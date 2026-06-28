@@ -18,6 +18,10 @@ class Config:
 
     MAX_SESSIONS = int(os.environ.get("SQV_MAX_SESSIONS", "8"))
 
+    # Default for thread-count form params (n_jobs etc.): SQUIDPY_N_THREADS if set,
+    # else all cores on the machine.
+    N_THREADS = int(os.environ.get("SQUIDPY_N_THREADS", os.cpu_count() or 1))
+
     RESOURCE_HZ = float(os.environ.get("SQV_RESOURCE_HZ", "2"))   # resource sample cadence
     LONG_RUNNING_S = float(os.environ.get("SQV_LONG_RUNNING_S", "120"))  # watchdog threshold
 

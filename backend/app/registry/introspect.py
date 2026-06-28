@@ -199,8 +199,8 @@ def _build_function(namespace: str, name: str, fn) -> FunctionEntry | None:
 
         if has_default and default is not None and _json_finite(default):
             schema = {**schema, "default": default}
-        if pname == "n_jobs" and schema.get("default") in (None, 0):
-            schema["default"] = conventions.N_JOBS_DEFAULT
+        if conventions.is_thread_param(pname):
+            schema["default"] = conventions.thread_default()  # cpu count / SQUIDPY_N_THREADS
 
         conv = conventions.convention_for(pname)
         widget, bound = (conv if conv else (type_widget, None))

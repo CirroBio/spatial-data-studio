@@ -7,10 +7,11 @@ import type { FunctionEntry } from '../types';
 
 interface Props {
   sessionId: string;
+  effectClass: 'compute' | 'plot';
   onClose: () => void;
 }
 
-export default function FunctionPicker({ sessionId, onClose }: Props) {
+export default function FunctionPicker({ sessionId, effectClass, onClose }: Props) {
   const { functions, sessionState } = useAppStore();
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<FunctionEntry | null>(null);
@@ -22,6 +23,7 @@ export default function FunctionPicker({ sessionId, onClose }: Props) {
   };
 
   const filtered = functions.filter((fn) => {
+    if (fn.effect_class !== effectClass) return false;  // Compute tab -> compute fns only, etc.
     const q = search.toLowerCase();
     return (
       fn.key.toLowerCase().includes(q) ||
@@ -65,7 +67,7 @@ export default function FunctionPicker({ sessionId, onClose }: Props) {
                   Back
                 </button>
               ) : (
-                'Add function'
+                `Add ${effectClass} function`
               )}
             </Dialog.Title>
             <Dialog.Close asChild>

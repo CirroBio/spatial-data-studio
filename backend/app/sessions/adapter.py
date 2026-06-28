@@ -14,6 +14,12 @@ from ..registry.introspect import REGISTRY
 # pyplot state is process-global; sessions plot concurrently (DESIGN §4.6 step 6).
 _PLOT_LOCK = threading.Lock()
 
+def _short_error(e: Exception) -> str:
+    """A concise, user-facing error string for the failure toast."""
+    msg = str(e).strip().splitlines()[0] if str(e).strip() else e.__class__.__name__
+    return f"{e.__class__.__name__}: {msg}"[:300]
+
+
 _TABLE_FACETS = ["obs", "var", "obsm", "obsp", "layers", "uns"]
 _SDATA_FACETS = ["images", "labels", "points", "shapes", "tables"]
 
@@ -99,9 +105,9 @@ class CallAdapter:
                 if entry.effect_class == "plot":
                     return self._run_plot(fn, injected, bound, buf)
                 ret = fn(*injected, **bound)
-            except Exception:
+            except Exception as e:
                 return CallResult(status="failed", log=buf.getvalue() + "\n" + traceback.format_exc(),
-                                  error="execution error")
+                                  error=_short_error(e))
             log = buf.getvalue()
 
         return self._handle_effect(entry, ret, session, before, log)
@@ -195,10 +201,10 @@ class CallAdapter:
                 plt.close("all")
                 return CallResult(status="drawn", log=buf.getvalue(),
                                   figure_svg=svg.getvalue(), figure_pdf=pdf.getvalue())
-            except Exception:
+            except Exception as e:
                 plt.close("all")
                 return CallResult(status="failed", log=buf.getvalue() + "\n" + traceback.format_exc(),
-                                  error="plot error")
+                                  error=_short_error(e))
 
     @staticmethod
     def _figure_from(ret, plt):

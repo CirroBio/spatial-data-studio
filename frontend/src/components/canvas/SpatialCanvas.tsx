@@ -137,6 +137,14 @@ export default function SpatialCanvas({ display, sessionId }: Props) {
     }
 
     if (positions && colors) {
+      // Radius is in world (coordinate-space) units so a spot keeps a constant
+      // spatial footprint at every zoom; zooming out shrinks spots on screen rather
+      // than packing fixed-pixel dots into overlap. point_size is scaled against the
+      // median inter-spot spacing (point_size 8 ~= touching).
+      const b = positions.bounds;
+      const area = Math.max(1, (b.d0max - b.d0min) * (b.d1max - b.d1min));
+      const spacing = Math.sqrt(area / Math.max(1, positions.numRows));
+      const worldRadius = (display.encoding.point_size / 8) * spacing;
       result.push(
         new ScatterplotLayer({
           id: 'spots',
@@ -147,13 +155,15 @@ export default function SpatialCanvas({ display, sessionId }: Props) {
               getFillColor: { value: colors, size: 4, normalized: true },
             },
           },
-          getRadius: display.encoding.point_size,
-          radiusUnits: 'pixels',
+          getRadius: worldRadius,
+          radiusUnits: 'common',
+          radiusMinPixels: 0.5,
           opacity: display.encoding.opacity,
           pickable: false,
           updateTriggers: {
             getFillColor: colors,
             getPosition: positions.positions,
+            getRadius: worldRadius,
           },
         })
       );

@@ -27,8 +27,18 @@ _CONVENTIONS = [
 ]
 _COMPILED = [(re.compile(p), w, b) for p, w, b in _CONVENTIONS]
 
-# n_jobs is surfaced as a first-class field (DESIGN §20.3).
-N_JOBS_DEFAULT = 1
+# Thread-count params are surfaced as first-class fields (DESIGN §20.3) and default
+# to the machine's thread budget (SQUIDPY_N_THREADS or cpu count) rather than 1.
+_THREAD_PARAM = re.compile(r"^n_jobs$|n_threads|num_threads|^workers$|^n_workers$")
+
+
+def is_thread_param(param_name: str) -> bool:
+    return bool(_THREAD_PARAM.search(param_name))
+
+
+def thread_default() -> int:
+    from ..config import config
+    return config.N_THREADS
 
 
 def convention_for(param_name: str):

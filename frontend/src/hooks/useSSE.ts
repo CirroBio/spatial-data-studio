@@ -27,6 +27,7 @@ export function useSSE(): void {
     removeActiveJob,
     activeSessionId,
     setSessionState,
+    pushNotification,
   } = useAppStore();
 
   useEffect(() => {
@@ -62,6 +63,12 @@ export function useSSE(): void {
     es.addEventListener('job.failed', (e: MessageEvent) => {
       const data = parseEvent<JobFailedEvent>(e);
       removeActiveJob(data.job_id);
+      // Failed compute jobs vanish from history (DESIGN §6.1); surface the error so
+      // the user isn't left with a silently-closed form and no feedback.
+      pushNotification({ kind: 'error', message: `Job failed: ${data.error ?? 'unknown error'}` });
+      if (data.session_id === activeSessionId) {
+        getSession(data.session_id).then(setSessionState).catch(console.error);
+      }
     });
 
     es.addEventListener('plot.drawn', (e: MessageEvent) => {
@@ -97,5 +104,5 @@ export function useSSE(): void {
     return () => {
       es.close();
     };
-  }, [activeSessionId, upsertSession, setResourceSample, updateDataVersions, updateDisplay, addActiveJob, removeActiveJob, setSessionState]);
+  }, [activeSessionId, upsertSession, setResourceSample, updateDataVersions, updateDisplay, addActiveJob, removeActiveJob, setSessionState, pushNotification]);
 }

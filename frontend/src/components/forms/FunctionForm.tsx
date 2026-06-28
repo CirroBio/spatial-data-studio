@@ -139,7 +139,11 @@ export default function FunctionForm({ fn, fields, onSubmit, submitting }: Props
                   className={inputClass}
                 />
               ) : (
-                <select {...register(key)} className={inputClass}>
+                <select
+                  {...register(key)}
+                  defaultValue={typeof prop.default === 'string' && options.includes(prop.default) ? prop.default : ''}
+                  className={inputClass}
+                >
                   <option value="">-- select --</option>
                   {options.map((opt) => (
                     <option key={opt} value={opt}>{opt}</option>

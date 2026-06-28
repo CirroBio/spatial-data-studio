@@ -43,7 +43,20 @@ interface AppStore {
   activeJobIds: Set<string>;
   addActiveJob: (jobId: string) => void;
   removeActiveJob: (jobId: string) => void;
+
+  // transient notifications (e.g. a compute job that failed and vanished from history)
+  notifications: AppNotification[];
+  pushNotification: (n: Omit<AppNotification, 'id'>) => void;
+  dismissNotification: (id: number) => void;
 }
+
+export interface AppNotification {
+  id: number;
+  kind: 'error' | 'info';
+  message: string;
+}
+
+let _notificationSeq = 0;
 
 export const useAppStore = create<AppStore>((set) => ({
   sessions: [],
@@ -112,4 +125,10 @@ export const useAppStore = create<AppStore>((set) => ({
       next.delete(jobId);
       return { activeJobIds: next };
     }),
+
+  notifications: [],
+  pushNotification: (n) =>
+    set((s) => ({ notifications: [...s.notifications, { ...n, id: ++_notificationSeq }] })),
+  dismissNotification: (id) =>
+    set((s) => ({ notifications: s.notifications.filter((x) => x.id !== id) })),
 }));

@@ -110,7 +110,7 @@ export default function Sidebar() {
             onClick={() => setShowPicker(true)}
             className="w-full py-1.5 text-xs bg-accent/20 hover:bg-accent/30 text-accent rounded transition-colors"
           >
-            + Add function
+            + Add {sidebarTab} function
           </button>
         </div>
       )}
@@ -118,6 +118,7 @@ export default function Sidebar() {
       {showPicker && activeSessionId && (
         <FunctionPicker
           sessionId={activeSessionId}
+          effectClass={sidebarTab}
           onClose={() => setShowPicker(false)}
         />
       )}

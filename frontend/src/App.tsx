@@ -10,6 +10,7 @@ import SpatialCanvas from './components/canvas/SpatialCanvas';
 import ComputeDetail from './components/ComputeDetail';
 import PlotDetail from './components/PlotDetail';
 import NewSessionDialog from './components/NewSessionDialog';
+import Toaster from './components/Toaster';
 import { useState } from 'react';
 
 export default function App() {
@@ -86,6 +87,7 @@ export default function App() {
         </main>
       </div>
       <ResourceStrip />
+      <Toaster />
       {showNewSession && (
         <NewSessionDialog
           onClose={() => setShowNewSession(false)}
