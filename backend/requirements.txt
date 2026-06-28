@@ -1,0 +1,21 @@
+# Pinned to the versions the app was built and validated against.
+squidpy==1.8.2
+spatialdata==0.7.3
+spatialdata-io==0.7.0
+anndata==0.12.18
+scanpy==1.11.5
+
+fastapi==0.138.1
+uvicorn[standard]==0.49.0
+pyarrow==24.0.0
+psutil==7.2.2
+pillow==12.2.0
+python-multipart==0.0.32
+
+# transitive pins that matter for the data path / persistence
+scipy==1.17.1
+numpy==2.4.6
+pandas==2.3.3
+matplotlib==3.11.0
+shapely==2.1.2
+zarr==3.1.6

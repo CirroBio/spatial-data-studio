@@ -1,0 +1,114 @@
+"""Field-path resolver → Arrow IPC (DESIGN §3.3, §14.1). Fully generic: it never
+knows function names, only how to fetch a field by `<element>:<key>` path.
+"""
+import io
+import json
+
+import numpy as np
+import pyarrow as pa
+import pyarrow.ipc as ipc
+import pandas as pd
+from scipy import sparse
+
+
+def _is_categorical(series: pd.Series) -> bool:
+    return isinstance(series.dtype, pd.CategoricalDtype) or series.dtype == object
+
+
+def field_kind(adata, element: str, key: str) -> str:
+    if element == "obs":
+        return "categorical" if _is_categorical(adata.obs[key]) else "numeric"
+    return "numeric"
+
+
+def resolve_field(adata, field_path: str) -> pa.RecordBatch:
+    if ":" not in field_path:
+        raise ValueError(f"bad field path: {field_path}")
+    element, key = field_path.split(":", 1)
+
+    if element == "obs":
+        return _obs_batch(adata, key)
+    if element == "var":
+        col = adata.var[key]
+        return pa.record_batch({"value": pa.array(np.asarray(col))})
+    if element == "obsm":
+        arr = np.asarray(adata.obsm[key])
+        ncol = min(arr.shape[1], 3)
+        cols = {f"d{i}": pa.array(arr[:, i].astype("float32")) for i in range(ncol)}
+        return pa.record_batch(cols)
+    if element == "X":
+        return _gene_batch(adata, key)
+    if element == "obsp":
+        return _sparse_batch(adata.obsp[key])
+    if element == "layers":
+        return _gene_batch(adata, key.split("/", 1)[1], layer=key.split("/", 1)[0]) \
+            if "/" in key else _dense_layer_meanless(adata, key)
+    raise ValueError(f"unsupported element: {element}")
+
+
+def _obs_batch(adata, key: str) -> pa.RecordBatch:
+    series = adata.obs[key]
+    if _is_categorical(series):
+        cat = series.astype("category") if not isinstance(series.dtype, pd.CategoricalDtype) else series
+        codes = cat.cat.codes.to_numpy().astype("int32")
+        categories = [str(c) for c in cat.cat.categories]
+        schema = pa.schema(
+            [pa.field("code", pa.int32())],
+            metadata={b"categories": json.dumps(categories).encode(), b"kind": b"categorical"},
+        )
+        return pa.record_batch([pa.array(codes)], schema=schema)
+    vals = pd.to_numeric(series, errors="coerce").to_numpy().astype("float64")
+    schema = pa.schema([pa.field("value", pa.float64())], metadata={b"kind": b"numeric"})
+    return pa.record_batch([pa.array(vals)], schema=schema)
+
+
+def _gene_batch(adata, gene: str, layer: str | None = None) -> pa.RecordBatch:
+    if gene not in adata.var_names:
+        raise KeyError(f"gene not found: {gene}")
+    idx = adata.var_names.get_loc(gene)
+    mat = adata.layers[layer] if layer else adata.X
+    col = mat[:, idx]
+    col = col.toarray().ravel() if sparse.issparse(col) else np.asarray(col).ravel()
+    return pa.record_batch({"value": pa.array(col.astype("float32"))})
+
+
+def _dense_layer_meanless(adata, key):
+    raise ValueError(f"layer field needs `layers:<layer>/<gene>` form: {key}")
+
+
+def _sparse_batch(mat) -> pa.RecordBatch:
+    """CSR/COO sparse graph → triplets, never densified (DESIGN §17)."""
+    coo = mat.tocoo() if sparse.issparse(mat) else sparse.coo_matrix(mat)
+    schema = pa.schema(
+        [pa.field("row", pa.int32()), pa.field("col", pa.int32()), pa.field("data", pa.float64())],
+        metadata={b"shape": json.dumps(list(coo.shape)).encode()},
+    )
+    return pa.record_batch(
+        [pa.array(coo.row.astype("int32")), pa.array(coo.col.astype("int32")),
+         pa.array(coo.data.astype("float64"))],
+        schema=schema,
+    )
+
+
+def to_ipc_bytes(batch: pa.RecordBatch) -> bytes:
+    sink = io.BytesIO()
+    with ipc.new_stream(sink, batch.schema) as writer:
+        writer.write_batch(batch)
+    return sink.getvalue()
+
+
+def describe_fields(adata, sdata) -> dict:
+    """Field inventory for SessionState.fields (frontend pickers)."""
+    obs = [{"name": c, "kind": field_kind(adata, "obs", c)} for c in adata.obs.columns]
+    images = list(getattr(sdata, "images", {}).keys()) if sdata is not None else []
+    shapes = list(getattr(sdata, "shapes", {}).keys()) if sdata is not None else []
+    return {
+        "obs": obs,
+        "obsm": list(adata.obsm.keys()),
+        "obsp": list(adata.obsp.keys()),
+        "layers": list(adata.layers.keys()),
+        "var_names_count": int(adata.n_vars),
+        "var_names_sample": [str(v) for v in adata.var_names[:50]],
+        "images": images,
+        "shapes": shapes,
+    }

@@ -1,0 +1,20 @@
+# Python
+.venv*/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Node / frontend
+node_modules/
+frontend/dist/
+
+# Data (large; fetched via scripts/prepare_test_data.py)
+test-data/
+data/
+checkpoints/
+*.zarr/
+*.zarr.zip
+
+# Local
+.DS_Store
+*.log

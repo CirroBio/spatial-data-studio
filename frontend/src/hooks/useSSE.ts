@@ -1,0 +1,101 @@
+import { useEffect } from 'react';
+import { useAppStore } from '../store/sessionStore';
+import { getSession } from '../api';
+import type {
+  JobQueuedEvent,
+  JobStartedEvent,
+  JobCompletedEvent,
+  JobFailedEvent,
+  PlotDrawnEvent,
+  PlotInvalidatedEvent,
+  DisplayUpdatedEvent,
+  SessionCreatedEvent,
+  ResourceSample,
+} from '../types';
+
+function parseEvent<T>(e: MessageEvent): T {
+  return JSON.parse(e.data as string) as T;
+}
+
+export function useSSE(): void {
+  const {
+    upsertSession,
+    setResourceSample,
+    updateDataVersions,
+    updateDisplay,
+    addActiveJob,
+    removeActiveJob,
+    activeSessionId,
+    setSessionState,
+  } = useAppStore();
+
+  useEffect(() => {
+    const es = new EventSource('/api/events');
+
+    es.addEventListener('session.created', (e: MessageEvent) => {
+      const data = parseEvent<SessionCreatedEvent>(e);
+      upsertSession(data.summary);
+    });
+
+    es.addEventListener('job.queued', (e: MessageEvent) => {
+      const data = parseEvent<JobQueuedEvent>(e);
+      addActiveJob(data.job_id);
+    });
+
+    es.addEventListener('job.started', (e: MessageEvent) => {
+      const data = parseEvent<JobStartedEvent>(e);
+      addActiveJob(data.job_id);
+    });
+
+    es.addEventListener('job.completed', (e: MessageEvent) => {
+      const data = parseEvent<JobCompletedEvent>(e);
+      removeActiveJob(data.job_id);
+      updateDataVersions(data.data_versions);
+      // Reload session state if this is for the active session
+      if (data.session_id === activeSessionId) {
+        getSession(data.session_id)
+          .then(setSessionState)
+          .catch(console.error);
+      }
+    });
+
+    es.addEventListener('job.failed', (e: MessageEvent) => {
+      const data = parseEvent<JobFailedEvent>(e);
+      removeActiveJob(data.job_id);
+    });
+
+    es.addEventListener('plot.drawn', (e: MessageEvent) => {
+      const data = parseEvent<PlotDrawnEvent>(e);
+      if (data.session_id === activeSessionId) {
+        getSession(data.session_id)
+          .then(setSessionState)
+          .catch(console.error);
+      }
+    });
+
+    es.addEventListener('plot.invalidated', (e: MessageEvent) => {
+      const data = parseEvent<PlotInvalidatedEvent>(e);
+      if (data.session_id === activeSessionId) {
+        getSession(data.session_id).then(setSessionState).catch(console.error);
+      }
+    });
+
+    es.addEventListener('display.updated', (e: MessageEvent) => {
+      const data = parseEvent<DisplayUpdatedEvent>(e);
+      updateDisplay(data.spec);
+    });
+
+    es.addEventListener('resource.sample', (e: MessageEvent) => {
+      const data = parseEvent<ResourceSample>(e);
+      setResourceSample(data);
+    });
+
+    es.onerror = () => {
+      // SSE reconnects automatically
+    };
+
+    return () => {
+      es.close();
+    };
+  }, [activeSessionId, upsertSession, setResourceSample, updateDataVersions, updateDisplay, addActiveJob, removeActiveJob, setSessionState]);
+}
