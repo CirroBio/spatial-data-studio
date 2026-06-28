@@ -40,7 +40,8 @@ class FunctionEntry:
     namespace: str
     function: str
     effect_class: str
-    summary: str
+    summary: str             # first line of the docstring
+    doc: str                 # full docstring (numpydoc), for the run modal
     injected: dict           # param_name -> injection kind (adata|sdata|image)
     pinned: dict             # param_name -> pinned value
     params: list             # list[ParamSpec] (form params, in signature order)
@@ -62,7 +63,7 @@ class FunctionEntry:
     def to_public(self) -> dict:
         return {
             "key": self.key, "namespace": self.namespace, "function": self.function,
-            "effect_class": self.effect_class, "summary": self.summary,
+            "effect_class": self.effect_class, "summary": self.summary, "doc": self.doc,
             "json_schema": self.json_schema(), "ui_schema": self.ui_schema(),
             "partially_supported": self.partially_supported,
             "unsupported_params": self.unsupported_params,
@@ -213,7 +214,7 @@ def _build_function(namespace: str, name: str, fn) -> FunctionEntry | None:
     effect = "plot" if namespace == "pl" else ("read" if namespace == "read" else "compute")
     return FunctionEntry(
         key=f"{namespace}.{name}", namespace=namespace, function=name,
-        effect_class=effect, summary=summary, injected=injected, pinned=pinned,
+        effect_class=effect, summary=summary, doc=doc, injected=injected, pinned=pinned,
         params=params, partially_supported=partially, unsupported_params=unsupported,
     )
 

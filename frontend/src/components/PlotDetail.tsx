@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useAppStore } from '../store/sessionStore';
 import { getJobLog, redrawPlot, getFigureUrl } from '../api';
 import StatusBadge from './StatusBadge';
+import AnsiLog from './AnsiLog';
 
 export default function PlotDetail() {
   const { selectedPlotId, sessionState, activeSessionId, setSelectedPlotId } = useAppStore();
@@ -118,9 +119,10 @@ export default function PlotDetail() {
         {log && (
           <div className="p-4 border-t border-border">
             <h3 className="text-xs font-mono text-muted uppercase tracking-wide mb-2">Log</h3>
-            <pre className="bg-bg border border-border rounded p-3 text-xs font-mono text-muted overflow-auto max-h-48 whitespace-pre-wrap">
-              {log}
-            </pre>
+            <AnsiLog
+              text={log}
+              className="bg-bg border border-border rounded p-3 text-xs font-mono text-muted overflow-auto max-h-48 whitespace-pre-wrap"
+            />
           </div>
         )}
       </div>

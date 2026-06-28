@@ -120,7 +120,13 @@ export default function FunctionPicker({ sessionId, effectClass, onClose }: Prop
             <div className="p-4 overflow-y-auto flex-1">
               <div className="mb-4">
                 <div className="text-sm font-semibold text-text font-mono">{selected.namespace}.{selected.function}</div>
-                <p className="text-xs text-muted mt-1">{selected.summary}</p>
+                {selected.doc ? (
+                  <pre className="mt-2 max-h-52 overflow-y-auto whitespace-pre-wrap break-words rounded border border-border bg-bg/60 px-3 py-2 text-[11px] leading-snug text-muted font-mono">
+                    {selected.doc}
+                  </pre>
+                ) : (
+                  <p className="text-xs text-muted mt-1">{selected.summary || 'No description available.'}</p>
+                )}
               </div>
               {error && (
                 <div className="mb-3 text-xs text-danger bg-danger/10 border border-danger/20 rounded px-3 py-2">

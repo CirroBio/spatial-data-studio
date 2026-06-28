@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useAppStore } from '../store/sessionStore';
 import { getJobLog, submitJob } from '../api';
 import StatusBadge from './StatusBadge';
+import AnsiLog from './AnsiLog';
 
 export default function ComputeDetail() {
   const { selectedComputeId, sessionState, activeSessionId, setSelectedComputeId } = useAppStore();
@@ -92,9 +93,10 @@ export default function ComputeDetail() {
         {log && (
           <section className="flex-1">
             <h3 className="text-xs font-mono text-muted uppercase tracking-wide mb-2">Log</h3>
-            <pre className="bg-bg border border-border rounded p-3 text-xs font-mono text-muted overflow-auto max-h-64 whitespace-pre-wrap">
-              {log}
-            </pre>
+            <AnsiLog
+              text={log}
+              className="bg-bg border border-border rounded p-3 text-xs font-mono text-muted overflow-auto max-h-64 whitespace-pre-wrap"
+            />
           </section>
         )}
       </div>

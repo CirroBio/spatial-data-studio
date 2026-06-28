@@ -31,6 +31,7 @@ export interface FunctionEntry {
   function: string;
   effect_class: EffectClass;
   summary: string;
+  doc: string;
   json_schema: Record<string, unknown>;
   ui_schema: Record<string, UiFieldInfo>;
   partially_supported: boolean;
