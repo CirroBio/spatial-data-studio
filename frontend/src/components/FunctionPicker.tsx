@@ -53,7 +53,7 @@ export default function FunctionPicker({ sessionId, effectClass, onClose }: Prop
     <Dialog.Root open onOpenChange={(open) => { if (!open) onClose(); }}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/60 z-40" />
-        <Dialog.Content className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-surface border border-border rounded-lg shadow-2xl w-[640px] max-h-[80vh] flex flex-col overflow-hidden">
+        <Dialog.Content className={`fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-surface border border-border rounded-lg shadow-2xl flex flex-col overflow-hidden ${selected ? 'w-[min(980px,94vw)] h-[80vh]' : 'w-[640px] max-h-[80vh]'}`}>
           <div className="flex items-center justify-between p-4 border-b border-border shrink-0">
             <Dialog.Title className="text-sm font-semibold text-text">
               {selected ? (
@@ -117,28 +117,33 @@ export default function FunctionPicker({ sessionId, effectClass, onClose }: Prop
               </div>
             </>
           ) : (
-            <div className="p-4 overflow-y-auto flex-1">
-              <div className="mb-4">
-                <div className="text-sm font-semibold text-text font-mono">{selected.namespace}.{selected.function}</div>
+            <div className="flex flex-1 overflow-hidden">
+              {/* Documentation — scrolls independently of the parameters */}
+              <div className="w-1/2 overflow-y-auto p-4 border-r border-border">
+                <div className="text-sm font-semibold text-text font-mono mb-2">{selected.namespace}.{selected.function}</div>
                 {selected.doc ? (
-                  <pre className="mt-2 max-h-52 overflow-y-auto whitespace-pre-wrap break-words rounded border border-border bg-bg/60 px-3 py-2 text-[11px] leading-snug text-muted font-mono">
+                  <pre className="whitespace-pre-wrap break-words text-[11px] leading-snug text-muted font-mono">
                     {selected.doc}
                   </pre>
                 ) : (
-                  <p className="text-xs text-muted mt-1">{selected.summary || 'No description available.'}</p>
+                  <p className="text-xs text-muted">{selected.summary || 'No description available.'}</p>
                 )}
               </div>
-              {error && (
-                <div className="mb-3 text-xs text-danger bg-danger/10 border border-danger/20 rounded px-3 py-2">
-                  {error}
-                </div>
-              )}
-              <FunctionForm
-                fn={selected}
-                fields={fields}
-                onSubmit={handleSubmit}
-                submitting={submitting}
-              />
+              {/* Parameters — scrolls independently of the documentation */}
+              <div className="w-1/2 overflow-y-auto p-4">
+                <h3 className="text-xs font-mono text-muted uppercase tracking-wide mb-3">Parameters</h3>
+                {error && (
+                  <div className="mb-3 text-xs text-danger bg-danger/10 border border-danger/20 rounded px-3 py-2">
+                    {error}
+                  </div>
+                )}
+                <FunctionForm
+                  fn={selected}
+                  fields={fields}
+                  onSubmit={handleSubmit}
+                  submitting={submitting}
+                />
+              </div>
             </div>
           )}
         </Dialog.Content>
