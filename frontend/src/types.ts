@@ -151,10 +151,11 @@ export interface JobStartedEvent {
 export interface JobCompletedEvent {
   session_id: string;
   job_id: string;
-  kind: 'compute' | 'plot';
+  kind: 'compute' | 'plot' | 'save' | 'subset';
   structural_diff?: Record<string, string[]>;
   data_versions: Record<string, number>;
   plot_id?: string;
+  child_id?: string;  // subset jobs: the new child session to switch to
 }
 
 export interface JobFailedEvent {

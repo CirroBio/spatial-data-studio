@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { useAppStore } from '../store/sessionStore';
-import { getSession } from '../api';
+import { getSession, getSessions } from '../api';
 import type {
   JobQueuedEvent,
   JobStartedEvent,
@@ -28,6 +28,8 @@ export function useSSE(): void {
     activeSessionId,
     setSessionState,
     pushNotification,
+    setActiveSessionId,
+    setSessions,
   } = useAppStore();
 
   useEffect(() => {
@@ -52,6 +54,13 @@ export function useSSE(): void {
       const data = parseEvent<JobCompletedEvent>(e);
       removeActiveJob(data.job_id);
       updateDataVersions(data.data_versions);
+      // A lasso subset produces a child session and evicts the parent: switch to the
+      // child and refresh the list so the evicted parent drops out.
+      if (data.child_id) {
+        setActiveSessionId(data.child_id);
+        getSessions().then(({ sessions }) => setSessions(sessions)).catch(console.error);
+        return;
+      }
       // Reload session state if this is for the active session
       if (data.session_id === activeSessionId) {
         getSession(data.session_id)
@@ -104,5 +113,5 @@ export function useSSE(): void {
     return () => {
       es.close();
     };
-  }, [activeSessionId, upsertSession, setResourceSample, updateDataVersions, updateDisplay, addActiveJob, removeActiveJob, setSessionState, pushNotification]);
+  }, [activeSessionId, upsertSession, setResourceSample, updateDataVersions, updateDisplay, addActiveJob, removeActiveJob, setSessionState, pushNotification, setActiveSessionId, setSessions]);
 }

@@ -53,6 +53,18 @@ export async function browsePath(path?: string): Promise<FsListing> {
   return res.json() as Promise<FsListing>;
 }
 
+export async function subsetSession(
+  id: string,
+  body: { polygons: number[][][]; coordinate_system?: string; save_parent?: boolean; name?: string }
+): Promise<{ job_id: string }> {
+  const res = await apiFetch(`/api/sessions/${id}/subset`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return res.json() as Promise<{ job_id: string }>;
+}
+
 export async function getSession(id: string): Promise<SessionState> {
   const res = await apiFetch(`/api/sessions/${id}`);
   return res.json() as Promise<SessionState>;

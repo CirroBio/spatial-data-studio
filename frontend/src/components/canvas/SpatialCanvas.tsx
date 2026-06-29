@@ -1,11 +1,11 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import DeckGL from '@deck.gl/react';
 import { OrthographicView } from '@deck.gl/core';
-import { BitmapLayer, ScatterplotLayer } from '@deck.gl/layers';
-import type { Layer, OrthographicViewState } from '@deck.gl/core';
+import { BitmapLayer, ScatterplotLayer, PolygonLayer, PathLayer } from '@deck.gl/layers';
+import type { Layer, OrthographicViewState, PickingInfo } from '@deck.gl/core';
 import { useAppStore } from '../../store/sessionStore';
 import { useArrowField } from '../../hooks/useArrowField';
-import { getImageInfo, putDisplay } from '../../api';
+import { getImageInfo, putDisplay, subsetSession } from '../../api';
 import type { DisplaySpec, ImageInfo } from '../../types';
 import { useArrowPositions } from './useArrowPositions';
 import { buildCategoricalPalette, buildNumericColormap } from './colorUtils';
@@ -34,7 +34,53 @@ export default function SpatialCanvas({ display, sessionId }: Props) {
   const [showImage, setShowImage] = useState(display.encoding.image_layer !== null);
   const [viewState, setViewState] = useState<OrthographicViewState | null>(null);
 
+  // Region selection (lasso → subset): committed polygon rings + the ring being drawn,
+  // all in world (== global) coordinates. Clicks add vertices; the backend's
+  // polygon_query subsets the dataset into a child session.
+  const [selectMode, setSelectMode] = useState(false);
+  const [polygons, setPolygons] = useState<[number, number][][]>([]);
+  const [currentRing, setCurrentRing] = useState<[number, number][]>([]);
+  const [saveParent, setSaveParent] = useState(false);
+  const [subsetting, setSubsetting] = useState(false);
+
   const positions = useArrowPositions(coordsTable);
+
+  const handleClick = useCallback((info: PickingInfo) => {
+    if (!selectMode || !info.coordinate) return;
+    setCurrentRing((r) => [...r, [info.coordinate![0], info.coordinate![1]] as [number, number]]);
+  }, [selectMode]);
+
+  function commitRing() {
+    if (currentRing.length >= 3) {
+      setPolygons((p) => [...p, currentRing]);
+      setCurrentRing([]);
+      return true;
+    }
+    return false;
+  }
+
+  function clearSelection() {
+    setPolygons([]);
+    setCurrentRing([]);
+  }
+
+  async function runSubset() {
+    const all = currentRing.length >= 3 ? [...polygons, currentRing] : polygons;
+    if (all.length === 0) return;
+    setSubsetting(true);
+    try {
+      // Child session arrives via SSE (session.created + job.completed → switch active).
+      await subsetSession(sessionId, { polygons: all, save_parent: saveParent });
+      clearSelection();
+      setSelectMode(false);
+    } catch (err) {
+      useAppStore.getState().pushNotification({
+        kind: 'error', message: `Subset failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    } finally {
+      setSubsetting(false);
+    }
+  }
 
   // Load image info
   useEffect(() => {
@@ -188,6 +234,30 @@ export default function SpatialCanvas({ display, sessionId }: Props) {
     setPendingUpdate(t);
   }
 
+  const SEL = [124, 108, 246] as [number, number, number]; // accent
+  const drawLayers: Layer[] = [];
+  if (selectMode) {
+    if (polygons.length) {
+      drawLayers.push(new PolygonLayer<[number, number][]>({
+        id: 'sel-polygons', data: polygons, getPolygon: (d) => d,
+        filled: true, getFillColor: [...SEL, 50], stroked: true,
+        getLineColor: [...SEL, 220], getLineWidth: 2, lineWidthUnits: 'pixels', pickable: false,
+      }));
+    }
+    if (currentRing.length >= 2) {
+      drawLayers.push(new PathLayer<[number, number][]>({
+        id: 'sel-path', data: [currentRing], getPath: (d) => d,
+        getColor: [...SEL, 220], getWidth: 2, widthUnits: 'pixels',
+      }));
+    }
+    if (currentRing.length >= 1) {
+      drawLayers.push(new ScatterplotLayer<[number, number]>({
+        id: 'sel-verts', data: currentRing, getPosition: (d) => d,
+        getFillColor: [...SEL, 255], getRadius: 4, radiusUnits: 'pixels',
+      }));
+    }
+  }
+
   const obsFields = fields?.obs ?? [];
   const colorOptions: string[] = [
     ...obsFields.map((f) => `obs:${f.name}`),
@@ -206,8 +276,10 @@ export default function SpatialCanvas({ display, sessionId }: Props) {
       <DeckGL
         views={VIEWS}
         initialViewState={viewState as unknown as Record<string, OrthographicViewState>}
-        layers={layers}
-        controller={true}
+        layers={[...layers, ...drawLayers]}
+        controller={selectMode ? { doubleClickZoom: false } : true}
+        onClick={handleClick}
+        getCursor={selectMode ? () => 'crosshair' : ({ isDragging }) => (isDragging ? 'grabbing' : 'grab')}
       />
 
       {/* On-canvas controls */}
@@ -265,6 +337,57 @@ export default function SpatialCanvas({ display, sessionId }: Props) {
             Show image
           </label>
         )}
+
+        <div className="border-t border-border pt-2 mt-1 flex flex-col gap-2">
+          <label className="flex items-center gap-2 text-xs text-text cursor-pointer">
+            <input
+              type="checkbox"
+              checked={selectMode}
+              onChange={(e) => { setSelectMode(e.target.checked); if (!e.target.checked) clearSelection(); }}
+              className="accent-accent"
+            />
+            Select region
+          </label>
+
+          {selectMode && (
+            <div className="flex flex-col gap-2">
+              <p className="text-[10px] text-muted leading-snug">
+                Click to add points. {polygons.length} region(s){currentRing.length > 0 ? `, ${currentRing.length} pt drawing` : ''}.
+              </p>
+              <div className="flex gap-1">
+                <button
+                  type="button"
+                  onClick={commitRing}
+                  disabled={currentRing.length < 3}
+                  className="flex-1 py-1 text-[11px] bg-bg border border-border rounded text-text hover:border-accent disabled:opacity-40 transition-colors"
+                >
+                  + region
+                </button>
+                <button
+                  type="button"
+                  onClick={clearSelection}
+                  disabled={polygons.length === 0 && currentRing.length === 0}
+                  className="flex-1 py-1 text-[11px] bg-bg border border-border rounded text-text hover:border-accent disabled:opacity-40 transition-colors"
+                >
+                  Clear
+                </button>
+              </div>
+              <label className="flex items-center gap-2 text-[11px] text-muted cursor-pointer">
+                <input type="checkbox" checked={saveParent} onChange={(e) => setSaveParent(e.target.checked)} className="accent-accent" />
+                Save parent first
+              </label>
+              <button
+                type="button"
+                onClick={runSubset}
+                disabled={subsetting || (polygons.length === 0 && currentRing.length < 3)}
+                className="py-1.5 text-xs bg-accent hover:bg-accent/80 disabled:opacity-40 text-white rounded transition-colors"
+              >
+                {subsetting ? 'Subsetting…' : `Subset to selection${polygons.length + (currentRing.length >= 3 ? 1 : 0) ? ` (${polygons.length + (currentRing.length >= 3 ? 1 : 0)})` : ''}`}
+              </button>
+              <p className="text-[10px] text-muted/60 leading-snug">Creates a child session; the parent is evicted.</p>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
