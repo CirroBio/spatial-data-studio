@@ -1,6 +1,7 @@
 import asyncio
 import json
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse, FileResponse
@@ -109,6 +110,62 @@ async def create_session(body: dict):
     except (RuntimeError, FileNotFoundError, KeyError) as e:
         raise HTTPException(400, str(e))
     return _mgr().summary(sess)
+
+
+# ---- filesystem browse (for the New Session path typeahead) ----------------
+def _browse_roots() -> list[Path]:
+    seen, roots = set(), []
+    for p in (config.DATA_DIR, config.CHECKPOINT_DIR):
+        try:
+            rp = p.resolve()
+        except OSError:
+            continue
+        if rp.exists() and rp.is_dir() and rp not in seen:
+            seen.add(rp)
+            roots.append(rp)
+    return roots
+
+
+def _within_roots(target: Path, roots: list[Path]) -> bool:
+    return any(target == r or r in target.parents for r in roots)
+
+
+@app.get("/api/fs/browse")
+async def fs_browse(path: str | None = None):
+    """List datasets and subfolders under the configured data roots, for the
+    New Session path picker. Scoped to DATA_DIR / CHECKPOINT_DIR — never the
+    whole filesystem. A `.zarr`/`.zarr.zip` entry is a loadable dataset; other
+    directories are navigable."""
+    roots = _browse_roots()
+    if not path:
+        return {"path": "", "parent": None,
+                "entries": [{"name": str(r), "path": str(r), "kind": "dir"} for r in roots]}
+    try:
+        target = Path(path).resolve()
+    except OSError:
+        raise HTTPException(400, "bad path")
+    if not _within_roots(target, roots):
+        raise HTTPException(403, "path is outside the allowed data roots")
+    if not target.is_dir():
+        raise HTTPException(404, "not a directory")
+
+    def _list():
+        out = []
+        for child in sorted(target.iterdir(), key=lambda c: c.name.lower()):
+            if child.name.startswith("."):
+                continue
+            if child.name.endswith((".zarr", ".zarr.zip")):
+                out.append({"name": child.name, "path": str(child), "kind": "dataset"})
+            elif child.is_dir():
+                out.append({"name": child.name, "path": str(child), "kind": "dir"})
+        return out
+
+    try:
+        entries = await _in_executor(_list)
+    except OSError as e:
+        raise HTTPException(400, str(e))
+    parent = None if target in roots else str(target.parent)
+    return {"path": str(target), "parent": parent, "entries": entries}
 
 
 @app.get("/api/sessions/{sid}")

@@ -35,6 +35,24 @@ export async function createSession(params: { name?: string; source: { kind: 'lo
   return res.json() as Promise<SessionSummary>;
 }
 
+export interface FsEntry {
+  name: string;
+  path: string;
+  kind: 'dir' | 'dataset';
+}
+
+export interface FsListing {
+  path: string;
+  parent: string | null;
+  entries: FsEntry[];
+}
+
+export async function browsePath(path?: string): Promise<FsListing> {
+  const q = path ? `?path=${encodeURIComponent(path)}` : '';
+  const res = await apiFetch(`/api/fs/browse${q}`);
+  return res.json() as Promise<FsListing>;
+}
+
 export async function getSession(id: string): Promise<SessionState> {
   const res = await apiFetch(`/api/sessions/${id}`);
   return res.json() as Promise<SessionState>;
