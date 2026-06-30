@@ -22,22 +22,47 @@ def _image_array(sdata, element):
     return arr
 
 
-def _to_hwc_uint8(arr) -> np.ndarray:
+def _channel_names(arr) -> list[str]:
+    try:
+        return [str(c) for c in arr.coords["c"].values]
+    except (KeyError, AttributeError):
+        n = arr.shape[0] if getattr(arr, "ndim", 0) == 3 else 1
+        return [str(i) for i in range(n)]
+
+
+def _to_hwc_uint8(arr, visible: list[int] | None = None) -> np.ndarray:
     data = np.asarray(arr.data if hasattr(arr, "data") else arr)
     # spatialdata images are (c, y, x)
     if data.ndim == 3:
         data = np.transpose(data, (1, 2, 0))
     elif data.ndim == 2:
         data = data[:, :, None]
-    if data.shape[2] >= 3:
-        data = data[:, :, :3]
+    nch = data.shape[2]
+    if visible is None:
+        visible = list(range(nch))
+    vis = [c for c in visible if 0 <= c < nch]
+
+    if nch == 3:
+        # RGB-like: keep the channel->colour mapping, zero hidden channels.
+        out = data.copy()
+        for c in range(3):
+            if c not in vis:
+                out[:, :, c] = 0
+    elif len(vis) == 0:
+        out = np.zeros((data.shape[0], data.shape[1], 3), dtype=data.dtype)
+    elif len(vis) == 1:
+        out = np.repeat(data[:, :, vis[:1]], 3, axis=2)  # single channel -> grayscale
     else:
-        data = np.repeat(data[:, :, :1], 3, axis=2)
-    if data.dtype != np.uint8:
-        d = data.astype("float32")
+        chans = [data[:, :, c] for c in vis[:3]]
+        while len(chans) < 3:
+            chans.append(np.zeros_like(chans[0]))
+        out = np.stack(chans, axis=2)
+
+    if out.dtype != np.uint8:
+        d = out.astype("float32")
         mx = float(d.max()) or 1.0
-        data = np.clip(d / mx * 255.0, 0, 255).astype("uint8")
-    return data
+        out = np.clip(d / mx * 255.0, 0, 255).astype("uint8")
+    return out
 
 
 def _extent(sdata, element):
@@ -57,13 +82,14 @@ def image_info(sdata, element) -> dict:
     arr = _image_array(sdata, element)
     return {"element": element, "height": int(arr.shape[-2]), "width": int(arr.shape[-1]),
             "channels": int(arr.shape[0]) if arr.ndim == 3 else 1,
+            "channel_names": _channel_names(arr),
             "bounds": _extent(sdata, element)}
 
 
-def thumbnail_png(sdata, element, max_px: int = 2048) -> bytes:
+def thumbnail_png(sdata, element, max_px: int = 2048, visible: list[int] | None = None) -> bytes:
     from PIL import Image
     arr = _image_array(sdata, element)
-    hwc = _to_hwc_uint8(arr)
+    hwc = _to_hwc_uint8(arr, visible)
     img = Image.fromarray(hwc)
     img.thumbnail((max_px, max_px))
     buf = io.BytesIO()

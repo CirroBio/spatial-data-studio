@@ -526,13 +526,16 @@ async def image_info(sid: str, element: str):
 
 
 @app.get("/api/sessions/{sid}/image/{element}/thumbnail")
-async def image_thumbnail(sid: str, element: str, max_px: int = 2048):
+async def image_thumbnail(sid: str, element: str, max_px: int = 2048, channels: str | None = None):
     sess = _session(sid)
+    visible = None
+    if channels is not None:
+        visible = [int(c) for c in channels.split(",") if c.strip().isdigit()]
 
     def _render():
         sess.lock.acquire_read()
         try:
-            return imaging.thumbnail_png(sess.sdata, element, max_px)
+            return imaging.thumbnail_png(sess.sdata, element, max_px, visible)
         finally:
             sess.lock.release_read()
 

@@ -45,6 +45,27 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
 
   const drawMode = canvasMode !== null;
 
+  // Per-channel display state (v3 Part 10): persisted in the display encoding,
+  // defaulting to all-visible with the raw channel names from image_info.
+  const channels = useMemo(
+    () => (imageInfo?.channel_names ?? []).map((cn, i) => ({
+      index: i,
+      visible: display.encoding.channels?.[String(i)]?.visible ?? true,
+      name: display.encoding.channels?.[String(i)]?.name ?? cn,
+    })),
+    [imageInfo, display.encoding.channels],
+  );
+  const visibleChannels = channels.filter((c) => c.visible).map((c) => c.index).join(',');
+
+  function setChannel(index: number, patch: Partial<{ visible: boolean; name: string }>) {
+    const cur = channels[index];
+    const next = { ...(display.encoding.channels ?? {}) };
+    next[String(index)] = { visible: cur.visible, name: cur.name, ...patch };
+    const spec = { ...display, encoding: { ...display.encoding, channels: next } };
+    updateDisplay(spec);                       // optimistic local update
+    putDisplay(sessionId, spec).catch(console.error);
+  }
+
   const positions = useArrowPositions(coordsTable);
 
   // Clear any in-progress drawing when leaving/entering a draw mode.
@@ -165,10 +186,10 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
     const result: Layer[] = [];
 
     if (imageInfo && display.encoding.image_layer) {
-      const thumbnailUrl = `/api/sessions/${sessionId}/image/${display.encoding.image_layer}/thumbnail`;
+      const thumbnailUrl = `/api/sessions/${sessionId}/image/${display.encoding.image_layer}/thumbnail?channels=${visibleChannels}`;
       result.push(
         new BitmapLayer({
-          id: 'tissue-image',
+          id: `tissue-image-${visibleChannels}`,  // id changes -> layer refetches on toggle
           image: thumbnailUrl,
           bounds: [
             imageInfo.bounds[0],
@@ -211,7 +232,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
     }
 
     return result;
-  }, [imageInfo, positions, colors, display.encoding, sessionId, showImage]);
+  }, [imageInfo, positions, colors, display.encoding, sessionId, showImage, visibleChannels]);
 
   const [pendingUpdate, setPendingUpdate] = useState<ReturnType<typeof setTimeout> | null>(null);
 
@@ -350,6 +371,30 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
             />
             Show image
           </label>
+        )}
+
+        {display.encoding.image_layer && showImage && channels.length > 1 && (
+          <div className="flex flex-col gap-1 border border-border/50 rounded p-1.5">
+            <span className="text-[10px] text-muted font-mono uppercase tracking-wide">Channels</span>
+            {channels.map((c) => (
+              <div key={c.index} className="flex items-center gap-1.5">
+                <input
+                  type="checkbox"
+                  checked={c.visible}
+                  onChange={(e) => setChannel(c.index, { visible: e.target.checked })}
+                  className="accent-accent"
+                  title="Toggle channel"
+                />
+                <input
+                  type="text"
+                  value={c.name}
+                  onChange={(e) => setChannel(c.index, { name: e.target.value })}
+                  className="flex-1 min-w-0 bg-bg border border-border rounded px-1 py-0.5 text-[10px] text-text focus:outline-none focus:border-accent"
+                  title="Rename channel"
+                />
+              </div>
+            ))}
+          </div>
         )}
 
         <button

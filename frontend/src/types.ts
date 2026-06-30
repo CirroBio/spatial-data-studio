@@ -85,6 +85,11 @@ export interface PlotEntry {
   references: string[];
 }
 
+export interface ChannelState {
+  visible: boolean;
+  name: string;
+}
+
 export interface DisplayEncoding {
   coords: string;
   color_by: string;
@@ -93,6 +98,7 @@ export interface DisplayEncoding {
   point_size: number;
   opacity: number;
   colormap: string;
+  channels?: Record<string, ChannelState>;  // per-channel on/off + rename (v3 Part 10)
 }
 
 export interface Viewport {
@@ -155,6 +161,7 @@ export interface ImageInfo {
   height: number;
   width: number;
   channels: number;
+  channel_names: string[];
   bounds: [number, number, number, number];
 }
 
