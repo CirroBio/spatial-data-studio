@@ -123,3 +123,82 @@ terms:
   - match: { names: [mode], scope: "gr.spatial_autocorr" }
     widget: enum
     values: [moran, geary]
+
+  # ==== scanpy coverage (v3 Part 4) ========================================
+  # QC / filtering thresholds (filter_cells, filter_genes, calculate_qc_metrics)
+  - match: { patterns: ["min_*", "max_*"], type: int }
+    widget: number
+    type: int
+    help: "Lower/upper threshold for filtering; leave unset to skip this bound."
+  # normalization / float knobs
+  - match: { names: [target_sum] }
+    widget: number
+    type: float
+    help: "Total count to normalize each cell to (unset = median of pre-norm totals)."
+  - match: { names: [max_fraction, max_value, min_dist, spread, resolution] }
+    widget: number
+    type: float
+  # the n_* count family scanpy exposes
+  - match: { names: [n_pcs, n_comps, n_components, n_neighbors, n_top_genes, n_bins,
+                     n_dcs, n_branchings, n_iterations, n_prin_comps, ctrl_size,
+                     negative_sample_rate, maxiter] }
+    widget: number
+    type: int
+    help: "Component / neighbor count; leave unset for the library default."
+  # representation / neighbor-graph selection
+  - match: { names: [use_rep] }
+    widget: text
+    help: "obsm key (e.g. X_pca) to use as the representation; unset = auto."
+  - match: { names: [neighbors_key] }
+    binding: obsp_key
+    help: "Key identifying a precomputed neighbor graph."
+  - match: { names: [basis] }
+    binding: obsm_key
+    help: "obsm embedding key to operate on (e.g. X_umap)."
+  # gene-set inputs
+  - match: { names: [gene_list, s_genes, g2m_genes, gene_pool] }
+    binding: var_names
+    widget: multiselect
+    help: "Gene names from var_names."
+  # grouping inputs reused by regress_out / aggregate
+  - match: { names: [keys, by] }
+    binding: obs_column
+    widget: multiselect
+    help: "obs column(s) to regress out / aggregate by."
+  # recurring boolean toggles
+  - match: { names: [use_raw, subset, zero_center, knn, directed, use_weights, pts,
+                     exclude_highly_expressed, check_values, log1p, tie_correct, compare_abs] }
+    widget: toggle
+    type: bool
+  # opaque scanpy type-alias enums (annotation hides the Literal)
+  - match: { names: [flavor], scope: "sc.pp.highly_variable_genes" }
+    widget: enum
+    values: [seurat, cell_ranger, seurat_v3, seurat_v3_paper]
+  - match: { names: [flavor], scope: "sc.tl.leiden" }
+    widget: enum
+    values: [leidenalg, igraph]
+  - match: { names: [flavor], scope: "sc.tl.louvain" }
+    widget: enum
+    values: [vtraag, igraph, rapids]
+  - match: { names: [method], scope: "sc.tl.rank_genes_groups" }
+    widget: enum
+    values: [logreg, t-test, wilcoxon, t-test_overestim_var]
+  - match: { names: [svd_solver], scope: "sc.pp.pca" }
+    widget: enum
+    values: [arpack, randomized, auto, lobpcg, tsqr]
+  - match: { names: [corr_method, cor_method] }
+    widget: enum
+    values: [benjamini-hochberg, bonferroni]
+  # output-name params (extend the key_added family)
+  - match: { names: [score_name, key_added_ext] }
+    role: output
+    binding: new_key
+    widget: text
+  # sc.get extraction params
+  - match: { names: [pval_cutoff, log2fc_min, log2fc_max] }
+    widget: number
+    type: float
+  # reader path inputs
+  - match: { names: [path, input, image_path, alignment_file] }
+    widget: text
+    help: "Filesystem path to the dataset directory/file to read."

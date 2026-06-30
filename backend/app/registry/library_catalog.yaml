@@ -1,0 +1,51 @@
+# v3 Part 4 — opt-in library functions (scanpy + spatialdata-io), added
+# declaratively. squidpy is wholesale-introspected in introspect.py; this catalog
+# is the "one short entry per function" import manifest for the curated libraries.
+# Each entry: key = namespace.function ; path = dotted attribute within `library`.
+# effect_class: compute | extract | read | plot. Entries whose import fails (e.g. a
+# reader missing in the installed version) are skipped with a log line, never hardcoded.
+
+# ---- scanpy pp (preprocessing; mutate the active table) --------------------
+- { library: scanpy, namespace: sc.pp, function: calculate_qc_metrics, path: pp.calculate_qc_metrics, effect_class: compute }
+- { library: scanpy, namespace: sc.pp, function: filter_cells, path: pp.filter_cells, effect_class: compute }
+- { library: scanpy, namespace: sc.pp, function: filter_genes, path: pp.filter_genes, effect_class: compute }
+- { library: scanpy, namespace: sc.pp, function: normalize_total, path: pp.normalize_total, effect_class: compute }
+- { library: scanpy, namespace: sc.pp, function: log1p, path: pp.log1p, effect_class: compute }
+- { library: scanpy, namespace: sc.pp, function: scale, path: pp.scale, effect_class: compute }
+- { library: scanpy, namespace: sc.pp, function: regress_out, path: pp.regress_out, effect_class: compute }
+- { library: scanpy, namespace: sc.pp, function: highly_variable_genes, path: pp.highly_variable_genes, effect_class: compute }
+- { library: scanpy, namespace: sc.pp, function: pca, path: pp.pca, effect_class: compute }
+- { library: scanpy, namespace: sc.pp, function: neighbors, path: pp.neighbors, effect_class: compute }
+- { library: scanpy, namespace: sc.pp, function: scrublet, path: pp.scrublet, effect_class: compute }
+
+# ---- scanpy tl (tools) -----------------------------------------------------
+- { library: scanpy, namespace: sc.tl, function: leiden, path: tl.leiden, effect_class: compute }
+- { library: scanpy, namespace: sc.tl, function: louvain, path: tl.louvain, effect_class: compute }
+- { library: scanpy, namespace: sc.tl, function: umap, path: tl.umap, effect_class: compute }
+- { library: scanpy, namespace: sc.tl, function: tsne, path: tl.tsne, effect_class: compute }
+- { library: scanpy, namespace: sc.tl, function: diffmap, path: tl.diffmap, effect_class: compute }
+- { library: scanpy, namespace: sc.tl, function: draw_graph, path: tl.draw_graph, effect_class: compute }
+- { library: scanpy, namespace: sc.tl, function: dpt, path: tl.dpt, effect_class: compute }
+- { library: scanpy, namespace: sc.tl, function: paga, path: tl.paga, effect_class: compute }
+- { library: scanpy, namespace: sc.tl, function: dendrogram, path: tl.dendrogram, effect_class: compute }
+- { library: scanpy, namespace: sc.tl, function: rank_genes_groups, path: tl.rank_genes_groups, effect_class: compute }
+- { library: scanpy, namespace: sc.tl, function: filter_rank_genes_groups, path: tl.filter_rank_genes_groups, effect_class: compute }
+- { library: scanpy, namespace: sc.tl, function: score_genes, path: tl.score_genes, effect_class: compute }
+- { library: scanpy, namespace: sc.tl, function: score_genes_cell_cycle, path: tl.score_genes_cell_cycle, effect_class: compute }
+- { library: scanpy, namespace: sc.tl, function: embedding_density, path: tl.embedding_density, effect_class: compute }
+
+# ---- scanpy get (extraction; read-only, returns a DataFrame) ---------------
+- { library: scanpy, namespace: sc.get, function: obs_df, path: get.obs_df, effect_class: extract }
+- { library: scanpy, namespace: sc.get, function: var_df, path: get.var_df, effect_class: extract }
+- { library: scanpy, namespace: sc.get, function: rank_genes_groups_df, path: get.rank_genes_groups_df, effect_class: extract }
+- { library: scanpy, namespace: sc.get, function: aggregate, path: get.aggregate, effect_class: extract }
+
+# ---- spatialdata-io readers (session bootstrap; take a path, return SpatialData) ----
+- { library: spatialdata_io, namespace: io, function: xenium, path: xenium, effect_class: read }
+- { library: spatialdata_io, namespace: io, function: visium, path: visium, effect_class: read }
+- { library: spatialdata_io, namespace: io, function: visium_hd, path: visium_hd, effect_class: read }
+- { library: spatialdata_io, namespace: io, function: merscope, path: merscope, effect_class: read }
+- { library: spatialdata_io, namespace: io, function: cosmx, path: cosmx, effect_class: read }
+- { library: spatialdata_io, namespace: io, function: steinbock, path: steinbock, effect_class: read }
+- { library: spatialdata_io, namespace: io, function: mcmicro, path: mcmicro, effect_class: read }
+- { library: spatialdata_io, namespace: io, function: curio, path: curio, effect_class: read }

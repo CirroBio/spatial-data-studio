@@ -1,6 +1,6 @@
 // types.ts — all domain types for squidpy-viewer
 
-export type EffectClass = 'compute' | 'plot' | 'read';
+export type EffectClass = 'compute' | 'plot' | 'read' | 'extract';
 
 export type UiWidget =
   | 'checkbox'

@@ -7,9 +7,14 @@ key. No squidpy function is named here.
 """
 from __future__ import annotations
 
+import importlib
 import inspect
+import logging
 import warnings
 from dataclasses import dataclass, field
+from pathlib import Path
+
+import yaml
 
 from .base import Function
 from .dictionary import DICTIONARY
@@ -19,6 +24,8 @@ from .custom import CUSTOM_FUNCTIONS
 warnings.filterwarnings("ignore")
 
 NAMESPACES = ["gr", "im", "tl", "read", "pl"]
+_CATALOG_PATH = Path(__file__).with_name("library_catalog.yaml")
+_log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -48,10 +55,32 @@ class Registry:
                 entry = build_library_function("squidpy", ns, name, obj)
                 if entry is not None:
                     self.entries[entry.key] = entry
+        self._load_catalog()
         self.coverage = DICTIONARY.coverage_report()
         for fn in CUSTOM_FUNCTIONS:
             self.entries[fn.key] = fn
         return self
+
+    def _load_catalog(self):
+        """Build the opt-in library functions (scanpy, spatialdata-io) declared in
+        library_catalog.yaml (v3 Part 4). Entries whose import fails (a reader absent
+        in the installed version) are skipped, never hardcoded."""
+        for e in yaml.safe_load(_CATALOG_PATH.read_text()) or []:
+            try:
+                obj = importlib.import_module(e["library"])
+                for part in e["path"].split("."):
+                    obj = getattr(obj, part)
+            except (ImportError, AttributeError) as ex:
+                _log.warning("catalog: skipping %s (%s)", e.get("key") or e["path"], ex)
+                continue
+            key = e.get("key") or f"{e['namespace']}.{e['function']}"
+            entry = build_library_function(
+                e["library"], e["namespace"], e["function"], obj,
+                effect_class=e.get("effect_class"), path=e["path"], key=key,
+                overrides=e.get("overrides"),
+            )
+            if entry is not None:
+                self.entries[entry.key] = entry
 
     def get(self, key: str) -> Function | None:
         return self.entries.get(key)

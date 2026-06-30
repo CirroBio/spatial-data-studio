@@ -109,8 +109,10 @@ async def create_session(body: dict):
         if source.get("kind") == "load":
             sess = await _in_executor(_mgr().create_from_load, source["path"], name)
         elif source.get("kind") == "read":
+            # squidpy `read` namespace or spatialdata-io readers (namespace `io`)
             sess = _mgr().create_from_read(
-                {"namespace": "read", "function": source["function"], "params": source.get("params", {})}, name)
+                {"namespace": source.get("namespace", "read"), "function": source["function"],
+                 "params": source.get("params", {})}, name)
         else:
             raise HTTPException(400, "source.kind must be 'load' or 'read'")
     except (RuntimeError, FileNotFoundError, KeyError) as e:

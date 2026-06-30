@@ -23,7 +23,11 @@ export default function FunctionPicker({ sessionId, effectClass, onClose }: Prop
   };
 
   const filtered = functions.filter((fn) => {
-    if (fn.effect_class !== effectClass) return false;  // Compute tab -> compute fns only, etc.
+    // Compute tab shows compute + extract (read-only sc.get.*); Plots tab shows plot.
+    const inTab = effectClass === 'compute'
+      ? (fn.effect_class === 'compute' || fn.effect_class === 'extract')
+      : fn.effect_class === effectClass;
+    if (!inTab) return false;
     const q = search.toLowerCase();
     return (
       fn.key.toLowerCase().includes(q) ||

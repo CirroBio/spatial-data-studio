@@ -77,6 +77,10 @@ class LibraryFunction(Function):
 
         if self.effect_class == "read":
             return CallResult(status="completed", log=log, new_object=ret)
+        if self.effect_class == "extract":
+            # read-only extraction (sc.get.*): returns a DataFrame, mutates nothing.
+            session.stash_result(self.key, ret)
+            return CallResult(status="completed", log=log, result_value=_summarize(ret))
         return compute_result(session, before, log, ret=ret, result_key=self.key)
 
     def _inject(self, session) -> list:
@@ -134,6 +138,23 @@ class LibraryFunction(Function):
             for v in vals:
                 if v not in adata.layers:
                     raise ValueError(f"layer '{v}' does not exist")
+
+
+def _summarize(ret) -> dict:
+    """A small JSON-safe summary of an extract result (DataFrame/Series) for the
+    contract envelope; the full object is stashed in uns['_results']."""
+    cols = getattr(ret, "columns", None)
+    shape = getattr(ret, "shape", None)
+    out: dict = {"type": ret.__class__.__name__}
+    if shape is not None:
+        out["shape"] = list(shape)
+    if cols is not None:
+        out["columns"] = [str(c) for c in list(cols)[:50]]
+    try:
+        out["head"] = ret.head(10).to_string()
+    except Exception:
+        out["head"] = str(ret)[:1000]
+    return out
 
 
 # ---- introspection builder (DESIGN §4) -------------------------------------
