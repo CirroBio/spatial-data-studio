@@ -82,6 +82,10 @@ export async function deleteSession(id: string): Promise<void> {
   await apiFetch(`/api/sessions/${id}`, { method: 'DELETE' });
 }
 
+export async function deleteHistoryEntry(sessionId: string, entryId: string): Promise<void> {
+  await apiFetch(`/api/sessions/${sessionId}/history/${entryId}`, { method: 'DELETE' });
+}
+
 export async function submitJob(
   sessionId: string,
   params: { namespace: string; function: string; params: Record<string, unknown> }

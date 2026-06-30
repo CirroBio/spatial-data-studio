@@ -1,13 +1,16 @@
-"""Squidpy functions — everything universal to a squidpy call.
+"""Library functions — the one executor for every reflected library call
+(squidpy, scanpy, spatialdata-io). v3 Part 1.4.
 
-`SquidpyFunction` is built by reflection (`build_squidpy_function`) and knows how
-to inject the session-held objects (AnnData/SpatialData/ImageContainer), bind and
-validate the form params, run the squidpy callable, and turn the result into a
-CallResult. No squidpy function is ever named here; the introspection builder is
-the only path to one (invariant DESIGN §16.1).
+`LibraryFunction` is built by reflection (`build_library_function`) from a
+`library` + dotted `path`. It injects the session-held objects
+(AnnData/SpatialData/ImageContainer) by type, binds and validates the form
+params, runs the callable, and returns the contract envelope (CallResult). No
+specific library function is ever named in code; reflection + the manifest are
+the only path to one (invariant R1).
 """
 from __future__ import annotations
 
+import importlib
 import inspect
 import traceback
 import typing
@@ -19,18 +22,21 @@ from .base import (
 from .dictionary import DICTIONARY
 
 # Session-held types filled by injection (DESIGN §4.6 step 2), matched on the
-# annotation's string form so we never depend on import identity.
+# annotation's string form so we never depend on import identity. Only the FIRST
+# param of each kind is injected (e.g. sc.pp.scrublet's second AnnData `adata_sim`
+# is left to its default).
 _INJECT_TOKENS = [("AnnData", "adata"), ("SpatialData", "sdata"), ("ImageContainer", "image")]
 _SCALAR_SCHEMA = {bool: {"type": "boolean"}, int: {"type": "integer"},
                   float: {"type": "number"}, str: {"type": "string"}}
 
 
-class SquidpyFunction(Function):
-    source = "squidpy"
-
-    def __init__(self, *, key, namespace, function, effect_class, summary, doc,
+class LibraryFunction(Function):
+    def __init__(self, *, key, library, path, namespace, function, effect_class, summary, doc,
                  injected, pinned, params, partially_supported, unsupported_params):
         self.key = key
+        self.source = library           # the library is the source tag (squidpy | scanpy | spatialdata_io)
+        self.library = library          # importable module name: squidpy | scanpy | spatialdata_io
+        self.path = path                # dotted attribute path within the module, e.g. gr.spatial_neighbors
         self.namespace = namespace
         self.function = function
         self.effect_class = effect_class
@@ -44,8 +50,10 @@ class SquidpyFunction(Function):
         self.unsupported_params = unsupported_params
 
     def _callable(self):
-        import squidpy as sq
-        return getattr(getattr(sq, self.namespace), self.function)
+        obj = importlib.import_module(self.library)
+        for part in self.path.split("."):
+            obj = getattr(obj, part)
+        return obj
 
     def execute(self, params: dict, session) -> CallResult:
         fn = self._callable()
@@ -92,7 +100,7 @@ class SquidpyFunction(Function):
                 continue
             spec = by_name.get(name)
             if value is None or value == "" or value == []:
-                continue  # unset -> let squidpy's own default apply
+                continue  # unset -> let the library's own default apply
             if spec is not None and adata is not None:
                 self._validate_reference(spec, value, adata)
             bound[name] = value
@@ -190,7 +198,8 @@ def _schema_for(annot, default, has_default) -> tuple[dict, str, bool]:
         return {"type": ["object", "null"]}, "json", True
 
     NON_SERIALIZABLE = ("Callable", "ndarray", "Colormap", "Axes", "Figure", "function",
-                        "Container", "Graph", "NDArray", "dtype", "type")
+                        "Container", "Graph", "NDArray", "dtype", "type",
+                        "AnnData", "SpatialData", "ImageContainer")
     if any(t in s for t in NON_SERIALIZABLE):
         return {"type": "string"}, "text", False
 
@@ -225,7 +234,17 @@ def _parse_param_docs(doc: str) -> dict:
     return out
 
 
-def build_squidpy_function(namespace: str, name: str, fn) -> SquidpyFunction | None:
+def _squidpy_effect(namespace: str) -> str:
+    return "plot" if namespace == "pl" else ("read" if namespace == "read" else "compute")
+
+
+def build_library_function(library: str, namespace: str, name: str, fn, *,
+                           effect_class: str | None = None, path: str | None = None,
+                           key: str | None = None, overrides: dict | None = None) -> LibraryFunction | None:
+    """Reflect a callable into a LibraryFunction. `namespace.name` is the form key
+    by default; `path` is the dotted attribute path within `library` (defaults to
+    `namespace.name`). `overrides` is an optional per-param {name: {help, ...}} map
+    (manifest overrides, term-dictionary style)."""
     try:
         sig = inspect.signature(fn)
     except (ValueError, TypeError):
@@ -235,7 +254,9 @@ def build_squidpy_function(namespace: str, name: str, fn) -> SquidpyFunction | N
     except Exception:
         hints = {}  # DESIGN §17: forward-ref / optional-dep failures fall back to raw annotations
 
+    overrides = overrides or {}
     injected, pinned, params, unsupported = {}, {}, [], []
+    injected_kinds: set[str] = set()
     partially = False
     doc = inspect.getdoc(fn) or ""
     summary = doc.split("\n")[0].strip()
@@ -248,8 +269,15 @@ def build_squidpy_function(namespace: str, name: str, fn) -> SquidpyFunction | N
         annot = hints.get(pname, p.annotation)
 
         kind = _injection_kind(annot)
+        if kind is not None and kind not in injected_kinds:
+            injected[pname] = kind  # first object of this kind -> type-injected data slot
+            injected_kinds.add(kind)
+            continue
         if kind is not None:
-            injected[pname] = kind  # type-injected data slot (core §4.6), not a form param
+            # a second AnnData/SpatialData/image param can't be form-supplied; lock to default
+            unsupported.append(pname)
+            if p.default is inspect.Parameter.empty:
+                partially = True
             continue
 
         has_default = p.default is not inspect.Parameter.empty
@@ -257,7 +285,7 @@ def build_squidpy_function(namespace: str, name: str, fn) -> SquidpyFunction | N
         base_schema, type_widget, serializable = _schema_for(annot, default, has_default)
 
         res = DICTIONARY.resolve(
-            key=f"{namespace}.{name}", name=pname, canonical_type=_canonical_type(annot),
+            key=key or f"{namespace}.{name}", name=pname, canonical_type=_canonical_type(annot),
             base_schema=base_schema, type_widget=type_widget, serializable=serializable,
             has_default=has_default, default=default,
         )
@@ -270,15 +298,17 @@ def build_squidpy_function(namespace: str, name: str, fn) -> SquidpyFunction | N
                 partially = True
             continue
 
+        tooltip = res.tooltip or overrides.get(pname, {}).get("help", "") or param_docs.get(pname, "")
         params.append(ParamSpec(
             name=pname, schema=res.schema, widget=res.widget, bound_to=res.bound_to,
-            required=not has_default, tooltip=res.tooltip or param_docs.get(pname, ""),
-            role=res.role,
+            required=not has_default, tooltip=tooltip, role=res.role,
         ))
 
-    effect = "plot" if namespace == "pl" else ("read" if namespace == "read" else "compute")
-    return SquidpyFunction(
-        key=f"{namespace}.{name}", namespace=namespace, function=name,
-        effect_class=effect, summary=summary, doc=doc, injected=injected, pinned=pinned,
-        params=params, partially_supported=partially, unsupported_params=unsupported,
+    key = key or f"{namespace}.{name}"
+    return LibraryFunction(
+        key=key, library=library, path=path or f"{namespace}.{name}",
+        namespace=namespace, function=name,
+        effect_class=effect_class or _squidpy_effect(namespace), summary=summary, doc=doc,
+        injected=injected, pinned=pinned, params=params,
+        partially_supported=partially, unsupported_params=unsupported,
     )

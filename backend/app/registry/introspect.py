@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 
 from .base import Function
 from .dictionary import DICTIONARY
-from .squidpy_fn import build_squidpy_function
+from .library_fn import build_library_function
 from .custom import CUSTOM_FUNCTIONS
 
 warnings.filterwarnings("ignore")
@@ -45,7 +45,7 @@ class Registry:
                     continue
                 if not getattr(obj, "__module__", "").startswith("squidpy"):
                     continue
-                entry = build_squidpy_function(ns, name, obj)
+                entry = build_library_function("squidpy", ns, name, obj)
                 if entry is not None:
                     self.entries[entry.key] = entry
         self.coverage = DICTIONARY.coverage_report()

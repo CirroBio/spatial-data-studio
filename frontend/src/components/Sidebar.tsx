@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import * as Tabs from '@radix-ui/react-tabs';
 import { useAppStore } from '../store/sessionStore';
+import { deleteHistoryEntry, getSession } from '../api';
 import StatusBadge from './StatusBadge';
 import FunctionPicker from './FunctionPicker';
 import AnnotationsPanel from './AnnotationsPanel';
@@ -22,9 +23,24 @@ export default function Sidebar({ onNewSession, sessions }: Props) {
     selectedPlotId,
     setSelectedPlotId,
     activeSessionId,
+    setSessionState,
+    pushNotification,
   } = useAppStore();
 
   const [showPicker, setShowPicker] = useState(false);
+
+  async function handleDelete(e: React.MouseEvent, id: string) {
+    e.stopPropagation();
+    if (!activeSessionId) return;
+    try {
+      await deleteHistoryEntry(activeSessionId, id);
+      if (selectedComputeId === id) setSelectedComputeId(null);
+      if (selectedPlotId === id) setSelectedPlotId(null);
+      setSessionState(await getSession(activeSessionId));
+    } catch (err) {
+      pushNotification({ kind: 'error', message: `Delete failed: ${err instanceof Error ? err.message : String(err)}` });
+    }
+  }
 
   const computeItems = sessionState?.app_state.compute_history ?? [];
   const plotItems = sessionState?.app_state.plots ?? [];
@@ -57,14 +73,14 @@ export default function Sidebar({ onNewSession, sessions }: Props) {
           ) : (
             <ul>
               {[...computeItems].reverse().map((item) => (
-                <li key={item.id}>
+                <li key={item.id} className="group relative">
                   <button
                     onClick={() => setSelectedComputeId(item.id)}
                     className={`w-full text-left px-3 py-2 border-b border-border/50 hover:bg-accent-lo/30 transition-colors ${
                       selectedComputeId === item.id ? 'bg-accent-lo text-text' : 'text-text/80'
                     }`}
                   >
-                    <div className="flex items-center justify-between gap-1 mb-0.5">
+                    <div className="flex items-center justify-between gap-1 mb-0.5 pr-5">
                       <span className="text-xs font-mono truncate">{item.namespace}.{item.function}</span>
                       <StatusBadge status={item.status} size="xs" />
                     </div>
@@ -74,6 +90,15 @@ export default function Sidebar({ onNewSession, sessions }: Props) {
                       </div>
                     )}
                   </button>
+                  {item.status !== 'queued' && item.status !== 'running' && (
+                    <button
+                      onClick={(e) => handleDelete(e, item.id)}
+                      title="Delete from history"
+                      className="absolute top-1.5 right-1.5 w-4 h-4 flex items-center justify-center rounded text-muted/50 opacity-0 group-hover:opacity-100 hover:text-danger hover:bg-danger/10 transition-all"
+                    >
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 6L6 18M6 6l12 12" /></svg>
+                    </button>
+                  )}
                 </li>
               ))}
             </ul>
@@ -86,18 +111,27 @@ export default function Sidebar({ onNewSession, sessions }: Props) {
           ) : (
             <ul>
               {[...plotItems].reverse().map((item) => (
-                <li key={item.id}>
+                <li key={item.id} className="group relative">
                   <button
                     onClick={() => setSelectedPlotId(item.id)}
                     className={`w-full text-left px-3 py-2 border-b border-border/50 hover:bg-accent-lo/30 transition-colors ${
                       selectedPlotId === item.id ? 'bg-accent-lo text-text' : 'text-text/80'
                     }`}
                   >
-                    <div className="flex items-center justify-between gap-1 mb-0.5">
+                    <div className="flex items-center justify-between gap-1 mb-0.5 pr-5">
                       <span className="text-xs font-mono truncate">{item.namespace}.{item.function}</span>
                       <StatusBadge status={item.status} size="xs" />
                     </div>
                   </button>
+                  {item.status !== 'queued' && item.status !== 'running' && (
+                    <button
+                      onClick={(e) => handleDelete(e, item.id)}
+                      title="Delete from history"
+                      className="absolute top-1.5 right-1.5 w-4 h-4 flex items-center justify-center rounded text-muted/50 opacity-0 group-hover:opacity-100 hover:text-danger hover:bg-danger/10 transition-all"
+                    >
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 6L6 18M6 6l12 12" /></svg>
+                    </button>
+                  )}
                 </li>
               ))}
             </ul>

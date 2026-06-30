@@ -33,8 +33,8 @@ export interface FunctionEntry {
   effect_class: EffectClass;
   summary: string;
   doc: string;
-  label: string | null;       // human title for custom functions; null for squidpy
-  source: 'squidpy' | 'custom';
+  label: string | null;       // human title for custom functions; null for library
+  source: string;             // 'custom' or the library name (squidpy | scanpy | spatialdata_io)
   json_schema: Record<string, unknown>;
   ui_schema: Record<string, UiFieldInfo>;
   partially_supported: boolean;

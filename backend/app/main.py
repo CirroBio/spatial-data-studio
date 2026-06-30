@@ -287,6 +287,15 @@ async def discard_pending(sid: str, step_id: str):
     return {"ok": True}
 
 
+@app.delete("/api/sessions/{sid}/history/{entry_id}")
+async def delete_history_entry(sid: str, entry_id: str):
+    """Delete a compute/plot history entry the user chose to remove (e.g. a kept
+    failure, v3 Part 2). Queued/running entries can't be deleted."""
+    if not _session(sid).delete_entry(entry_id):
+        raise HTTPException(409, "entry not found or still queued/running")
+    return {"ok": True}
+
+
 # ---- plots -----------------------------------------------------------------
 @app.post("/api/sessions/{sid}/plots/{plot_id}/redraw")
 async def redraw(sid: str, plot_id: str):

@@ -108,18 +108,21 @@ class Session:
             rec["structural_diff"] = {}
         return ec, rec
 
-    def _enqueue_job(self, entry_id: str, ec: str, descriptor: dict):
-        self._jobs[entry_id] = {"kind": ec, "descriptor": descriptor, "status": "queued"}
+    def _enqueue_job(self, entry_id: str, ec: str, descriptor: dict, keep_failures: bool = True):
+        self._jobs[entry_id] = {"kind": ec, "descriptor": descriptor, "status": "queued",
+                                "keep_failures": keep_failures}
         self._queue.put((entry_id, ec, descriptor))
         BUS.publish("job.queued", {"session_id": self.id, "job_id": entry_id,
                                    "descriptor": descriptor, "position": self._queue.qsize()})
 
-    def enqueue_descriptor(self, descriptor: dict) -> str:
-        """Run-now fast path: record + submit immediately."""
+    def enqueue_descriptor(self, descriptor: dict, keep_failures: bool = True) -> str:
+        """Run-now fast path: record + submit immediately. Frontend invocations keep
+        failures in history (keep_failures=True, v3 Part 2); the AI agent passes
+        keep_failures=False so its exploration never clutters the audit log."""
         entry_id = str(uuid.uuid4())
         ec, rec = self._make_record(descriptor, entry_id, "queued")
         self._collection(ec).append(rec)
-        self._enqueue_job(entry_id, ec, descriptor)
+        self._enqueue_job(entry_id, ec, descriptor, keep_failures)
         return entry_id
 
     def stage_descriptor(self, descriptor: dict) -> str:
@@ -172,6 +175,20 @@ class Session:
         order = {sid: i for i, sid in enumerate(ordered_ids)}
         self._collection(ec).sort(key=lambda r: order.get(r["id"], len(order) + 1))
         return True
+
+    def delete_entry(self, entry_id: str) -> bool:
+        """Remove a history entry the user chose to delete (e.g. a kept failure).
+        Queued/running entries can't be deleted; cancel them first."""
+        for ec in ("compute", "plot"):
+            coll = self._collection(ec)
+            for i, rec in enumerate(coll):
+                if rec["id"] == entry_id:
+                    if rec.get("status") in ("queued", "running"):
+                        return False
+                    coll.pop(i)
+                    self.plot_figures.pop(entry_id, None)
+                    return True
+        return False
 
     def enqueue_special(self, kind: str, payload: dict) -> str:
         job_id = str(uuid.uuid4())
@@ -343,8 +360,18 @@ class Session:
     def _fail(self, job_id, kind, error, log=""):
         self._jobs[job_id]["status"] = "failed"
         self._failed_logs[job_id] = log or error
+        keep = self._jobs.get(job_id, {}).get("keep_failures", True)
         if kind == "compute":
-            self._drop_history(job_id)  # FAILED/CANCELLED vanish from compute history (§6.1)
+            # v3 Part 2: frontend failures stay in history (keep_failures=True) for the
+            # user to inspect/delete; AI failures (keep_failures=False) are dropped from
+            # the audit log but still surfaced to the agent via job.failed.
+            if keep:
+                rec = self._find_record(job_id, "compute")
+                if rec:
+                    rec["status"] = "failed"
+                    rec["_log"] = log or error
+            else:
+                self._drop_history(job_id)
         elif kind == "plot":
             rec = self._find_record(job_id, "plot")
             if rec:
