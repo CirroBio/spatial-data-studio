@@ -12,6 +12,10 @@ addendum spec, and [docs/CONTRACT.md](docs/CONTRACT.md) for the API.
 > and how to run it. **Keep it up to date** — any change that adds/removes a
 > feature, endpoint, run command, or layout element updates this README in the
 > same change. See [CLAUDE.md](CLAUDE.md).
+>
+> **Governance:** invariants are enforced by `sds-governance/` (`make check`); read
+> [`sds-governance/AGENTS.md`](sds-governance/AGENTS.md) before changing the catalog
+> or agent surface.
 
 ## Foundational principle: zero hardcoded library functions
 
@@ -89,6 +93,8 @@ frontend/   React + TS + Vite + Tailwind + deck.gl SPA
 docker/     single-image build (multi-stage), nginx edge, supervisor
 docs/       CONTRACT.md (REST/SSE/Arrow API)
 scripts/    prepare_test_data.py (fetch + prep the test dataset)
+sds-governance/  governance bundle: RULES.md (R1-R16) + AGENTS.md + skills/ +
+                 checks/ executable gate (`make check`) + license allowlist (v3 Part 14)
 ```
 
 ## Run with Docker (single image, recommended)
