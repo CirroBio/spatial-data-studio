@@ -175,6 +175,13 @@ const cv = document.getElementById('c'), ctx = cv.getContext('2d');
 let img = null;
 if (V.image) {{ img = new Image(); img.src = V.image; img.onload = draw; }}
 const [x0,y0,x1,y1] = V.bounds; const wW = x1-x0, wH = y1-y0;
+// World-unit point radius (matches the live canvas): size is relative to the spot
+// spacing, so on-screen radius = worldR * scale and overlap stays constant on zoom.
+const XY = V.points.xy;
+let pnx=Infinity,pxx=-Infinity,pny=Infinity,pxy=-Infinity;
+for(const p of XY){{ if(p[0]<pnx)pnx=p[0]; if(p[0]>pxx)pxx=p[0]; if(p[1]<pny)pny=p[1]; if(p[1]>pxy)pxy=p[1]; }}
+const spacing = Math.sqrt(Math.max(1,(pxx-pnx)*(pxy-pny)) / Math.max(1, XY.length));
+const worldR = (V.points.size/8) * spacing;
 let scale = 1, ox = 0, oy = 0, init = false;
 function resize(){{ cv.width = innerWidth; cv.height = innerHeight; if(!init){{fit(); init=true;}} draw(); }}
 function fit(){{ const s = Math.min(cv.width/wW, (cv.height-30)/wH)*0.92; scale = s;
@@ -183,7 +190,7 @@ function wx(x){{return x*scale+ox}} function wy(y){{return y*scale+oy}}
 function draw(){{
   ctx.fillStyle='#0f1117'; ctx.fillRect(0,0,cv.width,cv.height);
   if(img){{ ctx.globalAlpha=1; ctx.drawImage(img, wx(x0), wy(y0), wW*scale, wH*scale); }}
-  const xy=V.points.xy, cols=V.points.colors, r=Math.max(1.2, V.points.size*scale*0.5);
+  const xy=XY, cols=V.points.colors, r=Math.max(0.4, worldR*scale);
   ctx.globalAlpha=V.points.opacity;
   for(let i=0;i<xy.length;i++){{ ctx.fillStyle=cols[i]||'#888'; ctx.beginPath();
     ctx.arc(wx(xy[i][0]), wy(xy[i][1]), r, 0, 6.2832); ctx.fill(); }}
