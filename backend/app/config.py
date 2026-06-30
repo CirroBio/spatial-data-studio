@@ -37,12 +37,28 @@ class Config:
     CONTEXT_KEEP_RECENT_N = int(os.environ.get("SQV_CONTEXT_KEEP_RECENT_N", "8"))
     AI_MAX_TOOL_ITERS = int(os.environ.get("SQV_AI_MAX_TOOL_ITERS", "8"))
 
+    _bedrock_ready_cache = None
+
     def ai_enabled(self) -> bool:
-        """True when the chat surface should light up: explicitly enabled and either
-        the mock provider or a configured Bedrock model id."""
+        """True only when the chat surface should light up (v3 Part 8.2). Requires
+        AI_ENABLED and either the explicit `mock` dev provider, or — for real
+        Bedrock — a configured model id AND resolvable AWS credentials. No creds =>
+        dark, even if a model id is set."""
         if not self.AI_ENABLED:
             return False
-        return self.AI_PROVIDER == "mock" or bool(self.BEDROCK_MODEL_ID)
+        if self.AI_PROVIDER == "mock":
+            return True
+        return bool(self.BEDROCK_MODEL_ID) and self._bedrock_credentials_available()
+
+    def _bedrock_credentials_available(self) -> bool:
+        if self._bedrock_ready_cache is None:
+            try:
+                import boto3
+                self._bedrock_ready_cache = (
+                    boto3.Session(region_name=self.AWS_REGION).get_credentials() is not None)
+            except Exception:
+                self._bedrock_ready_cache = False
+        return self._bedrock_ready_cache
 
 
 config = Config()
