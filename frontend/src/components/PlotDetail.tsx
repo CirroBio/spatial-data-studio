@@ -60,6 +60,26 @@ export default function PlotDetail() {
     URL.revokeObjectURL(url);
   }
 
+  async function handleExportPdf() {
+    if (!activeSessionId || !item) return;
+    try {
+      const res = await fetch(getFigureUrl(activeSessionId, item.id, 'pdf'));
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${item.function}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      useAppStore.getState().pushNotification({
+        kind: 'error',
+        message: `Export PDF failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+  }
+
   return (
     <div className="flex flex-col h-full overflow-hidden">
       <div className="flex items-center justify-between p-4 border-b border-border shrink-0">
@@ -78,12 +98,20 @@ export default function PlotDetail() {
         </div>
         <div className="flex items-center gap-2">
           {svgContent && (
-            <button
-              onClick={handleExportSvg}
-              className="px-3 py-1.5 bg-surface hover:bg-border text-muted hover:text-text text-xs rounded border border-border transition-colors"
-            >
-              Export SVG
-            </button>
+            <>
+              <button
+                onClick={handleExportSvg}
+                className="px-3 py-1.5 bg-surface hover:bg-border text-muted hover:text-text text-xs rounded border border-border transition-colors"
+              >
+                Export SVG
+              </button>
+              <button
+                onClick={handleExportPdf}
+                className="px-3 py-1.5 bg-surface hover:bg-border text-muted hover:text-text text-xs rounded border border-border transition-colors"
+              >
+                Export PDF
+              </button>
+            </>
           )}
           <button
             onClick={handleRedraw}
@@ -113,6 +141,10 @@ export default function PlotDetail() {
         ) : item.status === 'invalidated' ? (
           <div className="flex items-center justify-center h-32 text-warn text-sm">
             Figure invalidated — click Redraw
+          </div>
+        ) : item.status === 'failed' ? (
+          <div className="flex items-center justify-center h-32 text-danger text-sm">
+            Plot failed — see log below
           </div>
         ) : null}
 

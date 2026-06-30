@@ -54,6 +54,10 @@ export function useSSE(): void {
       const data = parseEvent<JobCompletedEvent>(e);
       removeActiveJob(data.job_id);
       updateDataVersions(data.data_versions);
+      // Save runs as a background job with no visible result; confirm it finished.
+      if (data.kind === 'save') {
+        pushNotification({ kind: 'info', message: 'Session saved.' });
+      }
       // A lasso subset produces a child session and evicts the parent: switch to the
       // child and refresh the list so the evicted parent drops out.
       if (data.child_id) {

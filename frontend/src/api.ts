@@ -95,8 +95,8 @@ export async function redrawPlot(sessionId: string, plotId: string): Promise<voi
   await apiFetch(`/api/sessions/${sessionId}/plots/${plotId}/redraw`, { method: 'POST' });
 }
 
-export function getFigureUrl(sessionId: string, plotId: string): string {
-  return `/api/sessions/${sessionId}/plots/${plotId}/figure?fmt=svg`;
+export function getFigureUrl(sessionId: string, plotId: string, fmt: 'svg' | 'pdf' = 'svg'): string {
+  return `/api/sessions/${sessionId}/plots/${plotId}/figure?fmt=${fmt}`;
 }
 
 export async function putDisplay(sessionId: string, display: DisplaySpec): Promise<void> {

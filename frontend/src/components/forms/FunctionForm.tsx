@@ -35,9 +35,14 @@ interface JsonSchemaProperty {
 }
 
 export default function FunctionForm({ fn, fields, onSubmit, submitting }: Props) {
-  const { register, handleSubmit } = useForm<Record<string, unknown>>();
+  const { register, handleSubmit, formState: { errors } } = useForm<Record<string, unknown>>();
 
-  const properties = (fn.json_schema as { properties?: Record<string, JsonSchemaProperty> }).properties ?? {};
+  const schema = fn.json_schema as {
+    properties?: Record<string, JsonSchemaProperty>;
+    required?: string[];
+  };
+  const properties = schema.properties ?? {};
+  const requiredKeys = new Set(schema.required ?? []);
   const uiSchema = fn.ui_schema;
 
   function processSubmit(raw: Record<string, unknown>) {
@@ -92,13 +97,23 @@ export default function FunctionForm({ fn, fields, onSubmit, submitting }: Props
         const prop = properties[key];
         const widget = uiSchema[key]?.widget;
         const tooltip = uiSchema[key]?.tooltip || prop.description;
+        const isRequired = requiredKeys.has(key);
+        // Booleans always carry a value (checked/unchecked), so a "required" rule is
+        // meaningless for them; only validate fields the user can leave blank.
+        const isBool = widget === 'checkbox' || prop.type === 'boolean';
+        const reg = (k: string) =>
+          register(k, isRequired && !isBool ? { required: 'This parameter is required' } : {});
         const label = (
           <label key={`label-${key}`} className="text-xs font-mono text-muted">
             {key}
+            {isRequired && <span className="ml-0.5 text-danger">*</span>}
             {tooltip && (
               <span className="ml-1 text-muted/60 font-sans normal-case">{tooltip}</span>
             )}
           </label>
+        );
+        const errLine = errors[key] && (
+          <span className="text-[10px] text-danger">{String(errors[key]?.message ?? 'Required')}</span>
         );
 
         const inputClass = 'bg-bg border border-border rounded px-2 py-1.5 text-xs text-text focus:outline-none focus:border-accent w-full';
@@ -135,12 +150,12 @@ export default function FunctionForm({ fn, fields, onSubmit, submitting }: Props
                   type="text"
                   list={`${key}-options`}
                   placeholder={options[0] ?? 'obs field or X:gene'}
-                  {...register(key)}
+                  {...reg(key)}
                   className={inputClass}
                 />
               ) : (
                 <select
-                  {...register(key)}
+                  {...reg(key)}
                   defaultValue={typeof prop.default === 'string' && options.includes(prop.default) ? prop.default : ''}
                   className={inputClass}
                 >
@@ -155,6 +170,7 @@ export default function FunctionForm({ fn, fields, onSubmit, submitting }: Props
                   {options.map((opt) => <option key={opt} value={opt} />)}
                 </datalist>
               )}
+              {errLine}
             </div>
           );
         }
@@ -163,12 +179,13 @@ export default function FunctionForm({ fn, fields, onSubmit, submitting }: Props
           return (
             <div key={key} className="flex flex-col gap-1">
               {label}
-              <select {...register(key)} className={inputClass}>
+              <select {...reg(key)} className={inputClass}>
                 <option value="">-- select --</option>
                 {(prop.enum ?? []).map((opt) => (
                   <option key={opt} value={opt}>{opt}</option>
                 ))}
               </select>
+              {errLine}
             </div>
           );
         }
@@ -180,9 +197,10 @@ export default function FunctionForm({ fn, fields, onSubmit, submitting }: Props
               <input
                 type="number"
                 defaultValue={prop.default as number | undefined}
-                {...register(key)}
+                {...reg(key)}
                 className={inputClass}
               />
+              {errLine}
             </div>
           );
         }
@@ -194,9 +212,10 @@ export default function FunctionForm({ fn, fields, onSubmit, submitting }: Props
               <input
                 type="text"
                 placeholder="comma-separated values"
-                {...register(key)}
+                {...reg(key)}
                 className={inputClass}
               />
+              {errLine}
             </div>
           );
         }
@@ -208,9 +227,10 @@ export default function FunctionForm({ fn, fields, onSubmit, submitting }: Props
               <textarea
                 rows={3}
                 placeholder="{}"
-                {...register(key)}
+                {...reg(key)}
                 className={`${inputClass} font-mono resize-y`}
               />
+              {errLine}
             </div>
           );
         }
@@ -222,9 +242,10 @@ export default function FunctionForm({ fn, fields, onSubmit, submitting }: Props
             <input
               type="text"
               defaultValue={prop.default as string | undefined}
-              {...register(key)}
+              {...reg(key)}
               className={inputClass}
             />
+            {errLine}
           </div>
         );
       })}

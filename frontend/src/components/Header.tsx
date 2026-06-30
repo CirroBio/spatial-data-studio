@@ -2,6 +2,13 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useAppStore } from '../store/sessionStore';
 import { saveSession, getRecipe, deleteSession } from '../api';
 
+function reportError(prefix: string, err: unknown) {
+  useAppStore.getState().pushNotification({
+    kind: 'error',
+    message: `${prefix}: ${err instanceof Error ? err.message : String(err)}`,
+  });
+}
+
 interface Props {
   onNewSession: () => void;
 }
@@ -13,7 +20,7 @@ export default function Header({ onNewSession }: Props) {
 
   function handleSave() {
     if (!activeSessionId) return;
-    saveSession(activeSessionId).catch(console.error);
+    saveSession(activeSessionId).catch((err) => reportError('Save failed', err));
   }
 
   function handleExportRecipe() {
@@ -28,7 +35,7 @@ export default function Header({ onNewSession }: Props) {
         a.click();
         URL.revokeObjectURL(url);
       })
-      .catch(console.error);
+      .catch((err) => reportError('Export recipe failed', err));
   }
 
   function handleDelete() {
@@ -39,7 +46,7 @@ export default function Header({ onNewSession }: Props) {
         removeSession(activeSessionId);
         setActiveSessionId(null);
       })
-      .catch(console.error);
+      .catch((err) => reportError('Delete failed', err));
   }
 
   return (
