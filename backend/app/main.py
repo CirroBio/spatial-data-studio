@@ -430,6 +430,23 @@ async def promote_region(sid: str, body: dict):
     return {"job_id": job_id}
 
 
+@app.post("/api/sessions/{sid}/snapshot")
+async def save_snapshot_endpoint(sid: str, body: dict | None = None):
+    """Save the current display as a self-contained read-only snapshot (v3 Part 9)."""
+    sess = _session(sid)
+    from . import snapshots
+    result = await _in_executor(snapshots.save_snapshot, sess, (body or {}).get("label"))
+    if result.get("status") == "failed":
+        raise HTTPException(400, result.get("error", "snapshot failed"))
+    return result
+
+
+@app.get("/api/snapshots")
+async def list_snapshots_endpoint():
+    from . import snapshots
+    return {"snapshots": snapshots.list_snapshots()}
+
+
 @app.post("/api/sessions/{sid}/save")
 async def save(sid: str, body: dict | None = None):
     sess = _session(sid)
@@ -561,6 +578,14 @@ async def events(request: Request):
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
+
+# ---- snapshots (read-only HTML + content-hashed assets, v3 Part 9) ---------
+try:
+    config.SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
+    (config.SNAPSHOTS_DIR / "assets").mkdir(parents=True, exist_ok=True)
+    app.mount("/snapshots", StaticFiles(directory=str(config.SNAPSHOTS_DIR), html=True), name="snapshots")
+except OSError:
+    pass  # read-only mount; the save endpoint surfaces the error per-call
 
 # ---- static SPA (optional; served by edge in prod) -------------------------
 if config.STATIC_DIR and config.STATIC_DIR.exists():

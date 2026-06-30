@@ -10,6 +10,7 @@ class Config:
     # Data mounts (DESIGN §19.9)
     DATA_DIR = Path(os.environ.get("SQV_DATA_DIR", "/data"))            # read mount (inputs)
     CHECKPOINT_DIR = Path(os.environ.get("SQV_CHECKPOINT_DIR", "/checkpoints"))  # rw mount
+    SNAPSHOTS_DIR = Path(os.environ.get("SQV_SNAPSHOTS_DIR", "/checkpoints/snapshots"))  # v3 Part 9
 
     # Memory accounting (DESIGN §11, §19.5) — evaluated against the container limit.
     CONTAINER_MEM_MB = _mb("SQV_CONTAINER_MEM_MB", 8192)

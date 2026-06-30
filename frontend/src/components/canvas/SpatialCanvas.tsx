@@ -5,7 +5,7 @@ import { BitmapLayer, ScatterplotLayer, PolygonLayer, PathLayer } from '@deck.gl
 import type { Layer, OrthographicViewState, PickingInfo } from '@deck.gl/core';
 import { useAppStore } from '../../store/sessionStore';
 import { useArrowField } from '../../hooks/useArrowField';
-import { getImageInfo, putDisplay } from '../../api';
+import { getImageInfo, putDisplay, saveSnapshot } from '../../api';
 import type { DisplaySpec, ImageInfo } from '../../types';
 import { useArrowPositions } from './useArrowPositions';
 import { buildCategoricalPalette, buildNumericColormap } from './colorUtils';
@@ -22,7 +22,17 @@ interface Props {
 }
 
 export default function SpatialCanvas({ display, sessionId, canvasMode, annotationTarget }: Props) {
-  const { sessionState, updateDisplay, isolatedCategory } = useAppStore();
+  const { sessionState, updateDisplay, isolatedCategory, pushNotification } = useAppStore();
+
+  async function handleSnapshot() {
+    try {
+      const r = await saveSnapshot(sessionId);
+      window.open(r.url, '_blank');
+      pushNotification({ kind: 'info', message: 'Snapshot saved.' });
+    } catch (e) {
+      pushNotification({ kind: 'error', message: `Snapshot failed: ${e instanceof Error ? e.message : String(e)}` });
+    }
+  }
   const fields = sessionState?.fields;
   const dataVersions = sessionState?.data_versions ?? {};
 
@@ -403,6 +413,14 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
           className="py-1 text-[11px] bg-bg border border-border rounded text-text hover:border-accent transition-colors"
         >
           Fit to data
+        </button>
+
+        <button
+          type="button"
+          onClick={handleSnapshot}
+          className="py-1 text-[11px] bg-bg border border-border rounded text-text hover:border-accent transition-colors"
+        >
+          Save snapshot
         </button>
       </div>
     </div>

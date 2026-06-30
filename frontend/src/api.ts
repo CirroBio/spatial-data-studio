@@ -65,6 +65,14 @@ export async function subsetSession(
   return res.json() as Promise<{ job_id: string }>;
 }
 
+export async function saveSnapshot(sessionId: string, label?: string): Promise<{ name: string; url: string }> {
+  const res = await apiFetch(`/api/sessions/${sessionId}/snapshot`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(label ? { label } : {}),
+  });
+  return res.json() as Promise<{ name: string; url: string }>;
+}
+
 export async function getObsValues(
   id: string,
   column: string
