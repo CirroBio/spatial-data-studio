@@ -1,11 +1,11 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import DeckGL from '@deck.gl/react';
 import { OrthographicView } from '@deck.gl/core';
 import { BitmapLayer, ScatterplotLayer, PolygonLayer, PathLayer } from '@deck.gl/layers';
 import type { Layer, OrthographicViewState, PickingInfo } from '@deck.gl/core';
 import { useAppStore } from '../../store/sessionStore';
 import { useArrowField } from '../../hooks/useArrowField';
-import { getImageInfo, putDisplay, subsetSession, annotateSession } from '../../api';
+import { getImageInfo, putDisplay } from '../../api';
 import type { DisplaySpec, ImageInfo } from '../../types';
 import { useArrowPositions } from './useArrowPositions';
 import { buildCategoricalPalette, buildNumericColormap } from './colorUtils';
@@ -37,79 +37,25 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   const [imageInfo, setImageInfo] = useState<ImageInfo | null>(null);
   const [showImage, setShowImage] = useState(display.encoding.image_layer !== null);
   const [viewState, setViewState] = useState<OrthographicViewState | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
 
-  // Polygon drawing state — shared between annotate and subset modes
-  const [polygons, setPolygons] = useState<[number, number][][]>([]);
-  const [currentRing, setCurrentRing] = useState<[number, number][]>([]);
-  const [saveParent, setSaveParent] = useState(false);
-  const [working, setWorking] = useState(false);
+  // Polygon draw state lives in the store so the active tab's left panel owns the
+  // commit / apply / clear actions; the canvas is purely the drawing surface.
+  const { drawPolygons: polygons, drawRing: currentRing, addDrawVertex, clearDraw } = useAppStore();
 
   const drawMode = canvasMode !== null;
 
   const positions = useArrowPositions(coordsTable);
 
-  // Clear drawing when mode changes
+  // Clear any in-progress drawing when leaving/entering a draw mode.
   useEffect(() => {
-    setPolygons([]);
-    setCurrentRing([]);
-  }, [canvasMode]);
+    clearDraw();
+  }, [canvasMode, clearDraw]);
 
   const handleClick = useCallback((info: PickingInfo) => {
     if (!drawMode || !info.coordinate) return;
-    setCurrentRing((r) => [...r, [info.coordinate![0], info.coordinate![1]] as [number, number]]);
-  }, [drawMode]);
-
-  function commitRing() {
-    if (currentRing.length >= 3) {
-      setPolygons((p) => [...p, currentRing]);
-      setCurrentRing([]);
-      return true;
-    }
-    return false;
-  }
-
-  function clearSelection() {
-    setPolygons([]);
-    setCurrentRing([]);
-  }
-
-  async function runSubset() {
-    const all = currentRing.length >= 3 ? [...polygons, currentRing] : polygons;
-    if (all.length === 0) return;
-    setWorking(true);
-    try {
-      await subsetSession(sessionId, { polygons: all, save_parent: saveParent });
-      clearSelection();
-    } catch (err) {
-      useAppStore.getState().pushNotification({
-        kind: 'error', message: `Subset failed: ${err instanceof Error ? err.message : String(err)}`,
-      });
-    } finally {
-      setWorking(false);
-    }
-  }
-
-  async function runAnnotate() {
-    if (!annotationTarget) return;
-    const all = currentRing.length >= 3 ? [...polygons, currentRing] : polygons;
-    if (all.length === 0) return;
-    setWorking(true);
-    try {
-      await annotateSession(sessionId, {
-        polygons: all,
-        region_set: annotationTarget.regionSetId,
-        category: annotationTarget.category,
-        color: annotationTarget.color,
-      });
-      clearSelection();
-    } catch (err) {
-      useAppStore.getState().pushNotification({
-        kind: 'error', message: `Annotate failed: ${err instanceof Error ? err.message : String(err)}`,
-      });
-    } finally {
-      setWorking(false);
-    }
-  }
+    addDrawVertex([info.coordinate[0], info.coordinate[1]]);
+  }, [drawMode, addDrawVertex]);
 
   // Load image info
   useEffect(() => {
@@ -120,7 +66,36 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
     }
   }, [sessionId, display.encoding.image_layer]);
 
-  // Set initial view state from data bounds or display viewport
+  // Compute a view state that fits the data bounds within the current canvas size.
+  // OrthographicView: world units per pixel = 1 / 2**zoom, so to fit an extent E
+  // into P pixels we need zoom = log2(P / E). A margin keeps the data off the edges.
+  const fitToData = useCallback((): OrthographicViewState | null => {
+    if (!positions) return null;
+    let { d0min, d0max, d1min, d1max } = positions.bounds;
+    // Frame the whole section: union the spot extent with the image extent when the
+    // image is shown, so a tissue image larger than the spots is fully visible.
+    if (showImage && imageInfo) {
+      const [ix0, iy0, ix1, iy1] = imageInfo.bounds;
+      d0min = Math.min(d0min, ix0, ix1);
+      d0max = Math.max(d0max, ix0, ix1);
+      d1min = Math.min(d1min, iy0, iy1);
+      d1max = Math.max(d1max, iy0, iy1);
+    }
+    const centerX = (d0min + d0max) / 2;
+    const centerY = (d1min + d1max) / 2;
+    const extentX = Math.max(1, d0max - d0min);
+    const extentY = Math.max(1, d1max - d1min);
+    const el = containerRef.current;
+    const pxW = el?.clientWidth || window.innerWidth;
+    const pxH = el?.clientHeight || window.innerHeight;
+    const MARGIN = 0.9; // leave ~10% padding around the data
+    const zoom = Math.log2(Math.min((pxW * MARGIN) / extentX, (pxH * MARGIN) / extentY));
+    return { target: [centerX, centerY, 0], zoom, minZoom: -8, maxZoom: 8 };
+  }, [positions, showImage, imageInfo]);
+
+  // Set initial view state from the saved display viewport, else fit to data.
+  // Wait for the image bounds before the first fit when a tissue image is shown, so
+  // the whole section (which can extend beyond the spots) is framed, not just the spots.
   useEffect(() => {
     if (viewState) return;
     if (display.viewport) {
@@ -132,18 +107,11 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
       });
       return;
     }
-    if (positions) {
-      const { d0min, d0max, d1min, d1max } = positions.bounds;
-      const centerX = (d0min + d0max) / 2;
-      const centerY = (d1min + d1max) / 2;
-      setViewState({
-        target: [centerX, centerY, 0],
-        zoom: -2,
-        minZoom: -8,
-        maxZoom: 8,
-      });
-    }
-  }, [positions, display.viewport, viewState]);
+    if (!positions) return;
+    if (display.encoding.image_layer && !imageInfo) return;
+    const fit = fitToData();
+    if (fit) setViewState(fit);
+  }, [fitToData, display.viewport, display.encoding.image_layer, imageInfo, positions, viewState]);
 
   // Build color array — respects isolated category by dimming non-matching points
   const colors = useMemo((): Uint8Array | null => {
@@ -292,36 +260,39 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
 
   if (!viewState) {
     return (
-      <div className="w-full h-full flex items-center justify-center bg-bg text-muted text-sm">
+      <div ref={containerRef} className="w-full h-full flex items-center justify-center bg-bg text-muted text-sm">
         {coordsLoading ? 'Loading spatial coordinates...' : 'Initializing canvas...'}
       </div>
     );
   }
 
-  const ringCount = polygons.length + (currentRing.length >= 3 ? 1 : 0);
-
   return (
-    <div className="w-full h-full relative bg-bg">
+    <div ref={containerRef} className="w-full h-full relative bg-bg">
       <DeckGL
         views={VIEWS}
-        initialViewState={viewState as unknown as Record<string, OrthographicViewState>}
+        viewState={viewState as unknown as Record<string, OrthographicViewState>}
+        onViewStateChange={({ viewState: vs }) => setViewState(vs as OrthographicViewState)}
         layers={[...layers, ...drawLayers]}
         controller={drawMode ? { doubleClickZoom: false } : true}
         onClick={handleClick}
         getCursor={drawMode ? () => 'crosshair' : ({ isDragging }) => (isDragging ? 'grabbing' : 'grab')}
       />
 
-      {/* Mode badge — bottom left */}
+      {/* Draw-mode hint — top center. All actions live in the active tab's panel. */}
       {drawMode && (
         <div
-          className="absolute bottom-4 left-4 z-10 px-3 py-1.5 rounded text-xs font-mono tracking-wide pointer-events-none"
+          className="absolute top-3 left-1/2 -translate-x-1/2 z-10 px-3 py-1.5 rounded text-xs tracking-wide pointer-events-none backdrop-blur-sm whitespace-nowrap"
           style={{
-            background: canvasMode === 'annotate' ? 'rgba(72,187,120,0.15)' : 'rgba(124,108,246,0.15)',
-            border: `1px solid ${canvasMode === 'annotate' ? 'rgba(72,187,120,0.5)' : 'rgba(124,108,246,0.5)'}`,
-            color: canvasMode === 'annotate' ? '#48bb78' : '#7c6cf6',
+            background: 'rgba(26,29,39,0.92)',
+            border: `1px solid ${canvasMode === 'annotate' ? 'rgba(72,187,120,0.7)' : 'rgba(124,108,246,0.7)'}`,
+            color: canvasMode === 'annotate' ? '#6fd99a' : '#a99bff',
           }}
         >
-          Drawing will: {canvasMode === 'annotate' ? 'label region' : 'arm subset'}
+          {canvasMode === 'annotate'
+            ? annotationTarget
+              ? `Annotating ${annotationTarget.regionSetId} / ${annotationTarget.category} — click to add points, then Apply on the left`
+              : 'Annotating — set a region set and category on the left, then click to add points'
+            : 'Subsetting — draw a region, then Subset to selection on the left'}
         </div>
       )}
 
@@ -381,72 +352,13 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
           </label>
         )}
 
-        {/* Drawing controls shown when in annotate or subset mode */}
-        {drawMode && (
-          <div className="border-t border-border pt-2 mt-1 flex flex-col gap-2">
-            <p className="text-[10px] text-muted leading-snug">
-              Click to add points. {polygons.length} region(s){currentRing.length > 0 ? `, ${currentRing.length} pt drawing` : ''}.
-            </p>
-            <div className="flex gap-1">
-              <button
-                type="button"
-                onClick={commitRing}
-                disabled={currentRing.length < 3}
-                className="flex-1 py-1 text-[11px] bg-bg border border-border rounded text-text hover:border-accent disabled:opacity-40 transition-colors"
-              >
-                + region
-              </button>
-              <button
-                type="button"
-                onClick={clearSelection}
-                disabled={polygons.length === 0 && currentRing.length === 0}
-                className="flex-1 py-1 text-[11px] bg-bg border border-border rounded text-text hover:border-accent disabled:opacity-40 transition-colors"
-              >
-                Clear
-              </button>
-            </div>
-
-            {canvasMode === 'subset' && (
-              <>
-                <label className="flex items-center gap-2 text-[11px] text-muted cursor-pointer">
-                  <input type="checkbox" checked={saveParent} onChange={(e) => setSaveParent(e.target.checked)} className="accent-accent" />
-                  Save parent first
-                </label>
-                <button
-                  type="button"
-                  onClick={runSubset}
-                  disabled={working || ringCount === 0}
-                  className="py-1.5 text-xs bg-accent hover:bg-accent/80 disabled:opacity-40 text-white rounded transition-colors"
-                >
-                  {working ? 'Subsetting...' : `Subset to selection${ringCount ? ` (${ringCount})` : ''}`}
-                </button>
-                <p className="text-[10px] text-muted/60 leading-snug">Creates a child session; the parent is evicted.</p>
-              </>
-            )}
-
-            {canvasMode === 'annotate' && (
-              <>
-                {annotationTarget ? (
-                  <div className="text-[10px] text-muted leading-snug">
-                    Labeling into <span className="text-text font-mono">{annotationTarget.regionSetId}</span> as{' '}
-                    <span className="font-mono" style={{ color: annotationTarget.color }}>{annotationTarget.category}</span>
-                  </div>
-                ) : (
-                  <div className="text-[10px] text-warn leading-snug">Select a region set and category in the Annotations panel.</div>
-                )}
-                <button
-                  type="button"
-                  onClick={runAnnotate}
-                  disabled={working || ringCount === 0 || !annotationTarget}
-                  className="py-1.5 text-xs disabled:opacity-40 text-white rounded transition-colors"
-                  style={{ background: annotationTarget ? '#48bb78' : '#3d9970', opacity: (working || ringCount === 0 || !annotationTarget) ? 0.4 : 1 }}
-                >
-                  {working ? 'Labeling...' : `Apply label${ringCount ? ` (${ringCount})` : ''}`}
-                </button>
-              </>
-            )}
-          </div>
-        )}
+        <button
+          type="button"
+          onClick={() => { const fit = fitToData(); if (fit) setViewState(fit); }}
+          className="py-1 text-[11px] bg-bg border border-border rounded text-text hover:border-accent transition-colors"
+        >
+          Fit to data
+        </button>
       </div>
     </div>
   );

@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import { useAppStore } from '../store/sessionStore';
+import { subsetSession } from '../api';
 import type { SessionSummary } from '../types';
 
 interface Props {
@@ -104,12 +106,74 @@ function SessionNode({
 }
 
 export default function SubsettingPanel({ onNewSession, sessions }: Props) {
-  const { activeSessionId, setActiveSessionId } = useAppStore();
+  const { activeSessionId, setActiveSessionId, drawPolygons, drawRing, commitDrawRing, clearDraw } = useAppStore();
+
+  const [saveParent, setSaveParent] = useState(false);
+  const [working, setWorking] = useState(false);
 
   const tree = buildTree(sessions);
 
+  const regionCount = drawPolygons.length + (drawRing.length >= 3 ? 1 : 0);
+
+  async function handleSubset() {
+    if (!activeSessionId || regionCount === 0) return;
+    const all = drawRing.length >= 3 ? [...drawPolygons, drawRing] : drawPolygons;
+    setWorking(true);
+    try {
+      await subsetSession(activeSessionId, { polygons: all, save_parent: saveParent });
+      clearDraw();
+    } catch (err) {
+      useAppStore.getState().pushNotification({
+        kind: 'error',
+        message: `Subset failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    } finally {
+      setWorking(false);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-0">
+      {/* Draw controls — drawing happens on the canvas; actions live here. */}
+      <div className="px-3 py-2 border-b border-border/50 flex flex-col gap-1.5">
+        <span className="text-[10px] text-muted font-mono uppercase tracking-wide">Selection</span>
+        <p className="text-[10px] text-muted leading-snug">
+          {regionCount} region{regionCount === 1 ? '' : 's'}
+          {drawRing.length > 0 ? `, ${drawRing.length}-pt drawing` : ''}.
+        </p>
+        <div className="flex gap-1">
+          <button
+            type="button"
+            onClick={commitDrawRing}
+            disabled={drawRing.length < 3}
+            className="flex-1 py-1 text-[11px] bg-bg border border-border rounded text-text hover:border-accent disabled:opacity-40 transition-colors"
+          >
+            Finish region
+          </button>
+          <button
+            type="button"
+            onClick={clearDraw}
+            disabled={drawPolygons.length === 0 && drawRing.length === 0}
+            className="flex-1 py-1 text-[11px] bg-bg border border-border rounded text-text hover:border-accent disabled:opacity-40 transition-colors"
+          >
+            Clear
+          </button>
+        </div>
+        <label className="flex items-center gap-2 text-[11px] text-muted cursor-pointer">
+          <input type="checkbox" checked={saveParent} onChange={(e) => setSaveParent(e.target.checked)} className="accent-accent" />
+          Save parent first
+        </label>
+        <button
+          type="button"
+          onClick={handleSubset}
+          disabled={working || regionCount === 0}
+          className="py-1.5 text-xs bg-accent hover:bg-accent/80 disabled:opacity-40 text-white rounded transition-colors"
+        >
+          {working ? 'Subsetting...' : `Subset to selection${regionCount ? ` (${regionCount})` : ''}`}
+        </button>
+        <p className="text-[10px] text-muted/60 leading-snug">Creates a child session; the parent is evicted.</p>
+      </div>
+
       {/* Session lineage tree */}
       <div className="px-3 py-2 border-b border-border/50">
         <span className="text-[10px] text-muted font-mono uppercase tracking-wide">Session lineage</span>
@@ -130,13 +194,6 @@ export default function SubsettingPanel({ onNewSession, sessions }: Props) {
           ))}
         </ul>
       )}
-
-      {/* Subset instructions */}
-      <div className="px-3 py-2 border-b border-border/50">
-        <p className="text-[10px] text-muted/70 leading-relaxed">
-          Draw a region on the canvas and click Subset to selection. A child session is created; the parent is evicted from memory.
-        </p>
-      </div>
 
       {/* New session shortcut */}
       <div className="px-3 py-2">
