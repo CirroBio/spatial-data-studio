@@ -26,20 +26,35 @@ bindings, value pins, and output-key roles. `GET /api/functions/coverage` report
 which params matched a term, ranked by reuse.
 
 Operations are modeled by an abstract **`Function`** (`backend/app/registry/base.py`):
-identity, a generated form descriptor (JSON Schema + ui hints), an effect class, and an
-`execute` contract. **`SquidpyFunction`** (`squidpy_fn.py`) is the introspection-built
-variant — squidpy is still never named in code. **Custom functions** (`registry/custom/`)
-are hand-written `Function` subclasses registered alongside the squidpy ones; they flow
-through the same picker → form → queue → history machinery and appear in the Compute tab.
+identity, a generated form descriptor (JSON Schema-of-record + ui hints), an effect class,
+and an `execute` contract returning the **contract envelope** `{status, logs,
+structural_diff, figure_bytes, new_object, result_value, manifest_before/after, error}`
+with a `keep_failures` flag (frontend calls keep failures in history; the AI agent does
+not). **`LibraryFunction`** (`library_fn.py`) is the one reflection-built executor for all
+libraries — a `library` field drives the import, so squidpy/scanpy/spatialdata-io readers
+run through one path; squidpy is still never named in code. **Custom functions**
+(`registry/custom/`) are hand-written `Function` subclasses. All three flow through the
+same picker → form → queue → history machinery.
 
 ## Features
 
 - **Introspected operations** — every `squidpy` `gr`/`im`/`tl`/`read`/`pl` function
   as a generated form; `copy`/`inplace` pinned, plot render-params managed.
-- **Custom functions** (non-squidpy, `namespace: custom`) — *Identify Regions (Leiden)*
-  (Leiden clustering on spatial coordinates into a new obs column), *Edit Annotations*
-  (rename/merge the unique values of a categorical obs column), and *Identify TMAs*
-  (automatic tissue-microarray core detection labelling each cell with its core).
+- **Expanded catalog** (`registry/library_catalog.yaml`) — scanpy `pp`/`tl`/`get`
+  (QC, normalization, HVG, PCA, neighbors, leiden/louvain, UMAP, rank_genes_groups, …)
+  and spatialdata-io readers (xenium/visium/visium_hd/merscope/cosmx), added one short
+  manifest entry each; `get.*` use an `extract` effect class.
+- **Custom functions** (non-squidpy, `namespace: custom`) — *Identify Regions (Leiden)*,
+  *Edit Annotations* (rename/merge a categorical obs column's values), and *Identify TMAs*
+  (automatic tissue-microarray core detection).
+- **Data manifest** (`backend/app/manifest`) — an extensible, text representation of
+  session state (tables + dtypes, categoricals with counts, region sets, images/channels,
+  summaries) captured before/after every call; the AI's eyes and a human-readable diff.
+- **AI chat** (optional, AWS Bedrock; `backend/app/agent`) — a per-session assistant with a
+  fixed set of meta-tools over the catalog (list/describe/run functions, manifest, recipes,
+  snapshots), an auto-mode toggle and sequential human approval (approve / edit & approve /
+  deny+reason), and self-curated context that persists into the `.zarr.zip`. Strictly
+  additive: dark unless configured (`AI_ENABLED`), with graceful degradation.
 - **Sessions** — one in-memory `SpatialData` per session, a FIFO worker thread,
   compute/plot jobs, structural-diff–driven refresh, live RAM/CPU resource strip.
 - **deck.gl canvas** — binary Arrow scatter colored by `obs`/`X`/region set over the
@@ -61,8 +76,12 @@ through the same picker → form → queue → history machinery and appear in t
 
 ```
 backend/    FastAPI app
-  app/registry/   base.py (abstract Function), squidpy_fn.py (introspected), custom/ (non-squidpy functions),
-                  terms.yaml + dictionary.py (Parameter Term Dictionary), introspect.py (Registry)
+  app/registry/   base.py (abstract Function + contract envelope), library_fn.py (one reflection
+                  executor for squidpy/scanpy/spatialdata-io), custom/ (non-squidpy functions),
+                  library_catalog.yaml (opt-in library manifests), terms.yaml + dictionary.py
+                  (Parameter Term Dictionary), introspect.py (Registry)
+  app/manifest/   data manifest contributor registry + seed contributors (v3 Part 3)
+  app/agent/      meta-tools, Bedrock/mock provider, chat loop + approval, self-curated context
   app/sessions/   manager, session (queue/worker), adapter (routes to Function.execute), regions, appstate
   app/transport/  arrow (field -> Arrow IPC), sse
   app/persistence/ store (.zarr / .zarr.zip)
@@ -83,6 +102,13 @@ open http://localhost:8080              # New Session -> /data/visium_hne.zarr
 The compose file mounts `test-data/` read-only at `/data` and a `checkpoints`
 volume at `/checkpoints`. Inside the container: `tini` → `supervisord` →
 {`nginx` edge (SSE buffering off), `uvicorn --workers 1`}.
+
+**Enable the AI chat (optional).** Copy `.env.example` to `.env` and set
+`AI_ENABLED=true` plus either `AI_PROVIDER=mock` (credential-free demo of the agent
+loop/approval) or `AI_PROVIDER=bedrock` with `BEDROCK_MODEL_ID`, `AWS_REGION`, and AWS
+credentials. The compose file forwards these; e.g. a quick mock demo:
+`AI_ENABLED=true AI_PROVIDER=mock docker compose up --build -d`. With AI disabled the
+chat panel is dark and the app runs normally.
 
 ## Run locally for development
 
