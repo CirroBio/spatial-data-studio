@@ -32,8 +32,19 @@ interface AppStore {
   setSelectedComputeId: (id: string | null) => void;
   selectedPlotId: string | null;
   setSelectedPlotId: (id: string | null) => void;
-  sidebarTab: 'compute' | 'plot';
-  setSidebarTab: (tab: 'compute' | 'plot') => void;
+  sidebarTab: 'compute' | 'plots' | 'annotations' | 'subsetting';
+  setSidebarTab: (tab: 'compute' | 'plots' | 'annotations' | 'subsetting') => void;
+
+  // annotations tab state
+  activeRegionSetId: string | null;
+  setActiveRegionSetId: (id: string | null) => void;
+  isolatedCategory: string | null;
+  setIsolatedCategory: (cat: string | null) => void;
+  // annotation drawing target (set name + category + color) — read by SpatialCanvas
+  annotationNewSetName: string;
+  annotationCategoryName: string;
+  annotationColor: string;
+  setAnnotationTarget: (setName: string, category: string, color: string) => void;
 
   // resource sample
   resourceSample: ResourceSample | null;
@@ -112,6 +123,16 @@ export const useAppStore = create<AppStore>((set) => ({
   setSelectedPlotId: (id) => set({ selectedPlotId: id, selectedComputeId: null }),
   sidebarTab: 'compute',
   setSidebarTab: (tab) => set({ sidebarTab: tab }),
+
+  activeRegionSetId: null,
+  setActiveRegionSetId: (id) => set({ activeRegionSetId: id }),
+  isolatedCategory: null,
+  setIsolatedCategory: (cat) => set({ isolatedCategory: cat }),
+  annotationNewSetName: '',
+  annotationCategoryName: '',
+  annotationColor: '#e05c5c',
+  setAnnotationTarget: (setName, category, color) =>
+    set({ annotationNewSetName: setName, annotationCategoryName: category, annotationColor: color }),
 
   resourceSample: null,
   setResourceSample: (sample) => set({ resourceSample: sample }),

@@ -104,11 +104,32 @@ export interface DisplaySpec {
   viewport: Viewport | null;
 }
 
+export interface RegionCategory {
+  label: string;
+  color: string;
+  n_cells: number;
+}
+
+export interface RegionSet {
+  id: string;
+  name: string;
+  obs_column: string;
+  shapes_element: string | null;
+  coordinate_system: string;
+  categories: RegionCategory[];
+  display: {
+    show_polygons: boolean;
+    fill_opacity: number;
+    outline: boolean;
+  };
+}
+
 export interface AppState {
   schema_version: number;
   compute_history: HistEntry[];
   plots: PlotEntry[];
   displays: DisplaySpec[];
+  regions?: RegionSet[];
 }
 
 export interface QueueEntry {
@@ -151,7 +172,7 @@ export interface JobStartedEvent {
 export interface JobCompletedEvent {
   session_id: string;
   job_id: string;
-  kind: 'compute' | 'plot' | 'save' | 'subset';
+  kind: 'compute' | 'plot' | 'save' | 'subset' | 'annotate' | 'promote';
   structural_diff?: Record<string, string[]>;
   data_versions: Record<string, number>;
   plot_id?: string;

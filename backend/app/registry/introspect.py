@@ -32,6 +32,7 @@ class ParamSpec:
     bound_to: str | None
     required: bool
     tooltip: str = ""
+    role: str = "input"   # input | output (output params name a slot the step creates)
 
 
 @dataclass
@@ -194,6 +195,7 @@ def _build_function(namespace: str, name: str, fn) -> FunctionEntry | None:
         params.append(ParamSpec(
             name=pname, schema=res.schema, widget=res.widget, bound_to=res.bound_to,
             required=not has_default, tooltip=res.tooltip or param_docs.get(pname, ""),
+            role=res.role,
         ))
 
     effect = "plot" if namespace == "pl" else ("read" if namespace == "read" else "compute")

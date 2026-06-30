@@ -1,15 +1,13 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useAppStore } from '../store/sessionStore';
 import { saveSession, getRecipe, deleteSession } from '../api';
-import type { SessionSummary } from '../types';
 
 interface Props {
   onNewSession: () => void;
-  sessions: SessionSummary[];
 }
 
-export default function Header({ onNewSession, sessions }: Props) {
-  const { activeSessionId, setActiveSessionId, activeJobIds, squidpyVersion, removeSession } = useAppStore();
+export default function Header({ onNewSession }: Props) {
+  const { activeSessionId, setActiveSessionId, activeJobIds, squidpyVersion, removeSession, sessions } = useAppStore();
   const activeSession = sessions.find((s) => s.id === activeSessionId);
   const runningCount = activeJobIds.size;
 
@@ -51,6 +49,9 @@ export default function Header({ onNewSession, sessions }: Props) {
         {squidpyVersion && (
           <span className="text-muted text-xs font-mono">{squidpyVersion}</span>
         )}
+        {activeSession && (
+          <span className="text-text/70 text-xs truncate max-w-[200px]">{activeSession.name}</span>
+        )}
       </div>
 
       <div className="flex items-center gap-3">
@@ -61,54 +62,7 @@ export default function Header({ onNewSession, sessions }: Props) {
           </span>
         )}
 
-        {/* Session selector */}
-        <DropdownMenu.Root>
-          <DropdownMenu.Trigger asChild>
-            <button className="flex items-center gap-2 px-3 py-1 rounded bg-bg border border-border text-sm hover:border-accent/50 transition-colors">
-              <span className="max-w-[160px] truncate">
-                {activeSession?.name ?? 'Select session'}
-              </span>
-              <svg width="10" height="6" viewBox="0 0 10 6" fill="currentColor" className="text-muted shrink-0">
-                <path d="M0 0l5 6 5-6H0z" />
-              </svg>
-            </button>
-          </DropdownMenu.Trigger>
-          <DropdownMenu.Portal>
-            <DropdownMenu.Content
-              className="z-50 bg-surface border border-border rounded shadow-xl py-1 min-w-[200px]"
-              sideOffset={4}
-            >
-              {sessions.map((s) => (
-                <DropdownMenu.Item
-                  key={s.id}
-                  onSelect={() => setActiveSessionId(s.id)}
-                  className={`px-3 py-2 text-sm cursor-pointer outline-none flex items-center gap-2 ${
-                    s.id === activeSessionId ? 'text-accent' : 'text-text hover:bg-accent-lo'
-                  }`}
-                >
-                  <span
-                    className={`w-2 h-2 rounded-full shrink-0 ${
-                      s.status === 'ready' ? 'bg-success' : s.status === 'errored' ? 'bg-danger' : 'bg-warn animate-pulse'
-                    }`}
-                  />
-                  <span className="truncate">{s.name}</span>
-                </DropdownMenu.Item>
-              ))}
-              {sessions.length === 0 && (
-                <div className="px-3 py-2 text-sm text-muted">No sessions</div>
-              )}
-              <DropdownMenu.Separator className="h-px bg-border my-1" />
-              <DropdownMenu.Item
-                onSelect={onNewSession}
-                className="px-3 py-2 text-sm cursor-pointer outline-none text-text hover:bg-accent-lo"
-              >
-                New session...
-              </DropdownMenu.Item>
-            </DropdownMenu.Content>
-          </DropdownMenu.Portal>
-        </DropdownMenu.Root>
-
-        {/* Gear menu */}
+        {/* Gear menu — global ops only; session switching moved to Subsetting tab */}
         <DropdownMenu.Root>
           <DropdownMenu.Trigger asChild>
             <button

@@ -5,7 +5,7 @@ import { BitmapLayer, ScatterplotLayer, PolygonLayer, PathLayer } from '@deck.gl
 import type { Layer, OrthographicViewState, PickingInfo } from '@deck.gl/core';
 import { useAppStore } from '../../store/sessionStore';
 import { useArrowField } from '../../hooks/useArrowField';
-import { getImageInfo, putDisplay, subsetSession } from '../../api';
+import { getImageInfo, putDisplay, subsetSession, annotateSession } from '../../api';
 import type { DisplaySpec, ImageInfo } from '../../types';
 import { useArrowPositions } from './useArrowPositions';
 import { buildCategoricalPalette, buildNumericColormap } from './colorUtils';
@@ -15,16 +15,20 @@ const VIEWS = [new OrthographicView({ id: 'main', flipY: false })];
 interface Props {
   display: DisplaySpec;
   sessionId: string;
+  // 'annotate' | 'subset' | null — set by active sidebar tab; when null canvas is view-only
+  canvasMode: 'annotate' | 'subset' | null;
+  // Annotation config: which region set + category + color to label into
+  annotationTarget: { regionSetId: string; category: string; color: string } | null;
 }
 
-export default function SpatialCanvas({ display, sessionId }: Props) {
-  const { sessionState, updateDisplay } = useAppStore();
+export default function SpatialCanvas({ display, sessionId, canvasMode, annotationTarget }: Props) {
+  const { sessionState, updateDisplay, isolatedCategory } = useAppStore();
   const fields = sessionState?.fields;
   const dataVersions = sessionState?.data_versions ?? {};
 
-  const coordsPath = display.encoding.coords; // "obsm:spatial"
+  const coordsPath = display.encoding.coords;
   const coordsVersion = dataVersions[coordsPath] ?? 0;
-  const colorByPath = display.encoding.color_by; // e.g. "obs:leiden"
+  const colorByPath = display.encoding.color_by;
   const colorVersion = dataVersions[colorByPath] ?? 0;
 
   const { table: coordsTable, loading: coordsLoading } = useArrowField(sessionId, coordsPath, coordsVersion);
@@ -34,21 +38,26 @@ export default function SpatialCanvas({ display, sessionId }: Props) {
   const [showImage, setShowImage] = useState(display.encoding.image_layer !== null);
   const [viewState, setViewState] = useState<OrthographicViewState | null>(null);
 
-  // Region selection (lasso → subset): committed polygon rings + the ring being drawn,
-  // all in world (== global) coordinates. Clicks add vertices; the backend's
-  // polygon_query subsets the dataset into a child session.
-  const [selectMode, setSelectMode] = useState(false);
+  // Polygon drawing state — shared between annotate and subset modes
   const [polygons, setPolygons] = useState<[number, number][][]>([]);
   const [currentRing, setCurrentRing] = useState<[number, number][]>([]);
   const [saveParent, setSaveParent] = useState(false);
-  const [subsetting, setSubsetting] = useState(false);
+  const [working, setWorking] = useState(false);
+
+  const drawMode = canvasMode !== null;
 
   const positions = useArrowPositions(coordsTable);
 
+  // Clear drawing when mode changes
+  useEffect(() => {
+    setPolygons([]);
+    setCurrentRing([]);
+  }, [canvasMode]);
+
   const handleClick = useCallback((info: PickingInfo) => {
-    if (!selectMode || !info.coordinate) return;
+    if (!drawMode || !info.coordinate) return;
     setCurrentRing((r) => [...r, [info.coordinate![0], info.coordinate![1]] as [number, number]]);
-  }, [selectMode]);
+  }, [drawMode]);
 
   function commitRing() {
     if (currentRing.length >= 3) {
@@ -67,18 +76,38 @@ export default function SpatialCanvas({ display, sessionId }: Props) {
   async function runSubset() {
     const all = currentRing.length >= 3 ? [...polygons, currentRing] : polygons;
     if (all.length === 0) return;
-    setSubsetting(true);
+    setWorking(true);
     try {
-      // Child session arrives via SSE (session.created + job.completed → switch active).
       await subsetSession(sessionId, { polygons: all, save_parent: saveParent });
       clearSelection();
-      setSelectMode(false);
     } catch (err) {
       useAppStore.getState().pushNotification({
         kind: 'error', message: `Subset failed: ${err instanceof Error ? err.message : String(err)}`,
       });
     } finally {
-      setSubsetting(false);
+      setWorking(false);
+    }
+  }
+
+  async function runAnnotate() {
+    if (!annotationTarget) return;
+    const all = currentRing.length >= 3 ? [...polygons, currentRing] : polygons;
+    if (all.length === 0) return;
+    setWorking(true);
+    try {
+      await annotateSession(sessionId, {
+        polygons: all,
+        region_set: annotationTarget.regionSetId,
+        category: annotationTarget.category,
+        color: annotationTarget.color,
+      });
+      clearSelection();
+    } catch (err) {
+      useAppStore.getState().pushNotification({
+        kind: 'error', message: `Annotate failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    } finally {
+      setWorking(false);
     }
   }
 
@@ -116,7 +145,7 @@ export default function SpatialCanvas({ display, sessionId }: Props) {
     }
   }, [positions, display.viewport, viewState]);
 
-  // Build color array
+  // Build color array — respects isolated category by dimming non-matching points
   const colors = useMemo((): Uint8Array | null => {
     if (!colorTable || !positions) return null;
     const n = positions.numRows;
@@ -138,11 +167,13 @@ export default function SpatialCanvas({ display, sessionId }: Props) {
 
       for (let i = 0; i < n; i++) {
         const code = codeCol.get(i) as number;
+        const cat = categories[code];
         const [r, g, b] = categoryColors[code] ?? [128, 128, 128];
+        const dimmed = isolatedCategory !== null && cat !== isolatedCategory;
         result[i * 4] = r;
         result[i * 4 + 1] = g;
         result[i * 4 + 2] = b;
-        result[i * 4 + 3] = Math.round(display.encoding.opacity * 255);
+        result[i * 4 + 3] = dimmed ? 30 : Math.round(display.encoding.opacity * 255);
       }
     } else {
       const valueCol = colorTable.getChild('value');
@@ -160,7 +191,7 @@ export default function SpatialCanvas({ display, sessionId }: Props) {
       }
     }
     return result;
-  }, [colorTable, positions, display.encoding.opacity, display.encoding.colormap]);
+  }, [colorTable, positions, display.encoding.opacity, display.encoding.colormap, isolatedCategory]);
 
   const layers = useMemo(() => {
     const result: Layer[] = [];
@@ -183,10 +214,6 @@ export default function SpatialCanvas({ display, sessionId }: Props) {
     }
 
     if (positions && colors) {
-      // Radius is in world (coordinate-space) units so a spot keeps a constant
-      // spatial footprint at every zoom; zooming out shrinks spots on screen rather
-      // than packing fixed-pixel dots into overlap. point_size is scaled against the
-      // median inter-spot spacing (point_size 8 ~= touching).
       const b = positions.bounds;
       const area = Math.max(1, (b.d0max - b.d0min) * (b.d1max - b.d1min));
       const spacing = Math.sqrt(area / Math.max(1, positions.numRows));
@@ -218,7 +245,6 @@ export default function SpatialCanvas({ display, sessionId }: Props) {
     return result;
   }, [imageInfo, positions, colors, display.encoding, sessionId, showImage]);
 
-  // Debounced display update
   const [pendingUpdate, setPendingUpdate] = useState<ReturnType<typeof setTimeout> | null>(null);
 
   function updateEncoding(patch: Partial<typeof display.encoding>) {
@@ -234,9 +260,12 @@ export default function SpatialCanvas({ display, sessionId }: Props) {
     setPendingUpdate(t);
   }
 
-  const SEL = [124, 108, 246] as [number, number, number]; // accent
+  const SEL = canvasMode === 'annotate'
+    ? [72, 187, 120] as [number, number, number]  // green for annotation
+    : [124, 108, 246] as [number, number, number]; // accent purple for subset
+
   const drawLayers: Layer[] = [];
-  if (selectMode) {
+  if (drawMode) {
     if (polygons.length) {
       drawLayers.push(new PolygonLayer<[number, number][]>({
         id: 'sel-polygons', data: polygons, getPolygon: (d) => d,
@@ -259,9 +288,7 @@ export default function SpatialCanvas({ display, sessionId }: Props) {
   }
 
   const obsFields = fields?.obs ?? [];
-  const colorOptions: string[] = [
-    ...obsFields.map((f) => `obs:${f.name}`),
-  ];
+  const colorOptions: string[] = obsFields.map((f) => `obs:${f.name}`);
 
   if (!viewState) {
     return (
@@ -271,18 +298,34 @@ export default function SpatialCanvas({ display, sessionId }: Props) {
     );
   }
 
+  const ringCount = polygons.length + (currentRing.length >= 3 ? 1 : 0);
+
   return (
     <div className="w-full h-full relative bg-bg">
       <DeckGL
         views={VIEWS}
         initialViewState={viewState as unknown as Record<string, OrthographicViewState>}
         layers={[...layers, ...drawLayers]}
-        controller={selectMode ? { doubleClickZoom: false } : true}
+        controller={drawMode ? { doubleClickZoom: false } : true}
         onClick={handleClick}
-        getCursor={selectMode ? () => 'crosshair' : ({ isDragging }) => (isDragging ? 'grabbing' : 'grab')}
+        getCursor={drawMode ? () => 'crosshair' : ({ isDragging }) => (isDragging ? 'grabbing' : 'grab')}
       />
 
-      {/* On-canvas controls */}
+      {/* Mode badge — bottom left */}
+      {drawMode && (
+        <div
+          className="absolute bottom-4 left-4 z-10 px-3 py-1.5 rounded text-xs font-mono tracking-wide pointer-events-none"
+          style={{
+            background: canvasMode === 'annotate' ? 'rgba(72,187,120,0.15)' : 'rgba(124,108,246,0.15)',
+            border: `1px solid ${canvasMode === 'annotate' ? 'rgba(72,187,120,0.5)' : 'rgba(124,108,246,0.5)'}`,
+            color: canvasMode === 'annotate' ? '#48bb78' : '#7c6cf6',
+          }}
+        >
+          Drawing will: {canvasMode === 'annotate' ? 'label region' : 'arm subset'}
+        </div>
+      )}
+
+      {/* Controls panel — top right */}
       <div className="absolute top-3 right-3 z-10 bg-surface/90 border border-border rounded p-3 flex flex-col gap-2 min-w-[200px] backdrop-blur-sm">
         <div className="flex flex-col gap-1">
           <label className="text-[10px] text-muted font-mono uppercase tracking-wide">Color by</label>
@@ -338,56 +381,72 @@ export default function SpatialCanvas({ display, sessionId }: Props) {
           </label>
         )}
 
-        <div className="border-t border-border pt-2 mt-1 flex flex-col gap-2">
-          <label className="flex items-center gap-2 text-xs text-text cursor-pointer">
-            <input
-              type="checkbox"
-              checked={selectMode}
-              onChange={(e) => { setSelectMode(e.target.checked); if (!e.target.checked) clearSelection(); }}
-              className="accent-accent"
-            />
-            Select region
-          </label>
-
-          {selectMode && (
-            <div className="flex flex-col gap-2">
-              <p className="text-[10px] text-muted leading-snug">
-                Click to add points. {polygons.length} region(s){currentRing.length > 0 ? `, ${currentRing.length} pt drawing` : ''}.
-              </p>
-              <div className="flex gap-1">
-                <button
-                  type="button"
-                  onClick={commitRing}
-                  disabled={currentRing.length < 3}
-                  className="flex-1 py-1 text-[11px] bg-bg border border-border rounded text-text hover:border-accent disabled:opacity-40 transition-colors"
-                >
-                  + region
-                </button>
-                <button
-                  type="button"
-                  onClick={clearSelection}
-                  disabled={polygons.length === 0 && currentRing.length === 0}
-                  className="flex-1 py-1 text-[11px] bg-bg border border-border rounded text-text hover:border-accent disabled:opacity-40 transition-colors"
-                >
-                  Clear
-                </button>
-              </div>
-              <label className="flex items-center gap-2 text-[11px] text-muted cursor-pointer">
-                <input type="checkbox" checked={saveParent} onChange={(e) => setSaveParent(e.target.checked)} className="accent-accent" />
-                Save parent first
-              </label>
+        {/* Drawing controls shown when in annotate or subset mode */}
+        {drawMode && (
+          <div className="border-t border-border pt-2 mt-1 flex flex-col gap-2">
+            <p className="text-[10px] text-muted leading-snug">
+              Click to add points. {polygons.length} region(s){currentRing.length > 0 ? `, ${currentRing.length} pt drawing` : ''}.
+            </p>
+            <div className="flex gap-1">
               <button
                 type="button"
-                onClick={runSubset}
-                disabled={subsetting || (polygons.length === 0 && currentRing.length < 3)}
-                className="py-1.5 text-xs bg-accent hover:bg-accent/80 disabled:opacity-40 text-white rounded transition-colors"
+                onClick={commitRing}
+                disabled={currentRing.length < 3}
+                className="flex-1 py-1 text-[11px] bg-bg border border-border rounded text-text hover:border-accent disabled:opacity-40 transition-colors"
               >
-                {subsetting ? 'Subsetting…' : `Subset to selection${polygons.length + (currentRing.length >= 3 ? 1 : 0) ? ` (${polygons.length + (currentRing.length >= 3 ? 1 : 0)})` : ''}`}
+                + region
               </button>
-              <p className="text-[10px] text-muted/60 leading-snug">Creates a child session; the parent is evicted.</p>
+              <button
+                type="button"
+                onClick={clearSelection}
+                disabled={polygons.length === 0 && currentRing.length === 0}
+                className="flex-1 py-1 text-[11px] bg-bg border border-border rounded text-text hover:border-accent disabled:opacity-40 transition-colors"
+              >
+                Clear
+              </button>
             </div>
-          )}
-        </div>
+
+            {canvasMode === 'subset' && (
+              <>
+                <label className="flex items-center gap-2 text-[11px] text-muted cursor-pointer">
+                  <input type="checkbox" checked={saveParent} onChange={(e) => setSaveParent(e.target.checked)} className="accent-accent" />
+                  Save parent first
+                </label>
+                <button
+                  type="button"
+                  onClick={runSubset}
+                  disabled={working || ringCount === 0}
+                  className="py-1.5 text-xs bg-accent hover:bg-accent/80 disabled:opacity-40 text-white rounded transition-colors"
+                >
+                  {working ? 'Subsetting...' : `Subset to selection${ringCount ? ` (${ringCount})` : ''}`}
+                </button>
+                <p className="text-[10px] text-muted/60 leading-snug">Creates a child session; the parent is evicted.</p>
+              </>
+            )}
+
+            {canvasMode === 'annotate' && (
+              <>
+                {annotationTarget ? (
+                  <div className="text-[10px] text-muted leading-snug">
+                    Labeling into <span className="text-text font-mono">{annotationTarget.regionSetId}</span> as{' '}
+                    <span className="font-mono" style={{ color: annotationTarget.color }}>{annotationTarget.category}</span>
+                  </div>
+                ) : (
+                  <div className="text-[10px] text-warn leading-snug">Select a region set and category in the Annotations panel.</div>
+                )}
+                <button
+                  type="button"
+                  onClick={runAnnotate}
+                  disabled={working || ringCount === 0 || !annotationTarget}
+                  className="py-1.5 text-xs disabled:opacity-40 text-white rounded transition-colors"
+                  style={{ background: annotationTarget ? '#48bb78' : '#3d9970', opacity: (working || ringCount === 0 || !annotationTarget) ? 0.4 : 1 }}
+                >
+                  {working ? 'Labeling...' : `Apply label${ringCount ? ` (${ringCount})` : ''}`}
+                </button>
+              </>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

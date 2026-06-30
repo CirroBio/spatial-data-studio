@@ -25,6 +25,11 @@ export default function App() {
     selectedComputeId,
     selectedPlotId,
     sessionState,
+    sidebarTab,
+    annotationNewSetName,
+    annotationCategoryName,
+    annotationColor,
+    activeRegionSetId,
   } = useAppStore();
 
   useSession(activeSessionId);
@@ -48,8 +53,24 @@ export default function App() {
       .catch(console.error);
   }, [setSessions, setFunctions, activeSessionId, setActiveSessionId]);
 
-  // find spatial canvas display from session state
   const display = sessionState?.app_state.displays.find((d) => d.type === 'spatial_canvas') ?? null;
+
+  // Canvas mode is set by which tab is active
+  const canvasMode = sidebarTab === 'annotations'
+    ? 'annotate'
+    : sidebarTab === 'subsetting'
+    ? 'subset'
+    : null;
+
+  // Build the annotation target from store state
+  const annotationTarget =
+    canvasMode === 'annotate' && annotationCategoryName
+      ? {
+          regionSetId: annotationNewSetName || activeRegionSetId || '',
+          category: annotationCategoryName,
+          color: annotationColor,
+        }
+      : null;
 
   function renderMain() {
     if (!activeSessionId) {
@@ -65,10 +86,21 @@ export default function App() {
         </div>
       );
     }
-    if (selectedComputeId) return <ComputeDetail />;
-    if (selectedPlotId) return <PlotDetail />;
+
+    // Operation-log tabs show the selected item detail, then fall back to canvas
+    if (sidebarTab === 'compute' && selectedComputeId) return <ComputeDetail />;
+    if (sidebarTab === 'plots' && selectedPlotId) return <PlotDetail />;
+
+    // Canvas-workflow tabs always show the canvas
     if (display) {
-      return <SpatialCanvas display={display} sessionId={activeSessionId} />;
+      return (
+        <SpatialCanvas
+          display={display}
+          sessionId={activeSessionId}
+          canvasMode={canvasMode}
+          annotationTarget={annotationTarget}
+        />
+      );
     }
     return (
       <div className="flex items-center justify-center h-full text-muted text-sm">
@@ -79,9 +111,9 @@ export default function App() {
 
   return (
     <div className="flex flex-col h-full bg-bg text-text">
-      <Header onNewSession={() => setShowNewSession(true)} sessions={sessions} />
+      <Header onNewSession={() => setShowNewSession(true)} />
       <div className="flex flex-1 overflow-hidden">
-        <Sidebar />
+        <Sidebar onNewSession={() => setShowNewSession(true)} sessions={sessions} />
         <main className="flex-1 overflow-hidden relative">
           {renderMain()}
         </main>

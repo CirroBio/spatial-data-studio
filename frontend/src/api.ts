@@ -144,3 +144,33 @@ export async function saveSession(sessionId: string, path?: string): Promise<{ j
   });
   return res.json() as Promise<{ job_id: string }>;
 }
+
+export async function annotateSession(
+  id: string,
+  body: {
+    polygons: number[][][];
+    region_set: string;
+    category: string;
+    color?: string;
+    coordinate_system?: string;
+  }
+): Promise<{ job_id: string }> {
+  const res = await apiFetch(`/api/sessions/${id}/annotate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return res.json() as Promise<{ job_id: string }>;
+}
+
+export async function promoteObsColumn(
+  id: string,
+  obs_column: string
+): Promise<{ job_id: string }> {
+  const res = await apiFetch(`/api/sessions/${id}/regions/promote`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ obs_column }),
+  });
+  return res.json() as Promise<{ job_id: string }>;
+}

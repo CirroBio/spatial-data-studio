@@ -92,24 +92,85 @@ class Session:
         ad = self.active_table()
         ad.uns.setdefault("_results", {})[key] = value
 
-    # ---- enqueue ----------------------------------------------------------
-    def enqueue_descriptor(self, descriptor: dict) -> str:
-        entry_id = str(uuid.uuid4())
+    # ---- enqueue / staging (PENDING lifecycle, spec §5.4) -----------------
+    def _collection(self, ec: str) -> list:
+        return self.app_state["plots"] if ec == "plot" else self.app_state["compute_history"]
+
+    def _make_record(self, descriptor: dict, entry_id: str, status: str):
         ec = "plot" if descriptor["namespace"] == "pl" else "compute"
         rec = {"id": entry_id, "namespace": descriptor["namespace"], "function": descriptor["function"],
-               "params": descriptor.get("params", {}), "status": "queued",
+               "params": descriptor.get("params", {}), "status": status,
                "squidpy_version": self.manager.registry.squidpy_version}
         if ec == "plot":
             rec["references"] = self._references(descriptor.get("params", {}))
-            self.app_state["plots"].append(rec)
         else:
             rec["structural_diff"] = {}
-            self.app_state["compute_history"].append(rec)
+        return ec, rec
+
+    def _enqueue_job(self, entry_id: str, ec: str, descriptor: dict):
         self._jobs[entry_id] = {"kind": ec, "descriptor": descriptor, "status": "queued"}
         self._queue.put((entry_id, ec, descriptor))
         BUS.publish("job.queued", {"session_id": self.id, "job_id": entry_id,
                                    "descriptor": descriptor, "position": self._queue.qsize()})
+
+    def enqueue_descriptor(self, descriptor: dict) -> str:
+        """Run-now fast path: record + submit immediately."""
+        entry_id = str(uuid.uuid4())
+        ec, rec = self._make_record(descriptor, entry_id, "queued")
+        self._collection(ec).append(rec)
+        self._enqueue_job(entry_id, ec, descriptor)
         return entry_id
+
+    def stage_descriptor(self, descriptor: dict) -> str:
+        """Stage a PENDING step: visible + editable, not submitted (spec §5.4)."""
+        entry_id = str(uuid.uuid4())
+        ec, rec = self._make_record(descriptor, entry_id, "pending")
+        self._collection(ec).append(rec)
+        return entry_id
+
+    def _descriptor_of(self, rec: dict) -> dict:
+        return {"namespace": rec["namespace"], "function": rec["function"], "params": rec["params"]}
+
+    def run_pending(self, entry_id: str) -> bool:
+        for ec in ("compute", "plot"):
+            rec = self._find_record(entry_id, ec)
+            if rec and rec["status"] == "pending":
+                rec["status"] = "queued"
+                self._enqueue_job(entry_id, ec, self._descriptor_of(rec))
+                return True
+        return False
+
+    def run_all_pending(self) -> int:
+        n = 0
+        for ec in ("compute", "plot"):
+            for rec in list(self._collection(ec)):
+                if rec["status"] == "pending" and self.run_pending(rec["id"]):
+                    n += 1
+        return n
+
+    def edit_pending(self, entry_id: str, params: dict) -> bool:
+        for ec in ("compute", "plot"):
+            rec = self._find_record(entry_id, ec)
+            if rec and rec["status"] == "pending":
+                rec["params"] = params
+                if ec == "plot":
+                    rec["references"] = self._references(params)
+                return True
+        return False
+
+    def discard_pending(self, entry_id: str) -> bool:
+        for ec in ("compute", "plot"):
+            coll = self._collection(ec)
+            for i, rec in enumerate(coll):
+                if rec["id"] == entry_id and rec["status"] == "pending":
+                    coll.pop(i)
+                    return True
+        return False
+
+    def reorder_pending(self, ec: str, ordered_ids: list) -> bool:
+        order = {sid: i for i, sid in enumerate(ordered_ids)}
+        self._collection(ec).sort(key=lambda r: order.get(r["id"], len(order) + 1))
+        return True
 
     def enqueue_special(self, kind: str, payload: dict) -> str:
         job_id = str(uuid.uuid4())

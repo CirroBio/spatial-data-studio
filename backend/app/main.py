@@ -220,6 +220,46 @@ async def job_log(sid: str, job_id: str):
     return {"log": log, "status": status}
 
 
+# ---- PENDING staging (spec §5.4) ------------------------------------------
+@app.post("/api/sessions/{sid}/jobs/stage")
+async def stage_job(sid: str, descriptor: dict):
+    if descriptor.get("namespace") not in ("gr", "im", "tl", "read", "pl"):
+        raise HTTPException(400, "bad namespace")
+    return {"step_id": _session(sid).stage_descriptor(descriptor), "status": "pending"}
+
+
+@app.post("/api/sessions/{sid}/pending/run-all")
+async def run_all_pending(sid: str):
+    return {"queued": _session(sid).run_all_pending()}
+
+
+@app.post("/api/sessions/{sid}/pending/reorder")
+async def reorder_pending(sid: str, body: dict):
+    _session(sid).reorder_pending(body.get("kind", "compute"), body.get("ids", []))
+    return {"ok": True}
+
+
+@app.post("/api/sessions/{sid}/pending/{step_id}/run")
+async def run_pending(sid: str, step_id: str):
+    if not _session(sid).run_pending(step_id):
+        raise HTTPException(409, "not a pending step")
+    return {"ok": True}
+
+
+@app.put("/api/sessions/{sid}/pending/{step_id}")
+async def edit_pending(sid: str, step_id: str, body: dict):
+    if not _session(sid).edit_pending(step_id, body.get("params", {})):
+        raise HTTPException(409, "not a pending step")
+    return {"ok": True}
+
+
+@app.delete("/api/sessions/{sid}/pending/{step_id}")
+async def discard_pending(sid: str, step_id: str):
+    if not _session(sid).discard_pending(step_id):
+        raise HTTPException(409, "not a pending step")
+    return {"ok": True}
+
+
 # ---- plots -----------------------------------------------------------------
 @app.post("/api/sessions/{sid}/plots/{plot_id}/redraw")
 async def redraw(sid: str, plot_id: str):
@@ -303,30 +343,48 @@ async def export_recipe(sid: str):
 
 @app.post("/api/sessions/{sid}/recipe/run")
 async def run_recipe(sid: str, recipe: dict):
+    """Import a recipe: run now (queue all steps) or stage as PENDING (spec §5.3)."""
     sess = _session(sid)
+    stage = recipe.get("mode") == "stage"
     n = 0
     for step in recipe.get("steps", []):
-        sess.enqueue_descriptor(step)
+        sess.stage_descriptor(step) if stage else sess.enqueue_descriptor(step)
         n += 1
-    return {"queued": n}
+    return {"staged" if stage else "queued": n}
+
+
+def _preflight(recipe: dict) -> dict:
+    """Required pre-existing keys = referenced keys − keys produced by role:output
+    params (spec §5.8, using the term dictionary's output terms §1.6). Also validates
+    each step's function exists in the installed registry (§5.2)."""
+    produced: set[str] = set()
+    referenced, unknown = [], []
+    _REF_SLOTS = ("obs", "obs_categorical", "obs_numeric", "obsp", "obsm", "layers")
+    for step in recipe.get("steps", []):
+        e = REGISTRY.get(f"{step['namespace']}.{step['function']}")
+        if e is None:
+            unknown.append(f"{step['namespace']}.{step['function']}")
+            continue
+        by_name = {p.name: p for p in e.params}
+        for name, val in step.get("params", {}).items():
+            spec = by_name.get(name)
+            if spec is None:
+                continue
+            vals = [v for v in (val if isinstance(val, list) else [val]) if isinstance(v, str) and v]
+            if spec.role == "output":
+                produced.update(vals)
+            elif spec.bound_to in _REF_SLOTS:
+                for v in vals:
+                    referenced.append({"step": step["function"], "param": name,
+                                       "ref": v, "bound_to": spec.bound_to})
+    unresolved = [r for r in referenced if r["ref"] not in produced]
+    return {"produced": sorted(produced), "unresolved": unresolved, "unknown_functions": unknown}
 
 
 @app.post("/api/sessions/{sid}/recipe/preflight")
 async def preflight_recipe(sid: str, recipe: dict):
-    """Statically flag references nothing in the recipe will create (DESIGN §10)."""
-    produced = set()
-    unresolved = []
-    for step in recipe.get("steps", []):
-        e = REGISTRY.get(f"{step['namespace']}.{step['function']}")
-        for name, val in step.get("params", {}).items():
-            spec = next((p for p in (e.params if e else []) if p.name == name), None)
-            if spec and spec.bound_to in ("obs", "obs_categorical", "obsp", "obsm", "layers"):
-                for v in (val if isinstance(val, list) else [val]):
-                    if isinstance(v, str) and v not in produced:
-                        unresolved.append({"step": step["function"], "param": name, "ref": v})
-        # crude: outputs are key_added-style; record any string values as potentially produced
-        produced.update(str(v) for v in step.get("params", {}).values() if isinstance(v, str))
-    return {"unresolved": unresolved}
+    _session(sid)
+    return _preflight(recipe)
 
 
 # ---- Arrow data path -------------------------------------------------------
