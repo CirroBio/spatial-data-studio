@@ -107,11 +107,17 @@ export default function AnnotationsPanel() {
         <div className="flex flex-col gap-1.5">
           <input
             type="text"
-            placeholder="Region set name (new or existing)"
+            list="obs-field-names"
+            placeholder="Region set name (pick an obs field or type a new one)"
             value={annotationNewSetName}
             onChange={(e) => setAnnotationTarget(e.target.value, annotationCategoryName, annotationColor)}
             className="w-full bg-bg border border-border rounded px-2 py-1 text-xs text-text placeholder:text-muted/40 focus:outline-none focus:border-accent"
           />
+          <datalist id="obs-field-names">
+            {obsFields.map((f) => (
+              <option key={f.name} value={f.name} />
+            ))}
+          </datalist>
           <input
             type="text"
             placeholder="Category label"

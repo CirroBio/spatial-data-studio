@@ -1,0 +1,218 @@
+"""The universal function layer.
+
+`Function` is everything common to *any* runnable operation — identity, the
+form descriptor (JSON Schema + ui hints), an effect class, and the `execute`
+contract — independent of whether it is a squidpy call or a hand-written
+operation. `SquidpyFunction` (squidpy_fn.py) and the `custom/` functions both
+subclass it, so they flow through the same picker -> form -> queue -> history
+machinery.
+
+This module imports nothing from the registry or sessions packages so the
+concrete function classes can depend on it without an import cycle.
+"""
+from __future__ import annotations
+
+import contextlib
+import io
+import logging
+import threading
+import traceback
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+
+# pyplot state is process-global; sessions plot concurrently (DESIGN §4.6 step 6).
+_PLOT_LOCK = threading.Lock()
+
+_TABLE_FACETS = ["obs", "var", "obsm", "obsp", "layers", "uns"]
+_SDATA_FACETS = ["images", "labels", "points", "shapes", "tables"]
+_FACET_TO_ELEMENT = {"obs": "obs", "var": "var", "obsm": "obsm", "obsp": "obsp", "layers": "layers"}
+
+
+@dataclass
+class ParamSpec:
+    name: str
+    schema: dict          # JSON Schema fragment
+    widget: str
+    bound_to: str | None
+    required: bool
+    tooltip: str = ""
+    role: str = "input"   # input | output (output params name a slot the step creates)
+
+
+@dataclass
+class CallResult:
+    status: str                       # completed | drawn | failed
+    log: str = ""
+    structural_diff: dict = field(default_factory=dict)
+    changed_fields: list = field(default_factory=list)  # field paths for version bump
+    figure_svg: bytes | None = None
+    figure_pdf: bytes | None = None
+    new_object: object | None = None
+    error: str | None = None
+
+
+class Function(ABC):
+    """Everything universal about a runnable function.
+
+    Subclasses set the identity/descriptor attributes (key, namespace,
+    function, effect_class, summary, doc, label, params, ...) and implement
+    `execute`. The JSON Schema / ui hints / public dict are derived here from
+    `params`, so every function — squidpy or custom — presents identically to
+    the frontend.
+    """
+
+    key: str
+    namespace: str
+    function: str
+    effect_class: str                 # compute | plot | read
+    summary: str = ""
+    doc: str = ""
+    label: str | None = None          # human title for the picker; squidpy uses namespace.function
+    source: str = "squidpy"           # squidpy | custom
+    params: list                      # list[ParamSpec], in display order
+    partially_supported: bool = False
+    unsupported_params: list = []
+
+    def json_schema(self) -> dict:
+        props, required = {}, []
+        for p in self.params:
+            props[p.name] = p.schema
+            if p.required:
+                required.append(p.name)
+        return {"type": "object", "properties": props, "required": required}
+
+    def ui_schema(self) -> dict:
+        return {p.name: {"widget": p.widget, "bound_to": p.bound_to, "tooltip": p.tooltip}
+                for p in self.params}
+
+    def to_public(self) -> dict:
+        return {
+            "key": self.key, "namespace": self.namespace, "function": self.function,
+            "effect_class": self.effect_class, "summary": self.summary, "doc": self.doc,
+            "label": self.label, "source": self.source,
+            "json_schema": self.json_schema(), "ui_schema": self.ui_schema(),
+            "partially_supported": self.partially_supported,
+            "unsupported_params": self.unsupported_params,
+        }
+
+    @abstractmethod
+    def execute(self, params: dict, session) -> CallResult:
+        """Run the operation against the session, returning a CallResult."""
+
+
+# ---- shared execution primitives (reused by squidpy + custom functions) -----
+
+def short_error(e: Exception) -> str:
+    """A concise, user-facing error string for the failure toast."""
+    msg = str(e).strip().splitlines()[0] if str(e).strip() else e.__class__.__name__
+    return f"{e.__class__.__name__}: {msg}"[:300]
+
+
+@contextlib.contextmanager
+def capture_log():
+    buf = io.StringIO()
+    handler = logging.StreamHandler(buf)
+    handler.setLevel(logging.DEBUG)
+    root = logging.getLogger()
+    prev_level = root.level
+    root.addHandler(handler)
+    root.setLevel(logging.DEBUG)
+    try:
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            yield buf
+    finally:
+        root.removeHandler(handler)
+        root.setLevel(prev_level)
+
+
+def keyset(adata, sdata) -> dict:
+    """Per-key identity snapshot. `id()` of the stored object lets the diff catch
+    keys that were *overwritten in place* (e.g. re-running clustering replaces
+    `obs['leiden']`), not just keys that were added (DESIGN §6.4). Over-detection
+    is harmless (a redundant refetch); under-detection leaves a stale canvas."""
+    snap = {}
+    for f in _TABLE_FACETS:
+        m = getattr(adata, f)
+        if f in ("obs", "var"):
+            snap[f] = {k: id(m[k].values) for k in m.columns}
+        else:
+            snap[f] = {k: id(v) for k, v in m.items()}
+    if sdata is not None:
+        for f in _SDATA_FACETS:
+            snap[f] = {k: id(v) for k, v in getattr(sdata, f, {}).items()}
+    return snap
+
+
+def diff(before: dict, after: dict) -> tuple[dict, list]:
+    out, fields = {}, []
+    for facet, after_map in after.items():
+        bmap = before.get(facet, {})
+        changed = sorted(k for k, v in after_map.items() if bmap.get(k) != v)
+        if changed:
+            out[facet] = changed
+            elem = _FACET_TO_ELEMENT.get(facet)
+            if elem:
+                fields.extend(f"{elem}:{k}" for k in changed)
+    return out, fields
+
+
+def compute_result(session, before: dict, log: str, ret=None, result_key: str | None = None) -> CallResult:
+    """Build the structural-diff CallResult for a compute op that mutated the
+    active object in place. Handles a returned data object (Edge B) or a
+    return-only function (Edge A, surfaced via uns['_results'])."""
+    adata = session.active_table()
+    after = keyset(adata, session.sdata)
+    out, fields = diff(before, after)
+    if ret is not None and not out and ret.__class__.__name__ in ("AnnData", "SpatialData"):
+        return CallResult(status="completed", log=log, new_object=ret)
+    if ret is not None and not out and result_key is not None:
+        session.stash_result(result_key, ret)
+    return CallResult(status="completed", log=log, structural_diff=out, changed_fields=fields)
+
+
+def run_compute(session, mutate) -> CallResult:
+    """Run an in-place compute mutation `mutate(adata)` with log capture and
+    structural diffing. The caller already holds the session write lock."""
+    adata = session.active_table()
+    before = keyset(adata, session.sdata)
+    with capture_log() as buf:
+        try:
+            mutate(adata)
+        except Exception as e:
+            return CallResult(status="failed", log=buf.getvalue() + "\n" + traceback.format_exc(),
+                              error=short_error(e))
+        log = buf.getvalue()
+    return compute_result(session, before, log)
+
+
+def render_plot(fn, injected: list, bound: dict, buf) -> CallResult:
+    """Run a plotting callable under the global pyplot lock and capture SVG+PDF."""
+    import numpy as np
+    import matplotlib
+    matplotlib.use("Agg", force=True)
+    import matplotlib.pyplot as plt
+
+    def _figure_from(ret):
+        if ret is not None:
+            axes = np.ravel(ret) if isinstance(ret, (list, tuple, np.ndarray)) else [ret]
+            for a in axes:
+                figure = getattr(a, "figure", None) or getattr(a, "get_figure", lambda: None)()
+                if figure is not None:
+                    return figure
+        return plt.gcf()
+
+    with _PLOT_LOCK:
+        try:
+            plt.close("all")
+            ret = fn(*injected, **bound)
+            fig = _figure_from(ret)
+            svg, pdf = io.BytesIO(), io.BytesIO()
+            fig.savefig(svg, format="svg", bbox_inches="tight")
+            fig.savefig(pdf, format="pdf", bbox_inches="tight")
+            plt.close("all")
+            return CallResult(status="drawn", log=buf.getvalue(),
+                              figure_svg=svg.getvalue(), figure_pdf=pdf.getvalue())
+        except Exception as e:
+            plt.close("all")
+            return CallResult(status="failed", log=buf.getvalue() + "\n" + traceback.format_exc(),
+                              error=short_error(e))

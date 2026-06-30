@@ -97,7 +97,8 @@ class Session:
         return self.app_state["plots"] if ec == "plot" else self.app_state["compute_history"]
 
     def _make_record(self, descriptor: dict, entry_id: str, status: str):
-        ec = "plot" if descriptor["namespace"] == "pl" else "compute"
+        fn = self.manager.registry.get(f"{descriptor['namespace']}.{descriptor['function']}")
+        ec = "plot" if (fn is not None and fn.effect_class == "plot") else "compute"
         rec = {"id": entry_id, "namespace": descriptor["namespace"], "function": descriptor["function"],
                "params": descriptor.get("params", {}), "status": status,
                "squidpy_version": self.manager.registry.squidpy_version}

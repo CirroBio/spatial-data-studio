@@ -65,6 +65,14 @@ export async function subsetSession(
   return res.json() as Promise<{ job_id: string }>;
 }
 
+export async function getObsValues(
+  id: string,
+  column: string
+): Promise<{ column: string; values: { value: string; count: number }[] }> {
+  const res = await apiFetch(`/api/sessions/${id}/obs/${encodeURIComponent(column)}/values`);
+  return res.json() as Promise<{ column: string; values: { value: string; count: number }[] }>;
+}
+
 export async function getSession(id: string): Promise<SessionState> {
   const res = await apiFetch(`/api/sessions/${id}`);
   return res.json() as Promise<SessionState>;

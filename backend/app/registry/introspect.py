@@ -1,237 +1,24 @@
-"""Function introspection layer (DESIGN §4) — the backbone.
+"""The function registry — the only path to a runnable function (invariant §16.1).
 
-Discovers squidpy functions by reflection and builds, per function, a form
-descriptor (JSON Schema + ui hints), a list of type-injected data slots, and an
-effect class. No squidpy function is ever named here; the registry is the only
-path to a function (invariant §16.1).
+Builds the squidpy functions by reflection (`squidpy_fn.build_squidpy_function`)
+and registers the hand-written `custom/` functions alongside them. Every entry is
+a `Function`; the descriptor `{namespace, function, params}` resolves to one by
+key. No squidpy function is named here.
 """
 from __future__ import annotations
 
 import inspect
-import typing
 import warnings
 from dataclasses import dataclass, field
 
+from .base import Function
 from .dictionary import DICTIONARY
+from .squidpy_fn import build_squidpy_function
+from .custom import CUSTOM_FUNCTIONS
 
 warnings.filterwarnings("ignore")
 
 NAMESPACES = ["gr", "im", "tl", "read", "pl"]
-COMPUTE_NS = {"gr", "im", "tl", "read"}
-
-# Session-held types filled by injection (DESIGN §4.6 step 2), matched on the
-# annotation's string form so we never depend on import identity.
-_INJECT_TOKENS = [("AnnData", "adata"), ("SpatialData", "sdata"), ("ImageContainer", "image")]
-
-
-@dataclass
-class ParamSpec:
-    name: str
-    schema: dict          # JSON Schema fragment
-    widget: str
-    bound_to: str | None
-    required: bool
-    tooltip: str = ""
-    role: str = "input"   # input | output (output params name a slot the step creates)
-
-
-@dataclass
-class FunctionEntry:
-    key: str
-    namespace: str
-    function: str
-    effect_class: str
-    summary: str             # first line of the docstring
-    doc: str                 # full docstring (numpydoc), for the run modal
-    injected: dict           # param_name -> injection kind (adata|sdata|image)
-    pinned: dict             # param_name -> pinned value
-    params: list             # list[ParamSpec] (form params, in signature order)
-    partially_supported: bool
-    unsupported_params: list  # locked-to-default param names
-
-    def json_schema(self) -> dict:
-        props, required = {}, []
-        for p in self.params:
-            props[p.name] = p.schema
-            if p.required:
-                required.append(p.name)
-        return {"type": "object", "properties": props, "required": required}
-
-    def ui_schema(self) -> dict:
-        return {p.name: {"widget": p.widget, "bound_to": p.bound_to, "tooltip": p.tooltip}
-                for p in self.params}
-
-    def to_public(self) -> dict:
-        return {
-            "key": self.key, "namespace": self.namespace, "function": self.function,
-            "effect_class": self.effect_class, "summary": self.summary, "doc": self.doc,
-            "json_schema": self.json_schema(), "ui_schema": self.ui_schema(),
-            "partially_supported": self.partially_supported,
-            "unsupported_params": self.unsupported_params,
-        }
-
-
-def _annot_str(annot) -> str:
-    if annot is inspect.Parameter.empty or annot is None:
-        return ""
-    return getattr(annot, "__name__", None) or str(annot)
-
-
-def _injection_kind(annot) -> str | None:
-    s = _annot_str(annot)
-    for token, kind in _INJECT_TOKENS:
-        if token in s:
-            return kind
-    return None
-
-
-def _strip_optional(annot):
-    """Return (inner_annotation, is_optional) unwrapping `X | None` / Optional[X]."""
-    origin = typing.get_origin(annot)
-    if origin is typing.Union or str(origin) == "types.UnionType" or origin is getattr(__import__("types"), "UnionType", None):
-        args = [a for a in typing.get_args(annot) if a is not type(None)]
-        is_opt = len(args) != len(typing.get_args(annot))
-        if len(args) == 1:
-            return args[0], is_opt
-        return annot, is_opt  # genuine multi-type union, keep as-is
-    return annot, False
-
-
-_SCALAR_SCHEMA = {bool: {"type": "boolean"}, int: {"type": "integer"},
-                  float: {"type": "number"}, str: {"type": "string"}}
-
-
-def _canonical_type(annot) -> str | None:
-    """Coarse type name for dictionary type-only matches (spec §1.2)."""
-    inner, _ = _strip_optional(annot)
-    return {bool: "bool", int: "int", float: "float", str: "str"}.get(inner)
-
-
-def _schema_for(annot, default, has_default) -> tuple[dict, str, bool]:
-    """Map an annotation to (json_schema_fragment, widget, serializable)."""
-    inner, _ = _strip_optional(annot)
-    origin = typing.get_origin(inner)
-
-    # Literal -> enum dropdown, preserving JSON-native value types so the form
-    # submits e.g. ints/bools rather than their stringified form.
-    if origin is typing.Literal:
-        vals = list(typing.get_args(inner))
-        if all(isinstance(v, bool) for v in vals):
-            return {"type": "boolean", "enum": vals}, "select", True
-        if all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in vals):
-            return {"type": "number", "enum": vals}, "select", True
-        if all(isinstance(v, str) for v in vals):
-            return {"type": "string", "enum": vals}, "select", True
-        return {"type": "string", "enum": [str(v) for v in vals]}, "select", True
-
-    # Sequence/list of strings -> multitext
-    if origin in (list, tuple) or _annot_str(inner).startswith(("collections.abc.Sequence", "typing.Sequence")):
-        return {"type": "array", "items": {"type": "string"}}, "multitext", True
-
-    if inner in _SCALAR_SCHEMA:
-        sch = dict(_SCALAR_SCHEMA[inner])
-        return sch, ("checkbox" if inner is bool else "number" if inner in (int, float) else "text"), True
-
-    s = _annot_str(inner)
-    # dict-typed -> JSON text widget (rarely needed; defaults to null/None)
-    if origin is dict or s.startswith(("dict", "typing.Dict", "collections.abc.Mapping", "typing.Mapping")):
-        return {"type": ["object", "null"]}, "json", True
-
-    # Non-serializable (Callable, ndarray, Colormap, type objects, constants enums, etc.)
-    NON_SERIALIZABLE = ("Callable", "ndarray", "Colormap", "Axes", "Figure", "function",
-                        "Container", "Graph", "NDArray", "dtype", "type")
-    if any(t in s for t in NON_SERIALIZABLE):
-        return {"type": "string"}, "text", False
-
-    # Unknown / unannotated -> safe text fallback (DESIGN §4.2)
-    return {"type": "string"}, "text", True
-
-
-def _build_function(namespace: str, name: str, fn) -> FunctionEntry | None:
-    try:
-        sig = inspect.signature(fn)
-    except (ValueError, TypeError):
-        return None
-    try:
-        hints = typing.get_type_hints(fn)
-    except Exception:
-        hints = {}  # DESIGN §17: forward-ref / optional-dep failures fall back to raw annotations
-
-    injected, pinned, params, unsupported = {}, {}, [], []
-    partially = False
-    doc = inspect.getdoc(fn) or ""
-    summary = doc.split("\n")[0].strip()
-    param_docs = _parse_param_docs(doc)
-
-    for pname, p in sig.parameters.items():
-        if p.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
-            partially = True  # variadic can't be form-generated (DESIGN §21 R1)
-            continue
-        annot = hints.get(pname, p.annotation)
-
-        kind = _injection_kind(annot)
-        if kind is not None:
-            injected[pname] = kind  # type-injected data slot (core §4.6), not a form param
-            continue
-
-        has_default = p.default is not inspect.Parameter.empty
-        default = p.default if has_default else None
-        base_schema, type_widget, serializable = _schema_for(annot, default, has_default)
-
-        res = DICTIONARY.resolve(
-            key=f"{namespace}.{name}", name=pname, canonical_type=_canonical_type(annot),
-            base_schema=base_schema, type_widget=type_widget, serializable=serializable,
-            has_default=has_default, default=default,
-        )
-        if res.action == "pin":
-            pinned[pname] = res.pin_value
-            continue
-        if res.action == "lock":
-            unsupported.append(pname)  # managed-hidden or non-serializable: locked to its default
-            if not has_default:
-                partially = True
-            continue
-
-        params.append(ParamSpec(
-            name=pname, schema=res.schema, widget=res.widget, bound_to=res.bound_to,
-            required=not has_default, tooltip=res.tooltip or param_docs.get(pname, ""),
-            role=res.role,
-        ))
-
-    effect = "plot" if namespace == "pl" else ("read" if namespace == "read" else "compute")
-    return FunctionEntry(
-        key=f"{namespace}.{name}", namespace=namespace, function=name,
-        effect_class=effect, summary=summary, doc=doc, injected=injected, pinned=pinned,
-        params=params, partially_supported=partially, unsupported_params=unsupported,
-    )
-
-
-def _parse_param_docs(doc: str) -> dict:
-    """Best-effort numpydoc Parameters section -> {param: first-line description}."""
-    out = {}
-    lines = doc.splitlines()
-    in_params = False
-    cur = None
-    for ln in lines:
-        st = ln.strip()
-        if st in ("Parameters", "Parameters\n") or st == "Parameters":
-            in_params = True
-            continue
-        if in_params and st and set(st) == {"-"}:
-            continue
-        if in_params and st in ("Returns", "Raises", "Examples", "Notes", "See Also"):
-            break
-        if not in_params:
-            continue
-        if ln and not ln[0].isspace():  # dedented -> end of section
-            break
-        if " : " in st or (st and not ln.startswith("        ") and ln.startswith("    ")):
-            cur = st.split(" : ")[0].split(",")[0].strip()
-            out.setdefault(cur, "")
-        elif cur and st:
-            if not out.get(cur):
-                out[cur] = st
-    return out
 
 
 @dataclass
@@ -258,19 +45,16 @@ class Registry:
                     continue
                 if not getattr(obj, "__module__", "").startswith("squidpy"):
                     continue
-                entry = _build_function(ns, name, obj)
+                entry = build_squidpy_function(ns, name, obj)
                 if entry is not None:
                     self.entries[entry.key] = entry
         self.coverage = DICTIONARY.coverage_report()
+        for fn in CUSTOM_FUNCTIONS:
+            self.entries[fn.key] = fn
         return self
 
-    def get(self, key: str) -> FunctionEntry | None:
+    def get(self, key: str) -> Function | None:
         return self.entries.get(key)
-
-    def resolve_callable(self, namespace: str, function: str):
-        """Resolve the live callable by namespace.function (DESIGN §4.6 step 1)."""
-        import squidpy as sq
-        return getattr(getattr(sq, namespace), function)
 
     def public(self) -> dict:
         return {"functions": [e.to_public() for e in self.entries.values()],

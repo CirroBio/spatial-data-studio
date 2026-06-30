@@ -1,10 +1,13 @@
+import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import type { FunctionEntry } from '../../types';
 import type { SessionFields } from '../../types';
+import { getObsValues } from '../../api';
 
 interface Props {
   fn: FunctionEntry;
   fields: SessionFields;
+  sessionId: string;
   onSubmit: (params: Record<string, unknown>) => void;
   submitting?: boolean;
 }
@@ -34,8 +37,8 @@ interface JsonSchemaProperty {
   items?: { type?: string };
 }
 
-export default function FunctionForm({ fn, fields, onSubmit, submitting }: Props) {
-  const { register, handleSubmit, formState: { errors } } = useForm<Record<string, unknown>>();
+export default function FunctionForm({ fn, fields, sessionId, onSubmit, submitting }: Props) {
+  const { register, handleSubmit, watch, formState: { errors } } = useForm<Record<string, unknown>>();
 
   const schema = fn.json_schema as {
     properties?: Record<string, JsonSchemaProperty>;
@@ -44,6 +47,31 @@ export default function FunctionForm({ fn, fields, onSubmit, submitting }: Props
   const properties = schema.properties ?? {};
   const requiredKeys = new Set(schema.required ?? []);
   const uiSchema = fn.ui_schema;
+
+  // obs_value_map widget: a {old -> new} editor whose source column is another
+  // field (named by the param's bound_to). Watch that field and fetch its uniques.
+  const mapParam = Object.keys(properties).find((k) => uiSchema[k]?.widget === 'obs_value_map');
+  const mapColumnField = mapParam ? uiSchema[mapParam]?.bound_to ?? undefined : undefined;
+  const mapColumn = mapColumnField ? (watch(mapColumnField) as string | undefined) : undefined;
+  const [uniques, setUniques] = useState<{ value: string; count: number }[]>([]);
+  const [loadingUniques, setLoadingUniques] = useState(false);
+  const [valueMap, setValueMap] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (!mapParam || !mapColumn) {
+      setUniques([]);
+      setValueMap({});
+      return;
+    }
+    let cancelled = false;
+    setLoadingUniques(true);
+    setValueMap({});
+    getObsValues(sessionId, mapColumn)
+      .then((r) => { if (!cancelled) setUniques(r.values); })
+      .catch(() => { if (!cancelled) setUniques([]); })
+      .finally(() => { if (!cancelled) setLoadingUniques(false); });
+    return () => { cancelled = true; };
+  }, [mapParam, mapColumn, sessionId]);
 
   function processSubmit(raw: Record<string, unknown>) {
     const params: Record<string, unknown> = {};
@@ -70,6 +98,13 @@ export default function FunctionForm({ fn, fields, onSubmit, submitting }: Props
       } else {
         params[key] = value;
       }
+    }
+    if (mapParam) {
+      const cleaned: Record<string, string> = {};
+      for (const [old, next] of Object.entries(valueMap)) {
+        if (next && next.trim() && next.trim() !== old) cleaned[old] = next.trim();
+      }
+      params[mapParam] = cleaned;
     }
     onSubmit(params);
   }
@@ -216,6 +251,39 @@ export default function FunctionForm({ fn, fields, onSubmit, submitting }: Props
                 className={inputClass}
               />
               {errLine}
+            </div>
+          );
+        }
+
+        if (widget === 'obs_value_map') {
+          return (
+            <div key={key} className="flex flex-col gap-1">
+              {label}
+              {!mapColumn ? (
+                <p className="text-[11px] text-muted/60">Select a column first.</p>
+              ) : loadingUniques ? (
+                <p className="text-[11px] text-muted/60">Loading values…</p>
+              ) : uniques.length === 0 ? (
+                <p className="text-[11px] text-muted/60">No values in this column.</p>
+              ) : (
+                <div className="flex flex-col gap-1 max-h-72 overflow-y-auto border border-border/50 rounded p-2">
+                  {uniques.map((u) => (
+                    <div key={u.value} className="flex items-center gap-2">
+                      <span className="text-[11px] font-mono text-muted truncate w-1/2" title={u.value}>
+                        {u.value} <span className="text-muted/40">({u.count})</span>
+                      </span>
+                      <input
+                        type="text"
+                        placeholder={u.value}
+                        value={valueMap[u.value] ?? ''}
+                        onChange={(e) => setValueMap((m) => ({ ...m, [u.value]: e.target.value }))}
+                        className={`${inputClass} w-1/2`}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+              <p className="text-[10px] text-muted/50">Leave blank to keep a value unchanged.</p>
             </div>
           );
         }

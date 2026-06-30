@@ -99,8 +99,17 @@ export default function FunctionPicker({ sessionId, effectClass, onClose }: Prop
                     className="w-full text-left px-4 py-3 border-b border-border/50 hover:bg-accent-lo/30 transition-colors"
                   >
                     <div className="flex items-center gap-2">
-                      <span className="text-xs font-mono text-accent">{fn.namespace}</span>
-                      <span className="text-sm text-text">{fn.function}</span>
+                      {fn.label ? (
+                        <span className="text-sm text-text">{fn.label}</span>
+                      ) : (
+                        <>
+                          <span className="text-xs font-mono text-accent">{fn.namespace}</span>
+                          <span className="text-sm text-text">{fn.function}</span>
+                        </>
+                      )}
+                      {fn.source === 'custom' && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent/20 text-accent">custom</span>
+                      )}
                       <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded ${fn.effect_class === 'plot' ? 'bg-warn/20 text-warn' : 'bg-accent/20 text-accent'}`}>
                         {fn.effect_class}
                       </span>
@@ -120,7 +129,7 @@ export default function FunctionPicker({ sessionId, effectClass, onClose }: Prop
             <div className="flex flex-1 overflow-hidden">
               {/* Documentation — scrolls independently of the parameters */}
               <div className="w-1/2 overflow-y-auto p-4 border-r border-border">
-                <div className="text-sm font-semibold text-text font-mono mb-2">{selected.namespace}.{selected.function}</div>
+                <div className="text-sm font-semibold text-text font-mono mb-2">{selected.label ?? `${selected.namespace}.${selected.function}`}</div>
                 {selected.doc ? (
                   <pre className="whitespace-pre-wrap break-words text-[11px] leading-snug text-muted font-mono">
                     {selected.doc}
@@ -140,6 +149,7 @@ export default function FunctionPicker({ sessionId, effectClass, onClose }: Prop
                 <FunctionForm
                   fn={selected}
                   fields={fields}
+                  sessionId={sessionId}
                   onSubmit={handleSubmit}
                   submitting={submitting}
                 />

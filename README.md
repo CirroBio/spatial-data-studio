@@ -25,10 +25,21 @@ map keyed by *parameter term* (never by function) that supplies widgets, data
 bindings, value pins, and output-key roles. `GET /api/functions/coverage` reports
 which params matched a term, ranked by reuse.
 
+Operations are modeled by an abstract **`Function`** (`backend/app/registry/base.py`):
+identity, a generated form descriptor (JSON Schema + ui hints), an effect class, and an
+`execute` contract. **`SquidpyFunction`** (`squidpy_fn.py`) is the introspection-built
+variant — squidpy is still never named in code. **Custom functions** (`registry/custom/`)
+are hand-written `Function` subclasses registered alongside the squidpy ones; they flow
+through the same picker → form → queue → history machinery and appear in the Compute tab.
+
 ## Features
 
 - **Introspected operations** — every `squidpy` `gr`/`im`/`tl`/`read`/`pl` function
   as a generated form; `copy`/`inplace` pinned, plot render-params managed.
+- **Custom functions** (non-squidpy, `namespace: custom`) — *Identify Regions (Leiden)*
+  (Leiden clustering on spatial coordinates into a new obs column), *Edit Annotations*
+  (rename/merge the unique values of a categorical obs column), and *Identify TMAs*
+  (automatic tissue-microarray core detection labelling each cell with its core).
 - **Sessions** — one in-memory `SpatialData` per session, a FIFO worker thread,
   compute/plot jobs, structural-diff–driven refresh, live RAM/CPU resource strip.
 - **deck.gl canvas** — binary Arrow scatter colored by `obs`/`X`/region set over the
@@ -50,8 +61,9 @@ which params matched a term, ranked by reuse.
 
 ```
 backend/    FastAPI app
-  app/registry/   introspection: terms.yaml + dictionary.py (Parameter Term Dictionary), introspect.py
-  app/sessions/   manager, session (queue/worker), adapter (CallAdapter), regions, appstate
+  app/registry/   base.py (abstract Function), squidpy_fn.py (introspected), custom/ (non-squidpy functions),
+                  terms.yaml + dictionary.py (Parameter Term Dictionary), introspect.py (Registry)
+  app/sessions/   manager, session (queue/worker), adapter (routes to Function.execute), regions, appstate
   app/transport/  arrow (field -> Arrow IPC), sse
   app/persistence/ store (.zarr / .zarr.zip)
 frontend/   React + TS + Vite + Tailwind + deck.gl SPA

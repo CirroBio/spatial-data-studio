@@ -15,6 +15,7 @@ export type UiWidget =
   | 'obsm_key'
   | 'obsp_key'
   | 'library_id'
+  | 'obs_value_map'
   | 'json';
 
 // Per-field UI hints from the backend registry (CONTRACT.md): the widget to
@@ -32,6 +33,8 @@ export interface FunctionEntry {
   effect_class: EffectClass;
   summary: string;
   doc: string;
+  label: string | null;       // human title for custom functions; null for squidpy
+  source: 'squidpy' | 'custom';
   json_schema: Record<string, unknown>;
   ui_schema: Record<string, UiFieldInfo>;
   partially_supported: boolean;

@@ -179,6 +179,30 @@ async def session_state(sid: str):
     return _mgr().state(_session(sid))
 
 
+@app.get("/api/sessions/{sid}/obs/{column}/values")
+async def obs_values(sid: str, column: str):
+    """Unique values (+counts) of a categorical obs column, for the Edit
+    Annotations widget."""
+    sess = _session(sid)
+
+    def _values():
+        sess.lock.acquire_read()
+        try:
+            obs = sess.active_table().obs
+            if column not in obs.columns:
+                raise KeyError(column)
+            counts = obs[column].astype(str).value_counts()
+            return [{"value": str(v), "count": int(n)} for v, n in counts.items()]
+        finally:
+            sess.lock.release_read()
+
+    try:
+        values = await _in_executor(_values)
+    except (KeyError, RuntimeError) as e:
+        raise HTTPException(404, str(e))
+    return {"column": column, "values": values}
+
+
 @app.delete("/api/sessions/{sid}")
 async def close_session(sid: str, body: dict | None = None):
     save = bool((body or {}).get("save"))
@@ -187,11 +211,15 @@ async def close_session(sid: str, body: dict | None = None):
 
 
 # ---- jobs ------------------------------------------------------------------
+def _require_known(descriptor: dict):
+    if REGISTRY.get(f"{descriptor.get('namespace')}.{descriptor.get('function')}") is None:
+        raise HTTPException(400, "unknown function")
+
+
 @app.post("/api/sessions/{sid}/jobs")
 async def enqueue_job(sid: str, descriptor: dict):
     sess = _session(sid)
-    if descriptor.get("namespace") not in ("gr", "im", "tl", "read", "pl"):
-        raise HTTPException(400, "bad namespace")
+    _require_known(descriptor)
     job_id = sess.enqueue_descriptor(descriptor)
     return {"job_id": job_id, "status": "queued"}
 
@@ -223,8 +251,7 @@ async def job_log(sid: str, job_id: str):
 # ---- PENDING staging (spec §5.4) ------------------------------------------
 @app.post("/api/sessions/{sid}/jobs/stage")
 async def stage_job(sid: str, descriptor: dict):
-    if descriptor.get("namespace") not in ("gr", "im", "tl", "read", "pl"):
-        raise HTTPException(400, "bad namespace")
+    _require_known(descriptor)
     return {"step_id": _session(sid).stage_descriptor(descriptor), "status": "pending"}
 
 
