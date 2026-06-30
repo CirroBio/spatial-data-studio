@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { createSession, browsePath } from '../api';
+import { useAppStore } from '../store/sessionStore';
 import type { SessionSummary } from '../types';
-import type { FsEntry, FsListing } from '../api';
+import type { FsEntry, FsListing, NewSessionSource } from '../api';
 
 interface Props {
   onClose: () => void;
@@ -18,6 +19,11 @@ function splitPath(input: string): { dir: string; partial: string } {
 }
 
 export default function NewSessionDialog({ onClose, onCreated }: Props) {
+  const functions = useAppStore((s) => s.functions);
+  const readers = functions.filter((f) => f.effect_class === 'read');
+
+  const [mode, setMode] = useState<'load' | 'import'>('load');
+  const [reader, setReader] = useState('');
   const [name, setName] = useState('');
   const [path, setPath] = useState('');
   const [loading, setLoading] = useState(false);
@@ -63,16 +69,23 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
 
   async function submit() {
     if (!path.trim()) {
-      setError('File path is required');
+      setError(mode === 'import' ? 'Dataset path is required' : 'File path is required');
       return;
+    }
+    let source: NewSessionSource;
+    if (mode === 'import') {
+      const r = readers.find((f) => f.key === reader);
+      if (!r) { setError('Select a reader for the dataset format'); return; }
+      const req = ((r.json_schema as { required?: string[] }).required) ?? [];
+      const pathParam = req.find((p) => ['path', 'input', 'image_path'].includes(p)) ?? req[0] ?? 'path';
+      source = { kind: 'read', namespace: r.namespace, function: r.function, params: { [pathParam]: path.trim() } };
+    } else {
+      source = { kind: 'load', path: path.trim() };
     }
     setLoading(true);
     setError(null);
     try {
-      const session = await createSession({
-        name: name.trim() || undefined,
-        source: { kind: 'load', path: path.trim() },
-      });
+      const session = await createSession({ name: name.trim() || undefined, source });
       onCreated(session);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -101,6 +114,43 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
             onSubmit={(e) => { e.preventDefault(); submit(); }}
             className="p-4 flex flex-col gap-4"
           >
+            {/* Source mode: open an existing .zarr, or import a raw dataset via a reader */}
+            <div className="grid grid-cols-2 gap-1 p-0.5 bg-bg border border-border rounded">
+              {(['load', 'import'] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => { setMode(m); setError(null); if (m === 'import' && !reader && readers[0]) setReader(readers[0].key); }}
+                  className={`py-1.5 text-xs rounded transition-colors ${
+                    mode === m ? 'bg-accent/20 text-accent' : 'text-muted hover:text-text'
+                  }`}
+                >
+                  {m === 'load' ? 'Open dataset (.zarr)' : 'Import raw data'}
+                </button>
+              ))}
+            </div>
+
+            {mode === 'import' && (
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-mono text-muted">
+                  Format / reader <span className="text-danger">*</span>
+                </label>
+                <select
+                  value={reader}
+                  onChange={(e) => setReader(e.target.value)}
+                  className="bg-bg border border-border rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-accent"
+                >
+                  <option value="">-- select a reader --</option>
+                  {readers.map((r) => (
+                    <option key={r.key} value={r.key}>{r.label ?? `${r.namespace}.${r.function}`}</option>
+                  ))}
+                </select>
+                {readers.length === 0 && (
+                  <span className="text-[11px] text-muted/60">No readers available in this build.</span>
+                )}
+              </div>
+            )}
+
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-mono text-muted">Session name (optional)</label>
               <input
@@ -114,8 +164,10 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
 
             <div className="flex flex-col gap-1.5 relative">
               <label className="text-xs font-mono text-muted">
-                Dataset <span className="text-danger">*</span>
-                <span className="ml-1 normal-case font-sans text-muted/60">(.zarr / .zarr.zip)</span>
+                {mode === 'import' ? 'Dataset directory' : 'Dataset'} <span className="text-danger">*</span>
+                <span className="ml-1 normal-case font-sans text-muted/60">
+                  {mode === 'import' ? '(raw dataset folder for the chosen reader)' : '(.zarr / .zarr.zip)'}
+                </span>
               </label>
               <input
                 type="text"

@@ -26,7 +26,11 @@ export async function getSessions(): Promise<{ sessions: SessionSummary[] }> {
   return res.json() as Promise<{ sessions: SessionSummary[] }>;
 }
 
-export async function createSession(params: { name?: string; source: { kind: 'load'; path: string } }): Promise<SessionSummary> {
+export type NewSessionSource =
+  | { kind: 'load'; path: string }
+  | { kind: 'read'; namespace: string; function: string; params: Record<string, unknown> };
+
+export async function createSession(params: { name?: string; source: NewSessionSource }): Promise<SessionSummary> {
   const res = await apiFetch('/api/sessions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
