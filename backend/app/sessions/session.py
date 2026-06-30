@@ -254,17 +254,21 @@ class Session:
             self._failed_logs.pop(jid, None)
 
     def _run_call(self, job_id, kind, descriptor):
+        from ..manifest import build_manifest
         if kind == "compute":
             self.lock.acquire_write()
         else:
             self.lock.acquire_read()
         try:
+            manifest_before = build_manifest(self)  # v3 Part 2: capture before the call
             result = ADAPTER.execute(descriptor, self)
             # Adopt a returned object (read bootstrap / Edge B) while still holding
             # the write lock so readers never see a new sdata with a stale table key.
             if result.status != "failed" and result.new_object is not None:
                 self.sdata = result.new_object
                 self.active_table_key = self._default_table_key()
+            result.manifest_before = manifest_before
+            result.manifest_after = build_manifest(self)
         finally:
             (self.lock.release_write if kind == "compute" else self.lock.release_read)()
 

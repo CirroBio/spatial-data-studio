@@ -179,6 +179,23 @@ async def session_state(sid: str):
     return _mgr().state(_session(sid))
 
 
+@app.get("/api/sessions/{sid}/manifest")
+async def data_manifest(sid: str):
+    """The text data manifest of the current session state (v3 Part 3) — the AI's
+    eyes and a human-readable diff source."""
+    sess = _session(sid)
+
+    def _build():
+        from .manifest import build_manifest
+        sess.lock.acquire_read()
+        try:
+            return build_manifest(sess)
+        finally:
+            sess.lock.release_read()
+
+    return {"manifest": await _in_executor(_build)}
+
+
 @app.get("/api/sessions/{sid}/obs/{column}/values")
 async def obs_values(sid: str, column: str):
     """Unique values (+counts) of a categorical obs column, for the Edit
