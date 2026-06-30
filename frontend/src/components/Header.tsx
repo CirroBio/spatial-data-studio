@@ -52,7 +52,7 @@ export default function Header({ onNewSession }: Props) {
   return (
     <header className="flex items-center justify-between px-4 h-12 bg-surface border-b border-border shrink-0">
       <div className="flex items-center gap-3">
-        <span className="text-accent font-semibold tracking-wide text-sm">squidpy-viewer</span>
+        <span className="text-accent font-semibold tracking-wide text-sm">Spatial Data Studio</span>
         {squidpyVersion && (
           <span className="text-muted text-xs font-mono">{squidpyVersion}</span>
         )}

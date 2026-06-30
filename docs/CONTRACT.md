@@ -1,4 +1,4 @@
-# API Contract — squidpy-viewer
+# API Contract — Spatial Data Studio
 
 Shared ground for backend + frontend. All command/control is REST (JSON). All
 server→client updates are SSE. Bulk field data is Apache Arrow IPC (binary).

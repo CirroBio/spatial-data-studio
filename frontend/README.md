@@ -1,6 +1,6 @@
-# squidpy-viewer frontend
+# Spatial Data Studio frontend
 
-React/TypeScript SPA for the squidpy-viewer spatial omics analysis tool.
+React/TypeScript SPA for the Spatial Data Studio spatial omics analysis tool.
 
 ## Stack
 

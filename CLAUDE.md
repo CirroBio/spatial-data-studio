@@ -1,4 +1,4 @@
-# squidpy-viewer — project rules
+# Spatial Data Studio — project rules
 
 ## Keep the README current (always)
 

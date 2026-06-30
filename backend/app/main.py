@@ -42,7 +42,7 @@ async def _resource_loop():
         await asyncio.sleep(interval)
 
 
-app = FastAPI(title="squidpy-viewer", lifespan=lifespan)
+app = FastAPI(title="Spatial Data Studio", lifespan=lifespan)
 
 
 def _mgr() -> SessionManager:

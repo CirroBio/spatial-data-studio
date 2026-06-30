@@ -55,7 +55,7 @@ COPY --from=spa-builder /build/frontend/dist /app/spa
 
 # nginx config and supervisord config
 COPY docker/nginx.conf     /etc/nginx/nginx.conf
-COPY docker/supervisord.conf /etc/supervisor/conf.d/squidpy-viewer.conf
+COPY docker/supervisord.conf /etc/supervisor/conf.d/spatial-data-studio.conf
 
 # Create volume mountpoints so Docker can bind-mount without root issues
 RUN mkdir -p /data /checkpoints

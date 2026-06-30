@@ -1,4 +1,4 @@
-// types.ts — all domain types for squidpy-viewer
+// types.ts — all domain types for Spatial Data Studio
 
 export type EffectClass = 'compute' | 'plot' | 'read' | 'extract';
 

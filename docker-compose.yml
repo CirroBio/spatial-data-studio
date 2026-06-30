@@ -1,9 +1,9 @@
 services:
-  squidpy-viewer:
+  spatial-data-studio:
     build:
       context: .
       dockerfile: docker/Dockerfile
-    image: squidpy-viewer:latest
+    image: spatial-data-studio:latest
 
     ports:
       - "8080:80"

@@ -10,7 +10,7 @@ manages both processes.
 From the repository root:
 
 ```
-docker build -f docker/Dockerfile -t squidpy-viewer .
+docker build -f docker/Dockerfile -t spatial-data-studio .
 ```
 
 The scientific wheels (squidpy, spatialdata, anndata, pyarrow …) take several
@@ -47,7 +47,7 @@ docker compose down
 
 ```
 docker run -d \
-  --name squidpy-viewer \
+  --name spatial-data-studio \
   -p 8080:80 \
   -v "$(pwd)/test-data":/data:ro \
   -v sqv-checkpoints:/checkpoints \
@@ -55,7 +55,7 @@ docker run -d \
   -e SQV_WORKER_CEILING_MB=9216 \
   -e SQV_MAX_SESSIONS=4 \
   --memory=12g \
-  squidpy-viewer
+  spatial-data-studio
 ```
 
 ## Environment contract (DESIGN §19.9)
@@ -114,7 +114,7 @@ Vite frontend is ready:
 1. Replace `frontend/` with the real Vite project.
 2. Update `frontend/package.json` `"build"` script to `"vite build"` (or
    whatever the project uses).
-3. Rebuild the image: `docker build -f docker/Dockerfile -t squidpy-viewer .`
+3. Rebuild the image: `docker build -f docker/Dockerfile -t spatial-data-studio .`
 
 No changes to `docker/Dockerfile`, `nginx.conf`, or `supervisord.conf` are
 needed — Stage 1 runs `npm run build` and copies `frontend/dist/` regardless

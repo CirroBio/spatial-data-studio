@@ -1,4 +1,4 @@
-"""Prepare the test dataset used to validate squidpy-viewer.
+"""Prepare the test dataset used to validate Spatial Data Studio.
 
 Downloads squidpy's `visium_hne_sdata` example (a single mouse-brain Visium H&E
 section: 2688 spots x 18078 genes, with an H&E image and `leiden`/`cluster`

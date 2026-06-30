@@ -1,4 +1,4 @@
-# squidpy-viewer backend
+# Spatial Data Studio backend
 
 FastAPI backend for interactive spatial-omics analysis. Holds one `SpatialData`
 object per session in memory, exposes squidpy as an introspected function

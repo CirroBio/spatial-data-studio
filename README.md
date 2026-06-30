@@ -1,4 +1,4 @@
-# squidpy-viewer
+# Spatial Data Studio
 
 Interactive analysis and visualization for spatial omics data. A Python backend
 holds a [`SpatialData`](https://spatialdata.scverse.org/) object in memory and
