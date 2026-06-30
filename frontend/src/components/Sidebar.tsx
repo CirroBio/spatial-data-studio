@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import * as Tabs from '@radix-ui/react-tabs';
 import { useAppStore } from '../store/sessionStore';
-import { deleteHistoryEntry, getSession } from '../api';
+import { deleteHistoryEntry, getRecipe, importRecipe, getSession } from '../api';
 import StatusBadge from './StatusBadge';
 import FunctionPicker from './FunctionPicker';
 import AnnotationsPanel from './AnnotationsPanel';
@@ -28,6 +28,36 @@ export default function Sidebar({ onNewSession, sessions }: Props) {
   } = useAppStore();
 
   const [showPicker, setShowPicker] = useState(false);
+  const recipeFileRef = useRef<HTMLInputElement>(null);
+
+  function handleExportRecipe() {
+    if (!activeSessionId) return;
+    getRecipe(activeSessionId)
+      .then((recipe) => {
+        const blob = new Blob([JSON.stringify(recipe, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'recipe.json';
+        a.click();
+        URL.revokeObjectURL(url);
+      })
+      .catch((err) => pushNotification({ kind: 'error', message: `Export recipe failed: ${err instanceof Error ? err.message : String(err)}` }));
+  }
+
+  async function handleLoadRecipe(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !activeSessionId) return;
+    try {
+      const recipe = JSON.parse(await file.text());
+      await importRecipe(activeSessionId, recipe, 'run');
+      setSessionState(await getSession(activeSessionId));
+      pushNotification({ kind: 'info', message: 'Recipe loaded.' });
+    } catch (err) {
+      pushNotification({ kind: 'error', message: `Load recipe failed: ${err instanceof Error ? err.message : String(err)}` });
+    }
+  }
 
   async function handleDelete(e: React.MouseEvent, id: string) {
     e.stopPropagation();
@@ -147,15 +177,36 @@ export default function Sidebar({ onNewSession, sessions }: Props) {
         </Tabs.Content>
       </Tabs.Root>
 
-      {/* Add button — only for compute/plots operation tabs */}
+      {/* Add + recipe controls — only for compute/plots operation tabs */}
       {activeSessionId && isOperationTab && (
-        <div className="p-2 border-t border-border shrink-0">
+        <div className="p-2 border-t border-border shrink-0 flex flex-col gap-1.5">
           <button
             onClick={() => setShowPicker(true)}
             className="w-full py-1.5 text-xs bg-accent/20 hover:bg-accent/30 text-accent rounded transition-colors"
           >
             + Add {sidebarTab === 'plots' ? 'plot' : 'compute'} function
           </button>
+          <div className="flex gap-1">
+            <button
+              onClick={() => recipeFileRef.current?.click()}
+              className="flex-1 py-1 text-[11px] bg-bg border border-border rounded text-text hover:border-accent transition-colors"
+            >
+              Load recipe
+            </button>
+            <button
+              onClick={handleExportRecipe}
+              className="flex-1 py-1 text-[11px] bg-bg border border-border rounded text-text hover:border-accent transition-colors"
+            >
+              Export recipe
+            </button>
+          </div>
+          <input
+            ref={recipeFileRef}
+            type="file"
+            accept="application/json,.json"
+            onChange={handleLoadRecipe}
+            className="hidden"
+          />
         </div>
       )}
 

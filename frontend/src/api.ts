@@ -195,6 +195,19 @@ export async function getRecipe(sessionId: string): Promise<unknown> {
   return res.json();
 }
 
+export async function importRecipe(
+  sessionId: string,
+  recipe: unknown,
+  mode: 'run' | 'stage' = 'run'
+): Promise<unknown> {
+  const body = { ...(recipe as Record<string, unknown>), mode };
+  const res = await apiFetch(`/api/sessions/${sessionId}/recipe/run`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return res.json();
+}
+
 export async function saveSession(sessionId: string, path?: string): Promise<{ job_id: string }> {
   const res = await apiFetch(`/api/sessions/${sessionId}/save`, {
     method: 'POST',

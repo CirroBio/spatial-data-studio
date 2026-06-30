@@ -74,16 +74,7 @@ export default function ChatPanel({ sessionId }: { sessionId: string }) {
     }
   }
 
-  if (!chatOpen) {
-    return (
-      <button
-        onClick={() => setChatOpen(true)}
-        className="absolute top-2 right-2 z-20 px-2 py-1 text-xs bg-accent/20 hover:bg-accent/30 text-accent rounded transition-colors"
-      >
-        AI chat
-      </button>
-    );
-  }
+  if (!chatOpen) return null;  // show/hide is driven by the Header "AI panel" toggle
 
   return (
     <aside className="w-80 shrink-0 bg-surface border-l border-border flex flex-col overflow-hidden">
