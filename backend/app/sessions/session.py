@@ -154,6 +154,8 @@ class Session:
                 self._run_save(job_id, payload)
             elif kind == "subset":
                 self._run_subset(job_id, payload)
+            elif kind == "annotate":
+                self._run_annotate(job_id, payload)
         except Exception as e:  # worker must never die
             self._fail(job_id, kind, str(e))
         finally:
@@ -205,6 +207,28 @@ class Session:
         invalidated = self._invalidate_plots(result.changed_fields)
         BUS.publish("job.completed", {"session_id": self.id, "job_id": job_id, "kind": "compute",
                                       "structural_diff": result.structural_diff,
+                                      "data_versions": self.app_state["data_versions"]})
+        if invalidated:
+            BUS.publish("plot.invalidated", {"session_id": self.id, "plot_ids": invalidated})
+
+    def _run_annotate(self, job_id, payload):
+        """Region labeling: mutate obs/shapes in place under the write lock (§3.1)."""
+        from . import regions
+        self.lock.acquire_write()
+        try:
+            changed = (regions.promote(self, payload["obs_column"])
+                       if payload.get("op") == "promote" else regions.assign(self, payload))
+        finally:
+            self.lock.release_write()
+        self._jobs[job_id]["status"] = "completed"
+        diff: dict = {}
+        for f in changed:
+            elem, key = f.split(":", 1)
+            diff.setdefault(elem, []).append(key)
+        appstate.bump_versions(self.app_state, changed)
+        invalidated = self._invalidate_plots(changed)
+        BUS.publish("job.completed", {"session_id": self.id, "job_id": job_id, "kind": "annotate",
+                                      "structural_diff": diff,
                                       "data_versions": self.app_state["data_versions"]})
         if invalidated:
             BUS.publish("plot.invalidated", {"session_id": self.id, "plot_ids": invalidated})

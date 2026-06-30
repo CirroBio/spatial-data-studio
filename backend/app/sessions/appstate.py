@@ -1,7 +1,7 @@
 """Application state lives in `sdata.attrs["app_state"]` (DESIGN §3.2, §16.4).
 Versioned; migrated on load (§13). Pure dict manipulation — serializes to Zarr.
 """
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 EMPTY = {
     "schema_version": SCHEMA_VERSION,
@@ -9,6 +9,7 @@ EMPTY = {
     "plots": [],
     "displays": [],
     "data_versions": {},  # field_path -> monotonic counter (DESIGN §9.3)
+    "regions": [],        # region-set registry (post-build spec Part 2)
 }
 
 
@@ -33,7 +34,9 @@ def migrate(st: dict) -> dict:
         st.setdefault("plots", [])
         st.setdefault("displays", [])
         st.setdefault("data_versions", {})
-        st["schema_version"] = 1
+    if v < 2:
+        st.setdefault("regions", [])
+    st["schema_version"] = SCHEMA_VERSION
     return st
 
 

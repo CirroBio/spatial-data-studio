@@ -267,6 +267,21 @@ async def subset(sid: str, body: dict):
     return {"job_id": job_id}
 
 
+@app.post("/api/sessions/{sid}/annotate")
+async def annotate(sid: str, body: dict):
+    """Label cells inside drawn polygon(s) into a region set, in place (spec §3.1).
+    Body: {polygons, region_set, category, color?, coordinate_system?}."""
+    job_id = _session(sid).enqueue_special("annotate", body)
+    return {"job_id": job_id}
+
+
+@app.post("/api/sessions/{sid}/regions/promote")
+async def promote_region(sid: str, body: dict):
+    """Promote an existing obs categorical to a region set (spec §3.2). Body: {obs_column}."""
+    job_id = _session(sid).enqueue_special("annotate", {"op": "promote", "obs_column": body["obs_column"]})
+    return {"job_id": job_id}
+
+
 @app.post("/api/sessions/{sid}/save")
 async def save(sid: str, body: dict | None = None):
     sess = _session(sid)
