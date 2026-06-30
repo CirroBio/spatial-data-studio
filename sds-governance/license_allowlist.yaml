@@ -1,0 +1,30 @@
+# Durable record of the dependency-license posture (v3 Part 12 / R15).
+# scan_licenses.py fails on forbidden packages or un-adjudicated copyleft.
+
+allowed_licenses:
+  - mit
+  - bsd
+  - apache
+  - apache-2.0
+  - apache software license
+  - psf
+  - python software foundation
+  - isc
+  - mpl-2.0          # weak copyleft, file-level; acceptable for libraries
+  - historical permission notice and disclaimer
+  - hpnd
+  - unlicense
+  - zlib
+  - lgpl             # dynamic-link copyleft; acceptable
+
+# Packages explicitly adjudicated despite a copyleft / unusual license. The
+# Leiden/Louvain GPL clustering chain is the v2 §9.3 decision carried forward.
+adjudicated_packages:
+  leidenalg: "GPL-3.0 — clustering backend; v2 §9.3 decision. Distributed copy requires source offer."
+  igraph: "GPL-2.0+ — pulled by leidenalg; same adjudication."
+  python-igraph: "GPL-2.0+ — same as igraph."
+
+# The v2 §9.3 clustering-license decision is recorded above; set true while the
+# final distribution decision is still open (the release-readiness skill blocks
+# distribution while true).
+clustering_decision_todo: true

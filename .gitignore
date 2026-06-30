@@ -20,3 +20,7 @@ checkpoints/
 *.log
 
 .env
+
+sds-governance/sbom.json
+__pycache__/
+.pytest_cache/
