@@ -81,6 +81,12 @@ async def functions():
     return REGISTRY.public()
 
 
+@app.get("/api/functions/coverage")
+async def coverage():
+    """Parameter-term coverage report (spec §1.9): unmatched params ranked by reuse."""
+    return REGISTRY.coverage
+
+
 @app.get("/api/functions/{key}")
 async def function(key: str):
     e = REGISTRY.get(key)

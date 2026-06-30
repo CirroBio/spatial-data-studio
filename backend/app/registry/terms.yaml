@@ -1,0 +1,125 @@
+# Parameter Term Dictionary (post-build spec Part 1).
+# Centralizes parameter knowledge keyed by *parameter term* — never by function
+# (invariant core §16.1). One entry enriches every function using that param.
+# Loaded at startup; editable without code changes. Regenerate the coverage
+# report after a squidpy/scanpy upgrade to surface new params (spec §1.9).
+#
+# Entry fields (all but `match` optional):
+#   match: { names: [...], patterns: ["*suffix"], type: <canonical>, scope: "ns.fn" }
+#   binding: data slot values resolve against (§1.4); null = no binding
+#   role:    input | managed | output
+#   widget:  picker | multiselect | enum | number | toggle | text   (used when no binding)
+#   value_source / type / required / label / help
+#   policy:  { pin: <value>, hidden: <bool> }
+#   values:  enum members (used only when the annotation is not already a Literal)
+#   default_source: threads   (n_jobs-style: default to the machine thread budget)
+
+terms:
+  # ---- grouping / annotation keys (the core reuse win; region sets surface here) ----
+  - match: { names: [cluster_key, groupby], patterns: ["*cluster_key"] }
+    binding: obs_categorical
+    value_source: obs.categorical
+    label: "Grouping key"
+    help: "Categorical obs column used to group cells (cell types, clusters, or region sets)."
+  - match: { names: [library_key] }
+    binding: obs_categorical
+    value_source: obs.categorical
+    label: "Library / partition key"
+    help: "Categorical obs column partitioning the data (e.g. sample / library)."
+  - match: { names: [library_id] }
+    binding: library_id
+    widget: multiselect
+    help: "Values of the partition column to include."
+  - match: { names: [groups] }
+    binding: categories_of(groupby)
+    widget: multiselect
+    help: "Subset of the grouping key's categories."
+  - match: { names: [reference] }
+    binding: categories_of(groupby)
+    widget: enum
+    help: "One category to compare against, or 'rest'."
+
+  # ---- colour (plotting) ----
+  - match: { names: [color, color_key], patterns: ["color"] }
+    binding: obs_column
+    value_source: obs.any
+    help: "obs column or X:gene to colour by."
+
+  # ---- features ----
+  - match: { names: [genes, var_names] }
+    binding: var_names
+    widget: multiselect
+    help: "Gene / feature names."
+  - match: { names: [gene] }
+    binding: var_names
+    widget: picker
+
+  # ---- data slots ----
+  - match: { names: [layer], patterns: ["*_layer", "layers"] }
+    binding: layer_key
+    help: "Key in layers."
+  - match: { names: [spatial_key] }
+    binding: obsm_key
+    type: str
+    help: "Key in obsm holding spatial coordinates."
+  - match: { names: [connectivity_key, distances_key], patterns: ["*connectivity_key", "*distances_key", "*graph_key"] }
+    binding: obsp_key
+    help: "Key in obsp holding a graph."
+
+  # ---- mutation / execution policy (managed) ----
+  - match: { names: [copy] }
+    role: managed
+    policy: { pin: false, hidden: true }
+  - match: { names: [inplace] }
+    role: managed
+    policy: { pin: true, hidden: true }
+  - match: { names: [n_jobs] }
+    widget: number
+    type: int
+    default_source: threads
+    help: "Parallel jobs; defaults to the machine thread budget (SQUIDPY_N_THREADS or cpu count)."
+  - match: { names: [n_threads, num_threads, workers, n_workers] }
+    widget: number
+    type: int
+    default_source: threads
+  - match: { names: [seed, random_state] }
+    widget: number
+    type: int
+    help: "Set for reproducibility; captured in the recipe."
+
+  # ---- output naming (feeds recipe contract §1.6/§5.8) ----
+  - match: { names: [key_added], patterns: ["*_added"] }
+    role: output
+    binding: new_key
+    widget: text
+    help: "Name of the slot this step creates."
+
+  # ---- plotting render params (managed; the app owns figure capture) ----
+  - match: { names: [show] }
+    role: managed
+    policy: { pin: false, hidden: true }
+  - match: { names: [save] }
+    role: managed
+    policy: { pin: null, hidden: true }
+  - match: { names: [return_fig] }
+    role: managed
+    policy: { pin: true, hidden: true }
+  - match: { names: [ax, fig] }
+    role: managed
+    policy: { hidden: true }
+
+  # ---- generic numerics (type-refinement where annotations are bare) ----
+  - match: { names: [n_neighs, n_rings, n_perms, n_genes, n_points] }
+    widget: number
+    type: int
+  - match: { names: [radius] }
+    widget: number
+    type: float
+
+  # ---- ambiguous name: scope-qualified (only applied when not Literal-annotated) ----
+  - match: { names: [mode], scope: "gr.ripley" }
+    widget: enum
+    values: [F, G, L]
+  - match: { names: [mode], scope: "gr.spatial_autocorr" }
+    widget: enum
+    values: [moran, geary]

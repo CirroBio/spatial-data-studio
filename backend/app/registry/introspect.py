@@ -12,7 +12,7 @@ import typing
 import warnings
 from dataclasses import dataclass, field
 
-from . import conventions
+from .dictionary import DICTIONARY
 
 warnings.filterwarnings("ignore")
 
@@ -70,24 +70,6 @@ class FunctionEntry:
         }
 
 
-def _json_finite(value) -> bool:
-    """True if value is JSON-serializable with only finite floats (Starlette rejects
-    NaN/Inf). Some squidpy defaults are e.g. `(-inf, inf)`."""
-    import json
-    import math
-    if isinstance(value, float):
-        return math.isfinite(value)
-    if isinstance(value, (list, tuple)):
-        return all(_json_finite(v) for v in value)
-    if isinstance(value, dict):
-        return all(_json_finite(v) for v in value.values())
-    try:
-        json.dumps(value)
-        return True
-    except (TypeError, ValueError):
-        return False
-
-
 def _annot_str(annot) -> str:
     if annot is inspect.Parameter.empty or annot is None:
         return ""
@@ -116,6 +98,12 @@ def _strip_optional(annot):
 
 _SCALAR_SCHEMA = {bool: {"type": "boolean"}, int: {"type": "integer"},
                   float: {"type": "number"}, str: {"type": "string"}}
+
+
+def _canonical_type(annot) -> str | None:
+    """Coarse type name for dictionary type-only matches (spec §1.2)."""
+    inner, _ = _strip_optional(annot)
+    return {bool: "bool", int: "int", float: "float", str: "str"}.get(inner)
 
 
 def _schema_for(annot, default, has_default) -> tuple[dict, str, bool]:
@@ -182,33 +170,30 @@ def _build_function(namespace: str, name: str, fn) -> FunctionEntry | None:
 
         kind = _injection_kind(annot)
         if kind is not None:
-            injected[pname] = kind
-            continue
-        if conventions.is_pinned(pname):
-            pinned[pname] = conventions.PINNED_PARAMS[pname]
+            injected[pname] = kind  # type-injected data slot (core §4.6), not a form param
             continue
 
         has_default = p.default is not inspect.Parameter.empty
         default = p.default if has_default else None
-        schema, type_widget, serializable = _schema_for(annot, default, has_default)
+        base_schema, type_widget, serializable = _schema_for(annot, default, has_default)
 
-        if not serializable:
-            unsupported.append(pname)
+        res = DICTIONARY.resolve(
+            key=f"{namespace}.{name}", name=pname, canonical_type=_canonical_type(annot),
+            base_schema=base_schema, type_widget=type_widget, serializable=serializable,
+            has_default=has_default, default=default,
+        )
+        if res.action == "pin":
+            pinned[pname] = res.pin_value
+            continue
+        if res.action == "lock":
+            unsupported.append(pname)  # managed-hidden or non-serializable: locked to its default
             if not has_default:
-                partially = True  # required but unfillable
+                partially = True
             continue
 
-        if has_default and default is not None and _json_finite(default):
-            schema = {**schema, "default": default}
-        if conventions.is_thread_param(pname):
-            schema["default"] = conventions.thread_default()  # cpu count / SQUIDPY_N_THREADS
-
-        conv = conventions.convention_for(pname)
-        widget, bound = (conv if conv else (type_widget, None))
-
         params.append(ParamSpec(
-            name=pname, schema=schema, widget=widget, bound_to=bound,
-            required=not has_default, tooltip=param_docs.get(pname, ""),
+            name=pname, schema=res.schema, widget=res.widget, bound_to=res.bound_to,
+            required=not has_default, tooltip=res.tooltip or param_docs.get(pname, ""),
         ))
 
     effect = "plot" if namespace == "pl" else ("read" if namespace == "read" else "compute")
@@ -251,10 +236,13 @@ def _parse_param_docs(doc: str) -> dict:
 class Registry:
     entries: dict = field(default_factory=dict)
     squidpy_version: str = ""
+    coverage: dict = field(default_factory=dict)
 
     def build(self):
         import squidpy as sq
         self.squidpy_version = sq.__version__
+        DICTIONARY.load()
+        DICTIONARY.coverage = []
         self.entries = {}
         for ns in NAMESPACES:
             mod = getattr(sq, ns, None)
@@ -271,6 +259,7 @@ class Registry:
                 entry = _build_function(ns, name, obj)
                 if entry is not None:
                     self.entries[entry.key] = entry
+        self.coverage = DICTIONARY.coverage_report()
         return self
 
     def get(self, key: str) -> FunctionEntry | None:
