@@ -49,6 +49,13 @@ def _now():
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
+def _envelope(result) -> dict:
+    """The JSON-safe contract envelope (v3 Part 2) for the agent loop."""
+    return {"status": result.status, "logs": result.log, "error": result.error,
+            "structural_diff": result.structural_diff, "result_value": result.result_value,
+            "manifest_before": result.manifest_before, "manifest_after": result.manifest_after}
+
+
 class Session:
     def __init__(self, sid, name, sdata, app_state, manager, parent_id=None, store_path=None):
         self.id = sid
@@ -131,6 +138,18 @@ class Session:
         ec, rec = self._make_record(descriptor, entry_id, "pending")
         self._collection(ec).append(rec)
         return entry_id
+
+    def run_and_wait(self, descriptor: dict, keep_failures: bool = False, timeout: float = 300) -> dict:
+        """Enqueue a call and block (in the caller's thread, not the worker) until it
+        reaches a terminal state, returning the contract envelope. The agent's
+        run_function tool uses this with keep_failures=False (v3 Part 2/5)."""
+        job_id = self.enqueue_descriptor(descriptor, keep_failures=keep_failures)
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            if self.job_status(job_id) in ("completed", "drawn", "failed", "cancelled"):
+                return self._jobs.get(job_id, {}).get("envelope") or {"status": self.job_status(job_id)}
+            time.sleep(0.1)
+        return {"status": "timeout", "error": f"job did not finish within {timeout}s"}
 
     def _descriptor_of(self, rec: dict) -> dict:
         return {"namespace": rec["namespace"], "function": rec["function"], "params": rec["params"]}
@@ -271,6 +290,8 @@ class Session:
             result.manifest_after = build_manifest(self)
         finally:
             (self.lock.release_write if kind == "compute" else self.lock.release_read)()
+
+        self._jobs[job_id]["envelope"] = _envelope(result)  # for the agent loop (Part 2/5)
 
         if result.status == "failed":
             self._fail(job_id, kind, result.error or "failed", log=result.log)
