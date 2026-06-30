@@ -98,10 +98,18 @@ class SessionManager:
         import spatialdata as sd
         from shapely.geometry import Polygon, MultiPolygon
         rings = payload["polygons"]
-        polys = [Polygon(r) for r in rings if len(r) >= 3]
+        polys = []
+        for r in rings:
+            if len(r) < 3:
+                continue
+            p = Polygon(r)
+            if not p.is_valid:           # repair self-intersecting / degenerate lassos
+                p = p.buffer(0)
+            if not p.is_empty:
+                polys.append(p)
         if not polys:
             raise ValueError("no valid polygon in selection")
-        geom = polys[0] if len(polys) == 1 else MultiPolygon([p for p in polys])
+        geom = polys[0] if len(polys) == 1 else MultiPolygon(polys)
         cs = payload.get("coordinate_system") or (parent.sdata.coordinate_systems[0])
         try:
             result = sd.polygon_query(parent.sdata, geom, target_coordinate_system=cs, filter_table=True)
@@ -113,6 +121,13 @@ class SessionManager:
         tkeys = list(getattr(result, "tables", {}).keys())
         if not tkeys or result.tables[tkeys[0]].n_obs == 0:
             raise ValueError("selection contains zero observations; no child created")
+
+        # polygon_query crops images/labels to the polygon's bounding box; subsetting cells
+        # should NOT crop the tissue raster, so re-attach the parent's full image/label
+        # elements (lazy refs, same 'global' transform). Shapes/points stay subset.
+        for kind in ("images", "labels"):
+            for name, elem in getattr(parent.sdata, kind, {}).items():
+                getattr(result, kind)[name] = elem
 
         child_state = copy.deepcopy(parent.app_state)  # deep-copy, then diverge (§8.2)
         child_state["compute_history"] = []
