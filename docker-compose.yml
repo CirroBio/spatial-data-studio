@@ -27,6 +27,15 @@ services:
       SQV_ADMISSION_PCT: "0.80"
       MPLBACKEND: "Agg"
       PYTHONUNBUFFERED: "1"
+      # AI / Bedrock (v3 Parts 6-8). Off unless overridden; set AI_PROVIDER=mock for
+      # a credential-free demo, or AI_PROVIDER=bedrock + a model id + AWS creds for real.
+      AI_ENABLED: "${AI_ENABLED:-false}"
+      AI_PROVIDER: "${AI_PROVIDER:-bedrock}"
+      AWS_REGION: "${AWS_REGION:-us-east-1}"
+      BEDROCK_MODEL_ID: "${BEDROCK_MODEL_ID:-}"
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
+      AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
 
     # Soft cgroup limit consistent with SQV_CONTAINER_MEM_MB
     mem_limit: 12g

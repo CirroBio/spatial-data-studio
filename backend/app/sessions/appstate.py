@@ -1,7 +1,7 @@
 """Application state lives in `sdata.attrs["app_state"]` (DESIGN §3.2, §16.4).
 Versioned; migrated on load (§13). Pure dict manipulation — serializes to Zarr.
 """
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 EMPTY = {
     "schema_version": SCHEMA_VERSION,
@@ -10,6 +10,8 @@ EMPTY = {
     "displays": [],
     "data_versions": {},  # field_path -> monotonic counter (DESIGN §9.3)
     "regions": [],        # region-set registry (post-build spec Part 2)
+    "ai_context": [],     # self-curated agent memory (v3 Part 7); persists into .zarr.zip
+    "ai_transcript": [],  # human-readable chat record (v3 Part 8.4); never replayed to the model
 }
 
 
@@ -36,6 +38,9 @@ def migrate(st: dict) -> dict:
         st.setdefault("data_versions", {})
     if v < 2:
         st.setdefault("regions", [])
+    if v < 3:
+        st.setdefault("ai_context", [])
+        st.setdefault("ai_transcript", [])
     st["schema_version"] = SCHEMA_VERSION
     return st
 

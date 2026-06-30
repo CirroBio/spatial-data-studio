@@ -11,6 +11,7 @@ fastapi==0.138.1
 uvicorn[standard]==0.49.0
 pyarrow==24.0.0
 psutil==7.2.2
+boto3==1.40.97   # AWS Bedrock Converse (Apache-2.0); only used when AI_ENABLED
 pillow==12.2.0
 python-multipart==0.0.32
 

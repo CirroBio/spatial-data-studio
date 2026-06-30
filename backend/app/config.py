@@ -27,6 +27,22 @@ class Config:
 
     STATIC_DIR = Path(os.environ.get("SQV_STATIC_DIR", "")) or None  # built SPA, optional
 
+    # ---- AI / Bedrock (v3 Parts 6-8). AI is strictly additive; off by default. ----
+    AI_ENABLED = os.environ.get("AI_ENABLED", "false").lower() in ("1", "true", "yes")
+    AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
+    BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "")
+    AI_PROVIDER = os.environ.get("AI_PROVIDER", "bedrock")  # bedrock | mock (mock for tests)
+    CONTEXT_TOKEN_LIMIT = int(os.environ.get("SQV_CONTEXT_TOKEN_LIMIT", "6000"))
+    CONTEXT_KEEP_RECENT_N = int(os.environ.get("SQV_CONTEXT_KEEP_RECENT_N", "8"))
+    AI_MAX_TOOL_ITERS = int(os.environ.get("SQV_AI_MAX_TOOL_ITERS", "8"))
+
+    def ai_enabled(self) -> bool:
+        """True when the chat surface should light up: explicitly enabled and either
+        the mock provider or a configured Bedrock model id."""
+        if not self.AI_ENABLED:
+            return False
+        return self.AI_PROVIDER == "mock" or bool(self.BEDROCK_MODEL_ID)
+
 
 config = Config()
 try:

@@ -75,6 +75,59 @@ async def readyz():
     return {"status": "ready", "functions": len(REGISTRY.entries)}
 
 
+# ---- AI / chat (v3 Parts 5-8). Dark when Bedrock is not configured. ---------
+@app.get("/api/ai/status")
+async def ai_status():
+    return {"enabled": config.ai_enabled(), "provider": config.AI_PROVIDER,
+            "model": config.BEDROCK_MODEL_ID or None}
+
+
+@app.post("/api/sessions/{sid}/chat")
+async def chat_send(sid: str, body: dict):
+    if not config.ai_enabled():
+        raise HTTPException(503, "AI is not configured")
+    sess = _session(sid)
+    message = (body or {}).get("message", "").strip()
+    if not message:
+        raise HTTPException(400, "empty message")
+    import threading
+    from .agent import chat
+    threading.Thread(target=chat.run_turn, args=(sess, message), daemon=True).start()
+    return {"status": "started"}
+
+
+@app.post("/api/sessions/{sid}/chat/approve")
+async def chat_approve(sid: str, body: dict):
+    from .agent import chat
+    _session(sid)
+    call_id = (body or {}).get("call_id")
+    action = (body or {}).get("action")
+    if action not in ("approve", "edit", "deny"):
+        raise HTTPException(400, "action must be approve|edit|deny")
+    ok = chat.decide(sid, call_id, {"action": action, "params": (body or {}).get("params"),
+                                    "reason": (body or {}).get("reason")})
+    if not ok:
+        raise HTTPException(409, "no pending approval with that call_id")
+    return {"ok": True}
+
+
+@app.put("/api/sessions/{sid}/chat/auto-mode")
+async def chat_auto_mode(sid: str, body: dict):
+    from .agent import chat
+    _session(sid)
+    chat.set_auto_mode(sid, bool((body or {}).get("auto")))
+    return {"ok": True}
+
+
+@app.get("/api/sessions/{sid}/chat")
+async def chat_transcript(sid: str):
+    sess = _session(sid)
+    from .agent import chat
+    return {"transcript": sess.app_state.get("ai_transcript", []),
+            "auto_mode": chat.state_for(sid).auto_mode,
+            "context": sess.app_state.get("ai_context", [])}
+
+
 # ---- registry --------------------------------------------------------------
 @app.get("/api/functions")
 async def functions():

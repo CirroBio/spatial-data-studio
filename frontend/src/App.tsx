@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useAppStore } from './store/sessionStore';
-import { getSessions, getFunctions } from './api';
+import { getSessions, getFunctions, getAiStatus } from './api';
+import ChatPanel from './components/ChatPanel';
 import { useSSE } from './hooks/useSSE';
 import { useSession } from './hooks/useSession';
 import Header from './components/Header';
@@ -30,6 +31,8 @@ export default function App() {
     annotationCategoryName,
     annotationColor,
     activeRegionSetId,
+    aiEnabled,
+    setAiEnabled,
   } = useAppStore();
 
   useSession(activeSessionId);
@@ -51,7 +54,9 @@ export default function App() {
         setFunctions(functions, squidpy_version);
       })
       .catch(console.error);
-  }, [setSessions, setFunctions, activeSessionId, setActiveSessionId]);
+
+    getAiStatus().then((s) => setAiEnabled(s.enabled)).catch(() => setAiEnabled(false));
+  }, [setSessions, setFunctions, activeSessionId, setActiveSessionId, setAiEnabled]);
 
   const display = sessionState?.app_state.displays.find((d) => d.type === 'spatial_canvas') ?? null;
 
@@ -117,6 +122,7 @@ export default function App() {
         <main className="flex-1 overflow-hidden relative">
           {renderMain()}
         </main>
+        {aiEnabled && activeSessionId && <ChatPanel sessionId={activeSessionId} />}
       </div>
       <ResourceStrip />
       <Toaster />

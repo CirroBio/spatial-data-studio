@@ -18,3 +18,5 @@ checkpoints/
 # Local
 .DS_Store
 *.log
+
+.env
