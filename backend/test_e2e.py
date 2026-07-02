@@ -11,7 +11,11 @@ import pyarrow.ipc as ipc
 from fastapi.testclient import TestClient
 
 os.environ.setdefault("SQV_CONTAINER_MEM_MB", "32768")
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+os.environ.setdefault("SQV_DATA_DIR", os.path.join(_REPO_ROOT, "test-data"))
+os.environ.setdefault("SQV_CHECKPOINT_DIR", tempfile.mkdtemp())
 from app.main import app  # noqa: E402
+from app.config import config  # noqa: E402
 
 DATA = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "test-data", "visium_hne.zarr"))
 
@@ -97,8 +101,8 @@ def main():
         assert fig.status_code == 200 and fig.content[:5] in (b"<?xml", b"<svg "), fig.content[:50]
         print(f"[ok] figure svg bytes={len(fig.content)}")
 
-        # save
-        out = os.path.join(tempfile.mkdtemp(), "session.zarr.zip")
+        # save (must land under CHECKPOINT_DIR — the save endpoint validates the target path)
+        out = os.path.join(str(config.CHECKPOINT_DIR), "session.zarr.zip")
         sv = client.post(f"/api/sessions/{sid}/save", json={"path": out}).json()
         t0 = time.time()
         while time.time() - t0 < 180:

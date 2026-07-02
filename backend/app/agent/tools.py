@@ -77,11 +77,12 @@ def describe_function(session, name: str) -> dict:
 
 
 def _live_options(entry, session) -> dict:
-    try:
-        adata = session.active_table()
-    except RuntimeError:
-        return {}
-    fields = arrow.describe_fields(adata, session.sdata)
+    with session.lock.reading():
+        try:
+            adata = session.active_table()
+        except RuntimeError:
+            return {}
+        fields = arrow.describe_fields(adata, session.sdata)
     cat = [f["name"] for f in fields["obs"] if f["kind"] == "categorical"]
     allobs = [f["name"] for f in fields["obs"]]
     opts = {}
@@ -101,11 +102,8 @@ def _live_options(entry, session) -> dict:
 
 def get_data_manifest(session) -> dict:
     from ..manifest import build_manifest
-    session.lock.acquire_read()
-    try:
+    with session.lock.reading():
         return {"manifest": build_manifest(session)}
-    finally:
-        session.lock.release_read()
 
 
 def list_recipes(session) -> dict:
@@ -115,7 +113,7 @@ def list_recipes(session) -> dict:
 
 def list_snapshots(session) -> dict:
     from .. import snapshots
-    return {"snapshots": snapshots.list_snapshots(session)}
+    return {"snapshots": snapshots.list_snapshots()}
 
 
 # ---- state-changing tools (gated by the chat loop) --------------------------

@@ -1,17 +1,17 @@
 import asyncio
-import json
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from .config import config
+from .config import config, browse_roots, within_roots
 from .registry.introspect import REGISTRY
 from .sessions.manager import SessionManager
 from .transport.sse import BUS
 from .transport import arrow
+from .transport import tables
 from . import imaging
 
 MANAGER: SessionManager | None = None
@@ -90,9 +90,8 @@ async def chat_send(sid: str, body: dict):
     message = (body or {}).get("message", "").strip()
     if not message:
         raise HTTPException(400, "empty message")
-    import threading
     from .agent import chat
-    threading.Thread(target=chat.run_turn, args=(sess, message), daemon=True).start()
+    chat.start_turn(sess, message)
     return {"status": "started"}
 
 
@@ -123,9 +122,12 @@ async def chat_auto_mode(sid: str, body: dict):
 async def chat_transcript(sid: str):
     sess = _session(sid)
     from .agent import chat
-    return {"transcript": sess.app_state.get("ai_transcript", []),
+    with sess.lock.reading():
+        transcript = sess.app_state.get("ai_transcript", [])
+        context = sess.app_state.get("ai_context", [])
+    return {"transcript": transcript,
             "auto_mode": chat.state_for(sid).auto_mode,
-            "context": sess.app_state.get("ai_context", [])}
+            "context": context}
 
 
 # ---- registry --------------------------------------------------------------
@@ -174,30 +176,69 @@ async def create_session(body: dict):
 
 
 # ---- filesystem browse (for the New Session path typeahead) ----------------
-def _browse_roots() -> list[Path]:
-    seen, roots = set(), []
-    for p in (config.DATA_DIR, config.CHECKPOINT_DIR):
-        try:
-            rp = p.resolve()
-        except OSError:
-            continue
-        if rp.exists() and rp.is_dir() and rp not in seen:
-            seen.add(rp)
-            roots.append(rp)
-    return roots
+# Dirs never worth walking for datasets (vendored/build/staging; `_`-prefixed dirs
+# like a reader's raw-bundle staging folder are skipped so their internal zarrs
+# don't surface as loadable sessions).
+_SKIP_SCAN_DIRS = {".git", "node_modules", "__pycache__", "venv", ".cache", "dist", "build"}
+_DATASET_MAX_DEPTH = 4
+_DATASET_CAP = 1000
 
 
-def _within_roots(target: Path, roots: list[Path]) -> bool:
-    return any(target == r or r in target.parents for r in roots)
+def _looks_like_sdata_zarr(p: Path) -> bool:
+    if p.name.endswith(".zarr.zip"):
+        return True  # a saved session / prepared bundle; can't cheaply peek inside
+    # A SpatialData .zarr directory holds element groups; a bare/foreign zarr does not.
+    return any((p / g).is_dir() for g in ("tables", "images", "shapes", "points", "labels"))
+
+
+def _find_datasets(roots: list[Path]) -> list[dict]:
+    """Recursively find loadable SpatialData datasets under the roots (flat list)."""
+    import os
+
+    def rel(p: Path) -> str:
+        for r in roots:
+            try:
+                return str(p.relative_to(r))
+            except ValueError:
+                continue
+        return str(p)
+
+    found: dict[str, dict] = {}
+    for root in roots:
+        base = len(root.parts)
+        for dirpath, dirnames, filenames in os.walk(root):
+            here = Path(dirpath)
+            if len(here.parts) - base >= _DATASET_MAX_DEPTH:
+                dirnames[:] = []
+            keep = []
+            for name in sorted(dirnames, key=str.lower):
+                if name.startswith((".", "_")) or name in _SKIP_SCAN_DIRS:
+                    continue
+                full = here / name
+                if name.endswith(".zarr"):
+                    if not _looks_like_sdata_zarr(full):
+                        continue  # never descend into a .zarr's internals
+                    found.setdefault(str(full.resolve()), {"name": rel(full), "path": str(full)})
+                    continue
+                keep.append(name)
+            dirnames[:] = keep
+            for name in filenames:
+                if name.endswith(".zarr.zip"):
+                    full = here / name
+                    found.setdefault(str(full.resolve()), {"name": rel(full), "path": str(full)})
+            if len(found) >= _DATASET_CAP:
+                break
+    return sorted(found.values(), key=lambda e: e["name"].lower())
 
 
 @app.get("/api/fs/browse")
-async def fs_browse(path: str | None = None):
+async def fs_browse(path: str | None = None, include_files: bool = False):
     """List datasets and subfolders under the configured data roots, for the
     New Session path picker. Scoped to DATA_DIR / CHECKPOINT_DIR — never the
     whole filesystem. A `.zarr`/`.zarr.zip` entry is a loadable dataset; other
-    directories are navigable."""
-    roots = _browse_roots()
+    directories are navigable. With `include_files` (raw-data import, where the
+    reader's input may be any file type), regular files are listed too."""
+    roots = browse_roots()
     if not path:
         return {"path": "", "parent": None,
                 "entries": [{"name": str(r), "path": str(r), "kind": "dir"} for r in roots]}
@@ -205,7 +246,7 @@ async def fs_browse(path: str | None = None):
         target = Path(path).resolve()
     except OSError:
         raise HTTPException(400, "bad path")
-    if not _within_roots(target, roots):
+    if not within_roots(target, roots):
         raise HTTPException(403, "path is outside the allowed data roots")
     if not target.is_dir():
         raise HTTPException(404, "not a directory")
@@ -219,6 +260,8 @@ async def fs_browse(path: str | None = None):
                 out.append({"name": child.name, "path": str(child), "kind": "dataset"})
             elif child.is_dir():
                 out.append({"name": child.name, "path": str(child), "kind": "dir"})
+            elif include_files:
+                out.append({"name": child.name, "path": str(child), "kind": "file"})
         return out
 
     try:
@@ -229,9 +272,23 @@ async def fs_browse(path: str | None = None):
     return {"path": str(target), "parent": parent, "entries": entries}
 
 
+@app.get("/api/fs/datasets")
+async def fs_datasets():
+    """Every loadable dataset found by scanning folders under the data roots (incl.
+    the CWD) — the New Session picker shows these on click, no typing needed."""
+    datasets = await _in_executor(_find_datasets, browse_roots())
+    return {"datasets": datasets}
+
+
 @app.get("/api/sessions/{sid}")
 async def session_state(sid: str):
-    return _mgr().state(_session(sid))
+    sess = _session(sid)
+
+    def _state():
+        with sess.lock.reading():
+            return _mgr().state(sess)
+
+    return await _in_executor(_state)
 
 
 @app.get("/api/sessions/{sid}/manifest")
@@ -242,11 +299,8 @@ async def data_manifest(sid: str):
 
     def _build():
         from .manifest import build_manifest
-        sess.lock.acquire_read()
-        try:
+        with sess.lock.reading():
             return build_manifest(sess)
-        finally:
-            sess.lock.release_read()
 
     return {"manifest": await _in_executor(_build)}
 
@@ -258,15 +312,12 @@ async def obs_values(sid: str, column: str):
     sess = _session(sid)
 
     def _values():
-        sess.lock.acquire_read()
-        try:
+        with sess.lock.reading():
             obs = sess.active_table().obs
             if column not in obs.columns:
                 raise KeyError(column)
             counts = obs[column].astype(str).value_counts()
             return [{"value": str(v), "count": int(n)} for v, n in counts.items()]
-        finally:
-            sess.lock.release_read()
 
     try:
         values = await _in_executor(_values)
@@ -391,7 +442,8 @@ async def add_display(sid: str, spec: dict):
     import uuid
     sess = _session(sid)
     spec["id"] = spec.get("id") or str(uuid.uuid4())
-    sess.app_state["displays"].append(spec)
+    with sess.lock.writing():
+        sess.app_state["displays"].append(spec)
     BUS.publish("display.updated", {"session_id": sid, "display_id": spec["id"], "spec": spec})
     return spec
 
@@ -399,13 +451,19 @@ async def add_display(sid: str, spec: dict):
 @app.put("/api/sessions/{sid}/displays/{display_id}")
 async def update_display(sid: str, display_id: str, spec: dict):
     sess = _session(sid)
-    for i, d in enumerate(sess.app_state["displays"]):
-        if d["id"] == display_id:
-            spec["id"] = display_id
-            sess.app_state["displays"][i] = spec
-            BUS.publish("display.updated", {"session_id": sid, "display_id": display_id, "spec": spec})
-            return {"ok": True}
-    raise HTTPException(404, "display not found")
+    with sess.lock.writing():
+        for i, d in enumerate(sess.app_state["displays"]):
+            if d["id"] == display_id:
+                spec["id"] = display_id
+                sess.app_state["displays"][i] = spec
+                found = True
+                break
+        else:
+            found = False
+    if not found:
+        raise HTTPException(404, "display not found")
+    BUS.publish("display.updated", {"session_id": sid, "display_id": display_id, "spec": spec})
+    return {"ok": True}
 
 
 # ---- subset / save ---------------------------------------------------------
@@ -417,8 +475,8 @@ async def subset(sid: str, body: dict):
 
 @app.post("/api/sessions/{sid}/annotate")
 async def annotate(sid: str, body: dict):
-    """Label cells inside drawn polygon(s) into a region set, in place (spec §3.1).
-    Body: {polygons, region_set, category, color?, coordinate_system?}."""
+    """Label the cells inside the drawn lasso into a region set (a categorical obs
+    column), in place (spec §3.1). Body: {polygons, region_set, category, color?}."""
     job_id = _session(sid).enqueue_special("annotate", body)
     return {"job_id": job_id}
 
@@ -458,6 +516,13 @@ async def save(sid: str, body: dict | None = None):
 
 
 # ---- recipes (DESIGN §10) --------------------------------------------------
+@app.get("/api/recipes")
+async def list_bundled_recipes():
+    """Curated analysis recipes shipped with the app (run via /recipe/run)."""
+    from . import recipes
+    return {"recipes": recipes.catalog()}
+
+
 @app.get("/api/sessions/{sid}/recipe")
 async def export_recipe(sid: str):
     sess = _session(sid)
@@ -518,12 +583,9 @@ async def data(sid: str, field_path: str):
     sess = _session(sid)
 
     def _resolve():
-        sess.lock.acquire_read()
-        try:
+        with sess.lock.reading():
             batch = arrow.resolve_field(sess.active_table(), field_path)
             return arrow.to_ipc_bytes(batch)
-        finally:
-            sess.lock.release_read()
 
     try:
         payload = await _in_executor(_resolve)
@@ -532,12 +594,45 @@ async def data(sid: str, field_path: str):
     return Response(content=payload, media_type="application/vnd.apache.arrow.stream")
 
 
+# ---- data inspector: element inventory + dataframe previews ----------------
+@app.get("/api/sessions/{sid}/elements")
+async def elements(sid: str):
+    sess = _session(sid)
+
+    def _build():
+        with sess.lock.reading():
+            return tables.describe_elements(sess.active_table(), sess.sdata, sess.active_table_key)
+
+    return await _in_executor(_build)
+
+
+@app.get("/api/sessions/{sid}/table")
+async def table_preview(sid: str, path: str, offset: int = 0, limit: int = 50):
+    sess = _session(sid)
+    offset = max(0, offset)
+    limit = max(1, min(limit, 200))
+
+    def _build():
+        with sess.lock.reading():
+            return tables.table_preview(sess.active_table(), sess.sdata, path, offset, limit)
+
+    try:
+        return await _in_executor(_build)
+    except (KeyError, ValueError) as e:
+        raise HTTPException(404, str(e))
+
+
 # ---- image tiles -----------------------------------------------------------
 @app.get("/api/sessions/{sid}/image/{element}/info")
 async def image_info(sid: str, element: str):
     sess = _session(sid)
+
+    def _info():
+        with sess.lock.reading():
+            return imaging.image_info(sess.sdata, element)
+
     try:
-        return await _in_executor(imaging.image_info, sess.sdata, element)
+        return await _in_executor(_info)
     except KeyError as e:
         raise HTTPException(404, str(e))
 
@@ -550,11 +645,8 @@ async def image_thumbnail(sid: str, element: str, max_px: int = 2048, channels: 
         visible = [int(c) for c in channels.split(",") if c.strip().isdigit()]
 
     def _render():
-        sess.lock.acquire_read()
-        try:
+        with sess.lock.reading():
             return imaging.thumbnail_png(sess.sdata, element, max_px, visible)
-        finally:
-            sess.lock.release_read()
 
     try:
         png = await _in_executor(_render)

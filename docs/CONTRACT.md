@@ -45,6 +45,8 @@ ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_cate
 | GET  | `/api/functions/{key}` | — | entry |
 | GET  | `/api/sessions` | — | `{sessions:[SessionSummary]}` |
 | POST | `/api/sessions` | `{name?, source:{kind:"read"|"load", ...}}` | `SessionSummary` |
+| GET  | `/api/fs/datasets` | — | `{datasets:[{name, path}]}` (loadable `.zarr`/`.zarr.zip` found under the data roots + CWD; New Session picker) |
+| GET  | `/api/fs/browse?path=&include_files=` | — | `{path, parent, entries:[{name, path, kind:"dir"\|"dataset"\|"file"}]}` (folder navigation for raw-data import) |
 | GET  | `/api/sessions/{id}` | — | `SessionState` |
 | DELETE | `/api/sessions/{id}` | `{save?:bool}` | `{ok:true}` |
 | POST | `/api/sessions/{id}/jobs` | `Descriptor` | `{job_id, status}` |
@@ -57,16 +59,19 @@ ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_cate
 | POST | `/api/sessions/{id}/subset` | `{polygons:[[[x,y]...]], coordinate_system, save_parent:bool, name?}` | `SessionSummary` (child) |
 | POST | `/api/sessions/{id}/save` | `{path?}` | `{job_id}` (queued save) |
 | GET  | `/api/sessions/{id}/data/{fieldPath}` | fieldPath e.g. `obs:leiden`, `obsm:spatial`, `X:Sox17`, `obsp:spatial_distances` | Arrow IPC stream (application/vnd.apache.arrow.stream) |
+| GET  | `/api/sessions/{id}/elements` | — | `{tables:[{name,n_obs,n_vars,active}], shapes, points, images, labels}` (data inspector inventory) |
+| GET  | `/api/sessions/{id}/table?path=&offset=&limit=` | path = `obs`, `var`, `shapes:<name>`, `points:<name>` | `{total_rows, offset, limit, index_name, index, columns:[{name,dtype}], rows}` (JSON page) |
 | GET  | `/api/sessions/{id}/image/{element}/info` | — | `{levels:[{level,width,height}], channels, dtype}` |
 | GET  | `/api/sessions/{id}/image/{element}/tile?level=&x=&y=&size=` | — | PNG tile |
+| GET  | `/api/recipes` | — | `{recipes:[{name, description, steps:[Descriptor]}]}` (curated catalog) |
 | GET  | `/api/sessions/{id}/recipe` | — | recipe JSON |
 | POST | `/api/sessions/{id}/recipe/preflight` | recipe JSON | `{unresolved:[...]}` |
 | POST | `/api/sessions/{id}/recipe/run` | recipe JSON | `{queued:int}` |
 | GET  | `/api/healthz` / `/api/readyz` | — | `{status}` |
 
 ### Session source on create
-- read:  `{kind:"read", namespace:"read", function:"visium", params:{path:"..."}}`
-- load:  `{kind:"load", path:"/data/visium_hne.zarr"}`
+- read:  `{kind:"read", namespace:"read", function:"visium", params:{path:"..."}}` — any `path`/`input`/`image_path`/`alignment_file` param must resolve under `DATA_DIR`/`CHECKPOINT_DIR`/CWD, else 400.
+- load:  `{kind:"load", path:"/data/visium_hne.zarr"}` — `path` must resolve under `DATA_DIR`/`CHECKPOINT_DIR`/CWD (the same allowlist as `/api/fs/browse`), else 400. `POST /api/sessions/{id}/save`'s `path` must resolve under `CHECKPOINT_DIR`, else 400.
 
 ### SessionSummary
 ```jsonc

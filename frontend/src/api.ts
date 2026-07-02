@@ -42,7 +42,7 @@ export async function createSession(params: { name?: string; source: NewSessionS
 export interface FsEntry {
   name: string;
   path: string;
-  kind: 'dir' | 'dataset';
+  kind: 'dir' | 'dataset' | 'file';
 }
 
 export interface FsListing {
@@ -51,9 +51,23 @@ export interface FsListing {
   entries: FsEntry[];
 }
 
-export async function browsePath(path?: string): Promise<FsListing> {
-  const q = path ? `?path=${encodeURIComponent(path)}` : '';
-  const res = await apiFetch(`/api/fs/browse${q}`);
+export interface DatasetEntry {
+  name: string;
+  path: string;
+}
+
+// All loadable datasets found by scanning folders under the server's data roots.
+export async function getDatasets(): Promise<{ datasets: DatasetEntry[] }> {
+  const res = await apiFetch('/api/fs/datasets');
+  return res.json() as Promise<{ datasets: DatasetEntry[] }>;
+}
+
+export async function browsePath(path?: string, includeFiles = false): Promise<FsListing> {
+  const params = new URLSearchParams();
+  if (path) params.set('path', path);
+  if (includeFiles) params.set('include_files', 'true');
+  const q = params.toString();
+  const res = await apiFetch(`/api/fs/browse${q ? `?${q}` : ''}`);
   return res.json() as Promise<FsListing>;
 }
 
@@ -194,6 +208,55 @@ export async function getFieldData(sessionId: string, fieldPath: string): Promis
   return arrow.tableFromIPC(buffer);
 }
 
+// ---- data inspector ---------------------------------------------------------
+export interface ElementInventory {
+  tables: { name: string; n_obs: number; n_vars: number; active: boolean }[];
+  shapes: { name: string; count: number; geometry: string[]; columns: string[] }[];
+  points: { name: string; columns: string[] }[];
+  images: { name: string }[];
+  labels: { name: string }[];
+}
+
+export async function getElements(sessionId: string): Promise<ElementInventory> {
+  const res = await apiFetch(`/api/sessions/${sessionId}/elements`);
+  return res.json() as Promise<ElementInventory>;
+}
+
+export type TableCell = string | number | boolean | null;
+
+export interface TablePreview {
+  path: string;
+  total_rows: number;
+  offset: number;
+  limit: number;
+  index_name: string;
+  index: string[];
+  columns: { name: string; dtype: string }[];
+  rows: TableCell[][];
+}
+
+export async function getTablePreview(
+  sessionId: string,
+  path: string,
+  offset: number,
+  limit: number
+): Promise<TablePreview> {
+  const q = `?path=${encodeURIComponent(path)}&offset=${offset}&limit=${limit}`;
+  const res = await apiFetch(`/api/sessions/${sessionId}/table${q}`);
+  return res.json() as Promise<TablePreview>;
+}
+
+export interface BundledRecipe {
+  name: string;
+  description: string;
+  steps: { namespace: string; function: string; params: Record<string, unknown> }[];
+}
+
+export async function getBundledRecipes(): Promise<{ recipes: BundledRecipe[] }> {
+  const res = await apiFetch('/api/recipes');
+  return res.json() as Promise<{ recipes: BundledRecipe[] }>;
+}
+
 export async function getRecipe(sessionId: string): Promise<unknown> {
   const res = await apiFetch(`/api/sessions/${sessionId}/recipe`);
   return res.json();
@@ -228,7 +291,6 @@ export async function annotateSession(
     region_set: string;
     category: string;
     color?: string;
-    coordinate_system?: string;
   }
 ): Promise<{ job_id: string }> {
   const res = await apiFetch(`/api/sessions/${id}/annotate`, {

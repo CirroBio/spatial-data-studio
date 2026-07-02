@@ -33,7 +33,7 @@ app/
 ```bash
 python3.11 -m venv .venv && . .venv/bin/activate     # squidpy needs <=3.12; 3.11 validated
 pip install -r requirements.txt
-SQV_DATA_DIR=../test-data SQV_CONTAINER_MEM_MB=16384 \
+SQV_DATA_DIR=../data SQV_CHECKPOINT_DIR=../checkpoints SQV_CONTAINER_MEM_MB=16384 \
   uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 

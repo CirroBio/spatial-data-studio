@@ -41,7 +41,8 @@ def migrate(st: dict) -> dict:
     if v < 3:
         st.setdefault("ai_context", [])
         st.setdefault("ai_transcript", [])
-    st["schema_version"] = SCHEMA_VERSION
+    if v <= SCHEMA_VERSION:
+        st["schema_version"] = SCHEMA_VERSION
     return st
 
 

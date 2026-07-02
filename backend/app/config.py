@@ -66,3 +66,24 @@ try:
     config.CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 except OSError:
     pass  # read-only or unavailable mount; save endpoints surface the error per-call
+
+
+# ---- shared data-root allowlist (used by both the fs/browse API and session
+# load-admission, so a client can never point either at an arbitrary path) ----
+def browse_roots() -> list[Path]:
+    seen, roots = set(), []
+    # The process CWD is included so datasets sitting in folders under wherever the
+    # server was launched are discoverable without configuring SQV_DATA_DIR.
+    for p in (config.DATA_DIR, config.CHECKPOINT_DIR, Path.cwd()):
+        try:
+            rp = p.resolve()
+        except OSError:
+            continue
+        if rp.exists() and rp.is_dir() and rp not in seen:
+            seen.add(rp)
+            roots.append(rp)
+    return roots
+
+
+def within_roots(target: Path, roots: list[Path]) -> bool:
+    return any(target == r or r in target.parents for r in roots)

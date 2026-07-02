@@ -42,6 +42,12 @@ def state_for(sid: str) -> ChatState:
     return _CHATS.setdefault(sid, ChatState())
 
 
+def discard_chat_state(sid: str) -> None:
+    """Drop a session's chat state (lock + pending approvals) once its session closes.
+    No-op if the session never populated _CHATS (AI chat wasn't enabled)."""
+    _CHATS.pop(sid, None)
+
+
 def set_auto_mode(sid: str, auto: bool):
     state_for(sid).auto_mode = auto
 
@@ -75,6 +81,14 @@ def _extract_note(text: str) -> str | None:
     return None
 
 
+def start_turn(session, user_text: str):
+    """Run a turn on its own background thread. A chat turn's run_function tool
+    calls block (session.run_and_wait) on the session's single-worker job queue,
+    so the turn itself must never run as a job on that same queue — it needs an
+    independent thread, not the queue's worker."""
+    threading.Thread(target=run_turn, args=(session, user_text), daemon=True).start()
+
+
 def run_turn(session, user_text: str):
     provider = get_provider()
     if provider is None:
@@ -94,14 +108,12 @@ def run_turn(session, user_text: str):
 
 def _run_turn(session, st: ChatState, provider, user_text: str):
     app_state = session.app_state
-    transcript = app_state.setdefault("ai_transcript", [])
-    transcript.append({"role": "user", "text": user_text})
+    with session.lock.writing():
+        transcript = app_state.setdefault("ai_transcript", [])
+        transcript.append({"role": "user", "text": user_text})
 
-    session.lock.acquire_read()
-    try:
+    with session.lock.reading():
         manifest = build_manifest(session)
-    finally:
-        session.lock.release_read()
     preamble = (f"{SYSTEM}\n\n# Prior learnings\n{ctx.rolled_up(app_state) or '(none)'}\n\n"
                 f"# Current data manifest\n{manifest}")
 
@@ -111,7 +123,8 @@ def _run_turn(session, st: ChatState, provider, user_text: str):
         reply = provider.converse(preamble, messages, tools.TOOL_SPECS)
         if reply["text"]:
             _publish(session.id, "ai.message", {"text": reply["text"]})
-            transcript.append({"role": "assistant", "text": reply["text"]})
+            with session.lock.writing():
+                transcript.append({"role": "assistant", "text": reply["text"]})
             final_text = reply["text"]
         if reply["stop"] != "tool_use" or not reply["tool_calls"]:
             break
@@ -127,8 +140,11 @@ def _run_turn(session, st: ChatState, provider, user_text: str):
 
     note = _extract_note(final_text)
     if note:
-        ctx.add_note(app_state, note)
-        ctx.maybe_consolidate(app_state, provider, SYSTEM)
+        with session.lock.writing():
+            ctx.add_note(app_state, note)
+        # maybe_consolidate takes its own short-held locks around the dict access,
+        # not across the Bedrock round-trip in between (would stall the session).
+        ctx.maybe_consolidate(session, provider, SYSTEM)
     _publish(session.id, "ai.turn_done", {"context_size": len(app_state.get("ai_context", []))})
 
 

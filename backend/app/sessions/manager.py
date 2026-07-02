@@ -4,14 +4,20 @@ sampler (§11.3). One shared process; one worker thread per session.
 """
 import copy
 import uuid
+from pathlib import Path
 
 import psutil
 
 from . import appstate
-from .session import Session, _now
-from ..config import config
+from .session import Session
+from ..config import config, browse_roots, within_roots
 from ..persistence.store import load_spatialdata, estimate_resident_mb, save_spatialdata
 from ..transport.sse import BUS
+
+# Reader params that terms.yaml documents as filesystem paths (see the
+# "reader path inputs" term). Any of these passed to a read-effect function
+# is validated against the allowed data roots before the reader ever runs.
+_READ_PATH_PARAMS = ("path", "input", "image_path", "alignment_file")
 
 
 class SessionManager:
@@ -23,14 +29,21 @@ class SessionManager:
     # ---- creation ---------------------------------------------------------
     def create_from_load(self, path: str, name: str | None = None) -> Session:
         self._check_capacity()
-        self._check_admission(estimate_resident_mb(path))
-        sdata, app_state, newer, extract_dir = load_spatialdata(path)
+        try:
+            target = Path(path).resolve()
+        except OSError:
+            raise RuntimeError(f"bad path: {path}")
+        if not within_roots(target, browse_roots()):
+            raise RuntimeError(f"path is outside the allowed data roots: {path}")
+        resolved = str(target)  # use the validated, resolved path for every fs op below
+        self._check_admission(estimate_resident_mb(resolved))
+        sdata, app_state, newer, extract_dir = load_spatialdata(resolved)
         sid = str(uuid.uuid4())
-        name = name or _basename(path)
-        sess = Session(sid, name, sdata, app_state, self, store_path=path)
+        name = name or _basename(resolved)
+        sess = Session(sid, name, sdata, app_state, self, store_path=resolved)
         sess.extract_dir = extract_dir
         if not app_state["displays"]:
-            self._auto_displays(sess)
+            self.auto_displays(sess)
         self.sessions[sid] = sess
         if newer:
             BUS.publish("memory.warning", {"session_id": sid,
@@ -40,6 +53,15 @@ class SessionManager:
 
     def create_from_read(self, descriptor: dict, name: str | None = None) -> Session:
         self._check_capacity()
+        for k, v in descriptor.get("params", {}).items():
+            if k not in _READ_PATH_PARAMS or not isinstance(v, str):
+                continue
+            try:
+                target = Path(v).resolve()
+            except OSError:
+                raise RuntimeError(f"bad path: {v}")
+            if not within_roots(target, browse_roots()):
+                raise RuntimeError(f"path is outside the allowed data roots: {v}")
         sid = str(uuid.uuid4())
         sess = Session(sid, name or descriptor.get("function", "session"), None, appstate.fresh(), self)
         self.sessions[sid] = sess
@@ -47,8 +69,11 @@ class SessionManager:
         BUS.publish("session.created", {"session_id": sid, "summary": self.summary(sess)})
         return sess
 
-    def _auto_displays(self, sess: Session):
-        """Generate a default spatial canvas (DESIGN §9.1)."""
+    def auto_displays(self, sess: Session):
+        """Generate a default spatial canvas (DESIGN §9.1). Called on session
+        creation from a saved store (create_from_load) and again once a read
+        bootstrap job adopts its SpatialData (Session._run_call), since the
+        latter has no sdata/table to build a display from until that job runs."""
         try:
             ad = sess.active_table()
         except RuntimeError:
@@ -80,7 +105,7 @@ class SessionManager:
                 "created_at": sess.created_at}
 
     def list_summaries(self) -> list:
-        return [self.summary(s) for s in self.sessions.values()]
+        return [self.summary(s) for s in list(self.sessions.values())]
 
     def state(self, sess: Session) -> dict:
         from ..transport.arrow import describe_fields
@@ -110,39 +135,55 @@ class SessionManager:
         if not polys:
             raise ValueError("no valid polygon in selection")
         geom = polys[0] if len(polys) == 1 else MultiPolygon(polys)
-        cs = payload.get("coordinate_system") or (parent.sdata.coordinate_systems[0])
-        try:
-            result = sd.polygon_query(parent.sdata, geom, target_coordinate_system=cs, filter_table=True)
-        except Exception:
-            # MultiPolygon rejected by this version: per-polygon query + concat (§8.1)
-            parts = [sd.polygon_query(parent.sdata, p, target_coordinate_system=cs, filter_table=True) for p in polys]
-            result = sd.concatenate(parts) if len(parts) > 1 else parts[0]
 
-        tkeys = list(getattr(result, "tables", {}).keys())
-        if not tkeys or result.tables[tkeys[0]].n_obs == 0:
-            raise ValueError("selection contains zero observations; no child created")
+        # Everything that reads parent.sdata (the query itself, the image/label
+        # re-attach, and the optional save_parent save) happens under parent's own
+        # read lock. close() below acquires parent's write lock itself, so that call
+        # must happen AFTER this block releases the read lock — the caller
+        # (Session._run_subset) runs on parent's own worker thread, and the RWLock
+        # isn't reentrant: holding either lock across the close() call would
+        # self-deadlock.
+        with parent.lock.reading():
+            cs = payload.get("coordinate_system") or (parent.sdata.coordinate_systems[0])
+            try:
+                result = sd.polygon_query(parent.sdata, geom, target_coordinate_system=cs, filter_table=True)
+            except Exception:
+                # MultiPolygon rejected by this version: per-polygon query + concat (§8.1)
+                parts = [sd.polygon_query(parent.sdata, p, target_coordinate_system=cs, filter_table=True) for p in polys]
+                result = sd.concatenate(parts) if len(parts) > 1 else parts[0]
 
-        # polygon_query crops images/labels to the polygon's bounding box; subsetting cells
-        # should NOT crop the tissue raster, so re-attach the parent's full image/label
-        # elements (lazy refs, same 'global' transform). Shapes/points stay subset.
-        for kind in ("images", "labels"):
-            for name, elem in getattr(parent.sdata, kind, {}).items():
-                getattr(result, kind)[name] = elem
+            tkeys = list(getattr(result, "tables", {}).keys())
+            if not tkeys or result.tables[tkeys[0]].n_obs == 0:
+                raise ValueError("selection contains zero observations; no child created")
 
-        child_state = copy.deepcopy(parent.app_state)  # deep-copy, then diverge (§8.2)
-        child_state["compute_history"] = []
-        child_state["plots"] = []
-        child_state["data_versions"] = {}
-        result.attrs["app_state"] = child_state
+            # polygon_query crops images/labels to the polygon's bounding box; subsetting cells
+            # should NOT crop the tissue raster, so re-attach the parent's full image/label
+            # elements (lazy refs, same 'global' transform). Shapes/points stay subset.
+            for kind in ("images", "labels"):
+                for name, elem in getattr(parent.sdata, kind, {}).items():
+                    getattr(result, kind)[name] = elem
+
+            child_state = copy.deepcopy(parent.app_state)  # deep-copy, then diverge (§8.2)
+            child_state["compute_history"] = []
+            child_state["plots"] = []
+            child_state["data_versions"] = {}
+            result.attrs["app_state"] = child_state
+
+            # parent eviction (§8.3)
+            if payload.get("save_parent") and parent.store_path:
+                save_spatialdata(parent.sdata, parent.store_path, parent.app_state)
 
         cid = str(uuid.uuid4())
         child = Session(cid, f"{parent.name}-subset", result, child_state, self, parent_id=parent.id)
         self.sessions[cid] = child
         BUS.publish("session.created", {"session_id": cid, "summary": self.summary(child)})
 
-        # parent eviction (§8.3)
-        if payload.get("save_parent") and parent.store_path:
-            save_spatialdata(parent.sdata, parent.store_path, parent.app_state)
+        # The re-attached images/labels above are lazy refs that still read chunks from
+        # parent.extract_dir (unpacked .zarr.zip); transfer ownership to the child so
+        # closing the parent below doesn't rmtree a directory the child still depends on.
+        child.extract_dir = parent.extract_dir
+        parent.extract_dir = None
+
         self.close(parent.id, save=False)
         return child
 
@@ -151,13 +192,21 @@ class SessionManager:
         sess = self.sessions.pop(sid, None)
         if sess is None:
             return
-        if save and sess.store_path:
-            save_spatialdata(sess.sdata, sess.store_path, sess.app_state)
+        # shutdown() only sets a stop flag (no join), so it can't deadlock against
+        # the worker holding the lock below; the save-then-null-out sequence below is
+        # the part that races with an in-flight read (/manifest, /table, /data) or
+        # write (a genuine job on this session's own worker thread), so it needs the
+        # write lock.
         sess.shutdown()
-        sess.sdata = None
+        with sess.lock.writing():
+            if save and sess.store_path:
+                save_spatialdata(sess.sdata, sess.store_path, sess.app_state)
+            sess.sdata = None
         if sess.extract_dir:
             import shutil
             shutil.rmtree(sess.extract_dir, ignore_errors=True)  # unpacked .zarr.zip temp (DESIGN §13)
+        from ..agent.chat import discard_chat_state
+        discard_chat_state(sid)  # drop any leaked ChatState (v3 Parts 6-8) for this session
 
     # ---- memory (DESIGN §11.3) -------------------------------------------
     def _rss_mb(self) -> float:
@@ -198,7 +247,7 @@ class SessionManager:
         return {"global": {"rss_mb": round(self._rss_mb(), 1),
                            "rss_pct": round(self._rss_mb() / config.CONTAINER_MEM_MB * 100, 1),
                            "cpu_pct": self._proc.cpu_percent()},
-                "per_session": {s.id: self._resident_mb(s) for s in self.sessions.values()}}
+                "per_session": {s.id: self._resident_mb(s) for s in list(self.sessions.values())}}
 
 
 def _basename(path: str) -> str:

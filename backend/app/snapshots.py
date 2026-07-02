@@ -96,8 +96,7 @@ def save_snapshot(session, label: str | None = None) -> dict:
         return {"status": "failed", "error": "no spatial canvas display to snapshot"}
     enc = display.get("encoding", {})
 
-    session.lock.acquire_read()
-    try:
+    with session.lock.reading():
         adata = session.active_table()
         coords_key = (enc.get("coords") or "obsm:spatial").split(":", 1)[-1]
         xy = np.asarray(adata.obsm[coords_key])[:, :2]
@@ -121,8 +120,6 @@ def save_snapshot(session, label: str | None = None) -> dict:
             png = imaging.thumbnail_png(session.sdata, image_layer, 2048, visible)
             image_rel = _write_asset(png, "png")
             bounds = imaging.image_info(session.sdata, image_layer)["bounds"]
-    finally:
-        session.lock.release_read()
 
     if bounds is None:
         bounds = [float(xy[:, 0].min()), float(xy[:, 1].min()), float(xy[:, 0].max()), float(xy[:, 1].max())]
@@ -148,7 +145,7 @@ def _visible_channels(enc: dict) -> list[int] | None:
     return sorted(vis)
 
 
-def list_snapshots(session=None) -> list[dict]:
+def list_snapshots() -> list[dict]:
     d = str(config.SNAPSHOTS_DIR)
     if not os.path.isdir(d):
         return []
@@ -156,7 +153,9 @@ def list_snapshots(session=None) -> list[dict]:
 
 
 def _render_html(view: dict, title: str) -> str:
-    payload = json.dumps(view)
+    # Escape `<` so a client-controlled string in `view` (e.g. an encoding field)
+    # can't close the <script> tag early and inject arbitrary HTML/JS (stored XSS).
+    payload = json.dumps(view).replace("<", "\\u003c")
     safe_title = html.escape(title)
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><title>{safe_title} — snapshot</title>

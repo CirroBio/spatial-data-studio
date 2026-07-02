@@ -30,15 +30,19 @@ def _tokens(notes: list[str]) -> int:
     return sum(len(n) for n in notes) // 4  # cheap heuristic, ~4 chars/token
 
 
-def maybe_consolidate(app_state: dict, provider, system: str):
-    notes = app_state.get("ai_context", [])
-    if _tokens(notes) <= config.CONTEXT_TOKEN_LIMIT or len(notes) <= config.CONTEXT_KEEP_RECENT_N:
-        return
-    keep = notes[-config.CONTEXT_KEEP_RECENT_N:]
-    old = notes[:-config.CONTEXT_KEEP_RECENT_N]
+def maybe_consolidate(session, provider, system: str):
+    app_state = session.app_state
+    with session.lock.writing():
+        notes = app_state.get("ai_context", [])
+        if _tokens(notes) <= config.CONTEXT_TOKEN_LIMIT or len(notes) <= config.CONTEXT_KEEP_RECENT_N:
+            return
+        keep = notes[-config.CONTEXT_KEEP_RECENT_N:]
+        old = notes[:-config.CONTEXT_KEEP_RECENT_N]
     msg = [{"role": "user", "content": [{"text": _CONSOLIDATE_PROMPT + "\n\n" + "\n".join(f"- {n}" for n in old)}]}]
     try:
         summary = provider.converse(system, msg, [])["text"]
     except Exception:
         return  # consolidation is best-effort; keep the raw notes if it fails
-    app_state["ai_context"] = ([f"(consolidated) {summary}"] if summary else []) + keep
+    # the network round-trip above runs outside the lock so it doesn't stall the session
+    with session.lock.writing():
+        app_state["ai_context"] = ([f"(consolidated) {summary}"] if summary else []) + keep

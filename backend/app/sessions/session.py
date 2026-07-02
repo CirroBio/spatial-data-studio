@@ -7,9 +7,12 @@ import queue
 import threading
 import time
 import uuid
+from contextlib import contextmanager
+from pathlib import Path
 
 from . import appstate
 from .adapter import ADAPTER
+from ..config import config
 from ..transport.sse import BUS
 
 
@@ -42,6 +45,22 @@ class RWLock:
         with self._cond:
             self._writer = False
             self._cond.notify_all()
+
+    @contextmanager
+    def reading(self):
+        self.acquire_read()
+        try:
+            yield
+        finally:
+            self.release_read()
+
+    @contextmanager
+    def writing(self):
+        self.acquire_write()
+        try:
+            yield
+        finally:
+            self.release_write()
 
 
 def _now():
@@ -223,7 +242,7 @@ class Session:
         if not job or job["status"] != "queued":
             return False
         job["status"] = "cancelled"  # worker skips cancelled entries
-        self._drop_history(job_id)
+        self._drop_history(job_id, job.get("kind"))
         return True
 
     # ---- worker loop ------------------------------------------------------
@@ -274,11 +293,11 @@ class Session:
 
     def _run_call(self, job_id, kind, descriptor):
         from ..manifest import build_manifest
-        if kind == "compute":
-            self.lock.acquire_write()
-        else:
-            self.lock.acquire_read()
-        try:
+        # kind is always "compute" or "plot" here (the only two _dispatch routes here);
+        # both need the write lock — render_plot (registry/base.py) calls squidpy/scanpy
+        # pl.* functions on the live adata, and those cache things like
+        # uns['<col>_colors'] as a side effect even for a pure "plot" job.
+        with self.lock.writing():
             manifest_before = build_manifest(self)  # v3 Part 2: capture before the call
             result = ADAPTER.execute(descriptor, self)
             # Adopt a returned object (read bootstrap / Edge B) while still holding
@@ -286,10 +305,10 @@ class Session:
             if result.status != "failed" and result.new_object is not None:
                 self.sdata = result.new_object
                 self.active_table_key = self._default_table_key()
+                if not self.app_state["displays"]:
+                    self.manager.auto_displays(self)
             result.manifest_before = manifest_before
             result.manifest_after = build_manifest(self)
-        finally:
-            (self.lock.release_write if kind == "compute" else self.lock.release_read)()
 
         self._jobs[job_id]["envelope"] = _envelope(result)  # for the agent loop (Part 2/5)
 
@@ -318,12 +337,9 @@ class Session:
     def _run_annotate(self, job_id, payload):
         """Region labeling: mutate obs/shapes in place under the write lock (§3.1)."""
         from . import regions
-        self.lock.acquire_write()
-        try:
+        with self.lock.writing():
             changed = (regions.promote(self, payload["obs_column"])
                        if payload.get("op") == "promote" else regions.assign(self, payload))
-        finally:
-            self.lock.release_write()
         self._jobs[job_id]["status"] = "completed"
         diff: dict = {}
         for f in changed:
@@ -339,22 +355,23 @@ class Session:
 
     def _run_save(self, job_id, payload):
         from ..persistence.store import save_spatialdata
-        self.lock.acquire_read()
-        try:
+        target = Path(payload["path"]).resolve()
+        checkpoint_dir = config.CHECKPOINT_DIR.resolve()
+        if target != checkpoint_dir and checkpoint_dir not in target.parents:
+            raise ValueError("save path is outside the checkpoint directory")
+        with self.lock.reading():
             path = save_spatialdata(self.sdata, payload["path"], self.app_state)
-        finally:
-            self.lock.release_read()
         self.store_path = path
         self._jobs[job_id]["status"] = "completed"
         BUS.publish("job.completed", {"session_id": self.id, "job_id": job_id, "kind": "save",
                                       "path": path, "data_versions": self.app_state["data_versions"]})
 
     def _run_subset(self, job_id, payload):
-        self.lock.acquire_read()
-        try:
-            child = self.manager.perform_subset(self, payload)
-        finally:
-            self.lock.release_read()
+        # No lock held here: perform_subset reads self.sdata under its own read lock
+        # and then ends by closing this session, which acquires the write lock. Holding
+        # either lock across that whole call would self-deadlock (this IS that call's
+        # worker thread; the RWLock isn't reentrant for the thread that already holds it).
+        child = self.manager.perform_subset(self, payload)
         self._jobs[job_id]["status"] = "completed"
         BUS.publish("job.completed", {"session_id": self.id, "job_id": job_id, "kind": "subset",
                                       "child_id": child.id, "data_versions": self.app_state["data_versions"]})
@@ -396,16 +413,24 @@ class Session:
                     rec["status"] = "failed"
                     rec["_log"] = log or error
             else:
-                self._drop_history(job_id)
+                self._drop_history(job_id, kind)
         elif kind == "plot":
-            rec = self._find_record(job_id, "plot")
-            if rec:
-                rec["status"] = "failed"
-                rec["_log"] = log or error
+            if keep:
+                rec = self._find_record(job_id, "plot")
+                if rec:
+                    rec["status"] = "failed"
+                    rec["_log"] = log or error
+            else:
+                self.app_state["plots"] = [r for r in self.app_state["plots"] if r["id"] != job_id]
         BUS.publish("job.failed", {"session_id": self.id, "job_id": job_id, "error": error})
 
-    def _drop_history(self, job_id):
-        self.app_state["compute_history"] = [r for r in self.app_state["compute_history"] if r["id"] != job_id]
+    def _drop_history(self, job_id, kind="compute"):
+        """Cancelling a queued job (or dropping a not-kept failure) must remove its
+        record from whichever collection it actually lives in — a plot job's record
+        is in app_state["plots"], not compute_history, and redraw_plot/delete_entry
+        both refuse queued/running records, so a plot left there is stuck forever."""
+        coll_key = "plots" if kind == "plot" else "compute_history"
+        self.app_state[coll_key] = [r for r in self.app_state[coll_key] if r["id"] != job_id]
 
     def _references(self, params: dict) -> list:
         refs = []
@@ -436,7 +461,7 @@ class Session:
         rec = self._find_record(plot_id, "plot")
         if not rec or rec["status"] not in ("invalidated", "failed", "drawn"):
             return False
-        descriptor = {"namespace": "pl", "function": rec["function"], "params": rec["params"]}
+        descriptor = {"namespace": rec["namespace"], "function": rec["function"], "params": rec["params"]}
         # redraw reuses the SAME plot id so the figure cache key stays stable
         rec["status"] = "queued"
         self._jobs[plot_id] = {"kind": "plot", "descriptor": descriptor, "status": "queued"}
@@ -460,7 +485,7 @@ class Session:
 
     def queue_view(self) -> list:
         return [{"job_id": jid, "status": j["status"], "kind": j["kind"]}
-                for jid, j in self._jobs.items() if j["status"] in ("queued", "running")]
+                for jid, j in list(self._jobs.items()) if j["status"] in ("queued", "running")]
 
     def shutdown(self):
         self._stop.set()
