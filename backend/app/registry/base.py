@@ -130,6 +130,16 @@ def capture_log():
         root.setLevel(prev_level)
 
 
+def resolve_obsm_key(adata, params: dict, param: str = "coords", default: str = "spatial") -> str:
+    """Resolve an obsm key from `params[param]` (falling back to `default`).
+    Raises KeyError(key) if that key isn't in `adata.obsm`, so callers can build
+    their own failure `CallResult` from the missing key."""
+    key = params.get(param) or default
+    if key not in adata.obsm:
+        raise KeyError(key)
+    return key
+
+
 def keyset(adata, sdata) -> dict:
     """Per-key identity snapshot. `id()` of the stored object lets the diff catch
     keys that were *overwritten in place* (e.g. re-running clustering replaces

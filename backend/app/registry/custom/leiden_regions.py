@@ -2,7 +2,7 @@
 write the cluster index to a user-named obs column."""
 from __future__ import annotations
 
-from ..base import Function, ParamSpec, CallResult, run_compute
+from ..base import Function, ParamSpec, CallResult, run_compute, resolve_obsm_key
 
 _DOC = """Identify Regions (Leiden)
 
@@ -53,15 +53,16 @@ class IdentifyRegionsLeiden(Function):
     def execute(self, params: dict, session) -> CallResult:
         import scanpy as sc
 
-        coords = params.get("coords") or "spatial"
         key_added = (params.get("key_added") or "leiden_spatial").strip()
         n_neighbors = int(params.get("n_neighbors") or 15)
         resolution = float(params.get("resolution") or 1.0)
         random_state = int(params.get("random_state") or 0)
 
         adata = session.active_table()
-        if coords not in adata.obsm:
-            return CallResult(status="failed", error=f"obsm['{coords}'] does not exist")
+        try:
+            coords = resolve_obsm_key(adata, params)
+        except KeyError as e:
+            return CallResult(status="failed", error=f"obsm['{e.args[0]}'] does not exist")
 
         neighbors_key = f"_{key_added}_neighbors"
 

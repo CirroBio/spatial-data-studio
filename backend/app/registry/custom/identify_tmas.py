@@ -2,7 +2,7 @@
 cell with the core it falls in."""
 from __future__ import annotations
 
-from ..base import Function, ParamSpec, CallResult, run_compute
+from ..base import Function, ParamSpec, CallResult, run_compute, resolve_obsm_key
 from .tma_detect import assign_cores, NAMING_SCHEMES
 
 _DOC = """Identify TMAs
@@ -64,12 +64,13 @@ class IdentifyTMAs(Function):
     def execute(self, params: dict, session) -> CallResult:
         import pandas as pd
 
-        coords_key = params.get("coords") or "spatial"
         key_added = (params.get("key_added") or "tma_core").strip()
 
         adata = session.active_table()
-        if coords_key not in adata.obsm:
-            return CallResult(status="failed", error=f"obsm['{coords_key}'] does not exist")
+        try:
+            coords_key = resolve_obsm_key(adata, params)
+        except KeyError as e:
+            return CallResult(status="failed", error=f"obsm['{e.args[0]}'] does not exist")
 
         xy = adata.obsm[coords_key]
         coords = pd.DataFrame({"x": xy[:, 0], "y": xy[:, 1]}, index=adata.obs_names)

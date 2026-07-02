@@ -102,8 +102,8 @@ def _hull(core_coords: pd.DataFrame) -> np.ndarray | None:
 def _find_cores(coords: pd.DataFrame, x_grid, y_grid, min_prop_cells, minor_grid_scale=20, n_iter=50):
     cores = pd.DataFrame([
         {"x": x, "y": y, "col_i": col_i, "row_i": row_i, "id": f"core_{row_i}_{col_i}"}
-        for row_i, x in enumerate(x_grid)
-        for col_i, y in enumerate(y_grid)
+        for row_i, y in enumerate(y_grid)
+        for col_i, x in enumerate(x_grid)
     ]).set_index("id")
 
     x_median = np.median(np.diff(x_grid))
