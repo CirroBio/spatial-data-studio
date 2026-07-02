@@ -2,6 +2,42 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Theme tokens as space-separated RGB channels so Tailwind's `/<alpha>` opacity
+   modifiers keep working (colors are declared rgb(var(--x) / <alpha-value>) in
+   tailwind.config.js). Dark is the default; [data-theme="light"] overrides. */
+:root,
+:root[data-theme='dark'] {
+  --color-bg: 15 17 23;
+  --color-surface: 26 29 39;
+  --color-border: 42 45 58;
+  --color-text: 232 234 240;
+  --color-muted: 107 114 128;
+  --color-accent: 124 92 191;
+  --color-accent-lo: 61 46 106;
+  --color-success: 61 153 112;
+  --color-warn: 224 123 57;
+  --color-danger: 214 69 69;
+  --scrollbar-track: 26 29 39;
+  --scrollbar-thumb: 42 45 58;
+  --scrollbar-thumb-hover: 58 61 74;
+}
+
+:root[data-theme='light'] {
+  --color-bg: 243 244 246;
+  --color-surface: 255 255 255;
+  --color-border: 214 218 224;
+  --color-text: 26 29 39;
+  --color-muted: 100 108 122;
+  --color-accent: 109 73 181;
+  --color-accent-lo: 226 219 245;
+  --color-success: 47 138 95;
+  --color-warn: 196 101 31;
+  --color-danger: 196 61 61;
+  --scrollbar-track: 235 237 240;
+  --scrollbar-thumb: 200 204 212;
+  --scrollbar-thumb-hover: 176 181 191;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -15,8 +51,8 @@ body,
 }
 
 body {
-  background: #0f1117;
-  color: #e8eaf0;
+  background: rgb(var(--color-bg));
+  color: rgb(var(--color-text));
   font-family: system-ui, -apple-system, sans-serif;
 }
 
@@ -26,14 +62,14 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: #1a1d27;
+  background: rgb(var(--scrollbar-track));
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #2a2d3a;
+  background: rgb(var(--scrollbar-thumb));
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #3a3d4a;
+  background: rgb(var(--scrollbar-thumb-hover));
 }

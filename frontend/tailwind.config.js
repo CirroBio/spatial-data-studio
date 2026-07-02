@@ -4,16 +4,16 @@ export default {
   theme: {
     extend: {
       colors: {
-        bg: '#0f1117',
-        surface: '#1a1d27',
-        border: '#2a2d3a',
-        text: '#e8eaf0',
-        muted: '#6b7280',
-        accent: '#7c5cbf',
-        'accent-lo': '#3d2e6a',
-        success: '#3d9970',
-        warn: '#e07b39',
-        danger: '#d64545',
+        bg: 'rgb(var(--color-bg) / <alpha-value>)',
+        surface: 'rgb(var(--color-surface) / <alpha-value>)',
+        border: 'rgb(var(--color-border) / <alpha-value>)',
+        text: 'rgb(var(--color-text) / <alpha-value>)',
+        muted: 'rgb(var(--color-muted) / <alpha-value>)',
+        accent: 'rgb(var(--color-accent) / <alpha-value>)',
+        'accent-lo': 'rgb(var(--color-accent-lo) / <alpha-value>)',
+        success: 'rgb(var(--color-success) / <alpha-value>)',
+        warn: 'rgb(var(--color-warn) / <alpha-value>)',
+        danger: 'rgb(var(--color-danger) / <alpha-value>)',
       },
       fontFamily: {
         mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Consolas', 'monospace'],

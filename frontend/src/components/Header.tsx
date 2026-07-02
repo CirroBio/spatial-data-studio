@@ -1,23 +1,18 @@
 import { useAppStore } from '../store/sessionStore';
 import { saveSession } from '../api';
-
-function reportError(prefix: string, err: unknown) {
-  useAppStore.getState().pushNotification({
-    kind: 'error',
-    message: `${prefix}: ${err instanceof Error ? err.message : String(err)}`,
-  });
-}
+import { reportError } from '../lib/errors';
 
 interface Props {
   onNewSession: () => void;
 }
 
-const BTN = 'px-2.5 py-1 text-xs rounded border border-border bg-bg text-text hover:border-accent transition-colors disabled:opacity-40';
+const ICON_BTN ='p-1.5 rounded border border-border bg-bg text-text hover:border-accent hover:text-accent transition-colors disabled:opacity-40 disabled:hover:border-border disabled:hover:text-text';
 
 export default function Header({ onNewSession }: Props) {
   const {
-    activeSessionId, activeJobIds, squidpyVersion, sessions,
+    activeSessionId, activeJobIds, sessions,
     aiEnabled, chatOpen, setChatOpen,
+    theme, setTheme,
   } = useAppStore();
   const activeSession = sessions.find((s) => s.id === activeSessionId);
   const runningCount = activeJobIds.size;
@@ -33,9 +28,6 @@ export default function Header({ onNewSession }: Props) {
     <header className="flex items-center justify-between px-4 h-12 bg-surface border-b border-border shrink-0">
       <div className="flex items-center gap-3">
         <span className="text-accent font-semibold tracking-wide text-sm">Spatial Data Studio</span>
-        {squidpyVersion && (
-          <span className="text-muted text-xs font-mono">squidpy {squidpyVersion}</span>
-        )}
         {activeSession && (
           <span className="text-text/70 text-xs truncate max-w-[200px]">{activeSession.name}</span>
         )}
@@ -49,8 +41,37 @@ export default function Header({ onNewSession }: Props) {
           </span>
         )}
 
-        <button onClick={onNewSession} className={BTN}>New session</button>
-        <button onClick={handleSave} disabled={!activeSessionId} className={BTN}>Save session</button>
+        <button onClick={onNewSession} className={ICON_BTN} title="New session" aria-label="New session">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M14 3v4a1 1 0 0 0 1 1h4" />
+            <path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z" />
+            <path d="M12 11v6M9 14h6" />
+          </svg>
+        </button>
+        <button onClick={handleSave} disabled={!activeSessionId} className={ICON_BTN} title="Save session" aria-label="Save session">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+            <path d="M17 21v-8H7v8M7 3v5h8" />
+          </svg>
+        </button>
+
+        <button
+          onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+          className={ICON_BTN}
+          title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+          aria-label="Toggle theme"
+        >
+          {theme === 'dark' ? (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="4" />
+              <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+            </svg>
+          ) : (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+            </svg>
+          )}
+        </button>
 
         {/* Dedicated AI panel toggle — only when Bedrock is configured */}
         {aiEnabled && (
