@@ -76,8 +76,7 @@ const VIRIDIS: [number, number, number][] = [
  * Returns Uint8Array of length N*4 (RGBA)
  */
 export function buildNumericColormap(
-  values: Float32Array | Float64Array,
-  _colormap: string
+  values: Float32Array | Float64Array
 ): Uint8Array {
   const n = values.length;
   const result = new Uint8Array(n * 4);
@@ -93,6 +92,10 @@ export function buildNumericColormap(
   const range = max - min;
   for (let i = 0; i < n; i++) {
     const v = values[i];
+    if (Number.isNaN(v)) {
+      result[i * 4 + 3] = 0;
+      continue;
+    }
     const t = range === 0 ? 0.5 : Math.max(0, Math.min(1, (v - min) / range));
     const idx = Math.min(255, Math.floor(t * 255));
     const [r, g, b] = VIRIDIS[idx];

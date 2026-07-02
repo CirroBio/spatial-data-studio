@@ -6,6 +6,7 @@ import type { Layer, OrthographicViewState, PickingInfo } from '@deck.gl/core';
 import { useAppStore } from '../../store/sessionStore';
 import { useArrowField } from '../../hooks/useArrowField';
 import { getImageInfo, putDisplay, saveSnapshot } from '../../api';
+import { reportError } from '../../lib/errors';
 import type { DisplaySpec, ImageInfo } from '../../types';
 import { useArrowPositions } from './useArrowPositions';
 import { buildCategoricalPalette, buildNumericColormap } from './colorUtils';
@@ -30,7 +31,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
       window.open(r.url, '_blank');
       pushNotification({ kind: 'info', message: 'Snapshot saved.' });
     } catch (e) {
-      pushNotification({ kind: 'error', message: `Snapshot failed: ${e instanceof Error ? e.message : String(e)}` });
+      reportError('Snapshot failed', e);
     }
   }
   const fields = sessionState?.fields;
@@ -181,7 +182,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
       for (let i = 0; i < n; i++) {
         values[i] = valueCol.get(i) as number;
       }
-      const rgba = buildNumericColormap(values, display.encoding.colormap);
+      const rgba = buildNumericColormap(values);
       for (let i = 0; i < n; i++) {
         result[i * 4] = rgba[i * 4];
         result[i * 4 + 1] = rgba[i * 4 + 1];
@@ -190,7 +191,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
       }
     }
     return result;
-  }, [colorTable, positions, display.encoding.opacity, display.encoding.colormap, isolatedCategory]);
+  }, [colorTable, positions, display.encoding.opacity, isolatedCategory]);
 
   const layers = useMemo(() => {
     const result: Layer[] = [];
@@ -344,12 +345,13 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
 
         <div className="flex flex-col gap-1">
           <label className="text-[10px] text-muted font-mono uppercase tracking-wide">
-            Point size: {display.encoding.point_size}
+            Point size: {display.encoding.point_size.toFixed(1)}
           </label>
           <input
             type="range"
-            min={1}
+            min={0.1}
             max={20}
+            step={0.1}
             value={display.encoding.point_size}
             onChange={(e) => updateEncoding({ point_size: Number(e.target.value) })}
             className="w-full accent-accent"
