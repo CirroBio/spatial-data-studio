@@ -35,6 +35,14 @@ interface AppStore {
   sidebarTab: 'compute' | 'plots' | 'annotations' | 'subsetting';
   setSidebarTab: (tab: 'compute' | 'plots' | 'annotations' | 'subsetting') => void;
 
+  // main viewer mode — the spatial canvas or the data-table inspector
+  mainView: 'canvas' | 'tables';
+  setMainView: (view: 'canvas' | 'tables') => void;
+
+  // light/dark theme — persisted in localStorage so it survives reloads
+  theme: 'dark' | 'light';
+  setTheme: (theme: 'dark' | 'light') => void;
+
   // annotations tab state
   activeRegionSetId: string | null;
   setActiveRegionSetId: (id: string | null) => void;
@@ -104,6 +112,20 @@ export interface ApprovalRequest {
 
 let _notificationSeq = 0;
 
+const THEME_KEY = 'sds-theme';
+
+function readTheme(): 'dark' | 'light' {
+  const t = localStorage.getItem(THEME_KEY);
+  return t === 'light' ? 'light' : 'dark';
+}
+
+export function applyTheme(theme: 'dark' | 'light') {
+  document.documentElement.dataset.theme = theme;
+}
+
+// Apply the persisted theme before first paint to avoid a flash.
+applyTheme(readTheme());
+
 export const useAppStore = create<AppStore>((set) => ({
   sessions: [],
   setSessions: (sessions) => set({ sessions }),
@@ -167,6 +189,16 @@ export const useAppStore = create<AppStore>((set) => ({
   setSelectedPlotId: (id) => set({ selectedPlotId: id, selectedComputeId: null }),
   sidebarTab: 'compute',
   setSidebarTab: (tab) => set({ sidebarTab: tab }),
+
+  mainView: 'canvas',
+  setMainView: (view) => set({ mainView: view }),
+
+  theme: readTheme(),
+  setTheme: (theme) => {
+    localStorage.setItem(THEME_KEY, theme);
+    applyTheme(theme);
+    set({ theme });
+  },
 
   activeRegionSetId: null,
   setActiveRegionSetId: (id) => set({ activeRegionSetId: id }),
