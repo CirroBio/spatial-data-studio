@@ -2,8 +2,10 @@ import { useRef, useState } from 'react';
 import * as Tabs from '@radix-ui/react-tabs';
 import { useAppStore } from '../store/sessionStore';
 import { deleteHistoryEntry, getRecipe, importRecipe, getSession } from '../api';
+import { reportError } from '../lib/errors';
 import StatusBadge from './StatusBadge';
 import FunctionPicker from './FunctionPicker';
+import RecipeGallery from './RecipeGallery';
 import AnnotationsPanel from './AnnotationsPanel';
 import SubsettingPanel from './SubsettingPanel';
 import type { SessionSummary } from '../types';
@@ -28,6 +30,7 @@ export default function Sidebar({ onNewSession, sessions }: Props) {
   } = useAppStore();
 
   const [showPicker, setShowPicker] = useState(false);
+  const [showRecipes, setShowRecipes] = useState(false);
   const recipeFileRef = useRef<HTMLInputElement>(null);
 
   function handleExportRecipe() {
@@ -42,7 +45,7 @@ export default function Sidebar({ onNewSession, sessions }: Props) {
         a.click();
         URL.revokeObjectURL(url);
       })
-      .catch((err) => pushNotification({ kind: 'error', message: `Export recipe failed: ${err instanceof Error ? err.message : String(err)}` }));
+      .catch((err) => reportError('Export recipe failed', err));
   }
 
   async function handleLoadRecipe(e: React.ChangeEvent<HTMLInputElement>) {
@@ -55,7 +58,7 @@ export default function Sidebar({ onNewSession, sessions }: Props) {
       setSessionState(await getSession(activeSessionId));
       pushNotification({ kind: 'info', message: 'Recipe loaded.' });
     } catch (err) {
-      pushNotification({ kind: 'error', message: `Load recipe failed: ${err instanceof Error ? err.message : String(err)}` });
+      reportError('Load recipe failed', err);
     }
   }
 
@@ -68,7 +71,7 @@ export default function Sidebar({ onNewSession, sessions }: Props) {
       if (selectedPlotId === id) setSelectedPlotId(null);
       setSessionState(await getSession(activeSessionId));
     } catch (err) {
-      pushNotification({ kind: 'error', message: `Delete failed: ${err instanceof Error ? err.message : String(err)}` });
+      reportError('Delete failed', err);
     }
   }
 
@@ -105,7 +108,7 @@ export default function Sidebar({ onNewSession, sessions }: Props) {
               {[...computeItems].reverse().map((item) => (
                 <li key={item.id} className="group relative">
                   <button
-                    onClick={() => setSelectedComputeId(item.id)}
+                    onClick={() => setSelectedComputeId(selectedComputeId === item.id ? null : item.id)}
                     className={`w-full text-left px-3 py-2 border-b border-border/50 hover:bg-accent-lo/30 transition-colors ${
                       selectedComputeId === item.id ? 'bg-accent-lo text-text' : 'text-text/80'
                     }`}
@@ -143,7 +146,7 @@ export default function Sidebar({ onNewSession, sessions }: Props) {
               {[...plotItems].reverse().map((item) => (
                 <li key={item.id} className="group relative">
                   <button
-                    onClick={() => setSelectedPlotId(item.id)}
+                    onClick={() => setSelectedPlotId(selectedPlotId === item.id ? null : item.id)}
                     className={`w-full text-left px-3 py-2 border-b border-border/50 hover:bg-accent-lo/30 transition-colors ${
                       selectedPlotId === item.id ? 'bg-accent-lo text-text' : 'text-text/80'
                     }`}
@@ -186,6 +189,12 @@ export default function Sidebar({ onNewSession, sessions }: Props) {
           >
             + Add {sidebarTab === 'plots' ? 'plot' : 'compute'} function
           </button>
+          <button
+            onClick={() => setShowRecipes(true)}
+            className="w-full py-1 text-[11px] bg-bg border border-border rounded text-text hover:border-accent transition-colors"
+          >
+            Browse recipes
+          </button>
           <div className="flex gap-1">
             <button
               onClick={() => recipeFileRef.current?.click()}
@@ -216,6 +225,10 @@ export default function Sidebar({ onNewSession, sessions }: Props) {
           effectClass={effectClass}
           onClose={() => setShowPicker(false)}
         />
+      )}
+
+      {showRecipes && activeSessionId && (
+        <RecipeGallery sessionId={activeSessionId} onClose={() => setShowRecipes(false)} />
       )}
     </aside>
   );
