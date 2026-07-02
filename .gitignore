@@ -18,6 +18,7 @@ checkpoints/
 # Local
 .DS_Store
 *.log
+.run.pids
 
 .env
 
