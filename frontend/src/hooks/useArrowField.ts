@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import * as arrow from 'apache-arrow';
 import { getFieldData } from '../api';
+import { formatError } from '../lib/errors';
 
 type CacheKey = string; // `${sessionId}:${fieldPath}:${version}`
 
@@ -50,7 +51,7 @@ export function useArrowField(
       })
       .catch((err: unknown) => {
         if (controller.signal.aborted) return;
-        setError(err instanceof Error ? err.message : String(err));
+        setError(formatError(err));
         setLoading(false);
       });
 

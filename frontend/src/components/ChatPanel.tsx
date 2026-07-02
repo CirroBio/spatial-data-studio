@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../store/sessionStore';
 import { sendChat, approveCall, setChatAutoMode, getChat } from '../api';
+import { formatError } from '../lib/errors';
 
 const ROLE_STYLE: Record<string, string> = {
   user: 'bg-accent/15 text-text self-end',
@@ -45,7 +46,7 @@ export default function ChatPanel({ sessionId }: { sessionId: string }) {
     try {
       await sendChat(sessionId, msg);
     } catch (err) {
-      appendChatMessage({ role: 'error', text: err instanceof Error ? err.message : String(err) });
+      appendChatMessage({ role: 'error', text: formatError(err) });
       setChatBusy(false);
     }
   }
@@ -70,7 +71,7 @@ export default function ChatPanel({ sessionId }: { sessionId: string }) {
     setEditing(false);
     setDenyReason('');
     try { await approveCall(sessionId, body); } catch (err) {
-      appendChatMessage({ role: 'error', text: err instanceof Error ? err.message : String(err) });
+      appendChatMessage({ role: 'error', text: formatError(err) });
     }
   }
 
