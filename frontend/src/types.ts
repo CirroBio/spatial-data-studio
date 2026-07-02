@@ -123,14 +123,7 @@ export interface RegionSet {
   id: string;
   name: string;
   obs_column: string;
-  shapes_element: string | null;
-  coordinate_system: string;
   categories: RegionCategory[];
-  display: {
-    show_polygons: boolean;
-    fill_opacity: number;
-    outline: boolean;
-  };
 }
 
 export interface AppState {

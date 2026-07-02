@@ -1,6 +1,10 @@
 import { useState } from 'react';
 import { useAppStore } from '../store/sessionStore';
 import { promoteObsColumn, annotateSession } from '../api';
+import { reportError } from '../lib/errors';
+import { resolveRegionSetColumn } from '../lib/regions';
+import { useDrawSelection } from '../hooks/useDrawSelection';
+import DrawControls from './DrawControls';
 import type { RegionSet } from '../types';
 
 const NEW_CAT_COLORS = [
@@ -19,11 +23,8 @@ export default function AnnotationsPanel() {
     annotationCategoryName,
     annotationColor,
     setAnnotationTarget,
-    drawPolygons,
-    drawRing,
-    commitDrawRing,
-    clearDraw,
   } = useAppStore();
+  const { drawPolygons, drawRing, regionCount, allPolygons, commitDrawRing, clearDraw } = useDrawSelection();
 
   const regions: RegionSet[] = sessionState?.app_state.regions ?? [];
   const obsFields = sessionState?.fields.obs ?? [];
@@ -35,27 +36,22 @@ export default function AnnotationsPanel() {
 
   const activeSet = regions.find((r) => r.id === activeRegionSetId) ?? regions[0] ?? null;
 
-  const regionCount = drawPolygons.length + (drawRing.length >= 3 ? 1 : 0);
-  const regionSetTarget = annotationNewSetName || activeRegionSetId || '';
+  const regionSetTarget = resolveRegionSetColumn(annotationNewSetName, activeRegionSetId, regions);
   const canApply = regionCount > 0 && !!regionSetTarget && !!annotationCategoryName;
 
   async function handleApplyLabel() {
     if (!activeSessionId || !canApply) return;
-    const all = drawRing.length >= 3 ? [...drawPolygons, drawRing] : drawPolygons;
     setApplying(true);
     try {
       await annotateSession(activeSessionId, {
-        polygons: all,
+        polygons: allPolygons,
         region_set: regionSetTarget,
         category: annotationCategoryName,
         color: annotationColor,
       });
       clearDraw();
     } catch (err) {
-      useAppStore.getState().pushNotification({
-        kind: 'error',
-        message: `Annotate failed: ${err instanceof Error ? err.message : String(err)}`,
-      });
+      reportError('Annotate failed', err);
     } finally {
       setApplying(false);
     }
@@ -68,10 +64,7 @@ export default function AnnotationsPanel() {
       await promoteObsColumn(activeSessionId, promoteColumn);
       setPromoteColumn('');
     } catch (err) {
-      useAppStore.getState().pushNotification({
-        kind: 'error',
-        message: `Promote failed: ${err instanceof Error ? err.message : String(err)}`,
-      });
+      reportError('Promote failed', err);
     } finally {
       setPromoting(false);
     }
@@ -155,28 +148,13 @@ export default function AnnotationsPanel() {
 
         {/* Draw controls — drawing happens on the canvas; actions live here. */}
         <div className="mt-2 flex flex-col gap-1.5">
-          <p className="text-[10px] text-muted leading-snug">
-            {regionCount} region{regionCount === 1 ? '' : 's'}
-            {drawRing.length > 0 ? `, ${drawRing.length}-pt drawing` : ''}.
-          </p>
-          <div className="flex gap-1">
-            <button
-              type="button"
-              onClick={commitDrawRing}
-              disabled={drawRing.length < 3}
-              className="flex-1 py-1 text-[11px] bg-bg border border-border rounded text-text hover:border-accent disabled:opacity-40 transition-colors"
-            >
-              Finish region
-            </button>
-            <button
-              type="button"
-              onClick={clearDraw}
-              disabled={drawPolygons.length === 0 && drawRing.length === 0}
-              className="flex-1 py-1 text-[11px] bg-bg border border-border rounded text-text hover:border-accent disabled:opacity-40 transition-colors"
-            >
-              Clear
-            </button>
-          </div>
+          <DrawControls
+            regionCount={regionCount}
+            drawRingLength={drawRing.length}
+            drawPolygonsLength={drawPolygons.length}
+            onFinish={commitDrawRing}
+            onClear={clearDraw}
+          />
           <button
             type="button"
             onClick={handleApplyLabel}

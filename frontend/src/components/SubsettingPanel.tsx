@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import { useAppStore } from '../store/sessionStore';
 import { subsetSession } from '../api';
+import { reportError } from '../lib/errors';
+import { useDrawSelection } from '../hooks/useDrawSelection';
+import DrawControls from './DrawControls';
 import type { SessionSummary } from '../types';
 
 interface Props {
@@ -106,27 +109,22 @@ function SessionNode({
 }
 
 export default function SubsettingPanel({ onNewSession, sessions }: Props) {
-  const { activeSessionId, setActiveSessionId, drawPolygons, drawRing, commitDrawRing, clearDraw } = useAppStore();
+  const { activeSessionId, setActiveSessionId } = useAppStore();
+  const { drawPolygons, drawRing, regionCount, allPolygons, commitDrawRing, clearDraw } = useDrawSelection();
 
   const [saveParent, setSaveParent] = useState(false);
   const [working, setWorking] = useState(false);
 
   const tree = buildTree(sessions);
 
-  const regionCount = drawPolygons.length + (drawRing.length >= 3 ? 1 : 0);
-
   async function handleSubset() {
     if (!activeSessionId || regionCount === 0) return;
-    const all = drawRing.length >= 3 ? [...drawPolygons, drawRing] : drawPolygons;
     setWorking(true);
     try {
-      await subsetSession(activeSessionId, { polygons: all, save_parent: saveParent });
+      await subsetSession(activeSessionId, { polygons: allPolygons, save_parent: saveParent });
       clearDraw();
     } catch (err) {
-      useAppStore.getState().pushNotification({
-        kind: 'error',
-        message: `Subset failed: ${err instanceof Error ? err.message : String(err)}`,
-      });
+      reportError('Subset failed', err);
     } finally {
       setWorking(false);
     }
@@ -137,28 +135,13 @@ export default function SubsettingPanel({ onNewSession, sessions }: Props) {
       {/* Draw controls — drawing happens on the canvas; actions live here. */}
       <div className="px-3 py-2 border-b border-border/50 flex flex-col gap-1.5">
         <span className="text-[10px] text-muted font-mono uppercase tracking-wide">Selection</span>
-        <p className="text-[10px] text-muted leading-snug">
-          {regionCount} region{regionCount === 1 ? '' : 's'}
-          {drawRing.length > 0 ? `, ${drawRing.length}-pt drawing` : ''}.
-        </p>
-        <div className="flex gap-1">
-          <button
-            type="button"
-            onClick={commitDrawRing}
-            disabled={drawRing.length < 3}
-            className="flex-1 py-1 text-[11px] bg-bg border border-border rounded text-text hover:border-accent disabled:opacity-40 transition-colors"
-          >
-            Finish region
-          </button>
-          <button
-            type="button"
-            onClick={clearDraw}
-            disabled={drawPolygons.length === 0 && drawRing.length === 0}
-            className="flex-1 py-1 text-[11px] bg-bg border border-border rounded text-text hover:border-accent disabled:opacity-40 transition-colors"
-          >
-            Clear
-          </button>
-        </div>
+        <DrawControls
+          regionCount={regionCount}
+          drawRingLength={drawRing.length}
+          drawPolygonsLength={drawPolygons.length}
+          onFinish={commitDrawRing}
+          onClear={clearDraw}
+        />
         <label className="flex items-center gap-2 text-[11px] text-muted cursor-pointer">
           <input type="checkbox" checked={saveParent} onChange={(e) => setSaveParent(e.target.checked)} className="accent-accent" />
           Save parent first
