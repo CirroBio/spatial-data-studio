@@ -4,9 +4,8 @@ the agent's view of "which columns are categorical" matches the Arrow transport
 exactly (no second definition)."""
 from __future__ import annotations
 
-import pandas as pd
-
 from .registry import contributor
+from .. import imaging
 from ..transport import arrow
 
 _MAX_CATS = 50
@@ -90,7 +89,7 @@ def images(session) -> str | None:
             chan_state[disp["encoding"].get("image_layer")] = cs
     lines = []
     for name, elem in sdata.images.items():
-        names = _channel_names(elem)
+        names = imaging.channel_names(elem)
         states = chan_state.get(name) or {}
         chans = []
         for i, cn in enumerate(names):
@@ -100,24 +99,6 @@ def images(session) -> str | None:
             chans.append(f'"{disp_name}"({on})' if disp_name != cn else f"{cn}({on})")
         lines.append(f"- {name}: {len(names)}ch [{', '.join(chans)}]")
     return "\n".join(lines)
-
-
-def _channel_names(elem) -> list[str]:
-    # multiscale images are a DataTree; take the highest-resolution scale
-    arr = elem
-    if hasattr(elem, "children") or elem.__class__.__name__ == "DataTree":
-        try:
-            scale0 = next(iter(elem.children.values()))
-            arr = next(iter(scale0.values()))
-        except (StopIteration, AttributeError):
-            pass
-    try:
-        return [str(c) for c in arr.coords["c"].values]
-    except (KeyError, AttributeError):
-        try:
-            return [str(i) for i in range(arr.sizes["c"])]
-        except (KeyError, AttributeError):
-            return []
 
 
 @contributor("Summaries")

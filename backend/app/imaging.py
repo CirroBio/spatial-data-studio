@@ -22,12 +22,28 @@ def _image_array(sdata, element):
     return arr
 
 
-def _channel_names(arr) -> list[str]:
+def channel_names(elem) -> list[str]:
+    """Channel labels for an image element, multiscale (DataTree) or plain.
+    Falls back through the `c` coord, the `c` dim size, and finally a shape
+    guess, since not every reader attaches explicit channel names/coords.
+    """
+    arr = elem
+    if hasattr(elem, "children") or elem.__class__.__name__ in ("DataTree", "Datatree"):
+        try:
+            scale0 = next(iter(elem.children.values()))
+            arr = next(iter(scale0.values()))
+        except (StopIteration, AttributeError):
+            arr = elem
     try:
         return [str(c) for c in arr.coords["c"].values]
     except (KeyError, AttributeError):
-        n = arr.shape[0] if getattr(arr, "ndim", 0) == 3 else 1
-        return [str(i) for i in range(n)]
+        pass
+    try:
+        return [str(i) for i in range(arr.sizes["c"])]
+    except (KeyError, AttributeError):
+        pass
+    n = arr.shape[0] if getattr(arr, "ndim", 0) == 3 else 1
+    return [str(i) for i in range(n)]
 
 
 def _to_hwc_uint8(arr, visible: list[int] | None = None) -> np.ndarray:
@@ -82,7 +98,7 @@ def image_info(sdata, element) -> dict:
     arr = _image_array(sdata, element)
     return {"element": element, "height": int(arr.shape[-2]), "width": int(arr.shape[-1]),
             "channels": int(arr.shape[0]) if arr.ndim == 3 else 1,
-            "channel_names": _channel_names(arr),
+            "channel_names": channel_names(arr),
             "bounds": _extent(sdata, element)}
 
 
