@@ -41,8 +41,10 @@ def resolve_field(adata, field_path: str) -> pa.RecordBatch:
     if element == "obsp":
         return _sparse_batch(adata.obsp[key])
     if element == "layers":
-        return _gene_batch(adata, key.split("/", 1)[1], layer=key.split("/", 1)[0]) \
-            if "/" in key else _dense_layer_meanless(adata, key)
+        if "/" not in key:
+            raise ValueError(f"layer field needs `layers:<layer>/<gene>` form: {key}")
+        layer, gene = key.split("/", 1)
+        return _gene_batch(adata, gene, layer=layer)
     raise ValueError(f"unsupported element: {element}")
 
 
@@ -70,10 +72,6 @@ def _gene_batch(adata, gene: str, layer: str | None = None) -> pa.RecordBatch:
     col = mat[:, idx]
     col = col.toarray().ravel() if sparse.issparse(col) else np.asarray(col).ravel()
     return pa.record_batch({"value": pa.array(col.astype("float32"))})
-
-
-def _dense_layer_meanless(adata, key):
-    raise ValueError(f"layer field needs `layers:<layer>/<gene>` form: {key}")
 
 
 def _sparse_batch(mat) -> pa.RecordBatch:
