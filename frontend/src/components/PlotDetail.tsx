@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from '../store/sessionStore';
 import { getJobLog, redrawPlot, getFigureUrl } from '../api';
-import StatusBadge from './StatusBadge';
+import { DetailHeader, ParametersSection } from './DetailModal';
 import AnsiLog from './AnsiLog';
+import RerunEditor from './RerunEditor';
+import { useRerunEditor } from '../hooks/useRerunEditor';
+import { reportError } from '../lib/errors';
 
 export default function PlotDetail() {
   const { selectedPlotId, sessionState, activeSessionId, setSelectedPlotId } = useAppStore();
@@ -11,6 +14,10 @@ export default function PlotDetail() {
   const [redrawing, setRedrawing] = useState(false);
 
   const item = sessionState?.app_state.plots.find((p) => p.id === selectedPlotId) ?? null;
+  const { fn, fields, editing, setEditing, submitting, rerun } = useRerunEditor(
+    item,
+    () => setSelectedPlotId(null)
+  );
 
   useEffect(() => {
     if (!activeSessionId || !selectedPlotId || !item) return;
@@ -73,91 +80,95 @@ export default function PlotDetail() {
       a.click();
       URL.revokeObjectURL(url);
     } catch (err) {
-      useAppStore.getState().pushNotification({
-        kind: 'error',
-        message: `Export PDF failed: ${err instanceof Error ? err.message : String(err)}`,
-      });
+      reportError('Export PDF failed', err);
     }
   }
 
+  const actionBtn = 'px-3 py-1.5 text-xs rounded border border-border bg-surface hover:bg-border text-muted hover:text-text transition-colors';
+
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      <div className="flex items-center justify-between p-4 border-b border-border shrink-0">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => setSelectedPlotId(null)}
-            className="text-muted hover:text-text transition-colors"
-            aria-label="Back"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M19 12H5M12 5l-7 7 7 7" />
-            </svg>
-          </button>
-          <span className="text-sm font-mono text-text">{item.namespace}.{item.function}</span>
-          <StatusBadge status={item.status} />
-        </div>
-        <div className="flex items-center gap-2">
-          {svgContent && (
-            <>
+      <DetailHeader title={`${item.namespace}.${item.function}`} status={item.status} onClose={() => setSelectedPlotId(null)}>
+        {editing ? (
+          <button onClick={() => setEditing(false)} className={actionBtn}>Cancel</button>
+        ) : (
+          <>
+            {svgContent && (
+              <>
+                <button onClick={handleExportSvg} className={actionBtn}>Export SVG</button>
+                <button onClick={handleExportPdf} className={actionBtn}>Export PDF</button>
+              </>
+            )}
+            {fn && (
               <button
-                onClick={handleExportSvg}
-                className="px-3 py-1.5 bg-surface hover:bg-border text-muted hover:text-text text-xs rounded border border-border transition-colors"
+                onClick={() => setEditing(true)}
+                className="px-3 py-1.5 bg-accent/20 hover:bg-accent/30 text-accent text-xs rounded transition-colors"
               >
-                Export SVG
+                Edit &amp; rerun
               </button>
-              <button
-                onClick={handleExportPdf}
-                className="px-3 py-1.5 bg-surface hover:bg-border text-muted hover:text-text text-xs rounded border border-border transition-colors"
-              >
-                Export PDF
-              </button>
-            </>
-          )}
-          <button
-            onClick={handleRedraw}
-            disabled={redrawing}
-            className="px-3 py-1.5 bg-accent/20 hover:bg-accent/30 text-accent text-xs rounded transition-colors disabled:opacity-50"
-          >
-            {redrawing ? 'Redrawing...' : 'Redraw'}
-          </button>
-        </div>
-      </div>
-
-      <div className="flex-1 overflow-y-auto">
-        {svgContent ? (
-          <div className="p-4">
-            <div
-              className="bg-white rounded overflow-auto"
-              // SVG from trusted backend
-              dangerouslySetInnerHTML={{ __html: svgContent }}
-            />
-          </div>
-        ) : item.status === 'drawn' ? (
-          <div className="flex items-center justify-center h-32 text-muted text-sm">Loading figure...</div>
-        ) : item.status === 'queued' || item.status === 'running' ? (
-          <div className="flex items-center justify-center h-32 text-accent text-sm animate-pulse">
-            {item.status === 'running' ? 'Drawing...' : 'Queued...'}
-          </div>
-        ) : item.status === 'invalidated' ? (
-          <div className="flex items-center justify-center h-32 text-warn text-sm">
-            Figure invalidated — click Redraw
-          </div>
-        ) : item.status === 'failed' ? (
-          <div className="flex items-center justify-center h-32 text-danger text-sm">
-            Plot failed — see log below
-          </div>
-        ) : null}
-
-        {log && (
-          <div className="p-4 border-t border-border">
-            <h3 className="text-xs font-mono text-muted uppercase tracking-wide mb-2">Log</h3>
-            <AnsiLog
-              text={log}
-              className="bg-bg border border-border rounded p-3 text-xs font-mono text-muted overflow-auto max-h-48 whitespace-pre-wrap"
-            />
-          </div>
+            )}
+            <button
+              onClick={handleRedraw}
+              disabled={redrawing}
+              className="px-3 py-1.5 bg-accent/20 hover:bg-accent/30 text-accent text-xs rounded transition-colors disabled:opacity-50"
+            >
+              {redrawing ? 'Redrawing...' : 'Redraw'}
+            </button>
+          </>
         )}
-      </div>
+      </DetailHeader>
+
+      {editing && fn ? (
+        <RerunEditor
+          fn={fn}
+          fields={fields}
+          sessionId={activeSessionId!}
+          submitting={submitting}
+          params={item.params}
+          note="Editing parameters — rerun draws a new plot from the same function."
+          onSubmit={rerun}
+        />
+      ) : (
+        <div className="flex-1 overflow-y-auto">
+          {svgContent ? (
+            <div className="p-4">
+              <div
+                className="bg-white rounded overflow-auto"
+                // SVG from trusted backend
+                dangerouslySetInnerHTML={{ __html: svgContent }}
+              />
+            </div>
+          ) : item.status === 'drawn' ? (
+            <div className="flex items-center justify-center h-32 text-muted text-sm">Loading figure...</div>
+          ) : item.status === 'queued' || item.status === 'running' ? (
+            <div className="flex items-center justify-center h-32 text-accent text-sm animate-pulse">
+              {item.status === 'running' ? 'Drawing...' : 'Queued...'}
+            </div>
+          ) : item.status === 'invalidated' ? (
+            <div className="flex items-center justify-center h-32 text-warn text-sm">
+              Figure invalidated — click Redraw
+            </div>
+          ) : item.status === 'failed' ? (
+            <div className="flex items-center justify-center h-32 text-danger text-sm">
+              Plot failed — see log below
+            </div>
+          ) : null}
+
+          <div className="p-4 border-t border-border">
+            <ParametersSection params={item.params} />
+          </div>
+
+          {log && (
+            <div className="p-4 border-t border-border">
+              <h3 className="text-xs font-mono text-muted uppercase tracking-wide mb-2">Log</h3>
+              <AnsiLog
+                text={log}
+                className="bg-bg border border-border rounded p-3 text-xs font-mono text-muted overflow-auto max-h-48 whitespace-pre-wrap"
+              />
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

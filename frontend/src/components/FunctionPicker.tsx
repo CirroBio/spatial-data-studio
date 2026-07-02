@@ -3,6 +3,7 @@ import * as Dialog from '@radix-ui/react-dialog';
 import { useAppStore } from '../store/sessionStore';
 import { submitJob } from '../api';
 import FunctionForm from './forms/FunctionForm';
+import { formatError } from '../lib/errors';
 import type { FunctionEntry } from '../types';
 
 interface Props {
@@ -47,7 +48,7 @@ export default function FunctionPicker({ sessionId, effectClass, onClose }: Prop
       });
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(formatError(err));
     } finally {
       setSubmitting(false);
     }
@@ -142,14 +143,16 @@ export default function FunctionPicker({ sessionId, effectClass, onClose }: Prop
                   <p className="text-xs text-muted">{selected.summary || 'No description available.'}</p>
                 )}
               </div>
-              {/* Parameters — scrolls independently of the documentation */}
-              <div className="w-1/2 overflow-y-auto p-4">
-                <h3 className="text-xs font-mono text-muted uppercase tracking-wide mb-3">Parameters</h3>
-                {error && (
-                  <div className="mb-3 text-xs text-danger bg-danger/10 border border-danger/20 rounded px-3 py-2">
-                    {error}
-                  </div>
-                )}
+              {/* Parameters — scroll independently; the Run button stays pinned below */}
+              <div className="w-1/2 flex flex-col overflow-hidden">
+                <div className="px-4 pt-4 pb-3 shrink-0">
+                  <h3 className="text-xs font-mono text-muted uppercase tracking-wide">Parameters</h3>
+                  {error && (
+                    <div className="mt-3 text-xs text-danger bg-danger/10 border border-danger/20 rounded px-3 py-2">
+                      {error}
+                    </div>
+                  )}
+                </div>
                 <FunctionForm
                   fn={selected}
                   fields={fields}

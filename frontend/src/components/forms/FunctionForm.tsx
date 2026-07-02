@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
-import type { FunctionEntry } from '../../types';
-import type { SessionFields } from '../../types';
+import type { FunctionEntry, SessionFields } from '../../types';
 import { getObsValues } from '../../api';
 
 interface Props {
@@ -10,6 +9,26 @@ interface Props {
   sessionId: string;
   onSubmit: (params: Record<string, unknown>) => void;
   submitting?: boolean;
+  // Pre-fill the form (e.g. editing a prior call's params before re-running).
+  initialValues?: Record<string, unknown>;
+  submitLabel?: string;
+}
+
+// Inverse of processSubmit: turn stored params back into the form's field shapes
+// (array params render as comma-joined text; json params as a JSON string).
+function paramsToFormValues(fn: FunctionEntry, params: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(params)) {
+    const widget = fn.ui_schema[k]?.widget;
+    if ((widget === 'var_names' || widget === 'multitext') && Array.isArray(v)) {
+      out[k] = (v as unknown[]).join(', ');
+    } else if (widget === 'json' && typeof v !== 'string') {
+      out[k] = JSON.stringify(v);
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
 }
 
 function getFieldOptions(widget: string, fields: SessionFields): string[] {
@@ -37,8 +56,10 @@ interface JsonSchemaProperty {
   items?: { type?: string };
 }
 
-export default function FunctionForm({ fn, fields, sessionId, onSubmit, submitting }: Props) {
-  const { register, handleSubmit, watch, formState: { errors } } = useForm<Record<string, unknown>>();
+export default function FunctionForm({ fn, fields, sessionId, onSubmit, submitting, initialValues, submitLabel }: Props) {
+  const { register, handleSubmit, watch, formState: { errors } } = useForm<Record<string, unknown>>({
+    defaultValues: initialValues ? paramsToFormValues(fn, initialValues) : undefined,
+  });
 
   const schema = fn.json_schema as {
     properties?: Record<string, JsonSchemaProperty>;
@@ -111,23 +132,30 @@ export default function FunctionForm({ fn, fields, sessionId, onSubmit, submitti
 
   const paramKeys = Object.keys(properties);
 
+  const runButton = (
+    <div className="shrink-0 border-t border-border px-4 py-3">
+      <button
+        type="submit"
+        disabled={submitting}
+        className="w-full px-4 py-2 bg-accent hover:bg-accent/80 disabled:opacity-50 text-white rounded text-sm transition-colors"
+      >
+        {submitting ? 'Running...' : submitLabel ?? 'Run'}
+      </button>
+    </div>
+  );
+
   if (paramKeys.length === 0) {
     return (
-      <form onSubmit={handleSubmit(processSubmit)} className="flex flex-col gap-3">
-        <p className="text-sm text-muted">No parameters required.</p>
-        <button
-          type="submit"
-          disabled={submitting}
-          className="px-4 py-2 bg-accent hover:bg-accent/80 disabled:opacity-50 text-white rounded text-sm transition-colors"
-        >
-          {submitting ? 'Running...' : 'Run'}
-        </button>
+      <form onSubmit={handleSubmit(processSubmit)} className="flex flex-col flex-1 min-h-0">
+        <p className="flex-1 overflow-y-auto px-4 pb-4 text-sm text-muted">No parameters required.</p>
+        {runButton}
       </form>
     );
   }
 
   return (
-    <form onSubmit={handleSubmit(processSubmit)} className="flex flex-col gap-3">
+    <form onSubmit={handleSubmit(processSubmit)} className="flex flex-col flex-1 min-h-0">
+      <div className="flex-1 overflow-y-auto px-4 pb-4 flex flex-col gap-3">
       {paramKeys.map((key) => {
         const prop = properties[key];
         const widget = uiSchema[key]?.widget;
@@ -317,14 +345,8 @@ export default function FunctionForm({ fn, fields, sessionId, onSubmit, submitti
           </div>
         );
       })}
-
-      <button
-        type="submit"
-        disabled={submitting}
-        className="px-4 py-2 bg-accent hover:bg-accent/80 disabled:opacity-50 text-white rounded text-sm transition-colors mt-1"
-      >
-        {submitting ? 'Running...' : 'Run'}
-      </button>
+      </div>
+      {runButton}
     </form>
   );
 }

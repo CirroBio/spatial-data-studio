@@ -1,4 +1,4 @@
-type Status = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'drawn' | 'invalidated' | 'loading' | 'ready' | 'errored';
+export type Status = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'drawn' | 'invalidated' | 'loading' | 'ready' | 'errored';
 
 interface Props {
   status: Status;
