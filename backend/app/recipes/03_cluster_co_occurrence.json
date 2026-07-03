@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "name": "Cluster co-occurrence",
+    "description": "How the chance of finding one region near another changes with distance (computed directly on the spot coordinates).",
+    "provenance": "Adapted from the squidpy 'Co-occurrence' vignette; targets the visium_hne example."
+  },
+  "readme": "Computes co-occurrence probability of `obs['cluster']` categories as a function of distance, directly on the spot coordinates (no spatial-neighbors graph needed), then plots the Hippocampus curve.",
+  "steps": [
+    { "namespace": "gr", "function": "co_occurrence", "params": { "cluster_key": "cluster" } },
+    { "namespace": "pl", "function": "co_occurrence", "params": { "cluster_key": "cluster", "clusters": "Hippocampus" } }
+  ]
+}

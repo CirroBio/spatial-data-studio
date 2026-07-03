@@ -189,12 +189,13 @@ At registry build, for every param across **all** discovered functions, record w
 
 # Part 2 — Region annotation: data model
 
-A **region** is a category within a **region set**; a region set is a categorical `obs` column. Hand-drawn regions additionally carry geometry as a SpatialData **shapes** element. Because a region set is an ordinary `obs` categorical, it flows through every existing mechanism with no new wiring (Part 1.4).
+A **region** is a category within a **region set**; a region set is a categorical `obs` column. Because a region set is an ordinary `obs` categorical, it flows through every existing mechanism with no new wiring (Part 1.4).
+
+**Geometry is out of scope.** Drawing a region computes cell membership (via point-in-polygon over `obsm["spatial"]`) and keeps only that membership as an `obs` categorical; the drawn polygon itself is not persisted as a SpatialData shapes element. A region set therefore looks identical whether it came from a drawn lasso, a promoted existing categorical, or a derived clustering — there is no "has geometry" distinction to track.
 
 | Piece | Where | Holds |
 |---|---|---|
 | **Membership** | `obs["<region_set>"]` (pandas Categorical) | per-cell label + `"unassigned"` |
-| **Geometry** (drawn only) | shapes element `regions/<region_set>` (GeoDataFrame) | one polygon per region, in a named coordinate system, with `region_set` + `category` columns |
 
 App registration (declarative, persisted in `attrs`):
 
@@ -203,14 +204,11 @@ App registration (declarative, persisted in `attrs`):
   {
     "id": "uuid", "name": "tumor_vs_stroma",
     "obs_column": "tumor_vs_stroma",
-    "shapes_element": "regions/tumor_vs_stroma",   // null for promoted/derived sets
-    "coordinate_system": "global",
     "categories": [
       { "label": "tumor",  "color": "#c1432b", "n_cells": 18234 },
       { "label": "stroma", "color": "#2b6cc1", "n_cells": 40561 },
       { "label": "unassigned", "color": "#bbbbbb", "n_cells": 1203 }
-    ],
-    "display": { "show_polygons": true, "fill_opacity": 0.15, "outline": true }
+    ]
   }
 ]
 ```
@@ -227,20 +225,18 @@ The existing lasso machinery (editable-layers → vertices → `shapely`) is reu
 
 1. user draws box/lasso/circle (strokes union into one region);
 2. chooses **"Assign to region…"** → pick/create set, name the category, pick color;
-3. backend builds the polygon(s) in the display's coordinate system, computes membership over `obsm["spatial"]` via vectorized point-in-polygon (`matplotlib.path.Path.contains_points`, or `shapely` + `STRtree` for millions of points), writes `obs["<set>"]`, upserts the polygon row(s), emits a structural diff (`obs:<set>`, `shapes:regions/<set>`).
+3. backend builds the polygon(s) in the display's coordinate system, computes membership over `obsm["spatial"]` via vectorized point-in-polygon (`matplotlib.path.Path.contains_points`, or `shapely` + `STRtree` for millions of points), writes `obs["<set>"]`, emits a structural diff (`obs:<set>`). The polygon itself is discarded once membership is computed (Part 2 — no shapes element is persisted).
 
 ## 3.2 Region sets from squidpy-native sources (promotion)
 
-Any existing `obs` categorical can be **promoted** to a region set (no geometry), unifying three sources:
-- **Hand-drawn** (lasso) — has geometry.
+Any existing `obs` categorical can be **promoted** to a region set, unifying three sources that all land in the same geometry-free representation:
+- **Hand-drawn** (lasso).
 - **`tl.sliding_window`** — tiles into windows; assignment column promotable.
 - **Cluster/domain-derived** — Leiden on a spatial graph, or `gr.calculate_niche`; resulting categorical promotable.
 
-Promoted sets have `shapes_element: null`. Synthetic geometry for derived sets is out of scope (no concave-hull synthesis in v1).
-
 ## 3.3 Editing operations
 
-Create set · add region (draw) · rename · recolor · redraw geometry · merge categories · split/reassign · delete region · delete set · promote existing categorical · toggle visibility · set active set. Each geometry-affecting edit re-derives membership and updates `obs` + shapes as a queued mutating job.
+Create set · add region (draw) · rename · recolor · merge categories · split/reassign · delete region · delete set · promote existing categorical · toggle visibility · set active set. Each membership-affecting edit re-derives membership and updates `obs` as a queued mutating job.
 
 ---
 
@@ -263,7 +259,7 @@ The left sidebar moves from two tabs to **four peer tabs in two classes**:
 
 The **Subsetting** tab's contents are the **session lineage**, not a list of subset operations — a subset spawns a child and evicts the parent, so it doesn't persist within the current session. This tab is the home for session navigation (previously the gear menu) and shows which lineage members are resident vs. evicted-to-Zarr.
 
-**Canvas rendering of regions** reuses existing layers: region coloring is `color_by` on the categorical (stable palette keyed by category value); region polygons are the cell-boundary `PolygonLayer` overlay. Interactions: legend with counts, click-to-isolate (client-side filter, no refetch), visibility toggles. Region layers participate in the existing per-layer data-state machine (`FRESH`/`LOADING`/`STALE`/`FETCHING`/`MISSING`).
+**Canvas rendering of regions** reuses existing layers: region coloring is `color_by` on the categorical (stable palette keyed by category value) — there is no separate region-boundary polygon overlay, since no geometry is persisted (Part 2). Interactions: legend with counts, click-to-isolate (client-side filter, no refetch), visibility toggles. Region layers participate in the existing per-layer data-state machine (`FRESH`/`LOADING`/`STALE`/`FETCHING`/`MISSING`).
 
 **Core-app changes this implies:** session navigation moves out of the gear menu into the Subsetting tab; selection-arming becomes **modal by active tab** rather than action-button-driven; the gear menu retains only global/advanced ops (save/export, load, recipe, settings). A persistent on-canvas affordance should show the current mode ("drawing will: label region / arm subset") so the active mode is visible at the moment of drawing.
 
@@ -343,7 +339,7 @@ A **Recipes** menu (in the gear menu) offers: **Apply official recipe ▸** (sub
 
 ## 5.7 Portability — annotations don't travel
 
-Recipes carry **compute + plotting** steps only; **annotations are excluded**. Hand-drawn geometry is tied to one section's coordinate space and is meaningless replayed elsewhere; replication works by **re-defining region sets under the same `obs` key names** (drawn, or promoted per §3.2). A step like `rank_genes_groups(groupby="tumor_vs_stroma")` resolves because the new dataset carries that column.
+Recipes carry **compute + plotting** steps only; **annotations are excluded**. Hand-drawn membership is derived from one section's specific spatial coordinates and is meaningless replayed elsewhere; replication works by **re-defining region sets under the same `obs` key names** (drawn, or promoted per §3.2). A step like `rank_genes_groups(groupby="tumor_vs_stroma")` resolves because the new dataset carries that column.
 
 ## 5.8 Preflight checklist  *(modifies built core §10 preflight)*
 
@@ -433,7 +429,7 @@ UI posture: effect-size-first; gate or footnote inferential numbers with a pseud
 6. **Plotting handler** — rely on `managed` render terms to pin `return_fig`/`show`/`save` and inject `ax` (Part 1.5).
 
 **Net-new features:**
-7. **Region data model** — `obs` categorical + shapes element + `attrs.regions` registry, single-label/overlap/unassigned semantics (Part 2).
+7. **Region data model** — `obs` categorical + `attrs.regions` registry, single-label/overlap/unassigned semantics; no geometry is persisted (Part 2).
 8. **Annotation creation/editing** — in-place lasso label action; promotion of existing categoricals; edit ops (Part 3).
 9. **Region comparison** — per-region orchestration wrapper + comparison views (faceted small-multiples, differential overlays, result charts) (Part 6).
 
@@ -444,10 +440,10 @@ UI posture: effect-size-first; gate or footnote inferential numbers with a pseud
 # Part 8 — Consolidated build sequence
 
 1. **Term dictionary** — schema + loader + resolution pipeline; migrate §4.2/4.3/4.6 logic onto it; seed entries; coverage report.
-2. **Region data model** — `obs` + shapes + `attrs.regions`; persistence round-trip.
-3. **In-place lasso label** — single set/region → `obs` + shapes + structural diff (reuses subset machinery).
-4. **Four-tab UI** — Annotations tab (list/color/counts/visibility/isolate) + canvas coloring/polygon layers; move session nav into a Subsetting tab; modal selection + on-canvas mode affordance.
-5. **Editing + promotion** — rename/recolor/redraw/merge/delete; promote existing categoricals.
+2. **Region data model** — `obs` + `attrs.regions`; persistence round-trip. No geometry is stored.
+3. **In-place lasso label** — single set/region → `obs` + structural diff (reuses subset machinery); the drawn polygon is discarded once membership is computed.
+4. **Four-tab UI** — Annotations tab (list/color/counts/visibility/isolate) + canvas coloring by category; move session nav into a Subsetting tab; modal selection + on-canvas mode affordance.
+5. **Editing + promotion** — rename/recolor/merge/delete; promote existing categoricals.
 6. **Analysis grouping** — confirm region sets appear in every `obs_categorical` picker (should be automatic via the dictionary); run `rank_genes_groups` + composition crosstab end-to-end.
 7. **PENDING lifecycle** — add the pre-queue staged status for compute + plots; manual add → PENDING with single-step Run-now; "Run all pending."
 8. **Recipe subsystem** — bundle format (steps + README + meta + requires); import dialog (run-now/stage) with registry validation; Save-as-recipe with README editor; official-recipes menu from the repo `recipes/` dir; seed a few official recipes adapted from squidpy/scanpy vignettes.

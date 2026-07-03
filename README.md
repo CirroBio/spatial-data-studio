@@ -49,8 +49,10 @@ same picker → form → queue → history machinery.
   and spatialdata-io readers (xenium/visium/visium_hd/merscope/cosmx), added one short
   manifest entry each; `get.*` use an `extract` effect class.
 - **Custom functions** (non-squidpy, `namespace: custom`) — *Identify Regions (Leiden)*,
-  *Edit Annotations* (rename/merge a categorical obs column's values), and *Identify TMAs*
-  (automatic tissue-microarray core detection).
+  *Edit Annotations* (rename/merge a categorical obs column's values), *Identify TMAs*
+  (automatic tissue-microarray core detection), and *Region composition* / *Region
+  composition (plot)* (cell-type-by-region crosstab + chi-square test, then a stacked-bar
+  plot of the proportions — pandas/scipy/matplotlib only, no new library).
 - **Data manifest** (`backend/app/manifest`) — an extensible, text representation of
   session state (tables + dtypes, categoricals with counts, region sets, images/channels,
   summaries) captured before/after every call; the AI's eyes and a human-readable diff.
@@ -97,6 +99,9 @@ same picker → form → queue → history machinery.
   keys + validates the installed registry. Ad-hoc export/import over history too.
 - **Persistence** — save/load `.zarr` and `.zarr.zip` (data + app state in
   `attrs`), with full UI/region/history round-trip.
+- **Acknowledgements** (About icon in the header) — third-party libraries in use and
+  their licenses, served by `GET /api/about/licenses` from the backend/frontend SBOMs
+  (`sds-governance/sbom.json` + `sds-governance/sbom_frontend.json`).
 
 ## Layout
 
@@ -110,7 +115,7 @@ backend/    FastAPI app
   app/agent/      meta-tools, Bedrock/mock provider, chat loop + approval, self-curated context
   app/sessions/   manager, session (queue/worker), adapter (routes to Function.execute), regions, appstate
   app/transport/  arrow (field -> Arrow IPC), tables (element inventory + dataframe page JSON), sse
-  app/recipes.py  curated analysis recipes (catalog + apply)
+  app/recipes/    curated analysis recipes — JSON bundle files, discovered at startup (catalog + apply)
   app/persistence/ store (.zarr / .zarr.zip)
 frontend/   React + TS + Vite + Tailwind + deck.gl SPA
 docker/     single-image build (multi-stage), nginx edge, supervisor
@@ -118,7 +123,9 @@ docs/       CONTRACT.md (REST/SSE/Arrow API)
 scripts/    test-data prep: prepare_test_data.py (Visium H&E), prepare_xenium_data.py (Xenium),
             prepare_xenium_tma.py (Xenium TMA grid for the Identify TMAs detector)
 sds-governance/  governance bundle: RULES.md (R1-R16) + AGENTS.md + skills/ +
-                 checks/ executable gate (`make check`) + license allowlist (v3 Part 14)
+                 checks/ executable gate (`make check`) + license allowlist (v3 Part 14);
+                 `checks/scan_licenses_frontend.py` regenerates sbom_frontend.json (not
+                 gated by `make check`, no npm forbidden-package list defined yet)
 ```
 
 ## Run with Docker (single image, recommended)

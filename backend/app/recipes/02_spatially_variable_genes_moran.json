@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "name": "Spatially variable genes (Moran's I)",
+    "description": "Rank genes by spatial autocorrelation (Moran's I) over the spatial graph; the ranking lands in uns['moranI'] (top genes can then color the canvas).",
+    "provenance": "Adapted from the squidpy 'Moran's I' spatially-variable-genes vignette; targets the visium_hne example."
+  },
+  "readme": "Ranks genes by spatial autocorrelation (Moran's I) over a hexagonal-grid spatial graph. No `n_perms`: Moran's I is scored analytically here — the permutation path uses joblib's process pool, which can't spawn inside this app's worker thread.",
+  "steps": [
+    { "namespace": "gr", "function": "spatial_neighbors", "params": { "coord_type": "grid", "n_neighs": 6 } },
+    { "namespace": "gr", "function": "spatial_autocorr", "params": { "mode": "moran" } }
+  ]
+}

@@ -505,6 +505,14 @@ async def list_snapshots_endpoint():
     return {"snapshots": snapshots.list_snapshots()}
 
 
+@app.get("/api/about/licenses")
+async def list_third_party_licenses():
+    """Third-party libraries in use and their licenses, for the in-app
+    Acknowledgements view (v2 Part 9.2)."""
+    from . import acknowledgements
+    return acknowledgements.catalog()
+
+
 @app.post("/api/sessions/{sid}/save")
 async def save(sid: str, body: dict | None = None):
     sess = _session(sid)

@@ -280,6 +280,17 @@ export async function importRecipe(
   return res.json();
 }
 
+export interface ThirdPartyLicense {
+  name: string;
+  version: string;
+  license: string;
+}
+
+export async function getThirdPartyLicenses(): Promise<{ python: ThirdPartyLicense[]; npm: ThirdPartyLicense[] }> {
+  const res = await apiFetch('/api/about/licenses');
+  return res.json() as Promise<{ python: ThirdPartyLicense[]; npm: ThirdPartyLicense[] }>;
+}
+
 export async function saveSession(sessionId: string, path?: string): Promise<{ job_id: string }> {
   const res = await apiFetch(`/api/sessions/${sessionId}/save`, {
     method: 'POST',

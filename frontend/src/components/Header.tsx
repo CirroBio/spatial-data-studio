@@ -1,6 +1,8 @@
+import { useState } from 'react';
 import { useAppStore } from '../store/sessionStore';
 import { saveSession } from '../api';
 import { reportError } from '../lib/errors';
+import AcknowledgementsDialog from './AcknowledgementsDialog';
 
 interface Props {
   onNewSession: () => void;
@@ -9,6 +11,7 @@ interface Props {
 const ICON_BTN ='p-1.5 rounded border border-border bg-bg text-text hover:border-accent hover:text-accent transition-colors disabled:opacity-40 disabled:hover:border-border disabled:hover:text-text';
 
 export default function Header({ onNewSession }: Props) {
+  const [showAbout, setShowAbout] = useState(false);
   const {
     activeSessionId, activeJobIds, sessions,
     aiEnabled, chatOpen, setChatOpen,
@@ -73,6 +76,13 @@ export default function Header({ onNewSession }: Props) {
           )}
         </button>
 
+        <button onClick={() => setShowAbout(true)} className={ICON_BTN} title="About / Acknowledgements" aria-label="About / Acknowledgements">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="10" />
+            <path d="M12 16v-4M12 8h.01" />
+          </svg>
+        </button>
+
         {/* Dedicated AI panel toggle — only when Bedrock is configured */}
         {aiEnabled && (
           <button
@@ -88,6 +98,8 @@ export default function Header({ onNewSession }: Props) {
           </button>
         )}
       </div>
+
+      {showAbout && <AcknowledgementsDialog onClose={() => setShowAbout(false)} />}
     </header>
   );
 }

@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "name": "Region graph topology",
+    "description": "Each region's connectivity role (centrality scores) and the matrix of inter-region edges over the spatial graph.",
+    "provenance": "Adapted from the squidpy centrality/interaction-matrix vignettes; targets the visium_hne example."
+  },
+  "readme": "Builds a hexagonal-grid spatial graph, then computes per-region centrality scores and the normalized inter-region interaction matrix, grouped by `obs['cluster']`.",
+  "steps": [
+    { "namespace": "gr", "function": "spatial_neighbors", "params": { "coord_type": "grid", "n_neighs": 6 } },
+    { "namespace": "gr", "function": "centrality_scores", "params": { "cluster_key": "cluster" } },
+    { "namespace": "pl", "function": "centrality_scores", "params": { "cluster_key": "cluster" } },
+    { "namespace": "gr", "function": "interaction_matrix", "params": { "cluster_key": "cluster", "normalized": true } },
+    { "namespace": "pl", "function": "interaction_matrix", "params": { "cluster_key": "cluster" } }
+  ]
+}

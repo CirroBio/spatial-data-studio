@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "name": "QC, filter & cluster (raw counts)",
+    "description": "Compute QC metrics, drop low-quality cells and rare genes, then normalize and cluster. For unprocessed data.",
+    "provenance": "Standard scanpy QC-to-clustering path; targets unprocessed raw-count data such as Xenium."
+  },
+  "readme": "Computes QC metrics, filters low-quality cells (fewer than 10 genes) and rare genes (fewer than 3 cells), then runs the same normalize → log1p → PCA → neighbors → Leiden path as 'Preprocess & cluster (raw counts)'.",
+  "steps": [
+    { "namespace": "sc.pp", "function": "calculate_qc_metrics", "params": { "inplace": true, "percent_top": [50, 100, 200] } },
+    { "namespace": "sc.pp", "function": "filter_cells", "params": { "min_genes": 10 } },
+    { "namespace": "sc.pp", "function": "filter_genes", "params": { "min_cells": 3 } },
+    { "namespace": "sc.pp", "function": "normalize_total", "params": {} },
+    { "namespace": "sc.pp", "function": "log1p", "params": {} },
+    { "namespace": "sc.pp", "function": "pca", "params": {} },
+    { "namespace": "sc.pp", "function": "neighbors", "params": {} },
+    { "namespace": "sc.tl", "function": "leiden", "params": { "flavor": "igraph", "n_iterations": 2 } }
+  ]
+}

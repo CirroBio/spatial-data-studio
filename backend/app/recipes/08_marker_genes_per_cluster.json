@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "name": "Marker genes per cluster",
+    "description": "Rank differentially expressed marker genes per Leiden cluster (Wilcoxon), then keep the significant ones (uns['rank_genes_groups'] + uns['rank_genes_groups_filtered']). Needs an obs['leiden'] column (present on visium_hne, or run a preprocessing recipe first).",
+    "provenance": "Standard scanpy rank_genes_groups workflow."
+  },
+  "readme": "Ranks differentially expressed marker genes per Leiden cluster with the Wilcoxon test, then filters to the significant ones. Requires `obs['leiden']` — present on visium_hne, or run 'Preprocess & cluster (raw counts)' / 'QC, filter & cluster (raw counts)' first.",
+  "steps": [
+    { "namespace": "sc.tl", "function": "rank_genes_groups", "params": { "groupby": "leiden", "method": "wilcoxon" } },
+    { "namespace": "sc.tl", "function": "filter_rank_genes_groups", "params": {} }
+  ]
+}
