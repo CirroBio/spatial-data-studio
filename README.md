@@ -150,13 +150,16 @@ chat panel is dark and the app runs normally.
 ## Run locally for development
 
 ```bash
-./run.sh
+./run.sh          # data/ is the data folder
+./run.sh --test   # test-data/ is the data folder
 ```
 
 Launches the backend (`uvicorn`, no `--reload` — see below) and the frontend
 (`npm run dev`, Vite proxies `/api` to :8000) together. Stop with Ctrl-C or,
-from another shell, `./stop.sh`. It expects a `.venv-introspect/` virtualenv at
-the repo root (Python 3.11; squidpy does not support 3.13+):
+from another shell, `./stop.sh`. `SQV_DATA_DIR` (set by `run.sh` to `data/` or,
+with `--test`, `test-data/`) can still be overridden directly to point at any
+other folder. It expects a `.venv-introspect/` virtualenv at the repo root
+(Python 3.11; squidpy does not support 3.13+):
 
 ```bash
 python3.11 -m venv .venv-introspect && . .venv-introspect/bin/activate

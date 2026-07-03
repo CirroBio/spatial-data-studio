@@ -5,6 +5,13 @@ set -euo pipefail
 set -m  # each background job gets its own process group, so stop.sh can kill it (and any children) by group
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
+DATA_SUBDIR="data"
+for arg in "$@"; do
+  if [[ "$arg" == "--test" ]]; then
+    DATA_SUBDIR="test-data"
+  fi
+done
+
 PIDFILE="$PWD/.run.pids"
 
 VENV_BIN="$PWD/.venv-introspect/bin"
@@ -18,7 +25,7 @@ if [[ ! -d frontend/node_modules ]]; then
   (cd frontend && npm install)
 fi
 
-export SQV_DATA_DIR="${SQV_DATA_DIR:-$PWD/test-data}"
+export SQV_DATA_DIR="${SQV_DATA_DIR:-$PWD/$DATA_SUBDIR}"
 export SQV_CHECKPOINT_DIR="${SQV_CHECKPOINT_DIR:-$PWD/checkpoints}"
 export SQV_CONTAINER_MEM_MB="${SQV_CONTAINER_MEM_MB:-16384}"
 mkdir -p "$SQV_CHECKPOINT_DIR"
