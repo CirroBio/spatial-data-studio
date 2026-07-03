@@ -46,39 +46,60 @@ def channel_names(elem) -> list[str]:
     return [str(i) for i in range(n)]
 
 
-def _to_hwc_uint8(arr, visible: list[int] | None = None) -> np.ndarray:
+# Canonical 8-color channel palette: ColorBrewer/matplotlib "Set1", the standard
+# qualitative cycle used across scientific plotting (R, Python, ggplot2). Mirrors
+# frontend/src/components/canvas/colorUtils.ts CHANNEL_COLORS.
+DEFAULT_CHANNEL_COLORS: list[tuple[int, int, int]] = [
+    (228, 26, 28),   # red
+    (55, 126, 184),  # blue
+    (77, 175, 74),   # green
+    (152, 78, 163),  # purple
+    (255, 127, 0),   # orange
+    (255, 255, 51),  # yellow
+    (166, 86, 40),   # brown
+    (247, 129, 191), # pink
+]
+
+
+def parse_channel_colors(spec: str | None) -> dict[int, tuple[int, int, int]] | None:
+    """Parse a `channels` query value of comma-separated `index:rrggbb` pairs into
+    a channel-index -> RGB dict. Only listed indices are treated as visible."""
+    if spec is None:
+        return None
+    colors: dict[int, tuple[int, int, int]] = {}
+    for part in spec.split(","):
+        idx_str, _, hexcolor = part.strip().partition(":")
+        hexcolor = hexcolor.lstrip("#")
+        if not idx_str.isdigit() or len(hexcolor) != 6:
+            continue
+        colors[int(idx_str)] = (int(hexcolor[0:2], 16), int(hexcolor[2:4], 16), int(hexcolor[4:6], 16))
+    return colors
+
+
+def _to_hwc_uint8(arr, channel_colors: dict[int, tuple[int, int, int]] | None = None) -> np.ndarray:
+    """Composite an image's channels into an RGB thumbnail by additively blending
+    each visible channel's normalized intensity tinted with its assigned color."""
     data = np.asarray(arr.data if hasattr(arr, "data") else arr)
     # spatialdata images are (c, y, x)
     if data.ndim == 3:
         data = np.transpose(data, (1, 2, 0))
     elif data.ndim == 2:
         data = data[:, :, None]
-    nch = data.shape[2]
-    if visible is None:
-        visible = list(range(nch))
-    vis = [c for c in visible if 0 <= c < nch]
+    h, w, nch = data.shape
 
-    if nch == 3:
-        # RGB-like: keep the channel->colour mapping, zero hidden channels.
-        out = data.copy()
-        for c in range(3):
-            if c not in vis:
-                out[:, :, c] = 0
-    elif len(vis) == 0:
-        out = np.zeros((data.shape[0], data.shape[1], 3), dtype=data.dtype)
-    elif len(vis) == 1:
-        out = np.repeat(data[:, :, vis[:1]], 3, axis=2)  # single channel -> grayscale
-    else:
-        chans = [data[:, :, c] for c in vis[:3]]
-        while len(chans) < 3:
-            chans.append(np.zeros_like(chans[0]))
-        out = np.stack(chans, axis=2)
+    if channel_colors is None:
+        channel_colors = {i: DEFAULT_CHANNEL_COLORS[i % len(DEFAULT_CHANNEL_COLORS)] for i in range(nch)}
+    vis = [c for c in channel_colors if 0 <= c < nch]
+    if not vis:
+        return np.zeros((h, w, 3), dtype=np.uint8)
 
-    if out.dtype != np.uint8:
-        d = out.astype("float32")
-        mx = float(d.max()) or 1.0
-        out = np.clip(d / mx * 255.0, 0, 255).astype("uint8")
-    return out
+    scale = 255.0 if data.dtype == np.uint8 else float(max(data[:, :, c].max() for c in vis)) or 1.0
+
+    out = np.zeros((h, w, 3), dtype=np.float32)
+    for c in vis:
+        frac = data[:, :, c].astype(np.float32) / scale
+        out += frac[:, :, None] * np.array(channel_colors[c], dtype=np.float32)
+    return np.clip(out, 0, 255).astype(np.uint8)
 
 
 def _extent(sdata, element):
@@ -102,10 +123,12 @@ def image_info(sdata, element) -> dict:
             "bounds": _extent(sdata, element)}
 
 
-def thumbnail_png(sdata, element, max_px: int = 2048, visible: list[int] | None = None) -> bytes:
+def thumbnail_png(
+    sdata, element, max_px: int = 2048, channel_colors: dict[int, tuple[int, int, int]] | None = None
+) -> bytes:
     from PIL import Image
     arr = _image_array(sdata, element)
-    hwc = _to_hwc_uint8(arr, visible)
+    hwc = _to_hwc_uint8(arr, channel_colors)
     img = Image.fromarray(hwc)
     img.thumbnail((max_px, max_px))
     buf = io.BytesIO()

@@ -12,7 +12,7 @@ export default function Header({ onNewSession }: Props) {
   const {
     activeSessionId, activeJobIds, sessions,
     aiEnabled, chatOpen, setChatOpen,
-    theme, setTheme,
+    theme, setTheme, savingJobId,
   } = useAppStore();
   const activeSession = sessions.find((s) => s.id === activeSessionId);
   const runningCount = activeJobIds.size;
@@ -20,7 +20,7 @@ export default function Header({ onNewSession }: Props) {
   function handleSave() {
     if (!activeSessionId) return;
     saveSession(activeSessionId)
-      .then(() => useAppStore.getState().pushNotification({ kind: 'info', message: 'Saving session…' }))
+      .then(({ job_id }) => useAppStore.getState().setSavingJobId(job_id))
       .catch((err) => reportError('Save failed', err));
   }
 
@@ -48,7 +48,7 @@ export default function Header({ onNewSession }: Props) {
             <path d="M12 11v6M9 14h6" />
           </svg>
         </button>
-        <button onClick={handleSave} disabled={!activeSessionId} className={ICON_BTN} title="Save session" aria-label="Save session">
+        <button onClick={handleSave} disabled={!activeSessionId || !!savingJobId} className={ICON_BTN} title="Save session" aria-label="Save session">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
             <path d="M17 21v-8H7v8M7 3v5h8" />

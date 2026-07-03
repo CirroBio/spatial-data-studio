@@ -62,7 +62,10 @@ same picker → form → queue → history machinery.
 - **Sessions** — one in-memory `SpatialData` per session, a FIFO worker thread,
   compute/plot jobs, structural-diff–driven refresh, live RAM/CPU resource strip.
 - **deck.gl canvas** — binary Arrow scatter colored by `obs`/`X`/region set over the
-  tissue image; world-unit point sizing.
+  tissue image; world-unit point sizing. Each image channel can be toggled, renamed,
+  and assigned one of 8 canonical spectrum colors (the server composites the thumbnail
+  by additively blending each channel's intensity tinted with its color); a togglable
+  legend overlays a color swatch + label for every visible channel.
 - **Data inspector** — a Spatial/Tables switch in the viewer's top-left opens a
   paginated browser over the `SpatialData` elements: each table's `obs`/`var`
   dataframes, `shapes` GeoDataFrames (geometry as WKT), `points`, and image
@@ -81,7 +84,9 @@ same picker → form → queue → history machinery.
   inspector); it shows the call's parameters and an **Edit & rerun** that reopens
   the original function form pre-filled. Clicking the selected item again
   deselects it. New/Save session are icon buttons (hover for labels) in the top
-  toolbar.
+  toolbar. Saving blocks the whole UI behind a spinner overlay until the write
+  finishes; an unobtrusive Stop button cancels it if the job is still queued
+  (a save already writing to disk can't be interrupted).
 - **Recipes** — curated multi-step workflows browsable from the Compute/Plots tabs
   (**Browse recipes**), served by `GET /api/recipes`, run through `/recipe/run`.
   squidpy spatial recipes for `visium_hne` (neighborhood enrichment, Moran's I

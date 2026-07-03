@@ -168,6 +168,11 @@ export async function getJobLog(sessionId: string, jobId: string): Promise<{ log
   return res.json() as Promise<{ log: string; status: string }>;
 }
 
+// Cancels a still-queued job; rejects if it's already running (non-interruptible) or finished.
+export async function cancelJob(sessionId: string, jobId: string): Promise<void> {
+  await apiFetch(`/api/sessions/${sessionId}/jobs/${jobId}`, { method: 'DELETE' });
+}
+
 export async function redrawPlot(sessionId: string, plotId: string): Promise<void> {
   await apiFetch(`/api/sessions/${sessionId}/plots/${plotId}/redraw`, { method: 'POST' });
 }

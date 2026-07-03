@@ -116,8 +116,8 @@ def save_snapshot(session, label: str | None = None) -> dict:
         bounds = None
         image_rel = None
         if image_layer and image_layer in getattr(session.sdata, "images", {}):
-            visible = _visible_channels(enc)
-            png = imaging.thumbnail_png(session.sdata, image_layer, 2048, visible)
+            channel_colors = _channel_colors(enc)
+            png = imaging.thumbnail_png(session.sdata, image_layer, 2048, channel_colors)
             image_rel = _write_asset(png, "png")
             bounds = imaging.image_info(session.sdata, image_layer)["bounds"]
 
@@ -137,12 +137,21 @@ def save_snapshot(session, label: str | None = None) -> dict:
     return {"status": "completed", "name": name, "url": f"/snapshots/{name}"}
 
 
-def _visible_channels(enc: dict) -> list[int] | None:
+def _channel_colors(enc: dict) -> dict[int, tuple[int, int, int]] | None:
     ch = enc.get("channels")
     if not ch:
         return None
-    vis = [int(i) for i, st in ch.items() if st.get("visible", True)]
-    return sorted(vis)
+    colors: dict[int, tuple[int, int, int]] = {}
+    for i, st in ch.items():
+        if not st.get("visible", True):
+            continue
+        idx = int(i)
+        hexcolor = (st.get("color") or "").lstrip("#")
+        if len(hexcolor) == 6:
+            colors[idx] = (int(hexcolor[0:2], 16), int(hexcolor[2:4], 16), int(hexcolor[4:6], 16))
+        else:
+            colors[idx] = imaging.DEFAULT_CHANNEL_COLORS[idx % len(imaging.DEFAULT_CHANNEL_COLORS)]
+    return colors
 
 
 def list_snapshots() -> list[dict]:

@@ -72,6 +72,10 @@ interface AppStore {
   addActiveJob: (jobId: string) => void;
   removeActiveJob: (jobId: string) => void;
 
+  // the in-flight "save session" job, if any — drives the blocking save overlay
+  savingJobId: string | null;
+  setSavingJobId: (jobId: string | null) => void;
+
   // transient notifications (e.g. a compute job that failed and vanished from history)
   notifications: AppNotification[];
   pushNotification: (n: Omit<AppNotification, 'id'>) => void;
@@ -231,6 +235,9 @@ export const useAppStore = create<AppStore>((set) => ({
       next.delete(jobId);
       return { activeJobIds: next };
     }),
+
+  savingJobId: null,
+  setSavingJobId: (jobId) => set({ savingJobId: jobId }),
 
   notifications: [],
   pushNotification: (n) =>

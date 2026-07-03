@@ -9,7 +9,7 @@ import { getImageInfo, putDisplay, saveSnapshot } from '../../api';
 import { reportError } from '../../lib/errors';
 import type { DisplaySpec, ImageInfo } from '../../types';
 import { useArrowPositions } from './useArrowPositions';
-import { buildCategoricalPalette, buildNumericColormap } from './colorUtils';
+import { buildCategoricalPalette, buildNumericColormap, CHANNEL_COLORS, defaultChannelColor } from './colorUtils';
 
 const VIEWS = [new OrthographicView({ id: 'main', flipY: false })];
 
@@ -47,6 +47,9 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
 
   const [imageInfo, setImageInfo] = useState<ImageInfo | null>(null);
   const [showImage, setShowImage] = useState(display.encoding.image_layer !== null);
+  const [showLegend, setShowLegend] = useState(true);
+  const [openColorPicker, setOpenColorPicker] = useState<number | null>(null);
+  const [panelCollapsed, setPanelCollapsed] = useState(false);
   const [viewState, setViewState] = useState<OrthographicViewState | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -63,15 +66,19 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
       index: i,
       visible: display.encoding.channels?.[String(i)]?.visible ?? true,
       name: display.encoding.channels?.[String(i)]?.name ?? cn,
+      color: display.encoding.channels?.[String(i)]?.color ?? defaultChannelColor(i),
     })),
     [imageInfo, display.encoding.channels],
   );
-  const visibleChannels = channels.filter((c) => c.visible).map((c) => c.index).join(',');
+  const visibleChannels = channels
+    .filter((c) => c.visible)
+    .map((c) => `${c.index}:${c.color.replace('#', '')}`)
+    .join(',');
 
-  function setChannel(index: number, patch: Partial<{ visible: boolean; name: string }>) {
+  function setChannel(index: number, patch: Partial<{ visible: boolean; name: string; color: string }>) {
     const cur = channels[index];
     const next = { ...(display.encoding.channels ?? {}) };
-    next[String(index)] = { visible: cur.visible, name: cur.name, ...patch };
+    next[String(index)] = { visible: cur.visible, name: cur.name, color: cur.color, ...patch };
     const spec = { ...display, encoding: { ...display.encoding, channels: next } };
     updateDisplay(spec);                       // optimistic local update
     putDisplay(sessionId, spec).catch(console.error);
@@ -200,7 +207,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
       const thumbnailUrl = `/api/sessions/${sessionId}/image/${display.encoding.image_layer}/thumbnail?channels=${visibleChannels}`;
       result.push(
         new BitmapLayer({
-          id: `tissue-image-${visibleChannels}`,  // id changes -> layer refetches on toggle
+          id: `tissue-image-${visibleChannels}`,  // id changes -> layer refetches on toggle/recolor
           image: thumbnailUrl,
           bounds: [
             imageInfo.bounds[0],
@@ -310,6 +317,18 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
         getCursor={drawMode ? () => 'crosshair' : ({ isDragging }) => (isDragging ? 'grabbing' : 'grab')}
       />
 
+      {/* Channel legend — bottom left, only while the image and legend are shown. */}
+      {showImage && showLegend && channels.some((c) => c.visible) && (
+        <div className="absolute bottom-3 left-3 z-10 bg-surface/90 border border-border rounded p-2 flex flex-col gap-1 max-w-[180px] backdrop-blur-sm pointer-events-none">
+          {channels.filter((c) => c.visible).map((c) => (
+            <div key={c.index} className="flex items-center gap-1.5 text-[11px] text-text">
+              <span className="w-2.5 h-2.5 rounded-sm shrink-0 border border-border/50" style={{ background: c.color }} />
+              <span className="truncate">{c.name}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Draw-mode hint — top center. All actions live in the active tab's panel. */}
       {drawMode && (
         <div
@@ -328,8 +347,36 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
         </div>
       )}
 
-      {/* Controls panel — top right */}
+      {/* Controls panel — top right; minimizes to a gear icon in the same corner. */}
+      {panelCollapsed ? (
+        <button
+          type="button"
+          onClick={() => setPanelCollapsed(false)}
+          title="Show controls"
+          aria-label="Show controls"
+          className="absolute top-3 right-3 z-10 p-1.5 rounded border border-border bg-surface/90 text-muted hover:text-accent hover:border-accent transition-colors backdrop-blur-sm"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+          </svg>
+        </button>
+      ) : (
       <div className="absolute top-3 right-3 z-10 bg-surface/90 border border-border rounded p-3 flex flex-col gap-2 min-w-[200px] backdrop-blur-sm">
+        <div className="flex justify-end -mt-1 -mr-1">
+          <button
+            type="button"
+            onClick={() => setPanelCollapsed(true)}
+            title="Minimize controls"
+            aria-label="Minimize controls"
+            className="w-5 h-5 flex items-center justify-center rounded text-muted hover:text-accent hover:bg-bg transition-colors"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <path d="M5 12h14" />
+            </svg>
+          </button>
+        </div>
+
         <div className="flex flex-col gap-1">
           <label className="text-[10px] text-muted font-mono uppercase tracking-wide">Color by</label>
           <select
@@ -385,17 +432,37 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
           </label>
         )}
 
+        {display.encoding.image_layer && showImage && channels.length > 0 && (
+          <label className="flex items-center gap-2 text-xs text-text cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showLegend}
+              onChange={(e) => setShowLegend(e.target.checked)}
+              className="accent-accent"
+            />
+            Show legend
+          </label>
+        )}
+
         {display.encoding.image_layer && showImage && channels.length > 1 && (
           <div className="flex flex-col gap-1 border border-border/50 rounded p-1.5">
             <span className="text-[10px] text-muted font-mono uppercase tracking-wide">Channels</span>
             {channels.map((c) => (
-              <div key={c.index} className="flex items-center gap-1.5">
+              <div key={c.index} className="relative flex items-center gap-1.5">
                 <input
                   type="checkbox"
                   checked={c.visible}
                   onChange={(e) => setChannel(c.index, { visible: e.target.checked })}
                   className="accent-accent"
                   title="Toggle channel"
+                />
+                <button
+                  type="button"
+                  onClick={() => setOpenColorPicker(openColorPicker === c.index ? null : c.index)}
+                  className="w-3.5 h-3.5 rounded-sm border border-border shrink-0 hover:ring-1 hover:ring-accent"
+                  style={{ background: c.color }}
+                  title="Change channel color"
+                  aria-label={`Change color for ${c.name}`}
                 />
                 <input
                   type="text"
@@ -404,6 +471,23 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
                   className="flex-1 min-w-0 bg-bg border border-border rounded px-1 py-0.5 text-[10px] text-text focus:outline-none focus:border-accent"
                   title="Rename channel"
                 />
+                {openColorPicker === c.index && (
+                  <div className="absolute left-0 top-full z-10 mt-1 grid grid-cols-4 gap-1 p-1.5 bg-surface border border-border rounded shadow-lg">
+                    {CHANNEL_COLORS.map((color) => (
+                      <button
+                        key={color}
+                        type="button"
+                        onClick={() => { setChannel(c.index, { color }); setOpenColorPicker(null); }}
+                        className={`w-4 h-4 rounded-sm border transition-transform hover:scale-110 ${
+                          color === c.color ? 'border-text' : 'border-border/50'
+                        }`}
+                        style={{ background: color }}
+                        title={color}
+                        aria-label={`Set color ${color}`}
+                      />
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -425,6 +509,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
           Save snapshot
         </button>
       </div>
+      )}
     </div>
   );
 }

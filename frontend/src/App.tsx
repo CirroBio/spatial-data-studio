@@ -15,6 +15,7 @@ import DataInspector from './components/DataInspector';
 import DetailModal from './components/DetailModal';
 import NewSessionDialog from './components/NewSessionDialog';
 import Toaster from './components/Toaster';
+import SavingOverlay from './components/SavingOverlay';
 
 export default function App() {
   useSSE();
@@ -171,6 +172,7 @@ export default function App() {
       </div>
       <ResourceStrip />
       <Toaster />
+      <SavingOverlay />
       {detail && (
         <DetailModal onClose={() => { setSelectedComputeId(null); setSelectedPlotId(null); }}>
           {detail}

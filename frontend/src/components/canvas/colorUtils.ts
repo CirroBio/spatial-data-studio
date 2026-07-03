@@ -17,6 +17,25 @@ const CATEGORY_COLORS: [number, number, number][] = [
   [188, 189, 34],
 ];
 
+// Canonical 8-color channel palette: ColorBrewer/matplotlib "Set1", the standard
+// qualitative cycle used across scientific plotting (R, Python, ggplot2). Mirrors
+// backend/app/imaging.py DEFAULT_CHANNEL_COLORS so a channel's default color here
+// matches what the server composites into the thumbnail.
+export const CHANNEL_COLORS: string[] = [
+  '#e41a1c', // red
+  '#377eb8', // blue
+  '#4daf4a', // green
+  '#984ea3', // purple
+  '#ff7f00', // orange
+  '#ffff33', // yellow
+  '#a65628', // brown
+  '#f781bf', // pink
+];
+
+export function defaultChannelColor(index: number): string {
+  return CHANNEL_COLORS[index % CHANNEL_COLORS.length];
+}
+
 /**
  * Build a map from category value (string) to RGB triple.
  * Categories are sorted for stable assignment.

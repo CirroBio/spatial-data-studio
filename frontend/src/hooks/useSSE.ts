@@ -60,6 +60,9 @@ export function useSSE(): void {
       // Save runs as a background job with no visible result; confirm it finished.
       if (data.kind === 'save') {
         pushNotification({ kind: 'info', message: 'Session saved.' });
+        if (useAppStore.getState().savingJobId === data.job_id) {
+          useAppStore.getState().setSavingJobId(null);
+        }
       }
       // A lasso subset produces a child session and evicts the parent: switch to the
       // child and refresh the list so the evicted parent drops out.
@@ -82,6 +85,9 @@ export function useSSE(): void {
       // Failed compute jobs vanish from history (DESIGN §6.1); surface the error so
       // the user isn't left with a silently-closed form and no feedback.
       pushNotification({ kind: 'error', message: `Job failed: ${data.error ?? 'unknown error'}` });
+      if (useAppStore.getState().savingJobId === data.job_id) {
+        useAppStore.getState().setSavingJobId(null);
+      }
       if (data.session_id === activeSessionId) {
         getSession(data.session_id).then(setSessionState).catch(console.error);
       }

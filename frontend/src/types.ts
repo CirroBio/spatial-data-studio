@@ -88,6 +88,7 @@ export interface PlotEntry {
 export interface ChannelState {
   visible: boolean;
   name: string;
+  color?: string;
 }
 
 export interface DisplayEncoding {
