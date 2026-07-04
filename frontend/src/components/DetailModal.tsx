@@ -45,6 +45,59 @@ export function ParametersSection({ params }: { params: Record<string, unknown> 
   );
 }
 
+interface ModalHeaderProps {
+  title: string;
+  subtitle?: string;
+  onClose: () => void;
+}
+
+// Header shared by the smaller dialogs (recipe gallery, Cirro upload,
+// acknowledgements, transform editor): title + optional subtitle, a close icon.
+export function ModalHeader({ title, subtitle, onClose }: ModalHeaderProps) {
+  return (
+    <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
+      <div>
+        <h2 className="text-sm font-semibold text-text">{title}</h2>
+        {subtitle && <p className="text-xs text-muted">{subtitle}</p>}
+      </div>
+      <button onClick={onClose} className="text-muted hover:text-text transition-colors" aria-label="Close">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M18 6L6 18M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+  );
+}
+
+interface ModalOverlayProps {
+  onClose: () => void;
+  widthClassName: string;
+  children: React.ReactNode;
+}
+
+// Backdrop + centered panel shared by the smaller dialogs (recipe gallery, Cirro
+// upload, acknowledgements, transform editor). Closes on backdrop click or Esc.
+export function ModalOverlay({ onClose, widthClassName, children }: ModalOverlayProps) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
+      <div
+        className={`bg-surface border border-border rounded-lg shadow-xl flex flex-col overflow-hidden ${widthClassName}`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
 // Shell for the compute/plot detail views — a large centered panel over the
 // current viewer (canvas or table inspector). Closes on backdrop click or Esc.
 export default function DetailModal({ onClose, children }: Props) {

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useAppStore } from '../store/sessionStore';
 import { getPointsTransform, setPointsTransform } from '../api';
 import { formatError, reportError } from '../lib/errors';
+import { ModalOverlay, ModalHeader } from './DetailModal';
 
 interface Props {
   sessionId: string;
@@ -65,104 +66,91 @@ export default function TransformEditor({ sessionId, onClose }: Props) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
-      <div
-        className="bg-surface border border-border rounded-lg shadow-xl w-[420px] flex flex-col overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-          <div>
-            <h2 className="text-sm font-semibold text-text">Points → global transform</h2>
-            <p className="text-xs text-muted">
-              Aligns the cells to the image{element ? ` (${element})` : ''}. Saved into the SpatialData object.
-            </p>
-          </div>
-          <button onClick={onClose} className="text-muted hover:text-text transition-colors" aria-label="Close">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M18 6L6 18M6 6l12 12" />
-            </svg>
-          </button>
+    <ModalOverlay onClose={onClose} widthClassName="w-[420px]">
+      <ModalHeader
+        title="Points → global transform"
+        subtitle={`Aligns the cells to the image${element ? ` (${element})` : ''}. Saved into the SpatialData object.`}
+        onClose={onClose}
+      />
+
+      <div className="p-4 flex flex-col gap-3">
+        <div className="flex gap-1 text-xs">
+          {(['simple', 'matrix'] as const).map((m) => (
+            <button
+              key={m}
+              onClick={() => setMode(m)}
+              className={`px-2.5 py-1 rounded border transition-colors ${
+                mode === m ? 'border-accent text-accent bg-accent/10' : 'border-border text-muted hover:text-text'
+              }`}
+            >
+              {m === 'simple' ? 'Scale / rotate / move' : 'Affine matrix'}
+            </button>
+          ))}
         </div>
 
-        <div className="p-4 flex flex-col gap-3">
-          <div className="flex gap-1 text-xs">
-            {(['simple', 'matrix'] as const).map((m) => (
-              <button
-                key={m}
-                onClick={() => setMode(m)}
-                className={`px-2.5 py-1 rounded border transition-colors ${
-                  mode === m ? 'border-accent text-accent bg-accent/10' : 'border-border text-muted hover:text-text'
-                }`}
-              >
-                {m === 'simple' ? 'Scale / rotate / move' : 'Affine matrix'}
-              </button>
-            ))}
+        {mode === 'simple' ? (
+          <div className="grid grid-cols-2 gap-2">
+            <label className="flex flex-col gap-1 text-[10px] text-muted uppercase tracking-wide">Scale X
+              <input type="number" step="0.1" value={sx} onChange={(e) => setSx(Number(e.target.value))} className={NUM} />
+            </label>
+            <label className="flex flex-col gap-1 text-[10px] text-muted uppercase tracking-wide">Scale Y
+              <input type="number" step="0.1" value={sy} onChange={(e) => setSy(Number(e.target.value))} className={NUM} />
+            </label>
+            <label className="flex flex-col gap-1 text-[10px] text-muted uppercase tracking-wide">Rotation°
+              <input type="number" step="1" value={rot} onChange={(e) => setRot(Number(e.target.value))} className={NUM} />
+            </label>
+            <span />
+            <label className="flex flex-col gap-1 text-[10px] text-muted uppercase tracking-wide">Translate X
+              <input type="number" step="1" value={tx} onChange={(e) => setTx(Number(e.target.value))} className={NUM} />
+            </label>
+            <label className="flex flex-col gap-1 text-[10px] text-muted uppercase tracking-wide">Translate Y
+              <input type="number" step="1" value={ty} onChange={(e) => setTy(Number(e.target.value))} className={NUM} />
+            </label>
           </div>
-
-          {mode === 'simple' ? (
-            <div className="grid grid-cols-2 gap-2">
-              <label className="flex flex-col gap-1 text-[10px] text-muted uppercase tracking-wide">Scale X
-                <input type="number" step="0.1" value={sx} onChange={(e) => setSx(Number(e.target.value))} className={NUM} />
-              </label>
-              <label className="flex flex-col gap-1 text-[10px] text-muted uppercase tracking-wide">Scale Y
-                <input type="number" step="0.1" value={sy} onChange={(e) => setSy(Number(e.target.value))} className={NUM} />
-              </label>
-              <label className="flex flex-col gap-1 text-[10px] text-muted uppercase tracking-wide">Rotation°
-                <input type="number" step="1" value={rot} onChange={(e) => setRot(Number(e.target.value))} className={NUM} />
-              </label>
-              <span />
-              <label className="flex flex-col gap-1 text-[10px] text-muted uppercase tracking-wide">Translate X
-                <input type="number" step="1" value={tx} onChange={(e) => setTx(Number(e.target.value))} className={NUM} />
-              </label>
-              <label className="flex flex-col gap-1 text-[10px] text-muted uppercase tracking-wide">Translate Y
-                <input type="number" step="1" value={ty} onChange={(e) => setTy(Number(e.target.value))} className={NUM} />
-              </label>
+        ) : (
+          <div className="flex flex-col gap-2">
+            <p className="text-[10px] text-muted">x' = a·x + b·y + c &nbsp;&nbsp; y' = d·x + e·y + f</p>
+            <div className="grid grid-cols-3 gap-2">
+              {['a', 'b', 'c', 'd', 'e', 'f'].map((lbl, i) => (
+                <label key={lbl} className="flex flex-col gap-1 text-[10px] text-muted uppercase tracking-wide">{lbl}
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={matrix[i]}
+                    onChange={(e) => setMatrixCell(i, Number(e.target.value))}
+                    className={NUM}
+                  />
+                </label>
+              ))}
             </div>
-          ) : (
-            <div className="flex flex-col gap-2">
-              <p className="text-[10px] text-muted">x' = a·x + b·y + c &nbsp;&nbsp; y' = d·x + e·y + f</p>
-              <div className="grid grid-cols-3 gap-2">
-                {['a', 'b', 'c', 'd', 'e', 'f'].map((lbl, i) => (
-                  <label key={lbl} className="flex flex-col gap-1 text-[10px] text-muted uppercase tracking-wide">{lbl}
-                    <input
-                      type="number"
-                      step="0.1"
-                      value={matrix[i]}
-                      onChange={(e) => setMatrixCell(i, Number(e.target.value))}
-                      className={NUM}
-                    />
-                  </label>
-                ))}
-              </div>
-            </div>
-          )}
+          </div>
+        )}
 
-          {error && <div className="text-xs text-danger">{error}</div>}
+        {error && <div className="text-xs text-danger">{error}</div>}
 
-          <div className="flex items-center justify-between pt-1">
-            <button
-              onClick={() => {
-                setSx(1); setSy(1); setRot(0); setTx(0); setTy(0); setMatrix(IDENTITY); setMode('simple');
-              }}
-              className="text-xs text-muted hover:text-text transition-colors"
-            >
-              Reset to identity
+        <div className="flex items-center justify-between pt-1">
+          <button
+            onClick={() => {
+              setSx(1); setSy(1); setRot(0); setTx(0); setTy(0); setMatrix(IDENTITY); setMode('simple');
+            }}
+            className="text-xs text-muted hover:text-text transition-colors"
+          >
+            Reset to identity
+          </button>
+          <div className="flex gap-2">
+            <button onClick={onClose} className="px-3 py-1.5 text-xs text-muted hover:text-text transition-colors">
+              Cancel
             </button>
-            <div className="flex gap-2">
-              <button onClick={onClose} className="px-3 py-1.5 text-xs text-muted hover:text-text transition-colors">
-                Cancel
-              </button>
-              <button
-                onClick={save}
-                disabled={saving}
-                className="px-3 py-1.5 bg-accent hover:bg-accent/80 disabled:opacity-50 text-white rounded text-xs transition-colors"
-              >
-                {saving ? 'Saving…' : 'Save'}
-              </button>
-            </div>
+            <button
+              onClick={save}
+              disabled={saving}
+              className="px-3 py-1.5 bg-accent hover:bg-accent/80 disabled:opacity-50 text-white rounded text-xs transition-colors"
+            >
+              {saving ? 'Saving…' : 'Save'}
+            </button>
           </div>
         </div>
       </div>
-    </div>
+    </ModalOverlay>
   );
 }
