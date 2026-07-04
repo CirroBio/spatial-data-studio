@@ -14,7 +14,8 @@ app/
   config.py              env-driven config (memory limits, mounts, cadence)
   registry/
     introspect.py        discovery + signature->JSON-Schema + type-injection + effect class (§4)
-    conventions.py       THE ONLY library-specific knowledge: param-name conventions + pinned policy (§4.3)
+    terms.yaml + dictionary.py   Parameter Term Dictionary — THE ONLY library-specific knowledge, keyed
+                          by parameter term (not by function); superseded conventions.py (see root README)
   sessions/
     manager.py           SessionManager: load/create, subset->child, memory admission, resource sampling (§8,§11)
     session.py           Session: SpatialData + FIFO queue + worker thread + RW lock + app_state (§6,§20.2)

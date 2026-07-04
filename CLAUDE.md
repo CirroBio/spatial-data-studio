@@ -22,14 +22,16 @@ locally for development" section of `README.md`) in the same commit. A change
 that leaves `run.sh` unable to boot the app, or `stop.sh` unable to stop it, is
 incomplete.
 
-## Reuse UI elements (always)
+## Reuse code elements (always)
 
-Before adding a UI control, assess whether an existing component already covers
-it and reuse that component whenever possible. Prefer adding a parameter to an
-existing element over creating a new one; a new element is justified only when
-the control is substantively different, not merely a variant. Example: the obs
-column picker (`ObsFieldSelect`) is shared by Color By, Draw Label, and Promote,
-with `creatable`/`categoricalOnly` props covering their differences.
+Before adding a new function, class, component, hook, endpoint, or other
+distinct code element — backend or frontend — search for an existing element
+that already does something similar and adapt it (e.g. a new parameter or
+flag) instead of writing a new one. A new element is justified only when the
+behavior is substantively different, not merely a variant of an existing one.
+Example: the obs column picker (`ObsFieldSelect`) is shared by Color By, Draw
+Label, and Promote, with `creatable`/`categoricalOnly` props covering their
+differences.
 
 ## Orientation
 

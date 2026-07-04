@@ -4,9 +4,8 @@ Interactive analysis and visualization for spatial omics data. A Python backend
 holds a [`SpatialData`](https://spatialdata.scverse.org/) object in memory and
 exposes [`squidpy`](https://squidpy.readthedocs.io/) as a runtime-introspected
 function registry; a React/TypeScript frontend renders cell-scale data in WebGL
-(deck.gl) and drives all interaction. See [DESIGN.md](DESIGN.md) for the original
-design, [post-build-additions-v2.md](post-build-additions-v2.md) for the current
-addendum spec, and [docs/CONTRACT.md](docs/CONTRACT.md) for the API.
+(deck.gl) and drives all interaction. See [DESIGN.md](DESIGN.md) for the full
+design specification and [docs/CONTRACT.md](docs/CONTRACT.md) for the API.
 
 > **Maintenance rule:** this README is the source of truth for what the app does
 > and how to run it. **Keep it up to date** — any change that adds/removes a
@@ -50,9 +49,12 @@ same picker → form → queue → history machinery.
   manifest entry each; `get.*` use an `extract` effect class.
 - **Custom functions** (non-squidpy, `namespace: custom`) — *Identify Regions (Leiden)*,
   *Edit Annotations* (rename/merge a categorical obs column's values), *Identify TMAs*
-  (automatic tissue-microarray core detection), and *Region composition* / *Region
+  (automatic tissue-microarray core detection), *Region composition* / *Region
   composition (plot)* (cell-type-by-region crosstab + chi-square test, then a stacked-bar
-  plot of the proportions — pandas/scipy/matplotlib only, no new library).
+  plot of the proportions — pandas/scipy/matplotlib only), and *Annotate Cells (CellTypist)*
+  (predict a cell-type label per cell with a pre-trained CellTypist model, writing a
+  categorical `<key_added>` column plus a `<key_added>_conf` confidence column; input is
+  log1p/1e4-normalized on a copy by default, and the chosen model is downloaded on first use).
 - **Data manifest** (`backend/app/manifest`) — an extensible, text representation of
   session state (tables + dtypes, categoricals with counts, region sets, images/channels,
   summaries) captured before/after every call; the AI's eyes and a human-readable diff.
@@ -63,15 +65,27 @@ same picker → form → queue → history machinery.
   additive: dark unless configured (`AI_ENABLED`), with graceful degradation.
 - **Sessions** — one in-memory `SpatialData` per session, a FIFO worker thread,
   compute/plot jobs, structural-diff–driven refresh, live RAM/CPU resource strip.
-- **deck.gl canvas** — binary Arrow scatter colored by `obs`/`X`/region set over the
-  tissue image; world-unit point sizing. Each image channel can be toggled, renamed,
+- **Startup splash** — the frontend polls `GET /api/readyz` and shows a full-screen
+  splash until the backend finishes importing `squidpy` and building its function
+  registry, so a slow cold start doesn't look like an app with nothing to load.
+  The session list and the New Session dataset picker also show a "Loading…"
+  state rather than looking empty while their first fetch is in flight.
+- **deck.gl canvas** — binary Arrow scatter colored by any per-cell value over the
+  tissue image; world-unit point sizing. **Color by** first picks a slot (`obs`, `X`
+  gene expression, or a `layer`) and then the column within it: obs columns from a
+  dropdown, genes from a type-to-search box backed by
+  `GET /api/sessions/{id}/var-names?q=&limit=` (so datasets with tens of thousands of
+  genes stay responsive — matches are found server-side, prefix hits first). The chosen
+  value is saved in the session display state. **Show points** and **Show image**
+  checkboxes toggle each layer independently. Each image channel can be toggled, renamed,
   and assigned one of 8 canonical spectrum colors (the server composites channels
   by additively blending each channel's intensity tinted with its color); a togglable
   legend overlays a color swatch + label for every visible channel. A separate,
   togglable cell-color legend (bottom-right) reflects the current **Color by** — a
-  viridis colorbar with the value range for numeric columns, category swatches for
-  categorical ones — with an editable title that defaults to the column name. A
-  spinner in the top-left signals when cells, colors, or image tiles are (re)loading.
+  viridis colorbar with the value range for numeric columns (X/layer genes and numeric
+  obs), category swatches for categorical ones — with an editable title that defaults to
+  the column (gene) name. A spinner in the top-left signals when cells, colors, or image
+  tiles are (re)loading.
 - **Tiled image pyramid** — large sections (e.g. Xenium, ~34k×14k px) are drawn from
   the `SpatialData` multiscale pyramid: a coarse whole-image base plus level-of-detail
   tiles for the current viewport, so only what's on screen at the resolution it needs
@@ -113,17 +127,23 @@ same picker → form → queue → history machinery.
   (a save already writing to disk can't be interrupted).
 - **Recipes** — curated multi-step workflows browsable from the Compute/Plots tabs
   (**Browse recipes**, with a search box filtering by name/description/step), served
-  by `GET /api/recipes`, run through `/recipe/run`.
+  by `GET /api/recipes`, applied through `/recipe/run`. Each recipe offers **Run**
+  (queues every step immediately) or **Stage** (loads the steps as editable *pending*
+  entries). A pending step shows a dashed `pending` badge in the Compute/Plots list;
+  opening it lets you **Edit params** (Save keeps it pending) and **Run** it on its
+  own, and a **Run all pending (N)** button in the tab footer submits every staged
+  step in order. Loading a recipe file (**Load recipe**) stages it the same way so
+  its parameters can be reviewed before running.
   squidpy spatial recipes for `visium_hne` (neighborhood enrichment, spatially
   variable genes by Moran's I / Geary's C / sepal, co-occurrence, region graph
-  topology, Ripley's L, ligand-receptor interactions) and scanpy recipes for raw
+  topology, Ripley's L, ligand-receptor interactions); scanpy recipes for raw
   data such as Xenium (preprocess → Leiden + UMAP; QC → filter → cluster; marker
   genes; cluster hierarchy + markers; Louvain clustering; t-SNE + diffusion-map
-  embeddings; PAGA trajectory; end-to-end cluster → neighborhood enrichment). Recipes
+  embeddings; PAGA trajectory; end-to-end cluster → neighborhood enrichment); and
+  scanpy-tutorial reproductions (full Visium analysis & visualization; MERFISH
+  clustering for imaging-based counts). Recipes
   are JSON files under `backend/app/recipes/` discovered at startup — see
-  "Contributing recipes" below. Plus PENDING staging (stage/edit/run/run-all) and a
-  preflight that computes required-vs-produced keys + validates the installed
-  registry. Ad-hoc export/import over history too.
+  "Contributing recipes" below. Ad-hoc export/import over history too.
 - **Persistence** — save/load `.zarr` and `.zarr.zip` (data + app state in
   `attrs`), with full UI/region/history round-trip.
 - **Acknowledgements** (About icon in the header) — third-party libraries in use and
@@ -147,7 +167,8 @@ backend/    FastAPI app
                   (Parameter Term Dictionary), introspect.py (Registry)
   app/manifest/   data manifest contributor registry + seed contributors (v3 Part 3)
   app/agent/      meta-tools, Bedrock/mock provider, chat loop + approval, self-curated context
-  app/sessions/   manager, session (queue/worker), adapter (routes to Function.execute), regions, appstate
+  app/sessions/   manager, session (queue/worker), adapter (routes to Function.execute), regions, appstate,
+                  transform (points->global affine)
   app/transport/  arrow (field -> Arrow IPC), tables (element inventory + dataframe page JSON), sse
   app/recipes/    curated analysis recipes — JSON bundle files, discovered at startup (catalog + apply)
   app/persistence/ store (.zarr / .zarr.zip)
