@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from './store/sessionStore';
-import { getSessions, getFunctions, getAiStatus, getCirroStatus } from './api';
+import { getSessions, getFunctions, getAiStatus, getCirroStatus, getReadyz } from './api';
+import { isSpatialDisplay, isEmbeddingDisplay } from './types';
 import { resolveRegionSetColumn } from './lib/regions';
 import ChatPanel from './components/ChatPanel';
 import { useSSE } from './hooks/useSSE';
@@ -9,6 +10,7 @@ import Header from './components/Header';
 import Sidebar from './components/Sidebar';
 import ResourceStrip from './components/ResourceStrip';
 import SpatialCanvas from './components/canvas/SpatialCanvas';
+import EmbeddingCanvas from './components/canvas/EmbeddingCanvas';
 import ComputeDetail from './components/ComputeDetail';
 import PlotDetail from './components/PlotDetail';
 import DataInspector from './components/DataInspector';
@@ -16,6 +18,7 @@ import DetailModal from './components/DetailModal';
 import NewSessionDialog from './components/NewSessionDialog';
 import Toaster from './components/Toaster';
 import SavingOverlay from './components/SavingOverlay';
+import StartupSplash from './components/StartupSplash';
 
 export default function App() {
   useSSE();
@@ -46,6 +49,27 @@ export default function App() {
   useSession(activeSessionId);
 
   const [showNewSession, setShowNewSession] = useState(false);
+  const [backendReady, setBackendReady] = useState(false);
+  const [sessionsLoading, setSessionsLoading] = useState(true);
+
+  // Gates the initial render on the backend's own readiness signal, so the
+  // multi-second squidpy import + registry introspection at startup shows a
+  // splash instead of an app that looks empty.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      while (!cancelled) {
+        try {
+          await getReadyz();
+          if (!cancelled) setBackendReady(true);
+          return;
+        } catch {
+          await new Promise((r) => setTimeout(r, 500));
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     getSessions()
@@ -55,7 +79,8 @@ export default function App() {
           setActiveSessionId(s[0].id);
         }
       })
-      .catch(console.error);
+      .catch(console.error)
+      .finally(() => setSessionsLoading(false));
 
     // The function registry drives the reader dropdown and function picker; retry so a
     // slow/briefly-unavailable backend at startup doesn't leave the app permanently empty.
@@ -78,10 +103,11 @@ export default function App() {
     return () => { cancelled = true; };
   }, [setSessions, setFunctions, activeSessionId, setActiveSessionId, setAiEnabled, setCirroEnabled]);
 
-  const display = sessionState?.app_state.displays.find((d) => d.type === 'spatial_canvas') ?? null;
+  const display = sessionState?.app_state.displays.find(isSpatialDisplay) ?? null;
+  const embeddingDisplay = sessionState?.app_state.displays.find(isEmbeddingDisplay) ?? null;
 
-  // The Spatial/Tables switcher floats over the viewer (canvas or inspector).
-  const showViewSwitcher = !!activeSessionId && (mainView === 'tables' || !!display);
+  // The Spatial/Embeddings/Tables switcher floats over the viewer.
+  const showViewSwitcher = !!activeSessionId;
 
   // Compute/plot detail opens in a modal over the current view, so it works
   // whether the canvas or the table inspector is showing.
@@ -110,6 +136,14 @@ export default function App() {
 
   function renderMain() {
     if (!activeSessionId) {
+      if (sessionsLoading) {
+        return (
+          <div className="flex flex-col items-center justify-center h-full gap-3 text-muted">
+            <div className="w-6 h-6 rounded-full border-2 border-border border-t-accent animate-spin" />
+            <span className="text-sm">Loading sessions…</span>
+          </div>
+        );
+      }
       return (
         <div className="flex flex-col items-center justify-center h-full gap-4 text-muted">
           <span className="text-lg">No session open</span>
@@ -123,8 +157,20 @@ export default function App() {
       );
     }
 
-    // The viewer mode switch toggles between the table inspector and the canvas.
+    // The viewer mode switch toggles between the canvas, embeddings, and the table inspector.
     if (mainView === 'tables') return <DataInspector />;
+
+    if (mainView === 'embedding') {
+      return (
+        <EmbeddingCanvas
+          display={embeddingDisplay}
+          sessionId={activeSessionId}
+          obsmFields={sessionState?.fields.obsm ?? []}
+          obsFields={sessionState?.fields.obs ?? []}
+          layerNames={sessionState?.fields.layers ?? []}
+        />
+      );
+    }
 
     // Canvas-workflow tabs always show the canvas
     if (display) {
@@ -144,6 +190,8 @@ export default function App() {
     );
   }
 
+  if (!backendReady) return <StartupSplash />;
+
   return (
     <div className="flex flex-col h-full bg-bg text-text">
       <Header onNewSession={() => setShowNewSession(true)} />
@@ -154,6 +202,7 @@ export default function App() {
             <div className="absolute top-2 left-2 z-20 flex rounded-md border border-border bg-surface/90 backdrop-blur overflow-hidden text-xs shadow">
               {([
                 ['canvas', 'Spatial'],
+                ['embedding', 'Embeddings'],
                 ['tables', 'Tables'],
               ] as const).map(([mode, label]) => (
                 <button

@@ -201,11 +201,11 @@ export async function putDisplay(sessionId: string, display: DisplaySpec): Promi
   });
 }
 
-export async function postDisplay(sessionId: string, display: Omit<DisplaySpec, 'id'>): Promise<DisplaySpec> {
+export async function addDisplay(sessionId: string, spec: Omit<DisplaySpec, 'id'>): Promise<DisplaySpec> {
   const res = await apiFetch(`/api/sessions/${sessionId}/displays`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(display),
+    body: JSON.stringify(spec),
   });
   return res.json() as Promise<DisplaySpec>;
 }
@@ -224,6 +224,17 @@ export function getImageTileUrl(
   sessionId: string, element: string, level: number, col: number, row: number, channels: string,
 ): string {
   return `/api/sessions/${sessionId}/image/${element}/tile/${level}/${col}/${row}?channels=${channels}`;
+}
+
+export async function searchVarNames(
+  sessionId: string,
+  query: string,
+  limit = 50
+): Promise<string[]> {
+  const q = `?q=${encodeURIComponent(query)}&limit=${limit}`;
+  const res = await apiFetch(`/api/sessions/${sessionId}/var-names${q}`);
+  const body = (await res.json()) as { names: string[] };
+  return body.names;
 }
 
 export async function getFieldData(sessionId: string, fieldPath: string): Promise<arrow.Table> {

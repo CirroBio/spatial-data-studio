@@ -40,7 +40,7 @@ function getFieldOptions(widget: string, fields: SessionFields): string[] {
     case 'layer_key':
       return fields.layers;
     case 'obsm_key':
-      return fields.obsm;
+      return fields.obsm.map((f) => f.name);
     case 'obsp_key':
       return fields.obsp;
     default:

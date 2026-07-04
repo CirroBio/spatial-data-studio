@@ -54,9 +54,14 @@ export interface ObsField {
   kind: 'categorical' | 'numeric';
 }
 
+export interface ObsmField {
+  name: string;
+  n_components: number;
+}
+
 export interface SessionFields {
   obs: ObsField[];
-  obsm: string[];
+  obsm: ObsmField[];
   var_names_count: number;
   obsp: string[];
   layers: string[];
@@ -105,15 +110,48 @@ export interface DisplayEncoding {
 }
 
 export interface Viewport {
-  target: [number, number];
+  target: number[];
   zoom: number;
+  rotationX?: number;      // embedding_canvas, 3D mode only
+  rotationOrbit?: number;  // embedding_canvas, 3D mode only
 }
 
-export interface DisplaySpec {
+export interface EmbeddingEncoding {
+  obsm_key: string;
+  x_component: number;
+  y_component: number;
+  z_component: number;  // used only when is_3d
+  is_3d: boolean;
+  color_by: string;
+  point_size: number;
+  opacity: number;
+  colormap: string;
+  legend_visible?: boolean;
+  legend_title?: string;
+}
+
+export interface SpatialDisplaySpec {
   id: string;
   type: 'spatial_canvas';
   encoding: DisplayEncoding;
   viewport: Viewport | null;
+}
+
+export interface EmbeddingDisplaySpec {
+  id: string;
+  type: 'embedding_canvas';
+  encoding: EmbeddingEncoding;
+  viewport: Viewport | null;
+}
+
+export type DisplaySpec = SpatialDisplaySpec | EmbeddingDisplaySpec;
+
+export function isSpatialDisplay(d: DisplaySpec): d is SpatialDisplaySpec {
+  return d.type === 'spatial_canvas';
+}
+
+export function isEmbeddingDisplay(d: DisplaySpec): d is EmbeddingDisplaySpec {
+  return d.type === 'embedding_canvas';
 }
 
 export interface RegionCategory {

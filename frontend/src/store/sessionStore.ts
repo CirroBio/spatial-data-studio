@@ -21,6 +21,7 @@ interface AppStore {
   setSessionState: (state: SessionState | null) => void;
   updateDataVersions: (versions: Record<string, number>) => void;
   updateDisplay: (display: DisplaySpec) => void;
+  addDisplay: (display: DisplaySpec) => void;
 
   // functions list
   functions: FunctionEntry[];
@@ -35,9 +36,9 @@ interface AppStore {
   sidebarTab: 'compute' | 'plots' | 'annotations' | 'subsetting';
   setSidebarTab: (tab: 'compute' | 'plots' | 'annotations' | 'subsetting') => void;
 
-  // main viewer mode — the spatial canvas or the data-table inspector
-  mainView: 'canvas' | 'tables';
-  setMainView: (view: 'canvas' | 'tables') => void;
+  // main viewer mode — spatial canvas, embedding scatter, or the data-table inspector
+  mainView: 'canvas' | 'embedding' | 'tables';
+  setMainView: (view: 'canvas' | 'embedding' | 'tables') => void;
 
   // light/dark theme — persisted in localStorage so it survives reloads
   theme: 'dark' | 'light';
@@ -183,6 +184,20 @@ export const useAppStore = create<AppStore>((set) => ({
         sessionState: {
           ...s.sessionState,
           app_state: { ...s.sessionState.app_state, displays },
+        },
+      };
+    }),
+  addDisplay: (display) =>
+    set((s) => {
+      if (!s.sessionState) return {};
+      if (s.sessionState.app_state.displays.some((d) => d.id === display.id)) return {};
+      return {
+        sessionState: {
+          ...s.sessionState,
+          app_state: {
+            ...s.sessionState.app_state,
+            displays: [...s.sessionState.app_state.displays, display],
+          },
         },
       };
     }),
