@@ -6,7 +6,7 @@ the same `uns` key, mirroring the compute-writes/plot-reads convention every squ
 metric already uses (e.g. `nhood_enrichment`)."""
 from __future__ import annotations
 
-from ..base import CallResult, Function, ParamSpec, capture_log, render_plot, run_compute
+from ..base import CallResult, Function, ParamSpec, capture_log, missing_obs_column, render_plot, run_compute
 
 _REGION_PARAM = ParamSpec(
     "region_key", {"type": "string"}, "obs_categorical", "obs_categorical", required=True,
@@ -51,10 +51,9 @@ cell_type_key
         region_key = params.get("region_key")
         cell_type_key = params.get("cell_type_key")
         adata = session.active_table()
-        if region_key not in adata.obs.columns:
-            return CallResult(status="failed", error=f"obs['{region_key}'] does not exist")
-        if cell_type_key not in adata.obs.columns:
-            return CallResult(status="failed", error=f"obs['{cell_type_key}'] does not exist")
+        error = missing_obs_column(adata, region_key) or missing_obs_column(adata, cell_type_key)
+        if error:
+            return CallResult(status="failed", error=error)
 
         def mutate(ad):
             counts = pd.crosstab(ad.obs[region_key], ad.obs[cell_type_key])

@@ -1,7 +1,7 @@
 """Edit Annotations — rename/merge the values of a categorical obs column."""
 from __future__ import annotations
 
-from ..base import Function, ParamSpec, CallResult, run_compute
+from ..base import Function, ParamSpec, CallResult, run_compute, missing_obs_column
 
 _DOC = """Edit Annotations
 
@@ -42,8 +42,9 @@ class EditAnnotations(Function):
         raw = params.get("mapping") or {}
 
         adata = session.active_table()
-        if not col or col not in adata.obs.columns:
-            return CallResult(status="failed", error=f"obs column '{col}' does not exist")
+        error = missing_obs_column(adata, col)
+        if error:
+            return CallResult(status="failed", error=error)
 
         mapping = {str(k): str(v) for k, v in raw.items()
                    if v is not None and str(v) != "" and str(v) != str(k)}

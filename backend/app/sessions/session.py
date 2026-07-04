@@ -12,7 +12,7 @@ from pathlib import Path
 
 from . import appstate
 from .adapter import ADAPTER
-from ..config import config
+from ..config import within_checkpoint_dir
 from ..transport.sse import BUS
 
 
@@ -200,20 +200,6 @@ class Session:
                 return True
         return False
 
-    def discard_pending(self, entry_id: str) -> bool:
-        for ec in ("compute", "plot"):
-            coll = self._collection(ec)
-            for i, rec in enumerate(coll):
-                if rec["id"] == entry_id and rec["status"] == "pending":
-                    coll.pop(i)
-                    return True
-        return False
-
-    def reorder_pending(self, ec: str, ordered_ids: list) -> bool:
-        order = {sid: i for i, sid in enumerate(ordered_ids)}
-        self._collection(ec).sort(key=lambda r: order.get(r["id"], len(order) + 1))
-        return True
-
     def delete_entry(self, entry_id: str) -> bool:
         """Remove a history entry the user chose to delete (e.g. a kept failure).
         Queued/running entries can't be deleted; cancel them first."""
@@ -365,8 +351,7 @@ class Session:
         with self.lock.writing():
             transform.set_affine6(self.sdata, self.active_table(), payload["affine"])
         target = Path(payload["path"]).resolve()
-        checkpoint_dir = config.CHECKPOINT_DIR.resolve()
-        if target != checkpoint_dir and checkpoint_dir not in target.parents:
+        if not within_checkpoint_dir(target):
             raise ValueError("save path is outside the checkpoint directory")
         with self.lock.reading():
             self.store_path = save_spatialdata(self.sdata, payload["path"], self.app_state)
@@ -379,8 +364,7 @@ class Session:
     def _run_save(self, job_id, payload):
         from ..persistence.store import save_spatialdata
         target = Path(payload["path"]).resolve()
-        checkpoint_dir = config.CHECKPOINT_DIR.resolve()
-        if target != checkpoint_dir and checkpoint_dir not in target.parents:
+        if not within_checkpoint_dir(target):
             raise ValueError("save path is outside the checkpoint directory")
         with self.lock.reading():
             path = save_spatialdata(self.sdata, payload["path"], self.app_state)

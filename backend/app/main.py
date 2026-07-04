@@ -1,4 +1,5 @@
 import asyncio
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -60,6 +61,16 @@ def _session(sid: str):
 
 async def _in_executor(fn, *a):
     return await asyncio.get_running_loop().run_in_executor(None, fn, *a)
+
+
+async def _read_locked(sess, fn, *a):
+    """Run `fn(*a)` in the executor under the session's read lock — the shape
+    every read-only endpoint below needs to serve a field/manifest/preview off a
+    session that a queued job may be mutating concurrently."""
+    def _run():
+        with sess.lock.reading():
+            return fn(*a)
+    return await _in_executor(_run)
 
 
 # ---- health ----------------------------------------------------------------
@@ -140,14 +151,6 @@ async def functions():
 async def coverage():
     """Parameter-term coverage report (spec §1.9): unmatched params ranked by reuse."""
     return REGISTRY.coverage
-
-
-@app.get("/api/functions/{key}")
-async def function(key: str):
-    e = REGISTRY.get(key)
-    if e is None:
-        raise HTTPException(404, "unknown function")
-    return e.to_public()
 
 
 # ---- sessions --------------------------------------------------------------
@@ -294,26 +297,7 @@ async def fs_datasets():
 @app.get("/api/sessions/{sid}")
 async def session_state(sid: str):
     sess = _session(sid)
-
-    def _state():
-        with sess.lock.reading():
-            return _mgr().state(sess)
-
-    return await _in_executor(_state)
-
-
-@app.get("/api/sessions/{sid}/manifest")
-async def data_manifest(sid: str):
-    """The text data manifest of the current session state (v3 Part 3) — the AI's
-    eyes and a human-readable diff source."""
-    sess = _session(sid)
-
-    def _build():
-        from .manifest import build_manifest
-        with sess.lock.reading():
-            return build_manifest(sess)
-
-    return {"manifest": await _in_executor(_build)}
+    return await _read_locked(sess, _mgr().state, sess)
 
 
 @app.get("/api/sessions/{sid}/obs/{column}/values")
@@ -323,15 +307,14 @@ async def obs_values(sid: str, column: str):
     sess = _session(sid)
 
     def _values():
-        with sess.lock.reading():
-            obs = sess.active_table().obs
-            if column not in obs.columns:
-                raise KeyError(column)
-            counts = obs[column].astype(str).value_counts()
-            return [{"value": str(v), "count": int(n)} for v, n in counts.items()]
+        obs = sess.active_table().obs
+        if column not in obs.columns:
+            raise KeyError(column)
+        counts = obs[column].astype(str).value_counts()
+        return [{"value": str(v), "count": int(n)} for v, n in counts.items()]
 
     try:
-        values = await _in_executor(_values)
+        values = await _read_locked(sess, _values)
     except (KeyError, RuntimeError) as e:
         raise HTTPException(404, str(e))
     return {"column": column, "values": values}
@@ -368,6 +351,9 @@ async def cancel_job(sid: str, job_id: str):
 
 @app.get("/api/sessions/{sid}/jobs/{job_id}")
 async def job_state(sid: str, job_id: str):
+    """Poll a job's status. The live frontend learns status over SSE, but "special"
+    jobs (save/subset/annotate/promote/cirro_upload/set_transform) have no
+    app_state record, so this is the only way a non-SSE client can await them."""
     status = _session(sid).job_status(job_id)
     if status is None:
         raise HTTPException(404, "job not found")
@@ -394,12 +380,6 @@ async def run_all_pending(sid: str):
     return {"queued": _session(sid).run_all_pending()}
 
 
-@app.post("/api/sessions/{sid}/pending/reorder")
-async def reorder_pending(sid: str, body: dict):
-    _session(sid).reorder_pending(body.get("kind", "compute"), body.get("ids", []))
-    return {"ok": True}
-
-
 @app.post("/api/sessions/{sid}/pending/{step_id}/run")
 async def run_pending(sid: str, step_id: str):
     if not _session(sid).run_pending(step_id):
@@ -410,13 +390,6 @@ async def run_pending(sid: str, step_id: str):
 @app.put("/api/sessions/{sid}/pending/{step_id}")
 async def edit_pending(sid: str, step_id: str, body: dict):
     if not _session(sid).edit_pending(step_id, body.get("params", {})):
-        raise HTTPException(409, "not a pending step")
-    return {"ok": True}
-
-
-@app.delete("/api/sessions/{sid}/pending/{step_id}")
-async def discard_pending(sid: str, step_id: str):
-    if not _session(sid).discard_pending(step_id):
         raise HTTPException(409, "not a pending step")
     return {"ok": True}
 
@@ -450,9 +423,8 @@ async def figure(sid: str, plot_id: str, fmt: str = "svg"):
 # ---- displays --------------------------------------------------------------
 @app.post("/api/sessions/{sid}/displays")
 async def add_display(sid: str, spec: dict):
-    import uuid
     sess = _session(sid)
-    spec["id"] = spec.get("id") or str(uuid.uuid4())
+    spec["id"] = str(uuid.uuid4())
     with sess.lock.writing():
         sess.app_state["displays"].append(spec)
     BUS.publish("display.updated", {"session_id": sid, "display_id": spec["id"], "spec": spec})
@@ -578,12 +550,11 @@ async def get_points_transform(sid: str):
     sess = _session(sid)
     from .sessions import transform
 
-    def _read():
-        with sess.lock.reading():
-            return {"affine": transform.get_affine6(sess.sdata, sess.active_table()),
-                    "element": transform.region_name(sess.active_table())}
+    def _fields():
+        return {"affine": transform.get_affine6(sess.sdata, sess.active_table()),
+                "element": transform.region_name(sess.active_table())}
 
-    return await _in_executor(_read)
+    return await _read_locked(sess, _fields)
 
 
 @app.post("/api/sessions/{sid}/points-transform")
@@ -617,13 +588,11 @@ async def export_recipe(sid: str):
 @app.post("/api/sessions/{sid}/recipe/run")
 async def run_recipe(sid: str, recipe: dict):
     """Import a recipe: run now (queue all steps) or stage as PENDING (spec §5.3)."""
+    from . import recipes
     sess = _session(sid)
-    stage = recipe.get("mode") == "stage"
-    n = 0
-    for step in recipe.get("steps", []):
-        sess.stage_descriptor(step) if stage else sess.enqueue_descriptor(step)
-        n += 1
-    return {"staged" if stage else "queued": n}
+    mode = recipe.get("mode") or "run"
+    n = recipes.run_steps(sess, recipe.get("steps", []), mode)
+    return {"staged" if mode == "stage" else "queued": n}
 
 
 def _preflight(recipe: dict) -> dict:
@@ -666,21 +635,41 @@ async def data(sid: str, field_path: str):
     sess = _session(sid)
 
     def _resolve():
-        with sess.lock.reading():
-            batch = arrow.resolve_field(sess.active_table(), field_path)
-            # Canvas cell positions honor the editable points->global transform.
-            if field_path == "obsm:spatial":
-                from .sessions import transform
-                affine6 = transform.get_affine6(sess.sdata, sess.active_table())
-                if not transform.is_identity(affine6):
-                    batch = arrow.apply_affine_xy(batch, transform.matrix3x3(affine6))
-            return arrow.to_ipc_bytes(batch)
+        batch = arrow.resolve_field(sess.active_table(), field_path)
+        # Canvas cell positions honor the editable points->global transform.
+        if field_path == "obsm:spatial":
+            from .sessions import transform
+            affine6 = transform.get_affine6(sess.sdata, sess.active_table())
+            if not transform.is_identity(affine6):
+                batch = arrow.apply_affine_xy(batch, transform.matrix3x3(affine6))
+        return arrow.to_ipc_bytes(batch)
 
     try:
-        payload = await _in_executor(_resolve)
+        payload = await _read_locked(sess, _resolve)
     except (KeyError, ValueError) as e:
         raise HTTPException(404, str(e))
     return Response(content=payload, media_type="application/vnd.apache.arrow.stream")
+
+
+@app.get("/api/sessions/{sid}/var-names")
+async def var_names(sid: str, q: str = "", limit: int = 50):
+    """Search var_names (genes) for the color-by gene picker. adata can carry tens
+    of thousands of genes, so match server-side and cap the result; prefix hits rank
+    first, then substring hits."""
+    sess = _session(sid)
+
+    def _search():
+        names = [str(v) for v in sess.active_table().var_names]
+        ql = q.strip().lower()
+        if not ql:
+            return names[:limit]
+        starts = [s for s in names if s.lower().startswith(ql)]
+        if len(starts) >= limit:
+            return starts[:limit]
+        contains = [s for s in names if ql in s.lower() and not s.lower().startswith(ql)]
+        return (starts + contains)[:limit]
+
+    return {"names": await _read_locked(sess, _search)}
 
 
 # ---- data inspector: element inventory + dataframe previews ----------------
@@ -689,10 +678,9 @@ async def elements(sid: str):
     sess = _session(sid)
 
     def _build():
-        with sess.lock.reading():
-            return tables.describe_elements(sess.active_table(), sess.sdata, sess.active_table_key)
+        return tables.describe_elements(sess.active_table(), sess.sdata, sess.active_table_key)
 
-    return await _in_executor(_build)
+    return await _read_locked(sess, _build)
 
 
 @app.get("/api/sessions/{sid}/table")
@@ -702,11 +690,10 @@ async def table_preview(sid: str, path: str, offset: int = 0, limit: int = 50):
     limit = max(1, min(limit, 200))
 
     def _build():
-        with sess.lock.reading():
-            return tables.table_preview(sess.active_table(), sess.sdata, path, offset, limit)
+        return tables.table_preview(sess.active_table(), sess.sdata, path, offset, limit)
 
     try:
-        return await _in_executor(_build)
+        return await _read_locked(sess, _build)
     except (KeyError, ValueError) as e:
         raise HTTPException(404, str(e))
 
@@ -717,12 +704,11 @@ async def image_info(sid: str, element: str):
     sess = _session(sid)
 
     def _info():
-        with sess.lock.reading():
-            table = sess.active_table() if sess.active_table_key else None
-            return imaging.image_info(sess.sdata, element, table)
+        table = sess.active_table() if sess.active_table_key else None
+        return imaging.image_info(sess.sdata, element, table)
 
     try:
-        return await _in_executor(_info)
+        return await _read_locked(sess, _info)
     except KeyError as e:
         raise HTTPException(404, str(e))
 
@@ -733,11 +719,10 @@ async def image_thumbnail(sid: str, element: str, max_px: int = 2048, channels: 
     channel_colors = imaging.parse_channel_colors(channels)
 
     def _render():
-        with sess.lock.reading():
-            return imaging.thumbnail_png(sess.sdata, element, max_px, channel_colors)
+        return imaging.thumbnail_png(sess.sdata, element, max_px, channel_colors)
 
     try:
-        png = await _in_executor(_render)
+        png = await _read_locked(sess, _render)
     except KeyError as e:
         raise HTTPException(404, str(e))
     return Response(content=png, media_type="image/png",
@@ -751,11 +736,10 @@ async def image_tile(sid: str, element: str, level: int, col: int, row: int,
     channel_colors = imaging.parse_channel_colors(channels)
 
     def _render():
-        with sess.lock.reading():
-            return imaging.tile_png(sess.sdata, element, level, col, row, channel_colors)
+        return imaging.tile_png(sess.sdata, element, level, col, row, channel_colors)
 
     try:
-        png = await _in_executor(_render)
+        png = await _read_locked(sess, _render)
     except KeyError as e:
         raise HTTPException(404, str(e))
     return Response(content=png, media_type="image/png",

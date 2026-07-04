@@ -91,6 +91,14 @@ DEFAULT_CHANNEL_COLORS: list[tuple[int, int, int]] = [
 ]
 
 
+def hex_to_rgb(hexcolor: str) -> tuple[int, int, int] | None:
+    """`"rrggbb"` (leading `#` optional) -> (r, g, b), or None if malformed."""
+    hexcolor = hexcolor.lstrip("#")
+    if len(hexcolor) != 6:
+        return None
+    return (int(hexcolor[0:2], 16), int(hexcolor[2:4], 16), int(hexcolor[4:6], 16))
+
+
 def parse_channel_colors(spec: str | None) -> dict[int, tuple[int, int, int]] | None:
     """Parse a `channels` query value of comma-separated `index:rrggbb` pairs into
     a channel-index -> RGB dict. Only listed indices are treated as visible."""
@@ -99,10 +107,10 @@ def parse_channel_colors(spec: str | None) -> dict[int, tuple[int, int, int]] | 
     colors: dict[int, tuple[int, int, int]] = {}
     for part in spec.split(","):
         idx_str, _, hexcolor = part.strip().partition(":")
-        hexcolor = hexcolor.lstrip("#")
-        if not idx_str.isdigit() or len(hexcolor) != 6:
+        rgb = hex_to_rgb(hexcolor)
+        if not idx_str.isdigit() or rgb is None:
             continue
-        colors[int(idx_str)] = (int(hexcolor[0:2], 16), int(hexcolor[2:4], 16), int(hexcolor[4:6], 16))
+        colors[int(idx_str)] = rgb
     return colors
 
 

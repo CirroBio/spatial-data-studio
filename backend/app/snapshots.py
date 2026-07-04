@@ -146,11 +146,8 @@ def _channel_colors(enc: dict) -> dict[int, tuple[int, int, int]] | None:
         if not st.get("visible", True):
             continue
         idx = int(i)
-        hexcolor = (st.get("color") or "").lstrip("#")
-        if len(hexcolor) == 6:
-            colors[idx] = (int(hexcolor[0:2], 16), int(hexcolor[2:4], 16), int(hexcolor[4:6], 16))
-        else:
-            colors[idx] = imaging.DEFAULT_CHANNEL_COLORS[idx % len(imaging.DEFAULT_CHANNEL_COLORS)]
+        rgb = imaging.hex_to_rgb(st.get("color") or "")
+        colors[idx] = rgb if rgb is not None else imaging.DEFAULT_CHANNEL_COLORS[idx % len(imaging.DEFAULT_CHANNEL_COLORS)]
     return colors
 
 

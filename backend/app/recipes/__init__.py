@@ -51,12 +51,20 @@ def catalog() -> list[dict]:
             for n, r in _BUNDLED.items()]
 
 
+def run_steps(session, steps: list, mode: str) -> int:
+    """Stage (mode='stage') or run-now each step descriptor; returns the count run.
+    Shared by a bundled recipe (apply_recipe) and an ad-hoc imported one
+    (main.py's /recipe/run, exported via GET /recipe)."""
+    n = 0
+    for step in steps:
+        session.stage_descriptor(step) if mode == "stage" else session.enqueue_descriptor(step)
+        n += 1
+    return n
+
+
 def apply_recipe(session, name: str, mode: str = "run") -> dict:
     recipe = _BUNDLED.get(name)
     if recipe is None:
         return {"status": "failed", "error": f"no recipe named '{name}'"}
-    n = 0
-    for step in recipe.get("steps", []):
-        session.stage_descriptor(step) if mode == "stage" else session.enqueue_descriptor(step)
-        n += 1
+    n = run_steps(session, recipe.get("steps", []), mode)
     return {"status": "completed", "staged" if mode == "stage" else "queued": n}

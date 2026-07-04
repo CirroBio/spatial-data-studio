@@ -20,6 +20,18 @@ from ..transport.sse import BUS
 _READ_PATH_PARAMS = ("path", "input", "image_path", "alignment_file")
 
 
+def _resolve_or_raise(path: str) -> Path:
+    """Resolve `path` and ensure it falls within an allowed data root; raises
+    RuntimeError otherwise (the error class both callers below surface as-is)."""
+    try:
+        target = Path(path).resolve()
+    except OSError:
+        raise RuntimeError(f"bad path: {path}")
+    if not within_roots(target, browse_roots()):
+        raise RuntimeError(f"path is outside the allowed data roots: {path}")
+    return target
+
+
 class SessionManager:
     def __init__(self, registry):
         self.registry = registry
@@ -29,13 +41,7 @@ class SessionManager:
     # ---- creation ---------------------------------------------------------
     def create_from_load(self, path: str, name: str | None = None) -> Session:
         self._check_capacity()
-        try:
-            target = Path(path).resolve()
-        except OSError:
-            raise RuntimeError(f"bad path: {path}")
-        if not within_roots(target, browse_roots()):
-            raise RuntimeError(f"path is outside the allowed data roots: {path}")
-        resolved = str(target)  # use the validated, resolved path for every fs op below
+        resolved = str(_resolve_or_raise(path))  # validated, resolved path for every fs op below
         self._check_admission(estimate_resident_mb(resolved))
         sdata, app_state, newer, extract_dir = load_spatialdata(resolved)
         sid = str(uuid.uuid4())
@@ -56,12 +62,7 @@ class SessionManager:
         for k, v in descriptor.get("params", {}).items():
             if k not in _READ_PATH_PARAMS or not isinstance(v, str):
                 continue
-            try:
-                target = Path(v).resolve()
-            except OSError:
-                raise RuntimeError(f"bad path: {v}")
-            if not within_roots(target, browse_roots()):
-                raise RuntimeError(f"path is outside the allowed data roots: {v}")
+            _resolve_or_raise(v)
         sid = str(uuid.uuid4())
         sess = Session(sid, name or descriptor.get("function", "session"), None, appstate.fresh(), self)
         self.sessions[sid] = sess
@@ -95,6 +96,17 @@ class SessionManager:
                          "legend_visible": True, "legend_title": ""},
             "viewport": None,
         })
+
+        emb_key = next((k for k in ad.obsm if k != "spatial"), None)
+        if emb_key is not None:
+            sess.app_state["displays"].append({
+                "id": str(uuid.uuid4()), "type": "embedding_canvas",
+                "encoding": {"obsm_key": emb_key, "x_component": 0, "y_component": 1,
+                             "z_component": 2, "is_3d": False, "color_by": color,
+                             "point_size": 4, "opacity": 0.85, "colormap": "viridis",
+                             "legend_visible": True, "legend_title": ""},
+                "viewport": None,
+            })
 
     # ---- queries ----------------------------------------------------------
     def get(self, sid: str) -> Session | None:

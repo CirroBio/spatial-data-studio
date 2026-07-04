@@ -33,8 +33,7 @@ def resolve_field(adata, field_path: str) -> pa.RecordBatch:
         return pa.record_batch({"value": pa.array(np.asarray(col))})
     if element == "obsm":
         arr = np.asarray(adata.obsm[key])
-        ncol = min(arr.shape[1], 3)
-        cols = {f"d{i}": pa.array(arr[:, i].astype("float32")) for i in range(ncol)}
+        cols = {f"d{i}": pa.array(arr[:, i].astype("float32")) for i in range(arr.shape[1])}
         return pa.record_batch(cols)
     if element == "X":
         return _gene_batch(adata, key)
@@ -116,7 +115,7 @@ def describe_fields(adata, sdata) -> dict:
     shapes = list(getattr(sdata, "shapes", {}).keys()) if sdata is not None else []
     return {
         "obs": obs,
-        "obsm": list(adata.obsm.keys()),
+        "obsm": [{"name": k, "n_components": int(np.asarray(v).shape[1])} for k, v in adata.obsm.items()],
         "obsp": list(adata.obsp.keys()),
         "layers": list(adata.layers.keys()),
         "var_names_count": int(adata.n_vars),

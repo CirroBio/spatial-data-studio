@@ -97,3 +97,10 @@ def browse_roots() -> list[Path]:
 
 def within_roots(target: Path, roots: list[Path]) -> bool:
     return any(target == r or r in target.parents for r in roots)
+
+
+def within_checkpoint_dir(target: Path) -> bool:
+    """True if `target` is CHECKPOINT_DIR itself or somewhere beneath it (save /
+    set-transform paths must land there)."""
+    checkpoint_dir = config.CHECKPOINT_DIR.resolve()
+    return target == checkpoint_dir or checkpoint_dir in target.parents

@@ -130,6 +130,14 @@ def capture_log():
         root.setLevel(prev_level)
 
 
+def missing_obs_column(adata, name: str | None) -> str | None:
+    """Failure message if `name` isn't a column of `adata.obs`, else None. Custom
+    functions that take an obs-column param check this before running `mutate`."""
+    if not name or name not in adata.obs.columns:
+        return f"obs column '{name}' does not exist"
+    return None
+
+
 def resolve_obsm_key(adata, params: dict, param: str = "coords", default: str = "spatial") -> str:
     """Resolve an obsm key from `params[param]` (falling back to `default`).
     Raises KeyError(key) if that key isn't in `adata.obsm`, so callers can build
