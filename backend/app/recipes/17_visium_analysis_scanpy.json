@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "name": "Visium analysis & visualization (scanpy)",
+    "description": "The canonical scanpy Visium walkthrough: QC → count/gene filtering → normalize → log1p → highly variable genes (Seurat, 2000) → PCA → neighbors → UMAP → Leiden (obs['clusters']) → per-cluster marker genes (t-test). For full-transcriptome Visium H&E sections; the fixed count thresholds are Visium-scale and will over-filter targeted panels.",
+    "provenance": "Adapted from the scanpy 'Analysis and visualization of spatial transcriptomics data' tutorial (Visium mouse-brain section)."
+  },
+  "readme": "End-to-end reproduction of scanpy's Visium basic-analysis tutorial. Drops spots outside 5000–35000 total counts and genes seen in fewer than 10 spots, selects 2000 highly variable genes (Seurat flavor, on log data), then runs the standard PCA → neighbors → UMAP → Leiden path and ranks marker genes per cluster with a t-test. Clusters land in `obs['clusters']`; markers in `uns['rank_genes_groups']`. The tutorial's mitochondrial QC (`qc_vars=['mt']` and the `pct_counts_mt` cutoff) needs a pre-set `var['mt']` mask and a manual boolean subset, so it is omitted here. Count thresholds assume full-transcriptome Visium data — not for targeted panels such as Xenium.",
+  "steps": [
+    { "namespace": "sc.pp", "function": "calculate_qc_metrics", "params": { "inplace": true, "percent_top": [50, 100, 200] } },
+    { "namespace": "sc.pp", "function": "filter_cells", "params": { "min_counts": 5000 } },
+    { "namespace": "sc.pp", "function": "filter_cells", "params": { "max_counts": 35000 } },
+    { "namespace": "sc.pp", "function": "filter_genes", "params": { "min_cells": 10 } },
+    { "namespace": "sc.pp", "function": "normalize_total", "params": {} },
+    { "namespace": "sc.pp", "function": "log1p", "params": {} },
+    { "namespace": "sc.pp", "function": "highly_variable_genes", "params": { "flavor": "seurat", "n_top_genes": 2000 } },
+    { "namespace": "sc.pp", "function": "pca", "params": {} },
+    { "namespace": "sc.pp", "function": "neighbors", "params": {} },
+    { "namespace": "sc.tl", "function": "umap", "params": {} },
+    { "namespace": "sc.tl", "function": "leiden", "params": { "key_added": "clusters", "flavor": "igraph", "directed": false, "n_iterations": 2 } },
+    { "namespace": "sc.tl", "function": "rank_genes_groups", "params": { "groupby": "clusters", "method": "t-test" } }
+  ]
+}

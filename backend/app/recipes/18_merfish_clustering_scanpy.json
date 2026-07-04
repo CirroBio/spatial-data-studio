@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "name": "MERFISH clustering (imaging-based counts)",
+    "description": "Cluster imaging-based FISH data (MERFISH/MERSCOPE) the way the scanpy tutorial does: counts-per-million normalize (target_sum=1e6) → log1p → PCA on few components (n_comps=15, suited to small gene panels) → neighbors → UMAP → Leiden. Produces obs['leiden'].",
+    "provenance": "Adapted from the MERFISH section of the scanpy 'Analysis and visualization of spatial transcriptomics data' tutorial."
+  },
+  "readme": "The scanpy tutorial's MERFISH branch. Imaging-based FISH panels measure few genes at high counts, so this normalizes to counts-per-million (`target_sum=1e6`, the modern equivalent of the tutorial's `normalize_per_cell(counts_per_cell_after=1e6)`) and runs PCA with only 15 components before the standard neighbors → UMAP → Leiden path. Clusters land in `obs['leiden']`. Contrast with 'Preprocess & cluster (raw counts)', which uses default median normalization and full-width PCA for larger panels.",
+  "steps": [
+    { "namespace": "sc.pp", "function": "normalize_total", "params": { "target_sum": 1000000 } },
+    { "namespace": "sc.pp", "function": "log1p", "params": {} },
+    { "namespace": "sc.pp", "function": "pca", "params": { "n_comps": 15 } },
+    { "namespace": "sc.pp", "function": "neighbors", "params": {} },
+    { "namespace": "sc.tl", "function": "umap", "params": {} },
+    { "namespace": "sc.tl", "function": "leiden", "params": { "flavor": "igraph", "n_iterations": 2 } }
+  ]
+}
