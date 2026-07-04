@@ -65,9 +65,31 @@ same picker → form → queue → history machinery.
   compute/plot jobs, structural-diff–driven refresh, live RAM/CPU resource strip.
 - **deck.gl canvas** — binary Arrow scatter colored by `obs`/`X`/region set over the
   tissue image; world-unit point sizing. Each image channel can be toggled, renamed,
-  and assigned one of 8 canonical spectrum colors (the server composites the thumbnail
+  and assigned one of 8 canonical spectrum colors (the server composites channels
   by additively blending each channel's intensity tinted with its color); a togglable
-  legend overlays a color swatch + label for every visible channel.
+  legend overlays a color swatch + label for every visible channel. A separate,
+  togglable cell-color legend (bottom-right) reflects the current **Color by** — a
+  viridis colorbar with the value range for numeric columns, category swatches for
+  categorical ones — with an editable title that defaults to the column name. A
+  spinner in the top-left signals when cells, colors, or image tiles are (re)loading.
+- **Tiled image pyramid** — large sections (e.g. Xenium, ~34k×14k px) are drawn from
+  the `SpatialData` multiscale pyramid: a coarse whole-image base plus level-of-detail
+  tiles for the current viewport, so only what's on screen at the resolution it needs
+  is fetched, and zooming reaches full resolution. Tiles come from
+  `GET /api/sessions/{id}/image/{element}/tile/{level}/{col}/{row}?channels=` (composited
+  PNGs, LRU-cached); `…/info` reports the pyramid levels, tile size, and a
+  `pixel_to_world` affine. Because a table's `obsm["spatial"]` and its image can live in
+  different coordinate spaces (Xenium spots are in microns; the image is in pixels), the
+  server reconciles them — picking the element transform that best overlays spots onto
+  the image — so points and image line up, and rotated/aligned images (e.g. an H&E) are
+  placed as quadrilaterals.
+- **Editable points transform** — when the automatic reconciliation is off, **Edit
+  points transform** (canvas controls) opens an editor for the points→global affine of
+  the table's region element, as either scale/rotation/translation or a raw 2×3 matrix.
+  Saving runs `spatialdata.transformations.set_transformation` under the write lock and
+  writes the object to its checkpoint (blocking spinner while it saves), so the new
+  alignment persists across sessions; the canvas re-renders the cells at the new
+  coordinates. Served via `GET`/`POST /api/sessions/{id}/points-transform`.
 - **Data inspector** — a Spatial/Tables switch in the viewer's top-left opens a
   paginated browser over the `SpatialData` elements: each table's `obs`/`var`
   dataframes, `shapes` GeoDataFrames (geometry as WKT), `points`, and image
@@ -90,18 +112,30 @@ same picker → form → queue → history machinery.
   finishes; an unobtrusive Stop button cancels it if the job is still queued
   (a save already writing to disk can't be interrupted).
 - **Recipes** — curated multi-step workflows browsable from the Compute/Plots tabs
-  (**Browse recipes**), served by `GET /api/recipes`, run through `/recipe/run`.
-  squidpy spatial recipes for `visium_hne` (neighborhood enrichment, Moran's I
-  spatially variable genes, co-occurrence, region graph topology, Ripley's L) and
-  scanpy recipes for raw data such as Xenium (preprocess → Leiden + UMAP; QC →
-  filter → cluster; marker genes; end-to-end cluster → neighborhood enrichment). Plus PENDING staging
-  (stage/edit/run/run-all) and a preflight that computes required-vs-produced
-  keys + validates the installed registry. Ad-hoc export/import over history too.
+  (**Browse recipes**, with a search box filtering by name/description/step), served
+  by `GET /api/recipes`, run through `/recipe/run`.
+  squidpy spatial recipes for `visium_hne` (neighborhood enrichment, spatially
+  variable genes by Moran's I / Geary's C / sepal, co-occurrence, region graph
+  topology, Ripley's L, ligand-receptor interactions) and scanpy recipes for raw
+  data such as Xenium (preprocess → Leiden + UMAP; QC → filter → cluster; marker
+  genes; cluster hierarchy + markers; Louvain clustering; t-SNE + diffusion-map
+  embeddings; PAGA trajectory; end-to-end cluster → neighborhood enrichment). Recipes
+  are JSON files under `backend/app/recipes/` discovered at startup — see
+  "Contributing recipes" below. Plus PENDING staging (stage/edit/run/run-all) and a
+  preflight that computes required-vs-produced keys + validates the installed
+  registry. Ad-hoc export/import over history too.
 - **Persistence** — save/load `.zarr` and `.zarr.zip` (data + app state in
   `attrs`), with full UI/region/history round-trip.
 - **Acknowledgements** (About icon in the header) — third-party libraries in use and
   their licenses, served by `GET /api/about/licenses` from the backend/frontend SBOMs
   (`sds-governance/sbom.json` + `sds-governance/sbom_frontend.json`).
+- **Cirro upload** (`backend/app/cirro.py`, optional) — upload the saved session plus
+  selected snapshots to [Cirro](https://cirro.bio/) as a dataset, via a service-account
+  (OAuth client-credentials) identity — no interactive login. Strictly additive: dark
+  unless `CIRRO_BASE_URL`, `CIRRO_CLIENT_ID`, and `CIRRO_CLIENT_SECRET` are all set. The
+  session must be saved first; the upload folder is built from symlinks (the saved
+  `.zarr.zip` plus, per selected snapshot, only the specific assets it references —
+  `assets/` is shared and content-hashed across snapshots) so nothing is copied.
 
 ## Layout
 
@@ -117,6 +151,7 @@ backend/    FastAPI app
   app/transport/  arrow (field -> Arrow IPC), tables (element inventory + dataframe page JSON), sse
   app/recipes/    curated analysis recipes — JSON bundle files, discovered at startup (catalog + apply)
   app/persistence/ store (.zarr / .zarr.zip)
+  app/cirro.py    Cirro dataset upload (client-credentials auth, symlink-based upload folder)
 frontend/   React + TS + Vite + Tailwind + deck.gl SPA
 docker/     single-image build (multi-stage), nginx edge, supervisor
 docs/       CONTRACT.md (REST/SSE/Arrow API)
@@ -127,6 +162,45 @@ sds-governance/  governance bundle: RULES.md (R1-R16) + AGENTS.md + skills/ +
                  `checks/scan_licenses_frontend.py` regenerates sbom_frontend.json (not
                  gated by `make check`, no npm forbidden-package list defined yet)
 ```
+
+## Contributing recipes
+
+Recipes are plain JSON files in `backend/app/recipes/`, discovered at startup — no
+code changes needed. To contribute one, open a PR that adds a file named
+`NN_short_name.json` (continue the numbering) with this shape:
+
+```json
+{
+  "schema_version": 1,
+  "meta": {
+    "name": "Human-readable name",
+    "description": "One or two sentences on what it computes and where the result lands.",
+    "provenance": "The squidpy/scanpy vignette or API it is adapted from, and the target dataset."
+  },
+  "readme": "Longer notes shown with the recipe: assumptions, preconditions, gotchas.",
+  "steps": [
+    { "namespace": "sc.pp", "function": "normalize_total", "params": {} },
+    { "namespace": "gr", "function": "spatial_neighbors", "params": { "coord_type": "grid", "n_neighs": 6 } }
+  ]
+}
+```
+
+Each step is `{namespace, function, params}`. Valid namespaces: squidpy `gr`, `im`,
+`tl`, `pl`, `read`; scanpy `sc.pp`, `sc.tl`, `sc.get` (there is **no `sc.pl`** — do all
+plotting with squidpy `pl.*`). Guidelines:
+
+- Only reference functions/params that exist in the installed registry. Validate with
+  the preflight endpoint (`POST /api/sessions/{id}/recipe/preflight`) or by running the
+  recipe through **Browse recipes** on a matching dataset; a step that names a missing
+  function or param fails at run time.
+- A param set to `null` is dropped before the call, so never pass `null` for a required
+  argument — omit it or give a real value.
+- Avoid the process-pool code paths: `gr.spatial_autocorr`/`sepal` must not pass
+  `n_perms` (joblib's process pool can't spawn inside the worker thread); prefer the
+  analytic score. Plots needing `uns['spatial']` (`pl.spatial_scatter`) don't work on
+  app sessions.
+- State the target dataset in `provenance`/`readme` when a recipe is bound to specific
+  columns or gene names (e.g. the mouse-brain `obs['cluster']` or ligand-receptor pairs).
 
 ## Run with Docker (single image, recommended)
 
@@ -146,6 +220,11 @@ loop/approval) or `AI_PROVIDER=bedrock` with `BEDROCK_MODEL_ID`, `AWS_REGION`, a
 credentials. The compose file forwards these; e.g. a quick mock demo:
 `AI_ENABLED=true AI_PROVIDER=mock docker compose up --build -d`. With AI disabled the
 chat panel is dark and the app runs normally.
+
+**Enable Cirro upload (optional).** Set `CIRRO_BASE_URL`, `CIRRO_CLIENT_ID`, and
+`CIRRO_CLIENT_SECRET` in `.env` (a service-account/client-credentials identity — no
+interactive login). The compose file forwards these too; with any unset, the upload
+button stays hidden and the app runs normally.
 
 ## Run locally for development
 

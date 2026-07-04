@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "name": "PAGA trajectory (raw counts)",
+    "description": "Cluster raw counts, then abstract the cluster connectivity graph with PAGA (partition-based graph abstraction) to reveal candidate trajectories between clusters. Connectivities land in uns['paga']. For unprocessed data such as Xenium.",
+    "provenance": "scanpy PAGA workflow (sc.tl.paga; Wolf et al. 2019, scanpy trajectory-inference tutorial). Targets unprocessed raw-count data such as Xenium."
+  },
+  "readme": "Scanpy path from raw counts to PAGA: normalize -> log1p -> PCA -> neighbors -> Leiden -> PAGA -> UMAP. PAGA scores how strongly each pair of Leiden clusters is connected (uns['paga']['connectivities']). UMAP uses its default (spectral) initialization — the PAGA-initialized layout needs sc.pl.paga, which this app does not expose.",
+  "steps": [
+    { "namespace": "sc.pp", "function": "normalize_total", "params": {} },
+    { "namespace": "sc.pp", "function": "log1p", "params": {} },
+    { "namespace": "sc.pp", "function": "pca", "params": {} },
+    { "namespace": "sc.pp", "function": "neighbors", "params": {} },
+    { "namespace": "sc.tl", "function": "leiden", "params": { "flavor": "igraph", "n_iterations": 2 } },
+    { "namespace": "sc.tl", "function": "paga", "params": { "groups": "leiden" } },
+    { "namespace": "sc.tl", "function": "umap", "params": {} }
+  ]
+}

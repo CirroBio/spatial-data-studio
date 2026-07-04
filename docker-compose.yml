@@ -36,6 +36,10 @@ services:
       AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
       AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
       AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
+      # Cirro upload. Off unless all three are set (service-account/client-credentials).
+      CIRRO_BASE_URL: "${CIRRO_BASE_URL:-}"
+      CIRRO_CLIENT_ID: "${CIRRO_CLIENT_ID:-}"
+      CIRRO_CLIENT_SECRET: "${CIRRO_CLIENT_SECRET:-}"
 
     # Soft cgroup limit consistent with SQV_CONTAINER_MEM_MB
     mem_limit: 12g

@@ -218,17 +218,28 @@ def _find_datasets(roots: list[Path]) -> list[dict]:
                 if name.endswith(".zarr"):
                     if not _looks_like_sdata_zarr(full):
                         continue  # never descend into a .zarr's internals
-                    found.setdefault(str(full.resolve()), {"name": rel(full), "path": str(full)})
+                    found.setdefault(str(full.resolve()),
+                                     {"name": rel(full), "path": str(full), "mtime": _mtime(full)})
                     continue
                 keep.append(name)
             dirnames[:] = keep
             for name in filenames:
                 if name.endswith(".zarr.zip"):
                     full = here / name
-                    found.setdefault(str(full.resolve()), {"name": rel(full), "path": str(full)})
+                    found.setdefault(str(full.resolve()),
+                                     {"name": rel(full), "path": str(full), "mtime": _mtime(full)})
             if len(found) >= _DATASET_CAP:
                 break
-    return sorted(found.values(), key=lambda e: e["name"].lower())
+    # Newest first: saved sessions the user just wrote surface at the top.
+    return sorted(found.values(), key=lambda e: e["mtime"], reverse=True)
+
+
+def _mtime(p: Path) -> float:
+    import os
+    try:
+        return os.path.getmtime(p)
+    except OSError:
+        return 0.0
 
 
 @app.get("/api/fs/browse")
@@ -513,6 +524,43 @@ async def list_third_party_licenses():
     return acknowledgements.catalog()
 
 
+# ---- Cirro upload (service-account auth; dark unless configured) ----------
+@app.get("/api/cirro/status")
+async def cirro_status():
+    return {"enabled": config.cirro_enabled()}
+
+
+@app.get("/api/cirro/projects")
+async def cirro_projects():
+    if not config.cirro_enabled():
+        raise HTTPException(503, "Cirro is not configured")
+    from . import cirro
+    return {"projects": cirro.list_projects()}
+
+
+@app.get("/api/cirro/processes")
+async def cirro_processes():
+    if not config.cirro_enabled():
+        raise HTTPException(503, "Cirro is not configured")
+    from . import cirro
+    return {"processes": cirro.list_processes()}
+
+
+@app.post("/api/sessions/{sid}/cirro/upload")
+async def cirro_upload(sid: str, body: dict):
+    """body: {project_id, process_id, dataset_name, snapshot_names: [str]}."""
+    if not config.cirro_enabled():
+        raise HTTPException(503, "Cirro is not configured")
+    sess = _session(sid)
+    if not sess.store_path:
+        raise HTTPException(409, "save the session before uploading to Cirro")
+    job_id = sess.enqueue_special("cirro_upload", {
+        "project_id": body["project_id"], "process_id": body["process_id"],
+        "dataset_name": body["dataset_name"], "snapshot_names": body.get("snapshot_names") or [],
+    })
+    return {"job_id": job_id}
+
+
 @app.post("/api/sessions/{sid}/save")
 async def save(sid: str, body: dict | None = None):
     sess = _session(sid)
@@ -520,6 +568,33 @@ async def save(sid: str, body: dict | None = None):
     if not path:
         path = str(config.CHECKPOINT_DIR / f"{sess.name}-{sid[:8]}.zarr.zip")
     job_id = sess.enqueue_special("save", {"path": path})
+    return {"job_id": job_id, "path": path}
+
+
+# ---- points -> global coordinate transform ---------------------------------
+@app.get("/api/sessions/{sid}/points-transform")
+async def get_points_transform(sid: str):
+    """Current points->global affine (6 floats) of the active table's region element."""
+    sess = _session(sid)
+    from .sessions import transform
+
+    def _read():
+        with sess.lock.reading():
+            return {"affine": transform.get_affine6(sess.sdata, sess.active_table()),
+                    "element": transform.region_name(sess.active_table())}
+
+    return await _in_executor(_read)
+
+
+@app.post("/api/sessions/{sid}/points-transform")
+async def set_points_transform(sid: str, body: dict):
+    """Set the points->global affine and persist to disk. body: {affine: [a,b,c,d,e,f]}."""
+    sess = _session(sid)
+    affine = body["affine"]
+    if not (isinstance(affine, list) and len(affine) == 6):
+        raise HTTPException(400, "affine must be 6 floats [a, b, c, d, e, f]")
+    path = body.get("path") or str(config.CHECKPOINT_DIR / f"{sess.name}-{sid[:8]}.zarr.zip")
+    job_id = sess.enqueue_special("set_transform", {"affine": affine, "path": path})
     return {"job_id": job_id, "path": path}
 
 
@@ -593,6 +668,12 @@ async def data(sid: str, field_path: str):
     def _resolve():
         with sess.lock.reading():
             batch = arrow.resolve_field(sess.active_table(), field_path)
+            # Canvas cell positions honor the editable points->global transform.
+            if field_path == "obsm:spatial":
+                from .sessions import transform
+                affine6 = transform.get_affine6(sess.sdata, sess.active_table())
+                if not transform.is_identity(affine6):
+                    batch = arrow.apply_affine_xy(batch, transform.matrix3x3(affine6))
             return arrow.to_ipc_bytes(batch)
 
     try:
@@ -637,7 +718,8 @@ async def image_info(sid: str, element: str):
 
     def _info():
         with sess.lock.reading():
-            return imaging.image_info(sess.sdata, element)
+            table = sess.active_table() if sess.active_table_key else None
+            return imaging.image_info(sess.sdata, element, table)
 
     try:
         return await _in_executor(_info)
@@ -658,7 +740,26 @@ async def image_thumbnail(sid: str, element: str, max_px: int = 2048, channels: 
         png = await _in_executor(_render)
     except KeyError as e:
         raise HTTPException(404, str(e))
-    return Response(content=png, media_type="image/png")
+    return Response(content=png, media_type="image/png",
+                    headers={"Cache-Control": "public, max-age=3600"})
+
+
+@app.get("/api/sessions/{sid}/image/{element}/tile/{level}/{col}/{row}")
+async def image_tile(sid: str, element: str, level: int, col: int, row: int,
+                     channels: str | None = None):
+    sess = _session(sid)
+    channel_colors = imaging.parse_channel_colors(channels)
+
+    def _render():
+        with sess.lock.reading():
+            return imaging.tile_png(sess.sdata, element, level, col, row, channel_colors)
+
+    try:
+        png = await _in_executor(_render)
+    except KeyError as e:
+        raise HTTPException(404, str(e))
+    return Response(content=png, media_type="image/png",
+                    headers={"Cache-Control": "public, max-age=3600"})
 
 
 # ---- SSE -------------------------------------------------------------------

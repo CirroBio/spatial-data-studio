@@ -14,6 +14,7 @@ psutil==7.2.2
 boto3>=1.34      # AWS Bedrock Converse (Apache-2.0); only used when AI_ENABLED
 pillow==12.2.0
 python-multipart==0.0.32
+cirro==1.12.0    # dataset upload (MIT); only used when CIRRO_* env vars are set
 
 # transitive pins that matter for the data path / persistence
 scipy==1.17.1

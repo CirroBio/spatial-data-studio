@@ -100,6 +100,8 @@ export interface DisplayEncoding {
   opacity: number;
   colormap: string;
   channels?: Record<string, ChannelState>;  // per-channel on/off + rename (v3 Part 10)
+  legend_visible?: boolean;  // cell-color legend (colorbar / category swatches); defaults on
+  legend_title?: string;     // overrides the default title (color_by column, sans "obs:")
 }
 
 export interface Viewport {
@@ -150,6 +152,12 @@ export interface SessionState {
   data_versions: Record<string, number>;
 }
 
+export interface ImageLevel {
+  level: number;
+  width: number;
+  height: number;
+}
+
 export interface ImageInfo {
   element: string;
   height: number;
@@ -157,6 +165,12 @@ export interface ImageInfo {
   channels: number;
   channel_names: string[];
   bounds: [number, number, number, number];
+  // Affine [a,b,c,d,e,f] mapping level-0 pixel (px,py) -> world (spot space):
+  // world_x = a*px + b*py + c, world_y = d*px + e*py + f. Encodes any rotation
+  // or axis-swap from image alignment (e.g. an aligned H&E).
+  pixel_to_world: [number, number, number, number, number, number];
+  levels: ImageLevel[];
+  tile_size: number;
 }
 
 // SSE event payloads
@@ -176,17 +190,20 @@ export interface JobStartedEvent {
 export interface JobCompletedEvent {
   session_id: string;
   job_id: string;
-  kind: 'compute' | 'plot' | 'save' | 'subset' | 'annotate' | 'promote';
+  kind: 'compute' | 'plot' | 'save' | 'subset' | 'annotate' | 'promote' | 'cirro_upload' | 'set_transform';
   structural_diff?: Record<string, string[]>;
   data_versions: Record<string, number>;
   plot_id?: string;
   child_id?: string;  // subset jobs: the new child session to switch to
+  dataset_name?: string;  // cirro_upload jobs: the dataset created in Cirro
 }
 
 export interface JobFailedEvent {
   session_id: string;
   job_id: string;
   error: string;
+  source?: string;
+  timestamp?: string;
 }
 
 export interface PlotDrawnEvent {

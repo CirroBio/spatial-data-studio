@@ -273,6 +273,10 @@ class Session:
                 self._run_subset(job_id, payload)
             elif kind == "annotate":
                 self._run_annotate(job_id, payload)
+            elif kind == "set_transform":
+                self._run_set_transform(job_id, payload)
+            elif kind == "cirro_upload":
+                self._run_cirro_upload(job_id, payload)
         except Exception as e:  # worker must never die
             self._fail(job_id, kind, str(e))
         finally:
@@ -353,6 +357,25 @@ class Session:
         if invalidated:
             BUS.publish("plot.invalidated", {"session_id": self.id, "plot_ids": invalidated})
 
+    def _run_set_transform(self, job_id, payload):
+        """Set the points->global transform on the active table's region element and
+        persist to disk so it survives a session restart (§3.1 mutating job)."""
+        from . import transform
+        from ..persistence.store import save_spatialdata
+        with self.lock.writing():
+            transform.set_affine6(self.sdata, self.active_table(), payload["affine"])
+        target = Path(payload["path"]).resolve()
+        checkpoint_dir = config.CHECKPOINT_DIR.resolve()
+        if target != checkpoint_dir and checkpoint_dir not in target.parents:
+            raise ValueError("save path is outside the checkpoint directory")
+        with self.lock.reading():
+            self.store_path = save_spatialdata(self.sdata, payload["path"], self.app_state)
+        self._jobs[job_id]["status"] = "completed"
+        appstate.bump_versions(self.app_state, ["obsm:spatial"])
+        BUS.publish("job.completed", {"session_id": self.id, "job_id": job_id, "kind": "set_transform",
+                                      "path": self.store_path,
+                                      "data_versions": self.app_state["data_versions"]})
+
     def _run_save(self, job_id, payload):
         from ..persistence.store import save_spatialdata
         target = Path(payload["path"]).resolve()
@@ -365,6 +388,22 @@ class Session:
         self._jobs[job_id]["status"] = "completed"
         BUS.publish("job.completed", {"session_id": self.id, "job_id": job_id, "kind": "save",
                                       "path": path, "data_versions": self.app_state["data_versions"]})
+
+    def _run_cirro_upload(self, job_id, payload):
+        import shutil
+        from .. import cirro
+        if not self.store_path:
+            raise ValueError("save the session before uploading to Cirro")
+        upload_dir = cirro.build_upload_folder(self.store_path, payload.get("snapshot_names") or [])
+        try:
+            result = cirro.upload(project_id=payload["project_id"], process_id=payload["process_id"],
+                                  dataset_name=payload["dataset_name"], upload_folder=upload_dir)
+        finally:
+            shutil.rmtree(upload_dir, ignore_errors=True)
+        self._jobs[job_id]["status"] = "completed"
+        BUS.publish("job.completed", {"session_id": self.id, "job_id": job_id, "kind": "cirro_upload",
+                                      "dataset_name": result["dataset_name"],
+                                      "data_versions": self.app_state["data_versions"]})
 
     def _run_subset(self, job_id, payload):
         # No lock held here: perform_subset reads self.sdata under its own read lock
@@ -422,7 +461,10 @@ class Session:
                     rec["_log"] = log or error
             else:
                 self.app_state["plots"] = [r for r in self.app_state["plots"] if r["id"] != job_id]
-        BUS.publish("job.failed", {"session_id": self.id, "job_id": job_id, "error": error})
+        descriptor = self._jobs.get(job_id, {}).get("descriptor") or {}
+        source = f"{descriptor['namespace']}.{descriptor['function']}" if "function" in descriptor else kind
+        BUS.publish("job.failed", {"session_id": self.id, "job_id": job_id, "error": error,
+                                   "source": source, "timestamp": time.strftime("%H:%M:%S")})
 
     def _drop_history(self, job_id, kind="compute"):
         """Cancelling a queued job (or dropping a not-kept failure) must remove its

@@ -119,7 +119,7 @@ def save_snapshot(session, label: str | None = None) -> dict:
             channel_colors = _channel_colors(enc)
             png = imaging.thumbnail_png(session.sdata, image_layer, 2048, channel_colors)
             image_rel = _write_asset(png, "png")
-            bounds = imaging.image_info(session.sdata, image_layer)["bounds"]
+            bounds = imaging.image_info(session.sdata, image_layer, adata)["bounds"]
 
     if bounds is None:
         bounds = [float(xy[:, 0].min()), float(xy[:, 1].min()), float(xy[:, 0].max()), float(xy[:, 1].max())]

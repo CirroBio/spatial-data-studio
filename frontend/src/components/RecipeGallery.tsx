@@ -13,6 +13,7 @@ export default function RecipeGallery({ sessionId, onClose }: Props) {
   const [recipes, setRecipes] = useState<BundledRecipe[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
 
   useEffect(() => {
     getBundledRecipes()
@@ -33,6 +34,14 @@ export default function RecipeGallery({ sessionId, onClose }: Props) {
     }
   }
 
+  const q = search.toLowerCase();
+  const filtered = recipes?.filter(
+    (r) =>
+      r.name.toLowerCase().includes(q) ||
+      r.description.toLowerCase().includes(q) ||
+      r.steps.some((s) => `${s.namespace}.${s.function}`.toLowerCase().includes(q)),
+  );
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
       <div
@@ -51,10 +60,24 @@ export default function RecipeGallery({ sessionId, onClose }: Props) {
           </button>
         </div>
 
+        {recipes && recipes.length > 0 && (
+          <div className="p-3 border-b border-border shrink-0">
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search recipes..."
+              className="w-full bg-bg border border-border rounded px-3 py-1.5 text-sm text-text placeholder-muted focus:outline-none focus:border-accent"
+            />
+          </div>
+        )}
+
         <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-2">
           {error && <div className="text-xs text-danger px-1">{error}</div>}
           {!recipes && !error && <div className="text-xs text-muted px-1">Loading…</div>}
-          {recipes?.map((r) => (
+          {filtered && filtered.length === 0 && (
+            <div className="px-4 py-8 text-sm text-muted text-center">No recipes match</div>
+          )}
+          {filtered?.map((r) => (
             <div key={r.name} className="border border-border rounded-md p-3 bg-bg">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">

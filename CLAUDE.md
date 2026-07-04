@@ -22,6 +22,15 @@ locally for development" section of `README.md`) in the same commit. A change
 that leaves `run.sh` unable to boot the app, or `stop.sh` unable to stop it, is
 incomplete.
 
+## Reuse UI elements (always)
+
+Before adding a UI control, assess whether an existing component already covers
+it and reuse that component whenever possible. Prefer adding a parameter to an
+existing element over creating a new one; a new element is justified only when
+the control is substantively different, not merely a variant. Example: the obs
+column picker (`ObsFieldSelect`) is shared by Color By, Draw Label, and Promote,
+with `creatable`/`categoricalOnly` props covering their differences.
+
 ## Orientation
 
 - Backend: FastAPI (`backend/app`). Operations are discovered by introspecting

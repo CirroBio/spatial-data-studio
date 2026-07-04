@@ -86,6 +86,10 @@ interface AppStore {
   setAiEnabled: (on: boolean) => void;
   chatOpen: boolean;
   setChatOpen: (open: boolean) => void;
+
+  // Cirro upload
+  cirroEnabled: boolean;
+  setCirroEnabled: (on: boolean) => void;
   chatAutoMode: boolean;
   setChatAutoModeState: (auto: boolean) => void;
   chatMessages: ChatMessage[];
@@ -247,6 +251,9 @@ export const useAppStore = create<AppStore>((set) => ({
 
   aiEnabled: false,
   setAiEnabled: (on) => set({ aiEnabled: on }),
+
+  cirroEnabled: false,
+  setCirroEnabled: (on) => set({ cirroEnabled: on }),
   chatOpen: true,
   setChatOpen: (open) => set({ chatOpen: open }),
   chatAutoMode: false,

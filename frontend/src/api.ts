@@ -54,6 +54,7 @@ export interface FsListing {
 export interface DatasetEntry {
   name: string;
   path: string;
+  mtime: number;  // file modification time (epoch seconds); saved-session save time
 }
 
 // All loadable datasets found by scanning folders under the server's data roots.
@@ -89,6 +90,11 @@ export async function saveSnapshot(sessionId: string, label?: string): Promise<{
     body: JSON.stringify(label ? { label } : {}),
   });
   return res.json() as Promise<{ name: string; url: string }>;
+}
+
+export async function getSnapshots(): Promise<{ snapshots: { name: string; url: string }[] }> {
+  const res = await apiFetch('/api/snapshots');
+  return res.json() as Promise<{ snapshots: { name: string; url: string }[] }>;
 }
 
 export async function getObsValues(
@@ -203,8 +209,15 @@ export async function getImageInfo(sessionId: string, element: string): Promise<
   return res.json() as Promise<ImageInfo>;
 }
 
-export function getImageThumbnailUrl(sessionId: string, element: string): string {
-  return `/api/sessions/${sessionId}/image/${element}/thumbnail`;
+export function getImageThumbnailUrl(sessionId: string, element: string, channels?: string): string {
+  const q = channels !== undefined ? `?channels=${channels}` : '';
+  return `/api/sessions/${sessionId}/image/${element}/thumbnail${q}`;
+}
+
+export function getImageTileUrl(
+  sessionId: string, element: string, level: number, col: number, row: number, channels: string,
+): string {
+  return `/api/sessions/${sessionId}/image/${element}/tile/${level}/${col}/${row}?channels=${channels}`;
 }
 
 export async function getFieldData(sessionId: string, fieldPath: string): Promise<arrow.Table> {
@@ -289,6 +302,56 @@ export interface ThirdPartyLicense {
 export async function getThirdPartyLicenses(): Promise<{ python: ThirdPartyLicense[]; npm: ThirdPartyLicense[] }> {
   const res = await apiFetch('/api/about/licenses');
   return res.json() as Promise<{ python: ThirdPartyLicense[]; npm: ThirdPartyLicense[] }>;
+}
+
+// ---- Cirro upload -----------------------------------------------------------
+export interface CirroStatus { enabled: boolean }
+export interface CirroProject { id: string; name: string }
+export interface CirroProcess { id: string; name: string }
+
+export async function getCirroStatus(): Promise<CirroStatus> {
+  const res = await apiFetch('/api/cirro/status');
+  return res.json() as Promise<CirroStatus>;
+}
+
+export async function getCirroProjects(): Promise<{ projects: CirroProject[] }> {
+  const res = await apiFetch('/api/cirro/projects');
+  return res.json() as Promise<{ projects: CirroProject[] }>;
+}
+
+export async function getCirroProcesses(): Promise<{ processes: CirroProcess[] }> {
+  const res = await apiFetch('/api/cirro/processes');
+  return res.json() as Promise<{ processes: CirroProcess[] }>;
+}
+
+export async function uploadToCirro(
+  sessionId: string,
+  body: { project_id: string; process_id: string; dataset_name: string; snapshot_names: string[] }
+): Promise<{ job_id: string }> {
+  const res = await apiFetch(`/api/sessions/${sessionId}/cirro/upload`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return res.json() as Promise<{ job_id: string }>;
+}
+
+export async function getPointsTransform(
+  sessionId: string,
+): Promise<{ affine: number[]; element: string | null }> {
+  const res = await apiFetch(`/api/sessions/${sessionId}/points-transform`);
+  return res.json() as Promise<{ affine: number[]; element: string | null }>;
+}
+
+export async function setPointsTransform(
+  sessionId: string,
+  affine: number[],
+): Promise<{ job_id: string }> {
+  const res = await apiFetch(`/api/sessions/${sessionId}/points-transform`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ affine }),
+  });
+  return res.json() as Promise<{ job_id: string }>;
 }
 
 export async function saveSession(sessionId: string, path?: string): Promise<{ job_id: string }> {

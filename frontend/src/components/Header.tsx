@@ -3,6 +3,7 @@ import { useAppStore } from '../store/sessionStore';
 import { saveSession } from '../api';
 import { reportError } from '../lib/errors';
 import AcknowledgementsDialog from './AcknowledgementsDialog';
+import CirroUploadDialog from './CirroUploadDialog';
 
 interface Props {
   onNewSession: () => void;
@@ -12,10 +13,11 @@ const ICON_BTN ='p-1.5 rounded border border-border bg-bg text-text hover:border
 
 export default function Header({ onNewSession }: Props) {
   const [showAbout, setShowAbout] = useState(false);
+  const [showCirroUpload, setShowCirroUpload] = useState(false);
   const {
     activeSessionId, activeJobIds, sessions,
     aiEnabled, chatOpen, setChatOpen,
-    theme, setTheme, savingJobId,
+    theme, setTheme, savingJobId, cirroEnabled,
   } = useAppStore();
   const activeSession = sessions.find((s) => s.id === activeSessionId);
   const runningCount = activeJobIds.size;
@@ -83,6 +85,22 @@ export default function Header({ onNewSession }: Props) {
           </svg>
         </button>
 
+        {/* Cirro upload — only when a service-account identity is configured */}
+        {cirroEnabled && (
+          <button
+            onClick={() => setShowCirroUpload(true)}
+            disabled={!activeSessionId}
+            className={ICON_BTN}
+            title="Upload to Cirro"
+            aria-label="Upload to Cirro"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M7 18a4.5 4.5 0 0 1-1.44-8.77A5.5 5.5 0 0 1 16.3 6.03 4.5 4.5 0 0 1 17.5 15H17" />
+              <path d="M12 12v9M9 15l3-3 3 3" />
+            </svg>
+          </button>
+        )}
+
         {/* Dedicated AI panel toggle — only when Bedrock is configured */}
         {aiEnabled && (
           <button
@@ -100,6 +118,9 @@ export default function Header({ onNewSession }: Props) {
       </div>
 
       {showAbout && <AcknowledgementsDialog onClose={() => setShowAbout(false)} />}
+      {showCirroUpload && activeSessionId && (
+        <CirroUploadDialog sessionId={activeSessionId} onClose={() => setShowCirroUpload(false)} />
+      )}
     </header>
   );
 }

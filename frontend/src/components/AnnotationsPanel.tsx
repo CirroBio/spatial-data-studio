@@ -5,6 +5,7 @@ import { reportError } from '../lib/errors';
 import { resolveRegionSetColumn } from '../lib/regions';
 import { useDrawSelection } from '../hooks/useDrawSelection';
 import DrawControls from './DrawControls';
+import ObsFieldSelect from './ObsFieldSelect';
 import type { RegionSet } from '../types';
 
 const NEW_CAT_COLORS = [
@@ -98,19 +99,13 @@ export default function AnnotationsPanel() {
       <div className="px-3 py-2 border-b border-border/50">
         <label className="text-[10px] text-muted font-mono uppercase tracking-wide block mb-1.5">Draw label</label>
         <div className="flex flex-col gap-1.5">
-          <input
-            type="text"
-            list="obs-field-names"
-            placeholder="Region set name (pick an obs field or type a new one)"
+          <ObsFieldSelect
+            fields={obsFields}
             value={annotationNewSetName}
-            onChange={(e) => setAnnotationTarget(e.target.value, annotationCategoryName, annotationColor)}
-            className="w-full bg-bg border border-border rounded px-2 py-1 text-xs text-text placeholder:text-muted/40 focus:outline-none focus:border-accent"
+            onChange={(v) => setAnnotationTarget(v, annotationCategoryName, annotationColor)}
+            creatable
+            placeholder="Region set name (pick an obs field or type a new one)"
           />
-          <datalist id="obs-field-names">
-            {obsFields.map((f) => (
-              <option key={f.name} value={f.name} />
-            ))}
-          </datalist>
           <input
             type="text"
             placeholder="Category label"
@@ -228,16 +223,13 @@ export default function AnnotationsPanel() {
           <div className="text-[11px] text-muted/60">No categorical obs fields</div>
         ) : (
           <div className="flex flex-col gap-1.5">
-            <select
+            <ObsFieldSelect
+              fields={obsFields}
               value={promoteColumn}
-              onChange={(e) => setPromoteColumn(e.target.value)}
-              className="w-full bg-bg border border-border rounded px-2 py-1 text-xs text-text focus:outline-none focus:border-accent"
-            >
-              <option value="">Select column...</option>
-              {categoricalObs.map((f) => (
-                <option key={f.name} value={f.name}>{f.name}</option>
-              ))}
-            </select>
+              onChange={setPromoteColumn}
+              categoricalOnly
+              placeholder="Select column..."
+            />
             <button
               onClick={handlePromote}
               disabled={promoting || !promoteColumn}

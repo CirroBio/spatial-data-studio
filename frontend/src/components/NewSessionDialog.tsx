@@ -23,6 +23,14 @@ function readerLabel(r: FunctionEntry): string {
   return r.label ?? `${r.function} (${r.source.replace(/_/g, '-')})`;
 }
 
+// Save time of a dataset/session file as a sortable "YYYY-MM-DD HH:mm" prefix.
+function formatTimestamp(mtime: number): string {
+  if (!mtime) return '';
+  const d = new Date(mtime * 1000);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 export default function NewSessionDialog({ onClose, onCreated }: Props) {
   const functions = useAppStore((s) => s.functions);
   const readers = functions.filter((f) => f.effect_class === 'read');
@@ -58,9 +66,9 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
   }, [dir, open, mode]);
 
   const q = path.trim().toLowerCase();
-  const datasetMatches = datasets.filter(
-    (d) => d.name.toLowerCase().includes(q) || d.path.toLowerCase().includes(q)
-  );
+  const datasetMatches = datasets
+    .filter((d) => d.name.toLowerCase().includes(q) || d.path.toLowerCase().includes(q))
+    .sort((a, b) => b.mtime - a.mtime);
   const browseMatches: FsEntry[] = (listing?.entries ?? []).filter((e) =>
     e.name.toLowerCase().includes(partial.toLowerCase())
   );
@@ -213,6 +221,11 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
                       className="w-full text-left px-3 py-1.5 hover:bg-accent-lo/30 flex items-center gap-2"
                     >
                       <span className="text-accent">▣</span>
+                      {d.mtime > 0 && (
+                        <span className="text-[10px] font-mono text-muted/70 shrink-0" style={{ fontVariantNumeric: 'tabular-nums' }}>
+                          {formatTimestamp(d.mtime)}
+                        </span>
+                      )}
                       <span className="text-xs font-mono text-text truncate">{d.name}</span>
                     </button>
                   ))}

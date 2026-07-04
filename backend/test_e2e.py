@@ -85,9 +85,14 @@ def main():
 
         # image
         info = client.get(f"/api/sessions/{sid}/image/hne/info")
-        print(f"[ok] image info: {info.json() if info.status_code==200 else info.text}")
+        meta = info.json()
+        assert meta["levels"] and "pixel_to_world" in meta, "image_info missing pyramid metadata"
+        print(f"[ok] image info: {meta}")
         thumb = client.get(f"/api/sessions/{sid}/image/hne/thumbnail?max_px=512")
         print(f"[ok] image thumbnail: status={thumb.status_code} bytes={len(thumb.content)}")
+        tile = client.get(f"/api/sessions/{sid}/image/hne/tile/0/0/0?channels=0:ff0000,1:00ff00,2:0000ff")
+        assert tile.status_code == 200 and tile.content, f"tile fetch failed: {tile.status_code}"
+        print(f"[ok] image tile 0/0/0: status={tile.status_code} bytes={len(tile.content)}")
 
         # plot
         client.post(f"/api/sessions/{sid}/jobs", json={

@@ -88,6 +88,20 @@ def _sparse_batch(mat) -> pa.RecordBatch:
     )
 
 
+def apply_affine_xy(batch: pa.RecordBatch, m: np.ndarray) -> pa.RecordBatch:
+    """Apply a 3x3 affine to the (d0, d1) columns of a coordinate batch, leaving
+    any further dimensions (d2) untouched. Used to serve points in the edited
+    points->global space."""
+    d0 = np.asarray(batch.column("d0"))
+    d1 = np.asarray(batch.column("d1"))
+    x = (m[0, 0] * d0 + m[0, 1] * d1 + m[0, 2]).astype("float32")
+    y = (m[1, 0] * d0 + m[1, 1] * d1 + m[1, 2]).astype("float32")
+    cols = {name: batch.column(name) for name in batch.schema.names}
+    cols["d0"] = pa.array(x)
+    cols["d1"] = pa.array(y)
+    return pa.record_batch(cols)
+
+
 def to_ipc_bytes(batch: pa.RecordBatch) -> bytes:
     sink = io.BytesIO()
     with ipc.new_stream(sink, batch.schema) as writer:

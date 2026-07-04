@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from './store/sessionStore';
-import { getSessions, getFunctions, getAiStatus } from './api';
+import { getSessions, getFunctions, getAiStatus, getCirroStatus } from './api';
 import { resolveRegionSetColumn } from './lib/regions';
 import ChatPanel from './components/ChatPanel';
 import { useSSE } from './hooks/useSSE';
@@ -40,6 +40,7 @@ export default function App() {
     activeRegionSetId,
     aiEnabled,
     setAiEnabled,
+    setCirroEnabled,
   } = useAppStore();
 
   useSession(activeSessionId);
@@ -72,9 +73,10 @@ export default function App() {
     })();
 
     getAiStatus().then((s) => setAiEnabled(s.enabled)).catch(() => setAiEnabled(false));
+    getCirroStatus().then((s) => setCirroEnabled(s.enabled)).catch(() => setCirroEnabled(false));
 
     return () => { cancelled = true; };
-  }, [setSessions, setFunctions, activeSessionId, setActiveSessionId, setAiEnabled]);
+  }, [setSessions, setFunctions, activeSessionId, setActiveSessionId, setAiEnabled, setCirroEnabled]);
 
   const display = sessionState?.app_state.displays.find((d) => d.type === 'spatial_canvas') ?? null;
 

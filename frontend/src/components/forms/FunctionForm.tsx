@@ -167,11 +167,21 @@ export default function FunctionForm({ fn, fields, sessionId, onSubmit, submitti
         const reg = (k: string) =>
           register(k, isRequired && !isBool ? { required: 'This parameter is required' } : {});
         const label = (
-          <label key={`label-${key}`} className="text-xs font-mono text-muted">
-            {key}
-            {isRequired && <span className="ml-0.5 text-danger">*</span>}
+          <label key={`label-${key}`} className="flex flex-col gap-0.5">
+            <span className="flex items-center gap-1.5">
+              <span className="text-xs font-mono text-text">{key}</span>
+              {isRequired ? (
+                <span className="text-[9px] font-sans uppercase tracking-wide text-danger border border-danger/40 rounded px-1 leading-tight">
+                  required
+                </span>
+              ) : (
+                <span className="text-[9px] font-sans uppercase tracking-wide text-muted/50 border border-border rounded px-1 leading-tight">
+                  optional
+                </span>
+              )}
+            </span>
             {tooltip && (
-              <span className="ml-1 text-muted/60 font-sans normal-case">{tooltip}</span>
+              <span className="text-[11px] text-muted/70 font-sans normal-case leading-snug">{tooltip}</span>
             )}
           </label>
         );
@@ -184,12 +194,12 @@ export default function FunctionForm({ fn, fields, sessionId, onSubmit, submitti
         if (widget === 'checkbox' || prop.type === 'boolean') {
           const defaultVal = typeof prop.default === 'boolean' ? prop.default : false;
           return (
-            <div key={key} className="flex items-center gap-2">
+            <div key={key} className="flex items-start gap-2">
               <input
                 type="checkbox"
                 defaultChecked={defaultVal}
                 {...register(key)}
-                className="accent-accent"
+                className="accent-accent mt-0.5"
               />
               {label}
             </div>

@@ -1,15 +1,18 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import DeckGL from '@deck.gl/react';
 import { OrthographicView } from '@deck.gl/core';
-import { BitmapLayer, ScatterplotLayer, PolygonLayer, PathLayer } from '@deck.gl/layers';
+import { ScatterplotLayer, PolygonLayer, PathLayer } from '@deck.gl/layers';
 import type { Layer, OrthographicViewState, PickingInfo } from '@deck.gl/core';
 import { useAppStore } from '../../store/sessionStore';
 import { useArrowField } from '../../hooks/useArrowField';
 import { getImageInfo, putDisplay, saveSnapshot } from '../../api';
 import { reportError } from '../../lib/errors';
+import ObsFieldSelect from '../ObsFieldSelect';
+import TransformEditor from '../TransformEditor';
 import type { DisplaySpec, ImageInfo } from '../../types';
 import { useArrowPositions } from './useArrowPositions';
-import { buildCategoricalPalette, buildNumericColormap, CHANNEL_COLORS, defaultChannelColor } from './colorUtils';
+import { useImageTiles } from './useImageTiles';
+import { buildCategoricalPalette, buildNumericColormap, CHANNEL_COLORS, defaultChannelColor, VIRIDIS_CSS_GRADIENT } from './colorUtils';
 
 const VIEWS = [new OrthographicView({ id: 'main', flipY: false })];
 
@@ -43,15 +46,29 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   const colorVersion = dataVersions[colorByPath] ?? 0;
 
   const { table: coordsTable, loading: coordsLoading } = useArrowField(sessionId, coordsPath, coordsVersion);
-  const { table: colorTable } = useArrowField(sessionId, colorByPath, colorVersion);
+  const { table: colorTable, loading: colorLoading } = useArrowField(sessionId, colorByPath, colorVersion);
 
   const [imageInfo, setImageInfo] = useState<ImageInfo | null>(null);
   const [showImage, setShowImage] = useState(display.encoding.image_layer !== null);
   const [showLegend, setShowLegend] = useState(true);
+  const [transformOpen, setTransformOpen] = useState(false);
   const [openColorPicker, setOpenColorPicker] = useState<number | null>(null);
   const [panelCollapsed, setPanelCollapsed] = useState(false);
   const [viewState, setViewState] = useState<OrthographicViewState | null>(null);
+  const [canvasSize, setCanvasSize] = useState<{ width: number; height: number } | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+
+  // Track the canvas pixel size so the tile layer can pick a level of detail and
+  // enumerate which tiles fall in the viewport.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const update = () => setCanvasSize({ width: el.clientWidth, height: el.clientHeight });
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   // Polygon draw state lives in the store so the active tab's left panel owns the
   // commit / apply / clear actions; the canvas is purely the drawing surface.
@@ -200,25 +217,51 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
     return result;
   }, [colorTable, positions, display.encoding.opacity, isolatedCategory]);
 
-  const layers = useMemo(() => {
-    const result: Layer[] = [];
-
-    if (imageInfo && display.encoding.image_layer) {
-      const thumbnailUrl = `/api/sessions/${sessionId}/image/${display.encoding.image_layer}/thumbnail?channels=${visibleChannels}`;
-      result.push(
-        new BitmapLayer({
-          id: `tissue-image-${visibleChannels}`,  // id changes -> layer refetches on toggle/recolor
-          image: thumbnailUrl,
-          bounds: [
-            imageInfo.bounds[0],
-            imageInfo.bounds[1],
-            imageInfo.bounds[2],
-            imageInfo.bounds[3],
-          ],
-          opacity: showImage ? 1 : 0,
-        })
-      );
+  // Legend for the current cell coloring: category swatches (categorical) or a
+  // colorbar with the value range (numeric). Mirrors the palette/ramp used above.
+  const colorLegend = useMemo(() => {
+    if (!colorTable) return null;
+    const meta = colorTable.schema.metadata;
+    if (meta?.get('kind') === 'categorical') {
+      const catJson = meta?.get('categories');
+      if (!catJson) return null;
+      const categories = JSON.parse(catJson) as string[];
+      const palette = buildCategoricalPalette(categories);
+      return {
+        kind: 'categorical' as const,
+        items: categories.map((c) => ({ label: c, color: palette.get(c) ?? [128, 128, 128] })),
+      };
     }
+    const valueCol = colorTable.getChild('value');
+    if (!valueCol) return null;
+    let min = Infinity;
+    let max = -Infinity;
+    for (let i = 0; i < colorTable.numRows; i++) {
+      const v = valueCol.get(i) as number;
+      if (!Number.isNaN(v)) {
+        if (v < min) min = v;
+        if (v > max) max = v;
+      }
+    }
+    if (!Number.isFinite(min)) return null;
+    return { kind: 'numeric' as const, min, max };
+  }, [colorTable]);
+
+  const legendVisible = display.encoding.legend_visible !== false;
+  const legendTitle = display.encoding.legend_title || colorByPath.replace(/^obs:/, '');
+
+  const { layers: imageLayers, loading: tilesLoading } = useImageTiles({
+    imageInfo,
+    sessionId,
+    element: display.encoding.image_layer,
+    viewState,
+    size: canvasSize,
+    visibleChannels,
+    show: showImage,
+  });
+
+  const layers = useMemo(() => {
+    const result: Layer[] = [...imageLayers];
 
     if (positions && colors) {
       const b = positions.bounds;
@@ -250,7 +293,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
     }
 
     return result;
-  }, [imageInfo, positions, colors, display.encoding, sessionId, showImage, visibleChannels]);
+  }, [imageLayers, positions, colors, display.encoding.point_size, display.encoding.opacity]);
 
   const [pendingUpdate, setPendingUpdate] = useState<ReturnType<typeof setTimeout> | null>(null);
 
@@ -295,7 +338,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   }
 
   const obsFields = fields?.obs ?? [];
-  const colorOptions: string[] = obsFields.map((f) => `obs:${f.name}`);
+  const colorByName = colorByPath.replace(/^obs:/, '');
 
   if (!viewState) {
     return (
@@ -317,6 +360,19 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
         getCursor={drawMode ? () => 'crosshair' : ({ isDragging }) => (isDragging ? 'grabbing' : 'grab')}
       />
 
+      {/* Recalculation cue — top left. Visible while spatial coords, colors, or
+          image tiles for the current view are still loading/rendering. */}
+      {(coordsLoading || colorLoading || tilesLoading) && (
+        <div className="absolute top-3 left-3 z-20 flex items-center gap-2 px-3 py-1.5 rounded-full bg-surface/95 border border-accent/60 text-xs text-text backdrop-blur-sm shadow-lg pointer-events-none">
+          <svg className="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+            <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+          </svg>
+          <span>
+            {coordsLoading ? 'Loading cells…' : colorLoading ? 'Loading colors…' : 'Rendering image…'}
+          </span>
+        </div>
+      )}
+
       {/* Channel legend — bottom left, only while the image and legend are shown. */}
       {showImage && showLegend && channels.some((c) => c.visible) && (
         <div className="absolute bottom-3 left-3 z-10 bg-surface/90 border border-border rounded p-2 flex flex-col gap-1 max-w-[180px] backdrop-blur-sm pointer-events-none">
@@ -326,6 +382,34 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
               <span className="truncate">{c.name}</span>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Cell-color legend — bottom right. Colorbar for numeric, swatches for categorical. */}
+      {legendVisible && colorLegend && (
+        <div className="absolute bottom-3 right-3 z-10 bg-surface/90 border border-border rounded p-2 max-w-[200px] backdrop-blur-sm">
+          <div className="text-[11px] font-medium text-text mb-1 truncate" title={legendTitle}>{legendTitle}</div>
+          {colorLegend.kind === 'categorical' ? (
+            <div className="flex flex-col gap-1 max-h-[220px] overflow-y-auto">
+              {colorLegend.items.map((it) => (
+                <div key={it.label} className="flex items-center gap-1.5 text-[11px] text-text">
+                  <span
+                    className="w-2.5 h-2.5 rounded-sm shrink-0 border border-border/50"
+                    style={{ background: `rgb(${it.color[0]},${it.color[1]},${it.color[2]})` }}
+                  />
+                  <span className="truncate">{it.label}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="flex flex-col gap-1 w-[150px]">
+              <div className="h-2.5 w-full rounded-sm border border-border/50" style={{ background: VIRIDIS_CSS_GRADIENT }} />
+              <div className="flex justify-between text-[10px] text-muted" style={{ fontVariantNumeric: 'tabular-nums' }}>
+                <span>{colorLegend.min.toLocaleString(undefined, { maximumSignificantDigits: 3 })}</span>
+                <span>{colorLegend.max.toLocaleString(undefined, { maximumSignificantDigits: 3 })}</span>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -379,16 +463,33 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
 
         <div className="flex flex-col gap-1">
           <label className="text-[10px] text-muted font-mono uppercase tracking-wide">Color by</label>
-          <select
-            value={display.encoding.color_by}
-            onChange={(e) => updateEncoding({ color_by: e.target.value })}
-            className="bg-bg border border-border rounded px-2 py-1 text-xs text-text focus:outline-none focus:border-accent"
-          >
-            {colorOptions.map((opt) => (
-              <option key={opt} value={opt}>{opt}</option>
-            ))}
-          </select>
+          <ObsFieldSelect
+            fields={obsFields}
+            value={colorByName}
+            onChange={(name) => updateEncoding({ color_by: `obs:${name}` })}
+          />
         </div>
+
+        <label className="flex items-center gap-2 text-xs text-text cursor-pointer">
+          <input
+            type="checkbox"
+            checked={legendVisible}
+            onChange={(e) => updateEncoding({ legend_visible: e.target.checked })}
+            className="accent-accent"
+          />
+          Color legend
+        </label>
+
+        {legendVisible && (
+          <input
+            type="text"
+            value={display.encoding.legend_title ?? ''}
+            onChange={(e) => updateEncoding({ legend_title: e.target.value })}
+            placeholder={colorByName}
+            className="bg-bg border border-border rounded px-2 py-1 text-xs text-text placeholder:text-muted/40 focus:outline-none focus:border-accent"
+            title="Legend title"
+          />
+        )}
 
         <div className="flex flex-col gap-1">
           <label className="text-[10px] text-muted font-mono uppercase tracking-wide">
@@ -440,7 +541,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
               onChange={(e) => setShowLegend(e.target.checked)}
               className="accent-accent"
             />
-            Show legend
+            Channel legend
           </label>
         )}
 
@@ -503,6 +604,14 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
 
         <button
           type="button"
+          onClick={() => setTransformOpen(true)}
+          className="py-1 text-[11px] bg-bg border border-border rounded text-text hover:border-accent transition-colors"
+        >
+          Edit points transform
+        </button>
+
+        <button
+          type="button"
           onClick={handleSnapshot}
           className="py-1 text-[11px] bg-bg border border-border rounded text-text hover:border-accent transition-colors"
         >
@@ -510,6 +619,8 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
         </button>
       </div>
       )}
+
+      {transformOpen && <TransformEditor sessionId={sessionId} onClose={() => setTransformOpen(false)} />}
     </div>
   );
 }
