@@ -4,6 +4,7 @@ from .leiden_regions import IdentifyRegionsLeiden
 from .edit_annotations import EditAnnotations
 from .identify_tmas import IdentifyTMAs
 from .region_composition import RegionComposition, RegionCompositionPlot
+from .celltypist_annotate import CellTypistAnnotate
 
 CUSTOM_FUNCTIONS = [IdentifyRegionsLeiden(), EditAnnotations(), IdentifyTMAs(),
-                    RegionComposition(), RegionCompositionPlot()]
+                    RegionComposition(), RegionCompositionPlot(), CellTypistAnnotate()]
