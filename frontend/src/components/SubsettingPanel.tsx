@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useAppStore } from '../store/sessionStore';
-import { subsetSession } from '../api';
+import { subsetSession, deleteSession } from '../api';
 import { reportError } from '../lib/errors';
 import { useDrawSelection } from '../hooks/useDrawSelection';
 import DrawControls from './DrawControls';
@@ -48,11 +48,13 @@ function SessionNode({
   depth,
   activeSessionId,
   onSelect,
+  onDelete,
 }: {
   node: TreeNode;
   depth: number;
   activeSessionId: string | null;
   onSelect: (id: string) => void;
+  onDelete: (e: React.MouseEvent, id: string, name: string) => void;
 }) {
   const { session } = node;
   const isActive = session.id === activeSessionId;
@@ -60,37 +62,46 @@ function SessionNode({
 
   return (
     <li>
-      <button
-        onClick={() => isResident && onSelect(session.id)}
-        disabled={!isResident}
-        className={[
-          'w-full text-left py-1.5 pr-2 flex items-start gap-1.5 transition-colors',
-          isActive ? 'bg-accent-lo text-text' : 'text-text/80 hover:bg-accent-lo/20',
-          !isResident ? 'opacity-50 cursor-default' : 'cursor-pointer',
-        ].join(' ')}
-        style={{ paddingLeft: `${12 + depth * 12}px` }}
-      >
-        {depth > 0 && (
-          <span className="text-muted/40 text-[10px] shrink-0 mt-0.5">&#8627;</span>
-        )}
-        <StatusDot status={session.status} />
-        <div className="flex flex-col min-w-0 flex-1">
-          <span className="text-[11px] truncate leading-tight">{session.name}</span>
-          <div className="flex items-center gap-2 mt-0.5">
-            {isResident && session.resident_mb > 0 && (
-              <span className="text-[9px] text-muted/60 font-mono" style={{ fontVariantNumeric: 'tabular-nums' }}>
-                {session.resident_mb.toFixed(0)} MB
-              </span>
-            )}
-            {!isResident && (
-              <span className="text-[9px] text-muted/50 font-mono">evicted</span>
-            )}
-            {isActive && (
-              <span className="text-[9px] text-accent font-mono">active</span>
-            )}
+      <div className="group relative">
+        <button
+          onClick={() => isResident && onSelect(session.id)}
+          disabled={!isResident}
+          className={[
+            'w-full text-left py-1.5 pr-6 flex items-start gap-1.5 transition-colors',
+            isActive ? 'bg-accent-lo text-text' : 'text-text/80 hover:bg-accent-lo/20',
+            !isResident ? 'opacity-50 cursor-default' : 'cursor-pointer',
+          ].join(' ')}
+          style={{ paddingLeft: `${12 + depth * 12}px` }}
+        >
+          {depth > 0 && (
+            <span className="text-muted/40 text-[10px] shrink-0 mt-0.5">&#8627;</span>
+          )}
+          <StatusDot status={session.status} />
+          <div className="flex flex-col min-w-0 flex-1">
+            <span className="text-[11px] truncate leading-tight">{session.name}</span>
+            <div className="flex items-center gap-2 mt-0.5">
+              {isResident && session.resident_mb > 0 && (
+                <span className="text-[9px] text-muted/60 font-mono" style={{ fontVariantNumeric: 'tabular-nums' }}>
+                  {session.resident_mb.toFixed(0)} MB
+                </span>
+              )}
+              {!isResident && (
+                <span className="text-[9px] text-muted/50 font-mono">evicted</span>
+              )}
+              {isActive && (
+                <span className="text-[9px] text-accent font-mono">active</span>
+              )}
+            </div>
           </div>
-        </div>
-      </button>
+        </button>
+        <button
+          onClick={(e) => onDelete(e, session.id, session.name)}
+          title="Delete session"
+          className="absolute top-1.5 right-1.5 w-4 h-4 flex items-center justify-center rounded text-muted/50 opacity-0 group-hover:opacity-100 hover:text-danger hover:bg-danger/10 transition-all"
+        >
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 6L6 18M6 6l12 12" /></svg>
+        </button>
+      </div>
       {node.children.length > 0 && (
         <ul>
           {node.children.map((child) => (
@@ -100,6 +111,7 @@ function SessionNode({
               depth={depth + 1}
               activeSessionId={activeSessionId}
               onSelect={onSelect}
+              onDelete={onDelete}
             />
           ))}
         </ul>
@@ -109,13 +121,28 @@ function SessionNode({
 }
 
 export default function SubsettingPanel({ onNewSession, sessions }: Props) {
-  const { activeSessionId, setActiveSessionId } = useAppStore();
+  const { activeSessionId, setActiveSessionId, removeSession } = useAppStore();
   const { drawPolygons, drawRing, regionCount, allPolygons, commitDrawRing, clearDraw } = useDrawSelection();
 
   const [saveParent, setSaveParent] = useState(false);
   const [working, setWorking] = useState(false);
 
   const tree = buildTree(sessions);
+
+  async function handleDeleteSession(e: React.MouseEvent, id: string, name: string) {
+    e.stopPropagation();
+    if (!window.confirm(`Delete session "${name}"? Any unsaved changes are lost.`)) return;
+    try {
+      await deleteSession(id);
+      removeSession(id);
+      if (activeSessionId === id) {
+        const next = sessions.find((s) => s.id !== id && s.status === 'ready');
+        setActiveSessionId(next ? next.id : null);
+      }
+    } catch (err) {
+      reportError('Delete session failed', err);
+    }
+  }
 
   async function handleSubset() {
     if (!activeSessionId || regionCount === 0) return;
@@ -173,6 +200,7 @@ export default function SubsettingPanel({ onNewSession, sessions }: Props) {
               depth={0}
               activeSessionId={activeSessionId}
               onSelect={setActiveSessionId}
+              onDelete={handleDeleteSession}
             />
           ))}
         </ul>
