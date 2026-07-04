@@ -21,6 +21,12 @@ export async function getFunctions(): Promise<{ functions: FunctionEntry[]; squi
   return res.json() as Promise<{ functions: FunctionEntry[]; squidpy_version: string }>;
 }
 
+// 503s until the backend has finished building its squidpy function registry.
+export async function getReadyz(): Promise<{ status: string; functions: number }> {
+  const res = await apiFetch('/api/readyz');
+  return res.json() as Promise<{ status: string; functions: number }>;
+}
+
 export async function getSessions(): Promise<{ sessions: SessionSummary[] }> {
   const res = await apiFetch('/api/sessions');
   return res.json() as Promise<{ sessions: SessionSummary[] }>;

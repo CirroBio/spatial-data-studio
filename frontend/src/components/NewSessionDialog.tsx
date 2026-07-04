@@ -43,6 +43,7 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   const [datasets, setDatasets] = useState<DatasetEntry[]>([]);
+  const [datasetsLoading, setDatasetsLoading] = useState(true);
   const [listing, setListing] = useState<FsListing | null>(null);
   const [open, setOpen] = useState(false);
   const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -53,7 +54,8 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
   useEffect(() => {
     getDatasets()
       .then(({ datasets: d }) => setDatasets(d))
-      .catch(() => setDatasets([]));
+      .catch(() => setDatasets([]))
+      .finally(() => setDatasetsLoading(false));
   }, []);
 
   // Import mode: browse the filesystem so the user can navigate to a raw folder.
@@ -231,7 +233,11 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
                   ))}
                   {datasetMatches.length === 0 && (
                     <div className="px-3 py-2 text-xs text-muted/60">
-                      {datasets.length ? 'No matching datasets' : 'No datasets found under the data folders'}
+                      {datasetsLoading
+                        ? 'Loading datasets…'
+                        : datasets.length
+                        ? 'No matching datasets'
+                        : 'No datasets found under the data folders'}
                     </div>
                   )}
                 </div>
