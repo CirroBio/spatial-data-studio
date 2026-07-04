@@ -69,7 +69,7 @@ export interface HistEntry {
   namespace: string;
   function: string;
   params: Record<string, unknown>;
-  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  status: 'pending' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
   squidpy_version: string;
   started_at: string | null;
   finished_at: string | null;
@@ -81,7 +81,7 @@ export interface PlotEntry {
   namespace: string;
   function: string;
   params: Record<string, unknown>;
-  status: 'queued' | 'running' | 'drawn' | 'invalidated' | 'failed';
+  status: 'pending' | 'queued' | 'running' | 'drawn' | 'invalidated' | 'failed';
   references: string[];
 }
 

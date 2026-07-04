@@ -14,10 +14,11 @@ export default function PlotDetail() {
   const [redrawing, setRedrawing] = useState(false);
 
   const item = sessionState?.app_state.plots.find((p) => p.id === selectedPlotId) ?? null;
-  const { fn, fields, editing, setEditing, submitting, rerun } = useRerunEditor(
+  const { fn, fields, editing, setEditing, submitting, rerun, runStaged, saveStaged } = useRerunEditor(
     item,
     () => setSelectedPlotId(null)
   );
+  const isPending = item?.status === 'pending';
 
   useEffect(() => {
     if (!activeSessionId || !selectedPlotId || !item) return;
@@ -91,6 +92,24 @@ export default function PlotDetail() {
       <DetailHeader title={`${item.namespace}.${item.function}`} status={item.status} onClose={() => setSelectedPlotId(null)}>
         {editing ? (
           <button onClick={() => setEditing(false)} className={actionBtn}>Cancel</button>
+        ) : isPending ? (
+          <>
+            {fn && (
+              <button
+                onClick={() => setEditing(true)}
+                className="px-3 py-1.5 bg-accent/20 hover:bg-accent/30 text-accent text-xs rounded transition-colors"
+              >
+                Edit params
+              </button>
+            )}
+            <button
+              onClick={runStaged}
+              disabled={submitting}
+              className="px-3 py-1.5 bg-accent/20 hover:bg-accent/30 text-accent text-xs rounded transition-colors disabled:opacity-50"
+            >
+              {submitting ? 'Queuing...' : 'Run'}
+            </button>
+          </>
         ) : (
           <>
             {svgContent && (
@@ -125,8 +144,11 @@ export default function PlotDetail() {
           sessionId={activeSessionId!}
           submitting={submitting}
           params={item.params}
-          note="Editing parameters — rerun draws a new plot from the same function."
-          onSubmit={rerun}
+          note={isPending
+            ? 'Editing a staged plot — Save keeps it pending; run it from the step view or with Run all.'
+            : 'Editing parameters — rerun draws a new plot from the same function.'}
+          submitLabel={isPending ? 'Save' : 'Rerun'}
+          onSubmit={isPending ? saveStaged : rerun}
         />
       ) : (
         <div className="flex-1 overflow-y-auto">
@@ -151,6 +173,10 @@ export default function PlotDetail() {
           ) : item.status === 'failed' ? (
             <div className="flex items-center justify-center h-32 text-danger text-sm">
               Plot failed — see log below
+            </div>
+          ) : item.status === 'pending' ? (
+            <div className="flex items-center justify-center h-32 text-warn text-sm">
+              Staged — edit params or run to draw
             </div>
           ) : null}
 

@@ -281,6 +281,48 @@ export async function getBundledRecipes(): Promise<{ recipes: BundledRecipe[] }>
   return res.json() as Promise<{ recipes: BundledRecipe[] }>;
 }
 
+export interface RecipePreflight {
+  produced: string[];
+  unresolved: { step: string; param: string; ref: string; bound_to: string }[];
+  unknown_functions: string[];
+}
+
+// Validate a recipe against the installed registry before running it: which
+// functions are missing, and which referenced keys no earlier step produces.
+export async function preflightRecipe(
+  sessionId: string,
+  recipe: { steps: BundledRecipe['steps'] },
+): Promise<RecipePreflight> {
+  const res = await apiFetch(`/api/sessions/${sessionId}/recipe/preflight`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(recipe),
+  });
+  return res.json() as Promise<RecipePreflight>;
+}
+
+// ---- staged (PENDING) steps -------------------------------------------------
+// Staged steps live in compute_history/plots with status "pending": visible and
+// editable, but not submitted until run individually or via run-all.
+export async function runPendingStep(sessionId: string, stepId: string): Promise<void> {
+  await apiFetch(`/api/sessions/${sessionId}/pending/${stepId}/run`, { method: 'POST' });
+}
+
+export async function runAllPending(sessionId: string): Promise<{ queued: number }> {
+  const res = await apiFetch(`/api/sessions/${sessionId}/pending/run-all`, { method: 'POST' });
+  return res.json() as Promise<{ queued: number }>;
+}
+
+export async function editPendingStep(
+  sessionId: string,
+  stepId: string,
+  params: Record<string, unknown>,
+): Promise<void> {
+  await apiFetch(`/api/sessions/${sessionId}/pending/${stepId}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ params }),
+  });
+}
+
 export async function getRecipe(sessionId: string): Promise<unknown> {
   const res = await apiFetch(`/api/sessions/${sessionId}/recipe`);
   return res.json();

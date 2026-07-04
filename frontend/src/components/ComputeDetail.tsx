@@ -13,10 +13,11 @@ export default function ComputeDetail() {
   const item = sessionState?.app_state.compute_history.find(
     (h) => h.id === selectedComputeId
   ) ?? null;
-  const { fn, fields, editing, setEditing, submitting, rerun } = useRerunEditor(
+  const { fn, fields, editing, setEditing, submitting, rerun, runStaged, saveStaged } = useRerunEditor(
     item,
     () => setSelectedComputeId(null)
   );
+  const isPending = item?.status === 'pending';
 
   useEffect(() => {
     if (!activeSessionId || !selectedComputeId || !item) return;
@@ -50,15 +51,15 @@ export default function ComputeDetail() {
                 onClick={() => setEditing(true)}
                 className="px-3 py-1.5 bg-accent/20 hover:bg-accent/30 text-accent text-xs rounded transition-colors"
               >
-                Edit &amp; rerun
+                {isPending ? 'Edit params' : 'Edit & rerun'}
               </button>
             )}
             <button
-              onClick={() => rerun(item.params)}
+              onClick={() => (isPending ? runStaged() : rerun(item.params))}
               disabled={submitting}
               className="px-3 py-1.5 bg-accent/20 hover:bg-accent/30 text-accent text-xs rounded transition-colors disabled:opacity-50"
             >
-              {submitting ? 'Queuing...' : 'Re-run'}
+              {submitting ? 'Queuing...' : isPending ? 'Run' : 'Re-run'}
             </button>
           </>
         )}
@@ -71,8 +72,11 @@ export default function ComputeDetail() {
           sessionId={activeSessionId!}
           submitting={submitting}
           params={item.params}
-          note="Editing parameters — rerun queues the function with these values."
-          onSubmit={rerun}
+          note={isPending
+            ? 'Editing a staged step — Save keeps it pending; run it from the step view or with Run all.'
+            : 'Editing parameters — rerun queues the function with these values.'}
+          submitLabel={isPending ? 'Save' : 'Rerun'}
+          onSubmit={isPending ? saveStaged : rerun}
         />
       ) : (
         <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">

@@ -1,9 +1,9 @@
 import { useRef, useState } from 'react';
 import * as Tabs from '@radix-ui/react-tabs';
 import { useAppStore } from '../store/sessionStore';
-import { deleteHistoryEntry, getRecipe, importRecipe, getSession } from '../api';
+import { deleteHistoryEntry, getRecipe, importRecipe, getSession, runAllPending } from '../api';
 import { reportError } from '../lib/errors';
-import StatusBadge from './StatusBadge';
+import StatusBadge, { type Status } from './StatusBadge';
 import FunctionPicker from './FunctionPicker';
 import RecipeGallery from './RecipeGallery';
 import AnnotationsPanel from './AnnotationsPanel';
@@ -13,6 +13,67 @@ import type { SessionSummary } from '../types';
 interface Props {
   onNewSession: () => void;
   sessions: SessionSummary[];
+}
+
+interface HistoryItem {
+  id: string;
+  namespace: string;
+  function: string;
+  status: Status;
+  finished_at?: string | null;
+}
+
+// Compute-history and plot rows share the same layout: name + status badge, an
+// optional finished timestamp, and a hover-reveal delete button.
+function HistoryList({
+  items,
+  selectedId,
+  onSelect,
+  onDelete,
+  emptyLabel,
+}: {
+  items: HistoryItem[];
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+  onDelete: (e: React.MouseEvent, id: string) => void;
+  emptyLabel: string;
+}) {
+  if (items.length === 0) {
+    return <div className="px-3 py-4 text-xs text-muted/60 text-center">{emptyLabel}</div>;
+  }
+  return (
+    <ul>
+      {[...items].reverse().map((item) => (
+        <li key={item.id} className="group relative">
+          <button
+            onClick={() => onSelect(item.id)}
+            className={`w-full text-left px-3 py-2 border-b border-border/50 hover:bg-accent-lo/30 transition-colors ${
+              selectedId === item.id ? 'bg-accent-lo text-text' : 'text-text/80'
+            }`}
+          >
+            <div className="flex items-center justify-between gap-1 mb-0.5 pr-5">
+              <span className="text-xs font-mono truncate">{item.namespace}.{item.function}</span>
+              <StatusBadge status={item.status} size="xs" />
+            </div>
+            {item.finished_at && (
+              <div className="text-[10px] text-muted/60">
+                {new Date(item.finished_at).toLocaleTimeString()}
+              </div>
+            )}
+          </button>
+          {item.status !== 'queued' && item.status !== 'running' && (
+            <button
+              onClick={(e) => onDelete(e, item.id)}
+              title="Delete from history"
+              className="absolute top-1.5 right-1.5 w-4 h-4 flex items-center justify-center rounded text-muted/50 opacity-0 group-hover:opacity-100 hover:text-danger hover:bg-danger/10 transition-all"
+            >
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 6L6 18M6 6l12 12" /></svg>
+            </button>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 export default function Sidebar({ onNewSession, sessions }: Props) {
@@ -54,11 +115,22 @@ export default function Sidebar({ onNewSession, sessions }: Props) {
     if (!file || !activeSessionId) return;
     try {
       const recipe = JSON.parse(await file.text());
-      await importRecipe(activeSessionId, recipe, 'run');
+      // Import as pending steps so params can be reviewed/edited before running.
+      await importRecipe(activeSessionId, recipe, 'stage');
       setSessionState(await getSession(activeSessionId));
-      pushNotification({ kind: 'info', message: 'Recipe loaded.' });
+      pushNotification({ kind: 'info', message: 'Recipe staged — review and run.' });
     } catch (err) {
       reportError('Load recipe failed', err);
+    }
+  }
+
+  async function handleRunAllPending() {
+    if (!activeSessionId) return;
+    try {
+      await runAllPending(activeSessionId);
+      setSessionState(await getSession(activeSessionId));
+    } catch (err) {
+      reportError('Run all pending failed', err);
     }
   }
 
@@ -77,6 +149,9 @@ export default function Sidebar({ onNewSession, sessions }: Props) {
 
   const computeItems = sessionState?.app_state.compute_history ?? [];
   const plotItems = sessionState?.app_state.plots ?? [];
+  const pendingCount =
+    computeItems.filter((i) => i.status === 'pending').length +
+    plotItems.filter((i) => i.status === 'pending').length;
 
   const isOperationTab = sidebarTab === 'compute' || sidebarTab === 'plots';
   const effectClass = sidebarTab === 'plots' ? 'plot' : 'compute';
@@ -101,74 +176,23 @@ export default function Sidebar({ onNewSession, sessions }: Props) {
         </Tabs.List>
 
         <Tabs.Content value="compute" className="flex-1 overflow-y-auto">
-          {computeItems.length === 0 ? (
-            <div className="px-3 py-4 text-xs text-muted/60 text-center">No compute history</div>
-          ) : (
-            <ul>
-              {[...computeItems].reverse().map((item) => (
-                <li key={item.id} className="group relative">
-                  <button
-                    onClick={() => setSelectedComputeId(selectedComputeId === item.id ? null : item.id)}
-                    className={`w-full text-left px-3 py-2 border-b border-border/50 hover:bg-accent-lo/30 transition-colors ${
-                      selectedComputeId === item.id ? 'bg-accent-lo text-text' : 'text-text/80'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-1 mb-0.5 pr-5">
-                      <span className="text-xs font-mono truncate">{item.namespace}.{item.function}</span>
-                      <StatusBadge status={item.status} size="xs" />
-                    </div>
-                    {item.finished_at && (
-                      <div className="text-[10px] text-muted/60">
-                        {new Date(item.finished_at).toLocaleTimeString()}
-                      </div>
-                    )}
-                  </button>
-                  {item.status !== 'queued' && item.status !== 'running' && (
-                    <button
-                      onClick={(e) => handleDelete(e, item.id)}
-                      title="Delete from history"
-                      className="absolute top-1.5 right-1.5 w-4 h-4 flex items-center justify-center rounded text-muted/50 opacity-0 group-hover:opacity-100 hover:text-danger hover:bg-danger/10 transition-all"
-                    >
-                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 6L6 18M6 6l12 12" /></svg>
-                    </button>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
+          <HistoryList
+            items={computeItems}
+            selectedId={selectedComputeId}
+            onSelect={(id) => setSelectedComputeId(selectedComputeId === id ? null : id)}
+            onDelete={handleDelete}
+            emptyLabel="No compute history"
+          />
         </Tabs.Content>
 
         <Tabs.Content value="plots" className="flex-1 overflow-y-auto">
-          {plotItems.length === 0 ? (
-            <div className="px-3 py-4 text-xs text-muted/60 text-center">No plots</div>
-          ) : (
-            <ul>
-              {[...plotItems].reverse().map((item) => (
-                <li key={item.id} className="group relative">
-                  <button
-                    onClick={() => setSelectedPlotId(selectedPlotId === item.id ? null : item.id)}
-                    className={`w-full text-left px-3 py-2 border-b border-border/50 hover:bg-accent-lo/30 transition-colors ${
-                      selectedPlotId === item.id ? 'bg-accent-lo text-text' : 'text-text/80'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-1 mb-0.5 pr-5">
-                      <span className="text-xs font-mono truncate">{item.namespace}.{item.function}</span>
-                      <StatusBadge status={item.status} size="xs" />
-                    </div>
-                  </button>
-                  {item.status !== 'queued' && item.status !== 'running' && (
-                    <button
-                      onClick={(e) => handleDelete(e, item.id)}
-                      title="Delete from history"
-                      className="absolute top-1.5 right-1.5 w-4 h-4 flex items-center justify-center rounded text-muted/50 opacity-0 group-hover:opacity-100 hover:text-danger hover:bg-danger/10 transition-all"
-                    >
-                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 6L6 18M6 6l12 12" /></svg>
-                    </button>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
+          <HistoryList
+            items={plotItems}
+            selectedId={selectedPlotId}
+            onSelect={(id) => setSelectedPlotId(selectedPlotId === id ? null : id)}
+            onDelete={handleDelete}
+            emptyLabel="No plots"
+          />
         </Tabs.Content>
 
         <Tabs.Content value="annotations" className="flex-1 overflow-y-auto">
@@ -183,6 +207,14 @@ export default function Sidebar({ onNewSession, sessions }: Props) {
       {/* Add + recipe controls — only for compute/plots operation tabs */}
       {activeSessionId && isOperationTab && (
         <div className="p-2 border-t border-border shrink-0 flex flex-col gap-1.5">
+          {pendingCount > 0 && (
+            <button
+              onClick={handleRunAllPending}
+              className="w-full py-1.5 text-xs bg-warn/20 hover:bg-warn/30 text-warn rounded transition-colors"
+            >
+              Run all pending ({pendingCount})
+            </button>
+          )}
           <button
             onClick={() => setShowPicker(true)}
             className="w-full py-1.5 text-xs bg-accent/20 hover:bg-accent/30 text-accent rounded transition-colors"

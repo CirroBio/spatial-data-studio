@@ -4,6 +4,7 @@ import { useAppStore } from '../store/sessionStore';
 import { submitJob } from '../api';
 import FunctionForm from './forms/FunctionForm';
 import { formatError } from '../lib/errors';
+import { EMPTY_FIELDS } from '../hooks/useRerunEditor';
 import type { FunctionEntry } from '../types';
 
 interface Props {
@@ -19,9 +20,7 @@ export default function FunctionPicker({ sessionId, effectClass, onClose }: Prop
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const fields = sessionState?.fields ?? {
-    obs: [], obsm: [], var_names_count: 0, obsp: [], layers: [], images: [], shapes: [],
-  };
+  const fields = sessionState?.fields ?? EMPTY_FIELDS;
 
   const filtered = functions.filter((fn) => {
     // Compute tab shows compute + extract (read-only sc.get.*); Plots tab shows plot.

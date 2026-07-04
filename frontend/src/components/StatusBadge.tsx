@@ -1,4 +1,4 @@
-export type Status = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'drawn' | 'invalidated' | 'loading' | 'ready' | 'errored';
+export type Status = 'pending' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'drawn' | 'invalidated' | 'loading' | 'ready' | 'errored';
 
 interface Props {
   status: Status;
@@ -6,6 +6,7 @@ interface Props {
 }
 
 const STATUS_STYLES: Record<Status, string> = {
+  pending: 'bg-warn/10 text-warn border border-dashed border-warn/40',
   queued: 'bg-muted/30 text-muted',
   running: 'bg-accent/20 text-accent animate-pulse',
   completed: 'bg-success/20 text-success',

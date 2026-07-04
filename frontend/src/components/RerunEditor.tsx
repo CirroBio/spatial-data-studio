@@ -9,11 +9,12 @@ interface Props {
   params: Record<string, unknown>;
   note: string;
   onSubmit: (params: Record<string, unknown>) => void;
+  submitLabel?: string;
 }
 
 // The editing panel shared by the compute/plot detail views: a caption plus the
 // original function form, pre-filled with the prior call's params.
-export default function RerunEditor({ fn, fields, sessionId, submitting, params, note, onSubmit }: Props) {
+export default function RerunEditor({ fn, fields, sessionId, submitting, params, note, onSubmit, submitLabel = 'Rerun' }: Props) {
   return (
     <div className="flex-1 min-h-0 flex flex-col">
       <div className="px-4 py-2 text-xs text-muted border-b border-border shrink-0">{note}</div>
@@ -24,7 +25,7 @@ export default function RerunEditor({ fn, fields, sessionId, submitting, params,
         onSubmit={onSubmit}
         submitting={submitting}
         initialValues={params}
-        submitLabel="Rerun"
+        submitLabel={submitLabel}
       />
     </div>
   );
