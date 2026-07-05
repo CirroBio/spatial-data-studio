@@ -13,8 +13,7 @@ design specification and [docs/CONTRACT.md](docs/CONTRACT.md) for the API.
 > same change. See [CLAUDE.md](CLAUDE.md).
 >
 > **Governance:** invariants are enforced by `sds-governance/` (`make check`); read
-> [`sds-governance/AGENTS.md`](sds-governance/AGENTS.md) before changing the catalog
-> or agent surface.
+> [`sds-governance/AGENTS.md`](sds-governance/AGENTS.md) before changing the catalog.
 
 ## Foundational principle: zero hardcoded library functions
 
@@ -32,8 +31,8 @@ Operations are modeled by an abstract **`Function`** (`backend/app/registry/base
 identity, a generated form descriptor (JSON Schema-of-record + ui hints), an effect class,
 and an `execute` contract returning the **contract envelope** `{status, logs,
 structural_diff, figure_bytes, new_object, result_value, manifest_before/after, error}`
-with a `keep_failures` flag (frontend calls keep failures in history; the AI agent does
-not). **`LibraryFunction`** (`library_fn.py`) is the one reflection-built executor for all
+with a `keep_failures` flag (`True` for every frontend call, so a failed call stays in
+history for inspection). **`LibraryFunction`** (`library_fn.py`) is the one reflection-built executor for all
 libraries — a `library` field drives the import, so squidpy/scanpy/spatialdata-io readers
 run through one path; squidpy is still never named in code. **Custom functions**
 (`registry/custom/`) are hand-written `Function` subclasses. All three flow through the
@@ -55,14 +54,26 @@ same picker → form → queue → history machinery.
   (predict a cell-type label per cell with a pre-trained CellTypist model, writing a
   categorical `<key_added>` column plus a `<key_added>_conf` confidence column; input is
   log1p/1e4-normalized on a copy by default, and the chosen model is downloaded on first use).
+- **Spatial & multi-sample analysis methods** (non-squidpy, `namespace: custom`, vendored
+  unmodified under `registry/custom/_vendor/`, numpy/scipy/scikit-learn only) — six
+  compute + plot Function pairs for methods scanpy/squidpy don't provide:
+  *Cellular Neighborhoods* (windowed cell-type composition clustered into recurring
+  tissue niches); *Milo differential abundance* (tests which overlapping kNN
+  neighborhoods in an embedding shift in cell abundance between two conditions,
+  NB-GLM + spatial FDR); *LISI* (per-cell iLISI/cLISI integration diagnostic — batch
+  mixing / cell-type separation in an embedding); *Proximity / avoidance test*
+  (nearest-neighbor distance between cell-type pairs vs. a label-permutation null,
+  distinct from squidpy's distance-binned `co_occurrence`); *Region boundary /
+  infiltration distance* + *Infiltration profile* (derive a tissue region from cell-type
+  labels with no hand-drawn geometry, compute each cell's signed distance to the region
+  margin, then profile a target population's abundance as a function of that distance —
+  the infiltration curve); and *Pseudobulk DE (DESeq2)* (sums raw counts per
+  sample × cell type and runs PyDESeq2 with an explicit contrast, the replicate-aware
+  alternative to `rank_genes_groups` for condition comparisons — requires ≥2 pseudobulk
+  samples per condition per cell type, skipped otherwise, and raw integer counts).
 - **Data manifest** (`backend/app/manifest`) — an extensible, text representation of
   session state (tables + dtypes, categoricals with counts, region sets, images/channels,
-  summaries) captured before/after every call; the AI's eyes and a human-readable diff.
-- **AI chat** (optional, AWS Bedrock; `backend/app/agent`) — a per-session assistant with a
-  fixed set of meta-tools over the catalog (list/describe/run functions, manifest, recipes,
-  snapshots), an auto-mode toggle and sequential human approval (approve / edit & approve /
-  deny+reason), and self-curated context that persists into the `.zarr.zip`. Strictly
-  additive: dark unless configured (`AI_ENABLED`), with graceful degradation.
+  summaries) captured before/after every call; a human-readable diff.
 - **Sessions** — one in-memory `SpatialData` per session, a FIFO worker thread,
   compute/plot jobs, structural-diff–driven refresh, live RAM/CPU resource strip.
 - **Startup splash** — the frontend polls `GET /api/readyz` and shows a full-screen
@@ -165,7 +176,10 @@ same picker → form → queue → history machinery.
   unless `CIRRO_BASE_URL`, `CIRRO_CLIENT_ID`, and `CIRRO_CLIENT_SECRET` are all set. The
   session must be saved first; the upload folder is built from symlinks (the saved
   `.zarr.zip` plus, per selected snapshot, only the specific assets it references —
-  `assets/` is shared and content-hashed across snapshots) so nothing is copied.
+  `assets/` is shared and content-hashed across snapshots) so nothing is copied. Always
+  uploaded via Cirro's generic "Files" ingest process (`custom_dataset`, accepts any
+  file) — the service-account identity only needs `Create dataset`/`View dataset` on
+  the target project, no `View process` permission.
 
 ## Layout
 
@@ -176,7 +190,6 @@ backend/    FastAPI app
                   library_catalog.yaml (opt-in library manifests), terms.yaml + dictionary.py
                   (Parameter Term Dictionary), introspect.py (Registry)
   app/manifest/   data manifest contributor registry + seed contributors (v3 Part 3)
-  app/agent/      meta-tools, Bedrock/mock provider, chat loop + approval, self-curated context
   app/sessions/   manager, session (queue/worker), adapter (routes to Function.execute), regions, appstate,
                   transform (points->global affine)
   app/transport/  arrow (field -> Arrow IPC), tables (element inventory + dataframe page JSON), sse
@@ -245,13 +258,6 @@ The compose file mounts `test-data/` read-only at `/data` and a `checkpoints`
 volume at `/checkpoints`. Inside the container: `tini` → `supervisord` →
 {`nginx` edge (SSE buffering off), `uvicorn --workers 1`}.
 
-**Enable the AI chat (optional).** Copy `.env.example` to `.env` and set
-`AI_ENABLED=true` plus either `AI_PROVIDER=mock` (credential-free demo of the agent
-loop/approval) or `AI_PROVIDER=bedrock` with `BEDROCK_MODEL_ID`, `AWS_REGION`, and AWS
-credentials. The compose file forwards these; e.g. a quick mock demo:
-`AI_ENABLED=true AI_PROVIDER=mock docker compose up --build -d`. With AI disabled the
-chat panel is dark and the app runs normally.
-
 **Enable Cirro upload (optional).** Set `CIRRO_BASE_URL`, `CIRRO_CLIENT_ID`, and
 `CIRRO_CLIENT_SECRET` in `.env` (a service-account/client-credentials identity — no
 interactive login). The compose file forwards these too; with any unset, the upload
@@ -268,8 +274,11 @@ Launches the backend (`uvicorn`, no `--reload` — see below) and the frontend
 (`npm run dev`, Vite proxies `/api` to :8000) together. Stop with Ctrl-C or,
 from another shell, `./stop.sh`. `SQV_DATA_DIR` (set by `run.sh` to `data/` or,
 with `--test`, `test-data/`) can still be overridden directly to point at any
-other folder. It expects a `.venv-introspect/` virtualenv at the repo root
-(Python 3.11; squidpy does not support 3.13+):
+other folder. If a `.env` file exists at the repo root, `run.sh` sources it
+before launching uvicorn, so `CIRRO_*` config set there (see above)
+reaches the backend the same way docker compose's auto-loaded `.env` does. It
+expects a `.venv-introspect/` virtualenv at the repo root (Python 3.11;
+squidpy does not support 3.13+):
 
 ```bash
 python3.11 -m venv .venv-introspect && . .venv-introspect/bin/activate
@@ -298,12 +307,17 @@ preprocessing recipes (`Preprocess & cluster`, etc.). `test-data/` is gitignored
 `scripts/prepare_xenium_tma.py` builds `test-data/xenium_tma.zarr` — a tissue
 microarray laid out as a 3×4 grid of 12 cores from the real Xenium lung cells (no
 public Xenium TMA is downloadable at a usable size). It's the target for validating
-the custom **Identify TMAs** core-detection function, which recovers all 12 cores.
+the custom **Identify TMAs** core-detection function, which recovers all 12 cores,
+and — using the detected cores as a per-cell sample id, plus a synthetic condition
+split for testing — the multi-sample methods (**Milo differential abundance**,
+**LISI**, **Pseudobulk DE (DESeq2)**).
 
 ## Tests
 
 - `cd backend && python test_e2e.py` — full in-process round trip (load → compute →
-  Arrow → plot → save `.zarr.zip` → reload), asserting app state + computed fields survive.
+  Arrow → plot → save `.zarr.zip` → reload), asserting app state + computed fields survive;
+  also exercises the six spatial/multi-sample custom methods above end to end on
+  `xenium_tma.zarr`, including their own save/reload round trip.
 - `cd frontend && npx tsc --noEmit -p tsconfig.app.json && npm run build` — typecheck + build.
 - `cd frontend && npm run test:e2e` — Playwright browser e2e tests (`frontend/e2e/`). Boots the
   real backend (against `test-data/`) and the Vite dev server itself (see

@@ -7,12 +7,12 @@ scanpy==1.11.5
 leidenalg==0.12.0   # sc.tl.leiden backend for custom.identify_regions_leiden
 igraph==1.0.0
 celltypist==1.7.1   # pre-trained cell-type annotation for custom.celltypist_annotate
+pydeseq2==0.5.4      # negative-binomial DE engine for custom.pseudobulk_deseq2
 
 fastapi==0.138.1
 uvicorn[standard]==0.49.0
 pyarrow==24.0.0
 psutil==7.2.2
-boto3>=1.34      # AWS Bedrock Converse (Apache-2.0); only used when AI_ENABLED
 pillow==12.2.0
 python-multipart==0.0.32
 cirro==1.12.0    # dataset upload (MIT); only used when CIRRO_* env vars are set

@@ -7,7 +7,7 @@
 This is the single design-of-record. It began as the pre-build specification and
 now incorporates everything added since: the Parameter Term Dictionary, region
 annotation and comparison, recipes with staged (PENDING) execution, the expanded
-scanpy / spatialdata-io catalog, the AI agent, the data manifest, snapshots, Cirro
+scanpy / spatialdata-io catalog, the data manifest, snapshots, Cirro
 upload, and the governance layer. `README.md` remains the source of truth for how to
 run the app and the exact current feature set; `docs/CONTRACT.md` is the API contract.
 Where a subsystem was built differently from the original plan, this document
@@ -23,8 +23,8 @@ other SpatialData-readable formats). A Python backend holds data in memory and
 exposes an API; a React/TypeScript frontend renders data-dense graphics in WebGL and
 drives all interaction. Users load data from a local folder, queue analysis
 (`squidpy`/`scanpy`) and plotting calls, configure a live GPU-rendered display, draw
-regions to label or subset cells, optionally drive the whole thing through an AI
-assistant, and persist everything to a SpatialData `.zarr`/`.zarr.zip`.
+regions to label or subset cells, and persist everything to a SpatialData
+`.zarr`/`.zarr.zip`.
 
 ### 1.1 Foundational principle: zero hardcoded library functions
 
@@ -58,13 +58,13 @@ parameter.
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │ Browser (React/TS)                                                │
-│  ┌────────────┐  ┌──────────────────────┐  ┌──────────────────┐  │
-│  │ Left        │  │ Main area            │  │ Chat panel       │  │
-│  │ sidebar     │  │  - deck.gl canvas    │  │ (AI, optional)   │  │
-│  │ (4 tabs:    │  │  - or call detail    │  ├──────────────────┤  │
-│  │  compute/   │  │    modal             │  │ Resource strip   │  │
-│  │  plots/     │  │ ┌── gear (global ops)│  │ (live RAM/CPU)   │  │
-│  │  annot/     │  └──────────────────────┘  └──────────────────┘  │
+│  ┌────────────┐  ┌──────────────────────────────────────────┐    │
+│  │ Left        │  │ Main area                                │    │
+│  │ sidebar     │  │  - deck.gl canvas                        │    │
+│  │ (4 tabs:    │  │  - or call detail modal                  │    │
+│  │  compute/   │  │  ┌── gear (global ops)                   │    │
+│  │  plots/     │  │  └── Resource strip (live RAM/CPU)       │    │
+│  │  annot/     │  └──────────────────────────────────────────┘    │
 │  │  subset)    │                                                  │
 │  └────────────┘                                                   │
 └───────────┬───────────────────────────────────┬──────────────────┘
@@ -79,10 +79,10 @@ parameter.
 │  │ (introspected │  │             worker thread + state(attrs) │  │
 │  │  + term dict) │  │  Session B: ...                          │  │
 │  └──────────────┘  └──────────────────────────────────────────┘  │
-│  ┌──────────────┐  ┌───────────────────┐  ┌───────────────────┐  │
-│  │ Resource      │  │ Arrow / tile /    │  │ AI agent          │  │
-│  │ monitor       │  │ table transport   │  │ (Bedrock, opt.)   │  │
-│  │ (psutil RSS)  │  └───────────────────┘  └───────────────────┘  │
+│  ┌──────────────┐  ┌──────────────────────────────────────────┐  │
+│  │ Resource      │  │ Arrow / tile / table transport            │  │
+│  │ monitor       │  └──────────────────────────────────────────┘  │
+│  │ (psutil RSS)  │                                                │
 │  └──────────────┘                                                 │
 └─────────────────────────────┬─────────────────────────────────────┘
                               │ read / write
@@ -95,7 +95,7 @@ parameter.
 object, one FIFO job queue, and one worker thread. Jobs run serially **within** a
 session (multithreaded internally where the underlying function supports it);
 sessions run concurrently across threads. Data is served from the same process that
-holds it — no IPC hop on the data path. (See Section 17 for why shared-process beat
+holds it — no IPC hop on the data path. (See Section 16 for why shared-process beat
 process-per-session.)
 
 ### 2.1 Technology choices
@@ -105,10 +105,9 @@ process-per-session.)
 | Backend framework | FastAPI + uvicorn | Async, native SSE, Pydantic contracts, integrates with thread-pool workers |
 | In-memory data | `spatialdata.SpatialData` | Committed data model; coordinate systems + shapes make lasso-subset clean |
 | Data transport | Apache Arrow IPC (binary) | Zero-copy-ish to JS typed arrays → deck.gl binary attributes; no JSON on hot path |
-| Server push | Server-Sent Events (SSE) | One-directional (queue/job/resource/chat events); commands go over POST |
+| Server push | Server-Sent Events (SSE) | One-directional (queue/job/resource events); commands go over POST |
 | Rendering | deck.gl + `@deck.gl-community/editable-layers` | Millions of points on GPU, binary attributes, built-in lasso/box/polygon editing, coordinate systems, image tiles |
 | Resource monitoring | `psutil` (process RSS) | Heavy allocations live in numpy/numba/C; `tracemalloc` would miss them |
-| AI (optional) | AWS Bedrock Converse API (`boto3`) | Native tool-use; strictly additive, dark unless configured |
 | Frontend UI | React + TS + Tailwind + Radix | Lightweight; maximizes canvas real estate; no heavy component kit chrome |
 | Dynamic forms | JSON Schema → react-hook-form + custom widget map | Introspection emits JSON Schema; custom widgets for obs-key/var-name pickers |
 
@@ -170,16 +169,14 @@ sdata.attrs["app_state"] = {
       "viewport": { "target": [x,y], "zoom": z } }   // DEFAULT camera on load only
   ],
   "data_versions": { "obs:leiden": 3 },   // per-field counters bumped by structural diffs (§9)
-  "regions": [ /* registered region sets — see §10.1 */ ],
-  "ai_context": [ /* self-curated agent memory notes — see §14.3 */ ],
-  "ai_transcript": [ /* human-readable chat record; NOT replayed to the model */ ]
+  "regions": [ /* registered region sets — see §10.1 */ ]
 }
 ```
 
 Reload reconstructs the entire UI from this blob: data is hydrated from Zarr (compute
 effects already materialized as fields), displays re-derive by resolving `encoding`
-field paths, plots load in `not-drawn` state and render lazily, regions re-register,
-and the AI context/transcript are restored.
+field paths, plots load in `not-drawn` state and render lazily, and regions
+re-register.
 
 ### 3.3 Field-path addressing scheme
 
@@ -222,9 +219,8 @@ kinds of function flow through the same picker → form → queue → history ma
 
 Each function's inputs are defined by one schema whose **canonical serialization is
 JSON Schema**, because that is simultaneously:
-- what the frontend form renders from (react-hook-form + a custom widget map),
-- what Python validates against (Pydantic), and
-- what the AI agent's `describe_function` tool publishes (Section 14.1).
+- what the frontend form renders from (react-hook-form + a custom widget map), and
+- what Python validates against (Pydantic).
 
 There is no second place where params are defined. For library functions the JSON
 Schema is **generated** from the Python signature (`inspect.signature` +
@@ -259,10 +255,19 @@ Type → widget fallback (before the Term Dictionary refines it):
   (`edit_annotations.py` — rename/merge a categorical obs column's values), *Identify
   TMAs* (`identify_tmas.py` / `tma_detect.py` — automatic tissue-microarray core
   detection), *Region composition* + *Region composition (plot)*
-  (`region_composition.py` — §11), and *Annotate Cells (CellTypist)*
+  (`region_composition.py` — §11), *Annotate Cells (CellTypist)*
   (`celltypist_annotate.py` — predict a cell-type label per cell with a pre-trained
-  model). They register in `custom/__init__.py`'s `CUSTOM_FUNCTIONS` and carry
-  `namespace: custom`.
+  model), and six spatial/multi-sample analysis method pairs — *Cellular
+  Neighborhoods* (`cellular_neighborhoods.py`), *Milo differential abundance*
+  (`milo_da.py`), *LISI* (`lisi.py`), *Proximity / avoidance test* (`proximity.py`),
+  *Region boundary / infiltration distance* + *Infiltration profile*
+  (`boundary.py`), and *Pseudobulk DE (DESeq2)* (`pseudobulk_deseq2.py`). Each of
+  these six wraps a dependency-light (numpy/scipy/scikit-learn) compute/plot module
+  vendored unmodified under `registry/custom/_vendor/` — the wrapper adapts the
+  module's thin AnnData entry point to the `Function` contract (obs/obsm/uns writes,
+  `ParamSpec`s, zarr-safe serialization of any result the module returns as a live
+  DataFrame/array) rather than reimplementing the algorithm. They register in
+  `custom/__init__.py`'s `CUSTOM_FUNCTIONS` and carry `namespace: custom`.
 
 ### 4.4 Parameter Term Dictionary (the only library-specific knowledge)
 
@@ -291,8 +296,7 @@ function's behavior. Functions still come only from the registry.
    time against the active table.
 
 **Binding vocabulary** (the data-slot mappings — a base type plus an `x-binding`
-vendor extension the frontend reads to pick a live-dropdown widget and the agent
-reads to know the value is dynamic):
+vendor extension the frontend reads to pick a live-dropdown widget):
 
 | `binding` | Resolves to |
 |---|---|
@@ -336,11 +340,11 @@ return-annotation cross-check:
   SVG/PDF. Tracked in the separate flat `plots` list. Idempotent, re-runnable, lazy.
   There is **no `sc.pl`** — do all plotting through squidpy `pl.*`.
 - **Read** (`read`, spatialdata-io readers): the return value *is* the new session
-  object (session bootstrap, §18).
+  object (session bootstrap, §17).
 - **Extract** (`sc.get`, e.g. `obs_df`/`rank_genes_groups_df`): read-only extraction
   that feeds result assembly and comparison views rather than mutating.
 
-These are surfaced as separate lists in the UI (Section 21) with different lifecycles
+These are surfaced as separate lists in the UI (Section 20) with different lifecycles
 (Sections 6 and 7). The live deck.gl canvas is **neither** — it is an app-defined
 display (Section 9), not a library call.
 
@@ -393,17 +397,14 @@ CallResult { status, logs, structural_diff?, figure_bytes?, new_object?,
 
 The worker applies it (update history/plots/`attrs`, emit SSE). The before/after
 **data manifests** (Section 13) are captured around every call so deltas are
-computable and legible to the AI agent.
+computable and legible in the manifest text.
 
-The envelope carries a **`keep_failures`** flag that differs by caller:
-- **Frontend invocation → `keep_failures = True`.** A failed call stays in the audit
-  log so the user can inspect and delete it.
-- **AI invocation → `keep_failures = False`.** A failed call is **not** written to
-  dataset history (so the agent's exploration doesn't clutter the record) — **but the
-  failure is always returned to the agent loop and distilled into context** (§14.3).
-  "Not kept" means *absent from dataset history*, never *hidden from the agent*.
-
-Successful AI calls **are** written to history like any other compute/plot call.
+The envelope carries a **`keep_failures`** flag. Every call today is a frontend
+invocation, so `keep_failures` is always `True`: a failed call stays in the audit
+log so the user can inspect and delete it. The flag remains part of the envelope
+because it is a caller-supplied setting, not a hardcoded constant — a future caller
+could set it differently — but there is currently only one caller, and it always
+keeps failures.
 
 ---
 
@@ -454,12 +455,11 @@ QUEUED → CANCELLED            (user cancels before run)
   Python offers no safe way to interrupt a thread mid–native-call, and the single-
   process model rules out killing a worker without taking down the box. A **watchdog**
   surfaces a "long-running" warning once a job exceeds a configurable threshold (it
-  cannot reclaim the job). Accepted limitation of in-process execution (§28, R6).
+  cannot reclaim the job). Accepted limitation of in-process execution (§27, R6).
 - If a session's bootstrap `read` job fails, the session has no object: it is marked
   `errored` and offered for retry or disposal, never left half-live.
-- `COMPLETED` calls remain in history permanently. `FAILED` / `CANCELLED` (from
-  frontend invocation) are shown but user-deletable; AI-run failures are not written to
-  history at all (§4.7).
+- `COMPLETED` calls remain in history permanently. `FAILED` / `CANCELLED` are shown
+  but user-deletable (§4.7).
 - There is no `INVALIDATED` state for compute (invalidation is a plotting concept, §7).
 
 ### 6.2 Queue and worker
@@ -467,7 +467,7 @@ QUEUED → CANCELLED            (user cancels before run)
 - One FIFO queue (`queue.Queue`) + one daemon worker thread per session
   (`backend/app/sessions/session.py`). Strictly serial dequeue.
 - `read` calls are ordinary queue jobs and are normally the **first** entry in a
-  session's history (they bootstrap the object — §18).
+  session's history (they bootstrap the object — §17).
 - The worker mutates the shared in-memory object directly (same process), so no
   serialization cost per job.
 - **Validate-on-dequeue:** when a job is dequeued, its `params` are validated against
@@ -552,7 +552,7 @@ as the child's immutable base — **not** as a compute-history step.
 - Child `attrs` are **deep-copied** (not by-reference) so the child's history/displays
   diverge from the parent. Child `compute_history` starts **empty** (the lasso is not a
   recorded step).
-- Subset is enqueued as a **special queue job** (§25.5) so it serializes against
+- Subset is enqueued as a **special queue job** (§24.5) so it serializes against
   compute and takes the read lock.
 
 ### 8.3 Parent lifecycle on subset
@@ -560,7 +560,7 @@ as the child's immutable base — **not** as a compute-history step.
 - User may **save parent before subsetting** (checkbox in the Subsetting panel); if so,
   flush parent to its Zarr store.
 - **Either way the parent is evicted from RAM.** The child becomes the active session.
-- Subsetting must pass the load-admission check for the child (§17.3) before the parent
+- Subsetting must pass the load-admission check for the child (§16.3) before the parent
   is evicted, to avoid a state with neither resident. Empty selections (zero-observation
   child) are refused with a warning.
 
@@ -619,7 +619,7 @@ Per image channel: **toggle visibility**, **rename** (display-only name overridi
 channel labels), and assign one of 8 canonical spectrum colors. The server composites
 channels by additively blending each channel's percentile-normalized intensity tinted
 with its color. State lives in the display spec, so it persists to `.zarr.zip`, is
-restored on load, is captured in snapshots (§15), and appears in the data manifest
+restored on load, is captured in snapshots (§14), and appears in the data manifest
 (§13). A togglable legend overlays a swatch + label for every visible channel.
 
 ### 9.5 Editable points transform
@@ -844,8 +844,8 @@ hard-coded category references; the preflight makes the difference visible.
 
 ## 13. Data manifest
 
-A **text** representation of session state — the AI's eyes, and a human-readable diff
-source (`backend/app/manifest/`). Assembled from an **extensible registry of
+A **text** representation of session state, and a human-readable diff source
+(`backend/app/manifest/`). Assembled from an **extensible registry of
 contributors** (`registry.py` + `contributors.py`), each a small function appending a
 labeled text block; new contributors are added the way Term Dictionary entries are,
 without touching the manifest core.
@@ -855,88 +855,18 @@ Seed contributors:
 - **Tables** — per table: shape, `obs`/`var` columns with dtypes, `obsm`/`obsp`/`layers`
   keys.
 - **Categoricals** — each categorical `obs` column with its categories and per-category
-  counts (this is what makes `obs_categorical` values legible to the agent).
+  counts.
 - **Region sets** — registered sets (§10.1) with categories + counts.
 - **Images** — image elements with channel names (and current on/off + rename state).
 - **Summaries** — total cells, QC totals if present, per-region counts when a set is
   active. Kept minimal by design; grow via the registry.
-- **Recent context** — the rolling agent context notes (§14.3) are appended so a fresh
-  turn sees prior learnings.
 
 Manifests are captured **before and after** every function call (§4.7) so deltas are
 computable.
 
 ---
 
-## 14. AI agent (optional, AWS Bedrock)
-
-When Bedrock is configured, the app exposes a per-session chat (`backend/app/agent/`).
-Strictly additive: dark unless `AI_ENABLED`, with graceful degradation (§14.4). The
-agent can run functions, apply recipes, and save snapshots; it **cannot** create/edit
-region annotations or perform subsetting — those stay human-only canvas workflows.
-
-### 14.1 Tool interface
-
-The LLM does not get one tool per function (the catalog is dynamic). It gets a small
-**fixed set of meta-tools** over the catalog (`backend/app/agent/tools.py`), given to
-Bedrock via Converse tool-use:
-
-- **Read-only (no approval):** `list_functions(filter?)`, `describe_function(name)`
-  (full JSON Schema **with live-resolved option lists** for dynamic params),
-  `get_data_manifest()`, `list_recipes()`, `list_snapshots()`.
-- **State-changing (gated in auto-off):** `run_function(name, params)` (executes under
-  the contract with `keep_failures=False`), `apply_recipe(name, mode)`,
-  `save_snapshot()`.
-
-The schema is fixed; the *currently valid values* are returned by `describe_function`,
-resolved against the live session. The agent loop is `list_functions` →
-`describe_function` → `run_function`, stable regardless of catalog size.
-
-### 14.2 Chat & approval
-
-One Bedrock conversation per session (`chat.py`). Each turn replays: system prompt +
-rolled-up context + current data manifest (or delta) + tool definitions + the user
-message. Read-only tool calls execute immediately; state-changing calls hit the approval
-gate per the per-session **auto-mode toggle**:
-- **Auto on** → state-changing calls execute immediately.
-- **Auto off** → each shows an approval modal: **Approve**, **Edit & approve** (edit
-  params, then run — context records what actually ran, so the model learns the
-  corrected form), or **Deny (± reason)** (the denial and reason return to the model as
-  the tool result, so it adapts instead of retrying blindly).
-
-When a turn proposes multiple state-changing calls, they are approved **one at a time,
-in order** — because functions mutate in place, approving call 1 changes the state call
-2 was predicated on; later calls are re-validated against the new state after each
-approval. Denials and failures both return to the model as tool results, so the agent
-doesn't repeat a rejected or failed approach.
-
-### 14.3 Context management (self-curated, compact)
-
-**The LLM-authored summary is the only carried memory.** The full back-and-forth is
-ephemeral (`backend/app/agent/context.py`):
-- **Ephemeral:** the user-facing transcript and within-turn tool-use messages —
-  rendered, used to produce the turn, then dropped from anything replayed to the model.
-  (The transcript is still persisted for the *user* as `ai_transcript`, just not fed
-  back.)
-- **Memory:** a short "what I newly learned" note the model emits each turn — durable
-  facts (what worked, what failed and why, corrections, key parameter values), appended
-  to `ai_context`. Append-only, separate from dataset history (so it outlives
-  history-deleted calls and never-recorded AI failures), and persisted into `.zarr.zip`.
-
-Two-tier compaction: per-turn distillation always; periodic consolidation when total
-context exceeds a token ceiling, keeping the most recent N notes verbatim. Bedrock is
-stateless — the model "remembers" only what is replayed.
-
-### 14.4 Bedrock config & degradation
-
-`config.AI_PROVIDER` selects `BedrockProvider` (Converse API via `boto3`, lazy import,
-`BEDROCK_MODEL_ID` + `AWS_REGION` + credentials) or a credential-free `MockProvider`
-(demo of the agent loop/approval). If unconfigured (`AI_ENABLED=false` / no creds), the
-chat panel and all agent features are dark and the rest of the app runs normally.
-
----
-
-## 15. Snapshots
+## 14. Snapshots
 
 Save the current display as a self-contained, **read-only** view the recipient can pan
 and zoom but not edit (`backend/app/snapshots.py`).
@@ -960,12 +890,11 @@ and zoom but not edit (`backend/app/snapshots.py`).
   The folder is the shareable unit. Filenames are a content hash of the bytes, so
   identical fields across snapshots **dedupe** and successive snapshots **never
   overwrite** older ones. `SNAPSHOTS_DIR` is configurable (default `./snapshots`).
-- **Invocation:** a **Save snapshot** action (canvas controls) and the agent tool
-  `save_snapshot()` (§14.1).
+- **Invocation:** a **Save snapshot** action (canvas controls).
 
 ---
 
-## 16. Cirro upload
+## 15. Cirro upload
 
 Optionally upload the saved session plus selected snapshots to
 [Cirro](https://cirro.bio/) as a dataset (`backend/app/cirro.py`). Strictly additive:
@@ -983,9 +912,9 @@ dark unless `CIRRO_BASE_URL`, `CIRRO_CLIENT_ID`, and `CIRRO_CLIENT_SECRET` are a
 
 ---
 
-## 17. Sessions, process model, and memory
+## 16. Sessions, process model, and memory
 
-### 17.1 Session model
+### 16.1 Session model
 
 - A session = one in-memory `SpatialData` + one queue + one worker thread + its `attrs`
   state.
@@ -993,9 +922,9 @@ dark unless `CIRRO_BASE_URL`, `CIRRO_CLIENT_ID`, and `CIRRO_CLIENT_SECRET` are a
   the same data, queue, history, plots, regions, and display specs, updated in real time
   over SSE. (Access control is the deployment layer's concern.)
 - Switching sessions is a client navigation; it does not evict server-side sessions.
-  Session navigation lives in the **Subsetting** tab's lineage tree (§21).
+  Session navigation lives in the **Subsetting** tab's lineage tree (§20).
 
-### 17.2 Process model — single shared process, per-session worker threads
+### 16.2 Process model — single shared process, per-session worker threads
 
 Chosen over process-per-session because the audit-log decision removed the need to
 reconstruct intermediate states (the main argument for process isolation), and because a
@@ -1008,7 +937,7 @@ process that holds it — no IPC hop, which matters for high-performance renderi
   `MemoryError` (fail that one job, keep the server and other sessions alive) instead of
   inviting the OS OOM killer.
 
-### 17.3 Memory accounting and guards
+### 16.3 Memory accounting and guards
 
 Memory peak is **not predictable** (some functions allocate transient O(n²)
 structures). Therefore: **monitor closely, expose live, guard at boundaries.**
@@ -1022,7 +951,7 @@ structures). Therefore: **monitor closely, expose live, guard at boundaries.**
   to dequeue the next job and warn. Only the per-worker ceiling bounds an in-flight
   spike.
 
-### 17.4 Session death
+### 16.4 Session death
 
 - Subsetting evicts the parent (§8.3).
 - Otherwise sessions are evicted under memory pressure or by explicit close; eviction
@@ -1030,7 +959,7 @@ structures). Therefore: **monitor closely, expose live, guard at boundaries.**
 
 ---
 
-## 18. Reading data / starting a session
+## 17. Reading data / starting a session
 
 - `read` functions (`read.visium`, `read.vizgen`, `read.nanostring`, plus
   spatialdata-io readers `xenium`/`visium`/`visium_hd`/`merscope`/`cosmx` as available)
@@ -1038,18 +967,18 @@ structures). Therefore: **monitor closely, expose live, guard at boundaries.**
   builds the initial `SpatialData`.
 - A `read` call is enqueued as the **first job** in the session and appears as the first
   entry in `compute_history`.
-- Loading must pass load-admission control (§17.3) before the object is materialized.
+- Loading must pass load-admission control (§16.3) before the object is materialized.
 - **Startup splash:** the frontend polls `GET /api/readyz` and shows a full-screen splash
   until the backend finishes importing `squidpy` and building the registry, so a slow
   cold start doesn't look like an empty app.
 
 ---
 
-## 19. Persistence
+## 18. Persistence
 
 - **Save / export:** write the active `SpatialData` to a `.zarr.zip` (data + `attrs`
   state blob) — the complete, portable project. A zip is write-once, so this is for
-  explicit export. Save is enqueued as a **special queue job** (§25.5) so it captures a
+  explicit export. Save is enqueued as a **special queue job** (§24.5) so it captures a
   consistent snapshot serialized against in-flight compute. Saving blocks the UI behind a
   spinner; a Stop button cancels it while still queued (a save already writing to disk
   can't be interrupted).
@@ -1065,12 +994,12 @@ structures). Therefore: **monitor closely, expose live, guard at boundaries.**
 
 ---
 
-## 20. API surface
+## 19. API surface
 
 All command/control over REST (JSON). All server→client updates over SSE. Bulk data over
 Arrow IPC (binary). See `docs/CONTRACT.md` for the full contract.
 
-### 20.1 REST (representative)
+### 19.1 REST (representative)
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -1106,13 +1035,11 @@ Arrow IPC (binary). See `docs/CONTRACT.md` for the full contract.
 | `GET` | `/api/sessions/{id}/table?path=&offset=&limit=` | Data-inspector dataframe page |
 | `GET` | `/api/sessions/{id}/image/{element}/tile/{level}/{col}/{row}?channels=` | Image pyramid tile (PNG) |
 | `GET` | `/api/sessions/{id}/image/{element}/info` | Pyramid levels, tile size, `pixel_to_world` |
-| `GET`/`POST` | `/api/sessions/{id}/chat` | AI transcript + auto-mode; send a message |
-| `POST` | `/api/sessions/{id}/chat/approve` | Approve / edit / deny a proposed tool call |
 | `POST` | `/api/sessions/{id}/snapshot` | Save an HTML snapshot |
 | `POST` | `/api/sessions/{id}/cirro/upload` | Upload session + snapshots to Cirro |
 | `GET` | `/api/about/licenses` | Third-party licenses (from SBOMs) |
 
-### 20.2 SSE event types
+### 19.2 SSE event types
 
 All events for a client arrive over a **single multiplexed SSE stream** (`/api/events`),
 each tagged by `session_id`, with a monotonic id so a reconnecting client resumes via
@@ -1127,26 +1054,25 @@ each tagged by `session_id`, with a monotonic id so a reconnecting client resume
 | `display.updated` | displayId, spec | Re-derive canvas |
 | `region.updated` | regions | Refresh annotations panel + coloring |
 | `session.created` | sessionId (child) | Add to lineage |
-| `chat.*` | message / proposed call / approval | Drive the chat panel |
 | `resource.sample` | global + per-session RSS, CPU | Update resource strip |
 | `memory.warning` | threshold breached | Block dequeue; warn |
 
 ---
 
-## 21. Frontend layout and stack
+## 20. Frontend layout and stack
 
 ```
 ┌───────────────────────────────────────────────────────────────┐
-│ [logo]  New · Save · Theme · About · AI panel · Cirro   [⚙ ▾]   │
-├──────────────┬───────────────────────────────────┬────────────┤
-│ Sidebar      │  Main area                          │ Chat panel │
-│ 4 tabs:      │   default: deck.gl spatial canvas   │ (AI, opt.) │
-│  Compute     │     (image + points; controls)      │            │
-│  Plots       │   or data inspector (Tables view)   │            │
-│  Annot.      │   selected item: detail MODAL over   │            │
-│  Subset      │     the current view (form/status)   │            │
-├──────────────┴───────────────────────────────────┴────────────┤
-│  Resource strip: ▓▓▓▓░░ RAM 62% (this session 1.8 GB) · CPU …   │
+│ [logo]  New · Save · Theme · About · Cirro                [⚙ ▾]│
+├──────────────┬──────────────────────────────────────────────────┤
+│ Sidebar      │  Main area                                       │
+│ 4 tabs:      │   default: deck.gl spatial canvas                │
+│  Compute     │     (image + points; controls)                   │
+│  Plots       │   or data inspector (Tables view)                │
+│  Annot.      │   selected item: detail MODAL over                │
+│  Subset      │     the current view (form/status)                │
+├──────────────┴──────────────────────────────────────────────────┤
+│  Resource strip: ▓▓▓▓░░ RAM 62% (this session 1.8 GB) · CPU …    │
 └───────────────────────────────────────────────────────────────┘
 ```
 
@@ -1166,11 +1092,8 @@ each tagged by `session_id`, with a monotonic id so a reconnecting client resume
   COMPLETED/DRAWN, FAILED (error glyph + log), INVALIDATED (stale + Redraw). The activity
   badge counts staged · queued · running.
 - **Header:** New/Save session (icon buttons), theme toggle (light/dark via CSS
-  variables, persisted in `localStorage`), About (Acknowledgements), AI-panel toggle
-  (only when configured), Cirro upload (only when configured). The gear dropdown holds
-  remaining global ops.
-- **Chat panel:** collapsible right-side `aside`, present only when Bedrock is
-  configured; approval modals are center-screen and sequential.
+  variables, persisted in `localStorage`), About (Acknowledgements), Cirro upload
+  (only when configured). The gear dropdown holds remaining global ops.
 - **Forms:** the introspection layer emits JSON Schema; `forms/FunctionForm.tsx` renders
   with react-hook-form + a custom widget map (obs-key picker, var-name search/multiselect,
   layer/obsm/obsp pickers, enum dropdowns, `obs_value_map` old→new editor) driven by the
@@ -1180,12 +1103,12 @@ each tagged by `session_id`, with a monotonic id so a reconnecting client resume
 
 ---
 
-## 22. Cross-cutting invariants (enforced in code)
+## 21. Cross-cutting invariants (enforced in code)
 
 1. No module imports or names any specific `squidpy`/`scanpy` function. The registry is
    the only path to a function.
 2. The Term Dictionary defines parameter *terms*, never functions.
-3. One schema-of-record drives the form + Pydantic validation + the agent interface.
+3. One schema-of-record drives the form + Pydantic validation.
 4. Every function returns the contract envelope and respects `keep_failures`.
 5. Redraw exists only on plotting items; a compute item can never go COMPLETED→QUEUED;
    rerun appends a new (PENDING) step.
@@ -1201,18 +1124,15 @@ each tagged by `session_id`, with a monotonic id so a reconnecting client resume
     ceiling is set below the container limit so the catchable `MemoryError` fires before
     the cgroup OOM killer.
 13. uvicorn runs exactly one worker; sessions are never spread across worker processes.
-14. Agent memory is self-curated context only; the transcript is never replayed to the
-    model. The agent gets fixed meta-tools; state-changing calls are gated in auto-off;
-    it cannot annotate or subset.
-15. Snapshots are read-only and share point coloring with the live canvas; assets are
+14. Snapshots are read-only and share point coloring with the live canvas; assets are
     content-hashed.
-16. Dependencies are permissive or explicitly adjudicated (§26).
+15. Dependencies are permissive or explicitly adjudicated (§25).
 
 ---
 
-## 23. Development governance: skills & rules
+## 22. Development governance: skills & rules
 
-To keep the structure solid as the catalog and AI surface grow, the repo ships a
+To keep the structure solid as the catalog grows, the repo ships a
 governance layer (`sds-governance/`) with **two deliberately separate parts**:
 
 - **Rules** — invariants enforced by CI, a lint, or a startup assertion, independent of
@@ -1233,22 +1153,21 @@ origin and enforcement check), `Makefile` (`make check` → `static` + `tests` +
 `sbom_frontend.json` and `license_allowlist.yaml`.
 
 The **contract smoke test** runs every registered function against a synthetic
-SpatialData fixture and asserts the envelope, that AI-run failures are excluded from
-history but surfaced to the agent, and that plotting calls produce a figure without
-mutating. Functions whose smoke inputs can't be synthesized are **visible skips**, not
+SpatialData fixture and asserts the envelope, and that plotting calls produce a figure
+without mutating. Functions whose smoke inputs can't be synthesized are **visible skips**, not
 silent passes. The **license gate** reads installed package metadata, fails on
 torch/scvi or un-adjudicated copyleft, and emits a CycloneDX SBOM; `license_allowlist.yaml`
-is the durable record of the clustering-GPL decision (§26). Checks **skip** until their
+is the durable record of the clustering-GPL decision (§25). Checks **skip** until their
 seam is wired, so the gate is adoptable incrementally.
 
 ---
 
-## 24. Deployment and process orchestration
+## 23. Deployment and process orchestration
 
 Everything ships as **one Docker image** run on a single machine. The single-process,
 in-RAM session model is what makes process failure costly, so resilience is first-class.
 
-### 24.1 Single-image composition
+### 23.1 Single-image composition
 
 Multi-stage build: (1) node builds the React/TS SPA to static assets; (2) python runtime
 + `squidpy`/`scanpy`/`spatialdata` + backend, copying in the built assets. Runtime
@@ -1265,14 +1184,14 @@ PID 1: tini                      # signal forwarding + zombie reaping
 events stall. The edge stays up while uvicorn restarts, so the SPA can render a
 "reconnecting" state instead of a dead page.
 
-### 24.2 Single worker is mandatory (and is the single point of failure)
+### 23.2 Single worker is mandatory (and is the single point of failure)
 
 uvicorn runs **exactly one worker process**. Sessions live in that process's RAM and are
 shared across users; multiple workers would each hold separate, inconsistent state.
 Concurrency comes from the async event loop plus per-session worker threads. The
 corollary: this one process is a single point of failure.
 
-### 24.3 Failure taxonomy & recovery
+### 23.3 Failure taxonomy & recovery
 
 - **Job-level (common):** bad params, exceptions, `MemoryError` from the ceiling.
   Contained — caught, job → `FAILED`, log captured, process unaffected.
@@ -1290,7 +1209,7 @@ corollary: this one process is a single point of failure.
   flush each session to its checkpoint volume, close SSE cleanly. The stop-timeout must
   be generous — large datasets flush slowly.
 
-### 24.4 Memory ceiling, health, config, residual risk
+### 23.4 Memory ceiling, health, config, residual risk
 
 - Set the per-worker ceiling **strictly below the container cgroup limit** so the app
   raises a catchable `MemoryError` before the OOM killer fires. Admission checks evaluate
@@ -1299,7 +1218,7 @@ corollary: this one process is a single point of failure.
   pure-Python job could delay liveness — use a generous timeout and tolerate several
   consecutive misses; do **not** configure aggressive single-miss kills.
 - **Config (env):** container memory limit, per-worker ceiling, max concurrent sessions,
-  checkpoint policy, liveness tuning, edge SSE buffering, AI + Cirro credentials.
+  checkpoint policy, liveness tuning, edge SSE buffering, Cirro credentials.
 - **Accepted residual risk:** with one container per box, a native segfault takes down
   all co-resident sessions until restart. Mitigated by fast supervised restart + the
   checkpoint policy (the primary durability lever), not eliminated. A max-concurrent-
@@ -1307,7 +1226,7 @@ corollary: this one process is a single point of failure.
 
 ---
 
-## 25. Concurrency and threading model
+## 24. Concurrency and threading model
 
 The hard constraint is the in-place mutation model: an object being mutated by a compute
 job cannot be safely read or mutated concurrently. Everything below maximizes parallelism
@@ -1315,7 +1234,7 @@ job cannot be safely read or mutated concurrently. Everything below maximizes pa
 
 1. **Cross-session parallelism (full):** sessions own independent objects, so their
    worker threads run truly in parallel for the GIL-releasing numerical work that
-   dominates `squidpy`/`scanpy`. Unrestricted except by the global thread budget (§25.3).
+   dominates `squidpy`/`scanpy`. Unrestricted except by the global thread budget (§24.3).
 2. **Per-session read/write lock** (`RWLock`): the worker is the exclusive **writer**
    while executing a compute call; Arrow/tile/table serving and plotting are shared
    **readers**. The client defers refetch to `job.completed` and shows `STALE` in the
@@ -1337,7 +1256,7 @@ job cannot be safely read or mutated concurrently. Everything below maximizes pa
 
 ---
 
-## 26. Licensing & third-party compliance
+## 25. Licensing & third-party compliance
 
 Applies to the whole application. The architecture violates no dependency license, but
 distribution (the Docker image counts as distribution) carries obligations. **This is an
@@ -1346,7 +1265,7 @@ confirmed with counsel.**
 
 - **Posture:** the core stack is **permissive** — squidpy, scanpy, anndata, spatialdata,
   numpy, scipy, pandas, scikit-learn (BSD-3), matplotlib (BSD-compatible), the frontend
-  (React, deck.gl, Tailwind, Radix — MIT), Apache Arrow and `boto3` (Apache-2.0). The app
+  (React, deck.gl, Tailwind, Radix — MIT), Apache Arrow (Apache-2.0). The app
   may remain proprietary and be distributed without releasing app source; the baseline
   obligation is attribution.
 - **Baseline obligations:** bundle a `THIRD_PARTY_LICENSES` (surfaced in the in-app
@@ -1367,7 +1286,7 @@ confirmed with counsel.**
 
 ---
 
-## 27. Known risks / pin early
+## 26. Known risks / pin early
 
 - **SpatialData incremental Zarr write API** has moved across versions. Pin the exact
   element-level write calls used for save/checkpoint.
@@ -1385,7 +1304,7 @@ confirmed with counsel.**
 
 ---
 
-## 28. Critique log (edge cases, limitations, dispositions)
+## 27. Critique log (edge cases, limitations, dispositions)
 
 A structured adversarial pass over the design. Each item is tagged **Resolved**
 (designed away, with location), **Accepted** (irreducible given a stated constraint), or
@@ -1405,7 +1324,7 @@ A structured adversarial pass over the design. Each item is tagged **Resolved**
 
 ### Execution & memory
 - **Cancelling a RUNNING job** is impossible to do safely. Cancel limited to QUEUED;
-  watchdog warns. **Accepted** (§6.1, §25.6).
+  watchdog warns. **Accepted** (§6.1, §24.6).
 - **A hung/infinite job** blocks its session's queue. Watchdog surfaces it; per-session
   queue means it stalls only that session. **Accepted**.
 - **Failed bootstrap read** → empty session. Marked `errored`, offered retry/disposal.
@@ -1418,19 +1337,19 @@ A structured adversarial pass over the design. Each item is tagged **Resolved**
 
 ### Concurrency
 - **Read/write races** between async data serving and an in-place mutation. Per-session
-  read/write lock. **Resolved** (§25.2).
+  read/write lock. **Resolved** (§24.2).
 - **Reader starvation / UI blocking** under a long writer. Client defers refetch to
-  completion and shows `STALE`. **Resolved** (§9.8, §25.2).
+  completion and shows `STALE`. **Resolved** (§9.8, §24.2).
 - **Thread oversubscription** across sessions. Global thread budget + per-job thread-count
-  env. **Resolved** (§25.3).
+  env. **Resolved** (§24.3).
 - **matplotlib pyplot global state** across concurrent plot jobs. Process-global plotting
   lock + Agg. **Resolved** (§4.6).
 - **Save/annotate/subset racing a mutation.** Enqueued as queue jobs. **Resolved**
-  (§25.5).
+  (§24.5).
 
 ### Transport, displays, persistence
 - **SSE connection-cap exhaustion.** Single multiplexed stream + HTTP/2. **Resolved**
-  (§20.2).
+  (§19.2).
 - **Re-downloading large fields** on view change. Client cache keyed by `(session, field,
   data_version)`. **Resolved** (§9.6).
 - **Display references a removed/renamed field.** `MISSING` layer state with a prompt.
@@ -1438,12 +1357,12 @@ A structured adversarial pass over the design. Each item is tagged **Resolved**
 - **Palette instability** when a category set changes. Palette keyed by category value.
   **Resolved** (§9.6).
 - **`.zarr.zip` write-once / slow** for huge data. Incremental `.zarr` directory store for
-  checkpoints. **Resolved** (§19).
+  checkpoints. **Resolved** (§18).
 - **App-state schema drift.** Versioned migration on load; newer-than-app read-only.
-  **Resolved** (§3.2, §19).
+  **Resolved** (§3.2, §18).
 - **Continuous colormap over millions of points** must be GPU-side. Shader/extension.
-  **Resolved** (§9.2, §27).
-- **Sparse `obsp` transport** must not densify. CSR triplets in Arrow. **Resolved** (§27).
+  **Resolved** (§9.2, §26).
+- **Sparse `obsp` transport** must not densify. CSR triplets in Arrow. **Resolved** (§26).
 
 ### Lasso subset & regions
 - **Polygon coordinate-system mismatch.** Vertices taken in the display's declared
@@ -1456,16 +1375,6 @@ A structured adversarial pass over the design. Each item is tagged **Resolved**
   (§12.5).
 - **Single-section region comparison has no replication.** Effect-size-first UI, p-values
   labeled exploratory. **Accepted** (§11).
-
-### AI agent
-- **Agent clutters history with exploration/failures.** AI calls run with
-  `keep_failures=False`; failures reach the model but not the record. **Resolved** (§4.7).
-- **Sequential in-place mutation invalidates later proposed calls.** One-at-a-time
-  approval + re-validation after each. **Resolved** (§14.2).
-- **Unbounded conversation memory.** Self-curated context + two-tier compaction; transcript
-  never replayed. **Resolved** (§14.3).
-- **Bedrock unavailable / unconfigured.** Agent features dark; app runs normally.
-  **Resolved** (§14.4).
 
 ### Residual accepted risks (irreducible under stated constraints)
 - **Native-crash blast radius**, **running-job non-interruptibility**, **compute
