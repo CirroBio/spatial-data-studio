@@ -51,8 +51,46 @@ def main():
         st = client.get(f"/api/sessions/{sid}").json()
         print(f"[ok] fields: obs={len(st['fields']['obs'])} cols, obsm={st['fields']['obsm']}, "
               f"images={st['fields']['images']}, var_count={st['fields']['var_names_count']}")
-        assert st["app_state"]["displays"], "auto-display not generated"
-        print(f"[ok] auto-display encoding: {st['app_state']['displays'][0]['encoding']}")
+        displays = st["app_state"]["displays"]
+        assert displays, "auto-display not generated"
+        print(f"[ok] auto-display encoding: {displays[0]['encoding']}")
+
+        # embedding_canvas auto-display: visium_hne has X_pca (50 comps) and X_umap (2 comps)
+        # in obsm alongside spatial, so auto_displays should pick one as the default embedding.
+        emb_displays = [d for d in displays if d["type"] == "embedding_canvas"]
+        assert emb_displays, "embedding_canvas auto-display not generated"
+        emb = emb_displays[0]
+        assert emb["encoding"]["obsm_key"] in ("X_pca", "X_umap")
+        print(f"[ok] embedding_canvas auto-display encoding: {emb['encoding']}")
+
+        pca_field = next(f for f in st["fields"]["obsm"] if f["name"] == "X_pca")
+        assert pca_field["n_components"] == 50, pca_field
+        umap_field = next(f for f in st["fields"]["obsm"] if f["name"] == "X_umap")
+        assert umap_field["n_components"] == 2, umap_field
+        print(f"[ok] obsm shapes: X_pca={pca_field['n_components']} X_umap={umap_field['n_components']}")
+
+        # obsm fetch now serves every component, not just the first 3 (resolve_field cap removed)
+        resp = client.get(f"/api/sessions/{sid}/data/obsm:X_pca")
+        assert resp.status_code == 200, resp.text
+        reader = ipc.open_stream(io.BytesIO(resp.content))
+        pca_batch = reader.read_all()
+        assert pca_batch.column_names == [f"d{i}" for i in range(50)], pca_batch.column_names
+        print(f"[ok] arrow obsm:X_pca: rows={pca_batch.num_rows} cols={len(pca_batch.column_names)}")
+
+        # POST /displays: lazily add a second embedding_canvas display pointed at X_umap
+        new_display = client.post(f"/api/sessions/{sid}/displays", json={
+            "type": "embedding_canvas",
+            "encoding": {"obsm_key": "X_umap", "x_component": 0, "y_component": 1,
+                         "z_component": 1, "is_3d": False, "color_by": "obs:leiden",
+                         "point_size": 4, "opacity": 0.85, "colormap": "viridis",
+                         "legend_visible": True, "legend_title": ""},
+            "viewport": None,
+        }).json()
+        assert new_display["id"]
+        st = client.get(f"/api/sessions/{sid}").json()
+        assert any(d["id"] == new_display["id"] for d in st["app_state"]["displays"]), \
+            "POST /displays result not reflected in a subsequent GET"
+        print(f"[ok] POST /displays created {new_display['id'][:8]} and it round-tripped via GET")
 
         # compute 1: spatial_neighbors
         client.post(f"/api/sessions/{sid}/jobs", json={

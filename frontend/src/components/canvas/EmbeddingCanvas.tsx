@@ -190,7 +190,10 @@ function EmbeddingCanvasView({
     if (is_3d) {
       return [
         new PointCloudLayer({
-          id: 'embedding-points',
+          // Distinct id from the 2D layer below — reusing one id across a
+          // ScatterplotLayer/PointCloudLayer swap makes deck.gl try to update
+          // the old layer's attributes (e.g. getRadius) onto the new class.
+          id: 'embedding-points-3d',
           data: {
             length: positions.numRows,
             attributes: {
@@ -207,7 +210,7 @@ function EmbeddingCanvasView({
     const worldRadius = (display.encoding.point_size / 8) * spacing;
     return [
       new ScatterplotLayer({
-        id: 'embedding-points',
+        id: 'embedding-points-2d',
         data: {
           length: positions.numRows,
           attributes: {

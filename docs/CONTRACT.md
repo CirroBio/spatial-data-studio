@@ -61,6 +61,7 @@ ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_cate
 | POST | `/api/sessions/{id}/plots/{plotId}/redraw` | — | `{ok:true}` |
 | GET  | `/api/sessions/{id}/plots/{plotId}/figure?fmt=svg\|pdf` | — | figure bytes (image/svg+xml or application/pdf) |
 | PUT  | `/api/sessions/{id}/displays/{displayId}` | `DisplaySpec` | `{ok:true}` |
+| POST | `/api/sessions/{id}/displays` | `DisplaySpec` (no id) | `DisplaySpec` (with id) — lazily add a display (e.g. an `embedding_canvas` for a dataset/obsm gained after session creation) |
 | POST | `/api/sessions/{id}/subset` | `{polygons:[[[x,y]...]], coordinate_system, save_parent:bool, name?}` | `{job_id}` (queued; the child session arrives via a `session.created` SSE event) |
 | POST | `/api/sessions/{id}/annotate` | `{polygons, region_set, category, color?}` | `{job_id}` (label lassoed cells into a region set) |
 | POST | `/api/sessions/{id}/regions/promote` | `{obs_column}` | `{job_id}` (promote an existing obs categorical to a region set) |
@@ -106,7 +107,7 @@ ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_cate
 { "summary": SessionSummary,
   "app_state": { "schema_version":1, "compute_history":[HistEntry], "plots":[PlotEntry], "displays":[DisplaySpec] },
   "queue": [ {job_id, descriptor, status, position} ],
-  "fields": { "obs":[{name,kind:"categorical|numeric"}], "obsm":[..], "var_names_count":N, "obsp":[..], "layers":[..], "images":[..], "shapes":[..] },
+  "fields": { "obs":[{name,kind:"categorical|numeric"}], "obsm":[{name,n_components}], "var_names_count":N, "obsp":[..], "layers":[..], "images":[..], "shapes":[..] },
   "data_versions": { "obs:leiden": 3, ... } }
 ```
 
@@ -118,20 +119,32 @@ PlotEntry = {id, namespace:"pl", function, params, status:"pending|queued|runnin
              references:["obs:leiden"], squidpy_version}
 ```
 
-### DisplaySpec  (app-defined, §9)
+### DisplaySpec  (app-defined, §9) — a `spatial_canvas | embedding_canvas` union
 ```jsonc
 { "id":"uuid", "type":"spatial_canvas",
   "encoding": { "coords":"obsm:spatial", "color_by":"obs:leiden", "image_layer":"hne",
                 "shapes_layer":null, "point_size":3, "opacity":0.8, "colormap":"viridis" },
   "viewport": { "target":[x,y], "zoom":z } }
 ```
+```jsonc
+{ "id":"uuid", "type":"embedding_canvas",
+  "encoding": { "obsm_key":"X_umap", "x_component":0, "y_component":1, "z_component":2,
+                "is_3d":false, "color_by":"obs:leiden", "point_size":4, "opacity":0.85,
+                "colormap":"viridis" },
+  "viewport": { "target":[x,y,z?], "zoom":z, "rotationX":25, "rotationOrbit":0 } }
+```
+`x_component`/`y_component`/`z_component` index into the obsm array's columns (see the
+`obsm:<key>` payload below); `z_component`/`rotationX`/`rotationOrbit` only apply when
+`is_3d` is true.
 
 ---
 
 ## Arrow field payloads (`/data/{fieldPath}`)
 Single RecordBatch streamed as Arrow IPC.
 - `obs:<col>` numeric → column `value: float64`. categorical → `code: int32` + schema metadata `categories` (JSON list) for stable, value-keyed palettes.
-- `obsm:<key>` → columns `d0,d1[,d2...]` float32 (only first 2–3 dims served for coords).
+- `obsm:<key>` → columns `d0,d1,...,d{n-1}` float32, one per column of the array (all
+  components served, not just the first 2–3 — the embedding view's axis pickers index
+  into these by number).
 - `X:<gene>` → column `value: float32` (dense expression for one gene).
 - `var:<col>` → one column typed by dtype.
 - `obsp:<key>` (sparse) → CSR triplets: columns `row:int32, col:int32, data:float64`, schema metadata `shape`=`[n,n]`. Never densified.

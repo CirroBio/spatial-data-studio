@@ -37,7 +37,11 @@ def tables(session) -> str | None:
         fields = arrow.describe_fields(tbl, sdata)
         obs_cols = ", ".join(f"{f['name']}:{f['kind']}" for f in fields["obs"]) or "(none)"
         lines.append(f"    obs[{len(fields['obs'])}]: {obs_cols}")
-        for facet in ("obsm", "obsp", "layers"):
+        obsm = fields.get("obsm") or []
+        if obsm:
+            rendered = ", ".join(f"{f['name']}({f['n_components']})" for f in obsm)
+            lines.append(f"    obsm: {rendered}")
+        for facet in ("obsp", "layers"):
             keys = fields.get(facet) or []
             if keys:
                 lines.append(f"    {facet}: {', '.join(keys)}")

@@ -104,8 +104,18 @@ same picker → form → queue → history machinery.
   writes the object to its checkpoint (blocking spinner while it saves), so the new
   alignment persists across sessions; the canvas re-renders the cells at the new
   coordinates. Served via `GET`/`POST /api/sessions/{id}/points-transform`.
-- **Data inspector** — a Spatial/Tables switch in the viewer's top-left opens a
-  paginated browser over the `SpatialData` elements: each table's `obs`/`var`
+- **Embeddings view** — a second deck.gl tab (Spatial / **Embeddings** / Tables) that
+  plots any `obsm` slot (e.g. `X_umap`, `X_pca`) as an X/Y scatter instead of the
+  spatial coordinates, reusing the same **Color by** mechanism and cell-color legend
+  as the spatial canvas. Settings let you pick the obsm slot and, per axis, which of
+  its components to plot (so `obsm:X_pca`'s 50 components aren't limited to the first
+  two); a **3D** toggle adds a Z-component picker and switches to an orbit camera
+  (`PointCloudLayer` under `OrbitView`), hidden when the selected slot has fewer than
+  three components. A session with no non-spatial `obsm` shows an empty state to run a
+  dimensionality reduction first; sessions that gain one later (or predate this
+  feature) can create the view on demand via `POST /api/sessions/{id}/displays`.
+- **Data inspector** — a Spatial/Embeddings/Tables switch in the viewer's top-left
+  opens a paginated browser over the `SpatialData` elements: each table's `obs`/`var`
   dataframes, `shapes` GeoDataFrames (geometry as WKT), `points`, and image
   metadata + thumbnail. Served by `GET /api/sessions/{id}/elements` (inventory)
   and `GET /api/sessions/{id}/table?path=&offset=&limit=` (JSON page).
