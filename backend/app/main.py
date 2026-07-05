@@ -86,61 +86,6 @@ async def readyz():
     return {"status": "ready", "functions": len(REGISTRY.entries)}
 
 
-# ---- AI / chat (v3 Parts 5-8). Dark when Bedrock is not configured. ---------
-@app.get("/api/ai/status")
-async def ai_status():
-    return {"enabled": config.ai_enabled(), "provider": config.AI_PROVIDER,
-            "model": config.BEDROCK_MODEL_ID or None}
-
-
-@app.post("/api/sessions/{sid}/chat")
-async def chat_send(sid: str, body: dict):
-    if not config.ai_enabled():
-        raise HTTPException(503, "AI is not configured")
-    sess = _session(sid)
-    message = (body or {}).get("message", "").strip()
-    if not message:
-        raise HTTPException(400, "empty message")
-    from .agent import chat
-    chat.start_turn(sess, message)
-    return {"status": "started"}
-
-
-@app.post("/api/sessions/{sid}/chat/approve")
-async def chat_approve(sid: str, body: dict):
-    from .agent import chat
-    _session(sid)
-    call_id = (body or {}).get("call_id")
-    action = (body or {}).get("action")
-    if action not in ("approve", "edit", "deny"):
-        raise HTTPException(400, "action must be approve|edit|deny")
-    ok = chat.decide(sid, call_id, {"action": action, "params": (body or {}).get("params"),
-                                    "reason": (body or {}).get("reason")})
-    if not ok:
-        raise HTTPException(409, "no pending approval with that call_id")
-    return {"ok": True}
-
-
-@app.put("/api/sessions/{sid}/chat/auto-mode")
-async def chat_auto_mode(sid: str, body: dict):
-    from .agent import chat
-    _session(sid)
-    chat.set_auto_mode(sid, bool((body or {}).get("auto")))
-    return {"ok": True}
-
-
-@app.get("/api/sessions/{sid}/chat")
-async def chat_transcript(sid: str):
-    sess = _session(sid)
-    from .agent import chat
-    with sess.lock.reading():
-        transcript = sess.app_state.get("ai_transcript", [])
-        context = sess.app_state.get("ai_context", [])
-    return {"transcript": transcript,
-            "auto_mode": chat.state_for(sid).auto_mode,
-            "context": context}
-
-
 # ---- registry --------------------------------------------------------------
 @app.get("/api/functions")
 async def functions():
@@ -510,24 +455,16 @@ async def cirro_projects():
     return {"projects": cirro.list_projects()}
 
 
-@app.get("/api/cirro/processes")
-async def cirro_processes():
-    if not config.cirro_enabled():
-        raise HTTPException(503, "Cirro is not configured")
-    from . import cirro
-    return {"processes": cirro.list_processes()}
-
-
 @app.post("/api/sessions/{sid}/cirro/upload")
 async def cirro_upload(sid: str, body: dict):
-    """body: {project_id, process_id, dataset_name, snapshot_names: [str]}."""
+    """body: {project_id, dataset_name, snapshot_names: [str]}."""
     if not config.cirro_enabled():
         raise HTTPException(503, "Cirro is not configured")
     sess = _session(sid)
     if not sess.store_path:
         raise HTTPException(409, "save the session before uploading to Cirro")
     job_id = sess.enqueue_special("cirro_upload", {
-        "project_id": body["project_id"], "process_id": body["process_id"],
+        "project_id": body["project_id"],
         "dataset_name": body["dataset_name"], "snapshot_names": body.get("snapshot_names") or [],
     })
     return {"job_id": job_id}

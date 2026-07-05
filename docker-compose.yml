@@ -27,15 +27,6 @@ services:
       SQV_ADMISSION_PCT: "0.80"
       MPLBACKEND: "Agg"
       PYTHONUNBUFFERED: "1"
-      # AI / Bedrock (v3 Parts 6-8). Off unless overridden; set AI_PROVIDER=mock for
-      # a credential-free demo, or AI_PROVIDER=bedrock + a model id + AWS creds for real.
-      AI_ENABLED: "${AI_ENABLED:-false}"
-      AI_PROVIDER: "${AI_PROVIDER:-bedrock}"
-      AWS_REGION: "${AWS_REGION:-us-east-1}"
-      BEDROCK_MODEL_ID: "${BEDROCK_MODEL_ID:-}"
-      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
-      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
-      AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
       # Cirro upload. Off unless all three are set (service-account/client-credentials).
       CIRRO_BASE_URL: "${CIRRO_BASE_URL:-}"
       CIRRO_CLIENT_ID: "${CIRRO_CLIENT_ID:-}"

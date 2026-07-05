@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from './store/sessionStore';
-import { getSessions, getFunctions, getAiStatus, getCirroStatus, getReadyz } from './api';
+import { getSessions, getFunctions, getCirroStatus, getReadyz } from './api';
 import { isSpatialDisplay, isEmbeddingDisplay } from './types';
 import { resolveRegionSetColumn } from './lib/regions';
-import ChatPanel from './components/ChatPanel';
 import { useSSE } from './hooks/useSSE';
 import { useSession } from './hooks/useSession';
 import Header from './components/Header';
@@ -41,8 +40,6 @@ export default function App() {
     annotationCategoryName,
     annotationColor,
     activeRegionSetId,
-    aiEnabled,
-    setAiEnabled,
     setCirroEnabled,
   } = useAppStore();
 
@@ -97,11 +94,10 @@ export default function App() {
       }
     })();
 
-    getAiStatus().then((s) => setAiEnabled(s.enabled)).catch(() => setAiEnabled(false));
     getCirroStatus().then((s) => setCirroEnabled(s.enabled)).catch(() => setCirroEnabled(false));
 
     return () => { cancelled = true; };
-  }, [setSessions, setFunctions, activeSessionId, setActiveSessionId, setAiEnabled, setCirroEnabled]);
+  }, [setSessions, setFunctions, activeSessionId, setActiveSessionId, setCirroEnabled]);
 
   const display = sessionState?.app_state.displays.find(isSpatialDisplay) ?? null;
   const embeddingDisplay = sessionState?.app_state.displays.find(isEmbeddingDisplay) ?? null;
@@ -219,7 +215,6 @@ export default function App() {
           )}
           {renderMain()}
         </main>
-        {aiEnabled && activeSessionId && <ChatPanel sessionId={activeSessionId} />}
       </div>
       <ResourceStrip />
       <Toaster />

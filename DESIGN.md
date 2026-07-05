@@ -907,8 +907,9 @@ dark unless `CIRRO_BASE_URL`, `CIRRO_CLIENT_ID`, and `CIRRO_CLIENT_SECRET` are a
   specific `assets/` it references — `assets/` is shared and content-hashed across
   snapshots), so nothing is copied. `upload()` calls the Cirro SDK's
   `project.upload_dataset`. Driven by a `cirro_upload` worker job.
-- **UI:** a dialog listing Cirro projects, ingest processes, saved snapshots (multi-
-  select), and a dataset name.
+- **UI:** a dialog listing Cirro projects, saved snapshots (multi-
+  select), and a dataset name. Uploads always use the generic "Files" ingest
+  process (`custom_dataset`), so there is no process picker.
 
 ---
 

@@ -16,7 +16,6 @@ export default function Header({ onNewSession }: Props) {
   const [showCirroUpload, setShowCirroUpload] = useState(false);
   const {
     activeSessionId, activeJobIds, sessions,
-    aiEnabled, chatOpen, setChatOpen,
     theme, setTheme, savingJobId, cirroEnabled,
   } = useAppStore();
   const activeSession = sessions.find((s) => s.id === activeSessionId);
@@ -98,21 +97,6 @@ export default function Header({ onNewSession }: Props) {
               <path d="M7 18a4.5 4.5 0 0 1-1.44-8.77A5.5 5.5 0 0 1 16.3 6.03 4.5 4.5 0 0 1 17.5 15H17" />
               <path d="M12 12v9M9 15l3-3 3 3" />
             </svg>
-          </button>
-        )}
-
-        {/* Dedicated AI panel toggle — only when Bedrock is configured */}
-        {aiEnabled && (
-          <button
-            onClick={() => setChatOpen(!chatOpen)}
-            aria-pressed={chatOpen}
-            className={`px-2.5 py-1 text-xs rounded border transition-colors ${
-              chatOpen
-                ? 'bg-accent/20 border-accent/40 text-accent'
-                : 'border-border bg-bg text-text hover:border-accent'
-            }`}
-          >
-            AI panel
           </button>
         )}
       </div>

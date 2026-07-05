@@ -11,17 +11,17 @@ incrementally.
 |----|------|--------|-------------|
 | R1 | No module references a specific library function; reach them only via the registry (the reflection builder + hand-written `custom/` run logic are exempt). | v1 | `check_import_graph.py` |
 | R2 | The term dictionary defines parameter *terms*, never functions. | v2 | `lint_term_dictionary.py` |
-| R3 | One schema-of-record (JSON Schema) drives form + Pydantic + agent. | v3 | `test_invariants.py::test_r3_*` |
+| R3 | One schema-of-record (JSON Schema) drives form + Pydantic. | v3 | `test_invariants.py::test_r3_*` |
 | R4 | Library functions are declarative manifest entries; custom functions declare a `params` schema-of-record + an `execute`. | v3 | `lint_function_folders.py` |
 | R5 | Every function returns the contract envelope and respects `keep_failures`. | v3 | `test_contracts.py` (skip-until-`SYNTH_FIXTURE`) |
 | R6/R7 | Compute history is append-only; never `COMPLETED→QUEUED`; rerun appends. | v1 | `test_invariants.py` (R6/R7 needs a run harness) |
 | R8 | Effect class is explicit; plotting render params are managed. | v2 | `test_invariants.py::test_r8_*` |
 | R9 | One uvicorn worker; per-worker ceiling < container limit. | v1 | startup assertion (backend) |
 | R10 | State-changing ops are queued mutating jobs under the write lock. | v1 | `test_invariants.py::test_r10_*` |
-| R11 | Agent memory is self-curated context only; the transcript is never replayed. | v3 | `test_invariants.py::test_r11_*` |
-| R12 | Fixed meta-tools; state-changing gated in auto-off; no annotate/subset. | v3 | `test_invariants.py::test_r12_*` |
+| R11 | *Retired.* Governed the AI agent's context replay; the agent was removed. | v3 | — |
+| R12 | *Retired.* Governed the AI agent's meta-tool set; the agent was removed. | v3 | — |
 | R13 | Snapshots share the render core; assets are content-hashed. | v3 | `test_invariants.py::test_r13_*` |
-| R14 | Every binding type has a widget **and** a `describe_function` resolver. | v3 | `test_invariants.py::test_r14_*` |
+| R14 | *Retired.* Required a widget **and** a `describe_function` resolver per binding type; the resolver was the AI agent's, which was removed. The widget requirement (`FunctionForm.tsx`) still applies but is enforced by review, not this gate. | v3 | — |
 | R15 | Deps permissive or adjudicated; no torch/scvi; scan + SBOM before distribution. | v2/v3 | `scan_licenses.py` |
 | R16 | Term-dictionary coverage must not regress below the floor. | v3 | `lint_term_dictionary.py` |
 

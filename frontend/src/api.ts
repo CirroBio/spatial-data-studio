@@ -124,45 +124,6 @@ export async function deleteHistoryEntry(sessionId: string, entryId: string): Pr
   await apiFetch(`/api/sessions/${sessionId}/history/${entryId}`, { method: 'DELETE' });
 }
 
-// ---- AI chat (v3 Parts 5-8) -------------------------------------------------
-export interface AiStatus { enabled: boolean; provider: string; model: string | null }
-
-export async function getAiStatus(): Promise<AiStatus> {
-  const res = await apiFetch('/api/ai/status');
-  return res.json() as Promise<AiStatus>;
-}
-
-export async function sendChat(sessionId: string, message: string): Promise<void> {
-  await apiFetch(`/api/sessions/${sessionId}/chat`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message }),
-  });
-}
-
-export async function approveCall(
-  sessionId: string,
-  body: { call_id: string; action: 'approve' | 'edit' | 'deny'; params?: unknown; reason?: string }
-): Promise<void> {
-  await apiFetch(`/api/sessions/${sessionId}/chat/approve`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-}
-
-export async function setChatAutoMode(sessionId: string, auto: boolean): Promise<void> {
-  await apiFetch(`/api/sessions/${sessionId}/chat/auto-mode`, {
-    method: 'PUT', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ auto }),
-  });
-}
-
-export async function getChat(
-  sessionId: string
-): Promise<{ transcript: { role: string; text: string }[]; auto_mode: boolean; context: string[] }> {
-  const res = await apiFetch(`/api/sessions/${sessionId}/chat`);
-  return res.json() as Promise<{ transcript: { role: string; text: string }[]; auto_mode: boolean; context: string[] }>;
-}
-
 export async function submitJob(
   sessionId: string,
   params: { namespace: string; function: string; params: Record<string, unknown> }
@@ -366,7 +327,6 @@ export async function getThirdPartyLicenses(): Promise<{ python: ThirdPartyLicen
 // ---- Cirro upload -----------------------------------------------------------
 export interface CirroStatus { enabled: boolean }
 export interface CirroProject { id: string; name: string }
-export interface CirroProcess { id: string; name: string }
 
 export async function getCirroStatus(): Promise<CirroStatus> {
   const res = await apiFetch('/api/cirro/status');
@@ -378,14 +338,9 @@ export async function getCirroProjects(): Promise<{ projects: CirroProject[] }> 
   return res.json() as Promise<{ projects: CirroProject[] }>;
 }
 
-export async function getCirroProcesses(): Promise<{ processes: CirroProcess[] }> {
-  const res = await apiFetch('/api/cirro/processes');
-  return res.json() as Promise<{ processes: CirroProcess[] }>;
-}
-
 export async function uploadToCirro(
   sessionId: string,
-  body: { project_id: string; process_id: string; dataset_name: string; snapshot_names: string[] }
+  body: { project_id: string; dataset_name: string; snapshot_names: string[] }
 ): Promise<{ job_id: string }> {
   const res = await apiFetch(`/api/sessions/${sessionId}/cirro/upload`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },

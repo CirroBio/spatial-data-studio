@@ -30,9 +30,6 @@ export function useSSE(): void {
     pushNotification,
     setActiveSessionId,
     setSessions,
-    appendChatMessage,
-    setChatPending,
-    setChatBusy,
   } = useAppStore();
 
   useEffect(() => {
@@ -135,36 +132,6 @@ export function useSSE(): void {
       setResourceSample(data);
     });
 
-    // ---- AI chat events (v3 Parts 6-8) ----
-    es.addEventListener('ai.message', (e: MessageEvent) => {
-      const data = parseEvent<{ session_id: string; text: string }>(e);
-      if (data.session_id === activeSessionId && data.text) appendChatMessage({ role: 'assistant', text: data.text });
-    });
-    es.addEventListener('ai.tool', (e: MessageEvent) => {
-      const data = parseEvent<{ session_id: string; name: string; phase: string }>(e);
-      if (data.session_id === activeSessionId && data.phase === 'proposed') {
-        appendChatMessage({ role: 'tool', text: data.name });
-      }
-    });
-    es.addEventListener('ai.approval', (e: MessageEvent) => {
-      const data = parseEvent<{ session_id: string; call_id: string; name: string; params: Record<string, unknown> }>(e);
-      if (data.session_id === activeSessionId) setChatPending({ call_id: data.call_id, name: data.name, params: data.params });
-    });
-    es.addEventListener('ai.turn_done', (e: MessageEvent) => {
-      const data = parseEvent<{ session_id: string }>(e);
-      if (data.session_id === activeSessionId) {
-        setChatBusy(false);
-        getSession(data.session_id).then(setSessionState).catch(console.error);
-      }
-    });
-    es.addEventListener('ai.error', (e: MessageEvent) => {
-      const data = parseEvent<{ session_id: string; error: string }>(e);
-      if (data.session_id === activeSessionId) {
-        appendChatMessage({ role: 'error', text: data.error });
-        setChatBusy(false);
-      }
-    });
-
     es.onerror = () => {
       // SSE reconnects automatically
     };
@@ -172,5 +139,5 @@ export function useSSE(): void {
     return () => {
       es.close();
     };
-  }, [activeSessionId, upsertSession, setResourceSample, updateDataVersions, updateDisplay, addActiveJob, removeActiveJob, setSessionState, pushNotification, setActiveSessionId, setSessions, appendChatMessage, setChatPending, setChatBusy]);
+  }, [activeSessionId, upsertSession, setResourceSample, updateDataVersions, updateDisplay, addActiveJob, removeActiveJob, setSessionState, pushNotification, setActiveSessionId, setSessions]);
 }

@@ -25,6 +25,14 @@ if [[ ! -d frontend/node_modules ]]; then
   (cd frontend && npm install)
 fi
 
+# Docker compose auto-loads .env; local dev needs it sourced explicitly so
+# CIRRO_* config reaches the uvicorn process below.
+if [[ -f .env ]]; then
+  set -a
+  source .env
+  set +a
+fi
+
 export SQV_DATA_DIR="${SQV_DATA_DIR:-$PWD/$DATA_SUBDIR}"
 export SQV_CHECKPOINT_DIR="${SQV_CHECKPOINT_DIR:-$PWD/checkpoints}"
 export SQV_CONTAINER_MEM_MB="${SQV_CONTAINER_MEM_MB:-16384}"

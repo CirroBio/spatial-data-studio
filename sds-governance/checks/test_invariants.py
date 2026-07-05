@@ -1,4 +1,4 @@
-"""Invariant checks (R3, R6/R7, R9-R14). pytest; checks whose seam can't be
+"""Invariant checks (R3, R6/R7, R8-R10, R13). pytest; checks whose seam can't be
 satisfied in the current environment skip visibly rather than passing falsely.
 """
 import importlib
@@ -40,34 +40,6 @@ def test_r8_effect_class_explicit():
     reg = _registry()
     for e in reg.entries.values():
         assert e.effect_class in {"compute", "plot", "read", "extract"}, (e.key, e.effect_class)
-
-
-def test_r12_fixed_meta_tools_no_annotate_subset():
-    """The agent gets a fixed meta-tool set; annotate/subset are never exposed."""
-    _backend()
-    tools = importlib.import_module("app.agent.tools")
-    names = {t["name"] for t in tools.TOOL_SPECS}
-    assert names == {"list_functions", "describe_function", "get_data_manifest", "list_recipes",
-                     "list_snapshots", "run_function", "apply_recipe", "save_snapshot"}, names
-    assert not any("annotate" in n or "subset" in n for n in names)
-
-
-def test_r14_bindings_have_widget_and_resolver():
-    """Every binding the term dictionary can emit has a describe_function resolver."""
-    _backend()
-    tools = importlib.import_module("app.agent.tools")
-    # the resolver map covers the data-bound facets the dictionary produces
-    assert {"obs_categorical", "obs", "obsm", "obsp", "layers", "var_names"} <= set(tools._BIND_FACET)
-
-
-def test_r11_context_only_no_transcript_replay():
-    """Agent replay carries the self-curated context, never the raw transcript."""
-    chat = (config.BACKEND / "agent" / "chat.py").read_text()
-    assert "ctx.rolled_up" in chat, "context must be replayed"
-    # the transcript is appended for the human record but not fed into the model messages
-    assert "transcript.append" in chat
-    assert "provider.converse(preamble, messages" in chat
-    assert "transcript" not in chat.split("messages = [")[1].split("provider.converse")[0]
 
 
 def test_r13_snapshot_assets_content_hashed():

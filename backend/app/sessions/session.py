@@ -380,7 +380,7 @@ class Session:
             raise ValueError("save the session before uploading to Cirro")
         upload_dir = cirro.build_upload_folder(self.store_path, payload.get("snapshot_names") or [])
         try:
-            result = cirro.upload(project_id=payload["project_id"], process_id=payload["process_id"],
+            result = cirro.upload(project_id=payload["project_id"],
                                   dataset_name=payload["dataset_name"], upload_folder=upload_dir)
         finally:
             shutil.rmtree(upload_dir, ignore_errors=True)

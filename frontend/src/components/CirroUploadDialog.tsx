@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from '../store/sessionStore';
 import {
-  getCirroProjects, getCirroProcesses, getSnapshots, uploadToCirro,
-  type CirroProject, type CirroProcess,
+  getCirroProjects, getSnapshots, uploadToCirro,
+  type CirroProject,
 } from '../api';
 import { formatError, reportError } from '../lib/errors';
 import { ModalOverlay, ModalHeader } from './DetailModal';
@@ -17,21 +17,18 @@ export default function CirroUploadDialog({ sessionId, onClose }: Props) {
   const session = sessions.find((s) => s.id === sessionId);
 
   const [projects, setProjects] = useState<CirroProject[] | null>(null);
-  const [processes, setProcesses] = useState<CirroProcess[] | null>(null);
   const [snapshots, setSnapshots] = useState<{ name: string; url: string }[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [projectId, setProjectId] = useState('');
-  const [processId, setProcessId] = useState('');
   const [datasetName, setDatasetName] = useState(session?.name ?? '');
   const [selectedSnapshots, setSelectedSnapshots] = useState<Set<string>>(new Set());
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    Promise.all([getCirroProjects(), getCirroProcesses(), getSnapshots()])
-      .then(([p, pr, s]) => {
+    Promise.all([getCirroProjects(), getSnapshots()])
+      .then(([p, s]) => {
         setProjects(p.projects);
-        setProcesses(pr.processes);
         setSnapshots(s.snapshots);
       })
       .catch((err) => setError(formatError(err)));
@@ -49,7 +46,7 @@ export default function CirroUploadDialog({ sessionId, onClose }: Props) {
     setSubmitting(true);
     try {
       await uploadToCirro(sessionId, {
-        project_id: projectId, process_id: processId, dataset_name: datasetName.trim(),
+        project_id: projectId, dataset_name: datasetName.trim(),
         snapshot_names: [...selectedSnapshots],
       });
       pushNotification({ kind: 'info', message: `Uploading "${datasetName.trim()}" to Cirro…` });
@@ -60,7 +57,7 @@ export default function CirroUploadDialog({ sessionId, onClose }: Props) {
     }
   }
 
-  const canSubmit = !!projectId && !!processId && !!datasetName.trim() && !submitting;
+  const canSubmit = !!projectId && !!datasetName.trim() && !submitting;
 
   return (
     <ModalOverlay onClose={onClose} widthClassName="w-[480px] max-h-[80vh]">
@@ -72,11 +69,11 @@ export default function CirroUploadDialog({ sessionId, onClose }: Props) {
 
       <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
         {error && <div className="text-xs text-danger px-1">{error}</div>}
-        {(!projects || !processes || !snapshots) && !error && (
+        {(!projects || !snapshots) && !error && (
           <div className="text-xs text-muted px-1">Loading…</div>
         )}
 
-        {projects && processes && snapshots && (
+        {projects && snapshots && (
           <>
             <label className="flex flex-col gap-1 text-xs text-muted">
               Project
@@ -87,20 +84,6 @@ export default function CirroUploadDialog({ sessionId, onClose }: Props) {
               >
                 <option value="">Select a project…</option>
                 {projects.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-            </label>
-
-            <label className="flex flex-col gap-1 text-xs text-muted">
-              Ingest process
-              <select
-                value={processId}
-                onChange={(e) => setProcessId(e.target.value)}
-                className="bg-bg border border-border rounded px-2 py-1.5 text-sm text-text"
-              >
-                <option value="">Select a process…</option>
-                {processes.map((p) => (
                   <option key={p.id} value={p.id}>{p.name}</option>
                 ))}
               </select>

@@ -218,8 +218,6 @@ class SessionManager:
         if sess.extract_dir:
             import shutil
             shutil.rmtree(sess.extract_dir, ignore_errors=True)  # unpacked .zarr.zip temp (DESIGN §13)
-        from ..agent.chat import discard_chat_state
-        discard_chat_state(sid)  # drop any leaked ChatState (v3 Parts 6-8) for this session
 
     # ---- memory (DESIGN §11.3) -------------------------------------------
     def _rss_mb(self) -> float:

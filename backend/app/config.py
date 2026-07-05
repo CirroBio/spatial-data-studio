@@ -28,38 +28,6 @@ class Config:
 
     STATIC_DIR = Path(os.environ.get("SQV_STATIC_DIR", "")) or None  # built SPA, optional
 
-    # ---- AI / Bedrock (v3 Parts 6-8). AI is strictly additive; off by default. ----
-    AI_ENABLED = os.environ.get("AI_ENABLED", "false").lower() in ("1", "true", "yes")
-    AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
-    BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "")
-    AI_PROVIDER = os.environ.get("AI_PROVIDER", "bedrock")  # bedrock | mock (mock for tests)
-    CONTEXT_TOKEN_LIMIT = int(os.environ.get("SQV_CONTEXT_TOKEN_LIMIT", "6000"))
-    CONTEXT_KEEP_RECENT_N = int(os.environ.get("SQV_CONTEXT_KEEP_RECENT_N", "8"))
-    AI_MAX_TOOL_ITERS = int(os.environ.get("SQV_AI_MAX_TOOL_ITERS", "8"))
-
-    _bedrock_ready_cache = None
-
-    def ai_enabled(self) -> bool:
-        """True only when the chat surface should light up (v3 Part 8.2). Requires
-        AI_ENABLED and either the explicit `mock` dev provider, or — for real
-        Bedrock — a configured model id AND resolvable AWS credentials. No creds =>
-        dark, even if a model id is set."""
-        if not self.AI_ENABLED:
-            return False
-        if self.AI_PROVIDER == "mock":
-            return True
-        return bool(self.BEDROCK_MODEL_ID) and self._bedrock_credentials_available()
-
-    def _bedrock_credentials_available(self) -> bool:
-        if self._bedrock_ready_cache is None:
-            try:
-                import boto3
-                self._bedrock_ready_cache = (
-                    boto3.Session(region_name=self.AWS_REGION).get_credentials() is not None)
-            except Exception:
-                self._bedrock_ready_cache = False
-        return self._bedrock_ready_cache
-
     # ---- Cirro upload. Strictly additive; off unless all three vars are set. ----
     CIRRO_BASE_URL = os.environ.get("CIRRO_BASE_URL", "")
     CIRRO_CLIENT_ID = os.environ.get("CIRRO_CLIENT_ID", "")

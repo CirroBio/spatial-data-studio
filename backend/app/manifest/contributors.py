@@ -117,12 +117,3 @@ def summaries(session) -> str | None:
     if "total_counts" in obs:
         lines.append(f"- median counts/cell: {float(obs['total_counts'].median()):.0f}")
     return "\n".join(lines)
-
-
-@contributor("Recent context")
-def recent_context(session) -> str | None:
-    notes = session.app_state.get("ai_context") or []
-    if not notes:
-        return None
-    recent = notes[-5:]
-    return "\n".join(f"- {n}" for n in recent if isinstance(n, str)) or None

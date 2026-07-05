@@ -17,7 +17,7 @@ static:
 	@cd $(CHECKS) && $(PYTHON) lint_function_folders.py
 
 tests:
-	@echo "── invariants + contracts (R3, R5-R14) ──"
+	@echo "── invariants + contracts (R3, R5-R10, R13) ──"
 	@cd $(CHECKS) && $(PYTHON) -m pytest -q -p no:cacheprovider test_invariants.py test_contracts.py
 
 licenses:

@@ -7,7 +7,7 @@ snapshot, recipe-apply, or a new analysis not in any library).
 1. Create `backend/app/registry/custom/<name>.py` with a `Function` subclass that
    sets identity (`key`, `namespace="custom"`, `function`, `effect_class`, `label`,
    `summary`, `doc`) and declares a `params` list of `ParamSpec` — this is the
-   schema-of-record (forms + validation + agent all derive from it).
+   schema-of-record (forms + validation both derive from it).
 2. Implement `execute(self, params, session) -> CallResult`. Reuse
    `base.run_compute` for in-place mutations so you get log capture + structural
    diffing + the contract envelope for free. Return the envelope on failure too.

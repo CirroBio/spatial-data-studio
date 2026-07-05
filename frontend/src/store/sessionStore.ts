@@ -82,41 +82,15 @@ interface AppStore {
   pushNotification: (n: Omit<AppNotification, 'id'>) => void;
   dismissNotification: (id: number) => void;
 
-  // AI chat (v3 Parts 6-8)
-  aiEnabled: boolean;
-  setAiEnabled: (on: boolean) => void;
-  chatOpen: boolean;
-  setChatOpen: (open: boolean) => void;
-
   // Cirro upload
   cirroEnabled: boolean;
   setCirroEnabled: (on: boolean) => void;
-  chatAutoMode: boolean;
-  setChatAutoModeState: (auto: boolean) => void;
-  chatMessages: ChatMessage[];
-  appendChatMessage: (m: ChatMessage) => void;
-  setChatMessages: (m: ChatMessage[]) => void;
-  chatBusy: boolean;
-  setChatBusy: (b: boolean) => void;
-  chatPending: ApprovalRequest | null;
-  setChatPending: (a: ApprovalRequest | null) => void;
 }
 
 export interface AppNotification {
   id: number;
   kind: 'error' | 'info';
   message: string;
-}
-
-export interface ChatMessage {
-  role: 'user' | 'assistant' | 'tool' | 'error';
-  text: string;
-}
-
-export interface ApprovalRequest {
-  call_id: string;
-  name: string;
-  params: Record<string, unknown>;
 }
 
 let _notificationSeq = 0;
@@ -159,8 +133,7 @@ export const useAppStore = create<AppStore>((set) => ({
     set((s) =>
       id === s.activeSessionId
         ? { activeSessionId: id }
-        : { activeSessionId: id, isolatedCategory: null, drawPolygons: [], drawRing: [],
-            chatMessages: [], chatPending: null, chatBusy: false }
+        : { activeSessionId: id, isolatedCategory: null, drawPolygons: [], drawRing: [] }
     ),
   sessionState: null,
   setSessionState: (state) => set({ sessionState: state }),
@@ -264,20 +237,6 @@ export const useAppStore = create<AppStore>((set) => ({
   dismissNotification: (id) =>
     set((s) => ({ notifications: s.notifications.filter((x) => x.id !== id) })),
 
-  aiEnabled: false,
-  setAiEnabled: (on) => set({ aiEnabled: on }),
-
   cirroEnabled: false,
   setCirroEnabled: (on) => set({ cirroEnabled: on }),
-  chatOpen: true,
-  setChatOpen: (open) => set({ chatOpen: open }),
-  chatAutoMode: false,
-  setChatAutoModeState: (auto) => set({ chatAutoMode: auto }),
-  chatMessages: [],
-  appendChatMessage: (m) => set((s) => ({ chatMessages: [...s.chatMessages, m] })),
-  setChatMessages: (m) => set({ chatMessages: m }),
-  chatBusy: false,
-  setChatBusy: (b) => set({ chatBusy: b }),
-  chatPending: null,
-  setChatPending: (a) => set({ chatPending: a }),
 }));

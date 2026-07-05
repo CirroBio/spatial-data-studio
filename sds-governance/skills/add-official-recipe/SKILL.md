@@ -10,7 +10,7 @@
    exist in the registry and params that conform to their schema-of-record.
 2. Run the recipe preflight (`/recipe/preflight`) to confirm required-vs-produced
    keys resolve and no step names an unknown function.
-3. Verify `list_recipes` / `apply_recipe` (and the agent's tools) surface it; each
+3. Verify it appears in `GET /api/recipes` and applies via `/recipe/run`; each
    step runs through the contract.
 
 **Satisfies:** recipe portability + R5.

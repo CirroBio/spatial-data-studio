@@ -15,6 +15,11 @@ from pathlib import Path
 
 from .config import config
 
+# The generic "Files" ingest process (accepts any file) — every upload from this
+# app uses it, since a saved session/snapshot isn't a bioinformatics file type any
+# other process would recognize.
+INGEST_PROCESS_ID = "custom_dataset"
+
 _client_cache = None
 
 
@@ -38,14 +43,9 @@ def list_projects() -> list[dict]:
     return [{"id": p.id, "name": p.name} for p in _client().list_projects()]
 
 
-def list_processes() -> list[dict]:
-    """Ingest processes only — the ones usable to upload a new dataset."""
-    return [{"id": p.id, "name": p.name} for p in _client().list_processes(ingest=True)]
-
-
-def upload(*, project_id: str, process_id: str, dataset_name: str, upload_folder: Path) -> dict:
+def upload(*, project_id: str, dataset_name: str, upload_folder: Path) -> dict:
     project = _client().get_project_by_id(project_id)
-    dataset = project.upload_dataset(name=dataset_name, process=process_id, upload_folder=str(upload_folder))
+    dataset = project.upload_dataset(name=dataset_name, process=INGEST_PROCESS_ID, upload_folder=str(upload_folder))
     return {"dataset_id": dataset.id, "dataset_name": dataset.name}
 
 

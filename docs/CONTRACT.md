@@ -73,8 +73,7 @@ ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_cate
 | GET  | `/api/about/licenses` | — | `{python:[...], npm:[...]}` (third-party licenses, in-app Acknowledgements) |
 | GET  | `/api/cirro/status` | — | `{enabled:bool}` |
 | GET  | `/api/cirro/projects` | — | `{projects:[...]}` (503 if Cirro is not configured) |
-| GET  | `/api/cirro/processes` | — | `{processes:[...]}` (503 if Cirro is not configured) |
-| POST | `/api/sessions/{id}/cirro/upload` | `{project_id, process_id, dataset_name, snapshot_names:[str]}` | `{job_id}` (session must be saved first) |
+| POST | `/api/sessions/{id}/cirro/upload` | `{project_id, dataset_name, snapshot_names:[str]}` | `{job_id}` (session must be saved first; always uses the generic "Files" ingest process) |
 | GET  | `/api/sessions/{id}/data/{fieldPath}` | fieldPath e.g. `obs:leiden`, `obsm:spatial`, `X:Sox17`, `obsp:spatial_distances` | Arrow IPC stream (application/vnd.apache.arrow.stream) |
 | GET  | `/api/sessions/{id}/elements` | — | `{tables:[{name,n_obs,n_vars,active}], shapes, points, images, labels}` (data inspector inventory) |
 | GET  | `/api/sessions/{id}/table?path=&offset=&limit=` | path = `obs`, `var`, `shapes:<name>`, `points:<name>` | `{total_rows, offset, limit, index_name, index, columns:[{name,dtype}], rows}` (JSON page) |
@@ -86,11 +85,6 @@ ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_cate
 | POST | `/api/sessions/{id}/recipe/preflight` | recipe JSON | `{produced:[...], unresolved:[...], unknown_functions:[...]}` |
 | POST | `/api/sessions/{id}/recipe/run` | recipe JSON, `{steps, mode?:"run"\|"stage"}` | `{queued:int}`, or `{staged:int}` when `mode:"stage"` |
 | GET  | `/api/healthz` / `/api/readyz` | — | `{status}` |
-| GET  | `/api/ai/status` | — | `{enabled, provider, model}` (dark unless `AI_ENABLED`) |
-| POST | `/api/sessions/{id}/chat` | `{message}` | `{status:"started"}` (503 if AI is not configured) |
-| POST | `/api/sessions/{id}/chat/approve` | `{call_id, action:"approve"\|"edit"\|"deny", params?, reason?}` | `{ok:true}` |
-| PUT  | `/api/sessions/{id}/chat/auto-mode` | `{auto:bool}` | `{ok:true}` |
-| GET  | `/api/sessions/{id}/chat` | — | `{transcript, auto_mode, context}` |
 
 ### Session source on create
 - read:  `{kind:"read", namespace:"read", function:"visium", params:{path:"..."}}` — any `path`/`input`/`image_path`/`alignment_file` param must resolve under `DATA_DIR`/`CHECKPOINT_DIR`/CWD, else 400.
