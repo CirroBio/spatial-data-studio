@@ -217,7 +217,7 @@ export default function Sidebar({ onNewSession, sessions }: Props) {
           )}
           <button
             onClick={() => setShowPicker(true)}
-            className="w-full py-1.5 text-xs bg-accent/20 hover:bg-accent/30 text-accent rounded transition-colors"
+            className="w-full py-1.5 text-xs bg-accent hover:bg-accent/90 text-white rounded transition-colors"
           >
             + Add {sidebarTab === 'plots' ? 'plot' : 'compute'} function
           </button>

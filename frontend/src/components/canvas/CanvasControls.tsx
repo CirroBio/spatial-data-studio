@@ -177,7 +177,7 @@ export default function CanvasControls({
         <button
           type="button"
           onClick={onFit}
-          className="py-1 text-[11px] bg-accent text-bg rounded hover:bg-accent/90 transition-colors"
+          className="py-1 text-[11px] bg-accent text-white rounded hover:bg-accent/90 transition-colors"
         >
           Fit to data
         </button>
