@@ -211,11 +211,11 @@ class SessionManager:
         child.raster_cache_dir = parent.raster_cache_dir
         parent.extract_dir = parent.raster_cache_dir = None
 
-        self.close(parent.id, save=False)
+        self.close(parent.id, save=False, reason="subset")
         return child
 
     # ---- close / evict ----------------------------------------------------
-    def close(self, sid: str, save: bool = False):
+    def close(self, sid: str, save: bool = False, reason: str = "closed"):
         sess = self.sessions.pop(sid, None)
         if sess is None:
             return
@@ -233,6 +233,11 @@ class SessionManager:
         for d in (sess.extract_dir, sess.raster_cache_dir):  # unpacked .zarr.zip + tiled-raster temps (DESIGN §13)
             if d:
                 shutil.rmtree(d, ignore_errors=True)
+        # Tell every viewer the session is gone so it drops out of their session list.
+        # reason="subset" marks a lasso eviction: the parent's viewers are moved to the
+        # child by the job.completed(child_id) handler, so they must NOT be nulled/notified
+        # here — only other viewers prune it from their list.
+        BUS.publish("session.removed", {"session_id": sid, "reason": reason})
 
     # ---- memory (DESIGN §11.3) -------------------------------------------
     def _rss_mb(self) -> float:

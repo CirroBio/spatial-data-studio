@@ -1098,6 +1098,7 @@ each tagged by `session_id`, with a monotonic id so a reconnecting client resume
 | `display.updated` | displayId, spec | Re-derive canvas |
 | `region.updated` | regions | Refresh annotations panel + coloring |
 | `session.created` | sessionId (child) | Add to lineage |
+| `session.removed` | sessionId, reason | Prune from list; if it was active and reason≠subset, clear the view |
 | `resource.sample` | global + per-session RSS, CPU | Update resource strip |
 | `memory.warning` | threshold breached | Block dequeue; warn |
 

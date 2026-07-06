@@ -157,6 +157,7 @@ Each event: `event: <type>`, `data: <json>`, every payload carries `session_id`.
 | `plot.invalidated` | `{session_id, plot_ids:[...]}` |
 | `display.updated` | `{session_id, display_id, spec}` |
 | `session.created` | `{session_id, summary}` |
+| `session.removed` | `{session_id, reason:"closed"|"subset"}` (closed or lasso-evicted; clients prune it from the session list) |
 | `session.errored` | `{session_id, error}` |
 | `resource.sample` | `{global:{rss_mb, rss_pct, cpu_pct}, per_session:{<id>:rss_mb}}` |
 | `memory.warning` | `{session_id?, message}` |

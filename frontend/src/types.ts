@@ -269,6 +269,11 @@ export interface SessionCreatedEvent {
   summary: SessionSummary;
 }
 
+export interface SessionRemovedEvent {
+  session_id: string;
+  reason: 'closed' | 'subset';
+}
+
 export interface ResourceSample {
   global: {
     rss_mb: number;

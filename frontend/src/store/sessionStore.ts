@@ -131,12 +131,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
   activeSessionId: null,
   // Switching sessions must drop per-session view state: a lingering isolated
   // category would dim the new session's other categories (looking like data loss),
-  // and a half-drawn polygon belongs to the old session's coordinates.
+  // a half-drawn polygon belongs to the old session's coordinates, and the running-job
+  // set is per-session (only the active session's jobs are tracked).
   setActiveSessionId: (id) =>
     set((s) =>
       id === s.activeSessionId
         ? { activeSessionId: id }
-        : { activeSessionId: id, isolatedCategory: null, drawPolygons: [], drawRing: [] }
+        : { activeSessionId: id, isolatedCategory: null, drawPolygons: [], drawRing: [],
+            activeJobIds: new Set() }
     ),
   sessionState: null,
   setSessionState: (state) => set({ sessionState: state }),
