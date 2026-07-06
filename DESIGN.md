@@ -939,9 +939,17 @@ dark unless `CIRRO_BASE_URL`, `CIRRO_CLIENT_ID`, and `CIRRO_CLIENT_SECRET` are a
   specific `assets/` it references — `assets/` is shared and content-hashed across
   snapshots), so nothing is copied. `upload()` calls the Cirro SDK's
   `project.upload_dataset`. Driven by a `cirro_upload` worker job.
-- **UI:** a dialog listing Cirro projects, saved snapshots (multi-
-  select), and a dataset name. Uploads always use the generic "Files" ingest
-  process (`custom_dataset`), so there is no process picker.
+- **UI:** a dialog listing Cirro projects, a dataset name, an optional folder (free-text
+  with typeahead, see below), and saved snapshots (multi-select). Uploads always use the
+  generic "Files" ingest process (`custom_dataset`), so there is no process picker.
+- **Folder:** Cirro's portal groups datasets into folders via a plain dataset tag whose
+  value is `folder://<path>` (nested paths use `/`) — there's no dedicated folder API, so
+  `list_folders()` derives the known folder list for a project by scanning
+  `project.list_datasets()` tags, same as the portal UI itself does. Backend-cached per
+  project (`GET /api/cirro/projects/{id}/folders`) since a full dataset scan is expensive;
+  a successful upload with a new folder updates the cache directly instead of forcing a
+  rescan. The field is free text with a browser `<datalist>` typeahead, not a plain
+  picker — the folder need not already exist.
 
 ---
 

@@ -338,9 +338,14 @@ export async function getCirroProjects(): Promise<{ projects: CirroProject[] }> 
   return res.json() as Promise<{ projects: CirroProject[] }>;
 }
 
+export async function getCirroFolders(projectId: string): Promise<{ folders: string[] }> {
+  const res = await apiFetch(`/api/cirro/projects/${projectId}/folders`);
+  return res.json() as Promise<{ folders: string[] }>;
+}
+
 export async function uploadToCirro(
   sessionId: string,
-  body: { project_id: string; dataset_name: string; snapshot_names: string[] }
+  body: { project_id: string; dataset_name: string; snapshot_names: string[]; folder?: string }
 ): Promise<{ job_id: string }> {
   const res = await apiFetch(`/api/sessions/${sessionId}/cirro/upload`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },

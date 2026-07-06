@@ -20,7 +20,18 @@ from .config import config
 # other process would recognize.
 INGEST_PROCESS_ID = "custom_dataset"
 
+# Cirro's portal UI groups datasets into folders via a plain dataset tag whose
+# value is "folder://<path>" (nested folders use "/" as the separator) — there is
+# no dedicated folder API, so both the portal and this app derive the folder list
+# by scanning tags across a project's datasets. See Cirro-portal's folder.utils.ts.
+FOLDER_TAG_PREFIX = "folder://"
+
 _client_cache = None
+# project_id -> sorted list of known folder paths (including ancestor paths).
+# Populated lazily from `list_datasets()`, which is otherwise an expensive full
+# per-project scan; refreshed on demand rather than on every keystroke of the
+# upload dialog's typeahead.
+_folders_cache: dict[str, list[str]] = {}
 
 
 def _client():
@@ -43,9 +54,50 @@ def list_projects() -> list[dict]:
     return [{"id": p.id, "name": p.name} for p in _client().list_projects()]
 
 
-def upload(*, project_id: str, dataset_name: str, upload_folder: Path) -> dict:
+def _normalize_folder_path(raw: str) -> str:
+    """Strip leading/trailing slashes and drop empty segments, e.g.
+    "//experiments//2024/" -> "experiments/2024"."""
+    return "/".join(part.strip() for part in raw.split("/") if part.strip())
+
+
+def list_folders(project_id: str, force_refresh: bool = False) -> list[str]:
+    """Every folder path in use in the project, including intermediate ancestor
+    paths (so "a/b/c" also contributes "a" and "a/b"), for a folder typeahead.
+    Uses the raw `datasets.list` call rather than `project.list_datasets()`,
+    which additionally pulls in datasets from subscribed shares and so requires
+    a `VIEW_PROJECT_SHARES` grant the upload service account may not have; a
+    dataset's own folder tags are all that matter here anyway."""
+    if force_refresh or project_id not in _folders_cache:
+        paths: set[str] = set()
+        for dataset in _client()._client.datasets.list(project_id=project_id):
+            for tag in dataset.tags:
+                if not tag.value.startswith(FOLDER_TAG_PREFIX):
+                    continue
+                path = _normalize_folder_path(tag.value[len(FOLDER_TAG_PREFIX):])
+                if not path:
+                    continue
+                parts = path.split("/")
+                paths.update("/".join(parts[:i]) for i in range(1, len(parts) + 1))
+        _folders_cache[project_id] = sorted(paths)
+    return _folders_cache[project_id]
+
+
+def upload(*, project_id: str, dataset_name: str, upload_folder: Path, folder: str | None = None) -> dict:
     project = _client().get_project_by_id(project_id)
-    dataset = project.upload_dataset(name=dataset_name, process=INGEST_PROCESS_ID, upload_folder=str(upload_folder))
+    tags = None
+    if folder:
+        path = _normalize_folder_path(folder)
+        if path:
+            tags = [f"{FOLDER_TAG_PREFIX}{path}"]
+    dataset = project.upload_dataset(name=dataset_name, process=INGEST_PROCESS_ID,
+                                     upload_folder=str(upload_folder), tags=tags)
+    if tags:
+        # Make the new folder visible to the next typeahead lookup without a full rescan.
+        _folders_cache.setdefault(project_id, [])
+        parts = tags[0][len(FOLDER_TAG_PREFIX):].split("/")
+        known = set(_folders_cache[project_id])
+        known.update("/".join(parts[:i]) for i in range(1, len(parts) + 1))
+        _folders_cache[project_id] = sorted(known)
     return {"dataset_id": dataset.id, "dataset_name": dataset.name}
 
 

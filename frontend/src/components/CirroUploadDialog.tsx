@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from '../store/sessionStore';
 import {
-  getCirroProjects, getSnapshots, uploadToCirro,
+  getCirroFolders, getCirroProjects, getSnapshots, uploadToCirro,
   type CirroProject,
 } from '../api';
 import { formatError, reportError } from '../lib/errors';
@@ -22,6 +22,8 @@ export default function CirroUploadDialog({ sessionId, onClose }: Props) {
 
   const [projectId, setProjectId] = useState('');
   const [datasetName, setDatasetName] = useState(session?.name ?? '');
+  const [folder, setFolder] = useState('');
+  const [folders, setFolders] = useState<string[]>([]);
   const [selectedSnapshots, setSelectedSnapshots] = useState<Set<string>>(new Set());
   const [submitting, setSubmitting] = useState(false);
 
@@ -33,6 +35,11 @@ export default function CirroUploadDialog({ sessionId, onClose }: Props) {
       })
       .catch((err) => setError(formatError(err)));
   }, []);
+
+  useEffect(() => {
+    if (!projectId) { setFolders([]); return; }
+    getCirroFolders(projectId).then((f) => setFolders(f.folders)).catch((err) => setError(formatError(err)));
+  }, [projectId]);
 
   function toggleSnapshot(name: string) {
     setSelectedSnapshots((prev) => {
@@ -48,6 +55,7 @@ export default function CirroUploadDialog({ sessionId, onClose }: Props) {
       await uploadToCirro(sessionId, {
         project_id: projectId, dataset_name: datasetName.trim(),
         snapshot_names: [...selectedSnapshots],
+        folder: folder.trim() || undefined,
       });
       pushNotification({ kind: 'info', message: `Uploading "${datasetName.trim()}" to Cirro…` });
       onClose();
@@ -96,6 +104,21 @@ export default function CirroUploadDialog({ sessionId, onClose }: Props) {
                 onChange={(e) => setDatasetName(e.target.value)}
                 className="bg-bg border border-border rounded px-2 py-1.5 text-sm text-text"
               />
+            </label>
+
+            <label className="flex flex-col gap-1 text-xs text-muted">
+              Folder (optional)
+              <input
+                list="cirro-folder-options"
+                value={folder}
+                onChange={(e) => setFolder(e.target.value)}
+                placeholder="e.g. experiments/2024"
+                autoComplete="off"
+                className="bg-bg border border-border rounded px-2 py-1.5 text-sm text-text"
+              />
+              <datalist id="cirro-folder-options">
+                {folders.map((f) => <option key={f} value={f} />)}
+              </datalist>
             </label>
 
             <div className="flex flex-col gap-1">

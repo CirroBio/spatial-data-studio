@@ -73,7 +73,8 @@ ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_cate
 | GET  | `/api/about/licenses` | — | `{python:[...], npm:[...]}` (third-party licenses, in-app Acknowledgements) |
 | GET  | `/api/cirro/status` | — | `{enabled:bool}` |
 | GET  | `/api/cirro/projects` | — | `{projects:[...]}` (503 if Cirro is not configured) |
-| POST | `/api/sessions/{id}/cirro/upload` | `{project_id, dataset_name, snapshot_names:[str]}` | `{job_id}` (session must be saved first; always uses the generic "Files" ingest process) |
+| GET  | `/api/cirro/projects/{id}/folders?refresh=` | — | `{folders:[str]}` (known `folder://` tag paths in the project, backend-cached; `refresh=true` forces a rescan) |
+| POST | `/api/sessions/{id}/cirro/upload` | `{project_id, dataset_name, snapshot_names:[str], folder?}` | `{job_id}` (session must be saved first; always uses the generic "Files" ingest process; `folder` is applied as a `folder://<path>` dataset tag) |
 | GET  | `/api/sessions/{id}/data/{fieldPath}` | fieldPath e.g. `obs:leiden`, `obsm:spatial`, `X:Sox17`, `obsp:spatial_distances` | Arrow IPC stream (application/vnd.apache.arrow.stream) |
 | GET  | `/api/sessions/{id}/elements` | — | `{tables:[{name,n_obs,n_vars,active}], shapes, points, images, labels}` (data inspector inventory) |
 | GET  | `/api/sessions/{id}/table?path=&offset=&limit=` | path = `obs`, `var`, `shapes:<name>`, `points:<name>` | `{total_rows, offset, limit, index_name, index, columns:[{name,dtype}], rows}` (JSON page) |

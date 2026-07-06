@@ -473,9 +473,17 @@ async def cirro_projects():
     return {"projects": cirro.list_projects()}
 
 
+@app.get("/api/cirro/projects/{project_id}/folders")
+async def cirro_folders(project_id: str, refresh: bool = False):
+    if not config.cirro_enabled():
+        raise HTTPException(503, "Cirro is not configured")
+    from . import cirro
+    return {"folders": cirro.list_folders(project_id, force_refresh=refresh)}
+
+
 @app.post("/api/sessions/{sid}/cirro/upload")
 async def cirro_upload(sid: str, body: dict):
-    """body: {project_id, dataset_name, snapshot_names: [str]}."""
+    """body: {project_id, dataset_name, snapshot_names: [str], folder?: str}."""
     if not config.cirro_enabled():
         raise HTTPException(503, "Cirro is not configured")
     sess = _session(sid)
@@ -484,17 +492,27 @@ async def cirro_upload(sid: str, body: dict):
     job_id = sess.enqueue_special("cirro_upload", {
         "project_id": body["project_id"],
         "dataset_name": body["dataset_name"], "snapshot_names": body.get("snapshot_names") or [],
+        "folder": body.get("folder") or None,
     })
     return {"job_id": job_id}
+
+
+def _default_save_path(sess) -> str:
+    """Checkpoint path to use when the caller doesn't give one explicitly. The
+    filename's content-hash suffix is (re)computed from the written bytes on
+    every save (see `_save_zip`), so this only needs the checkpoint's clean base
+    name - stripping any hash a previous save already appended keeps it from
+    stacking a new one on top."""
+    from .persistence.store import strip_content_hash
+    return str(config.CHECKPOINT_DIR / f"{strip_content_hash(sess.name)}.zarr.zip")
 
 
 @app.post("/api/sessions/{sid}/save")
 async def save(sid: str, body: dict | None = None):
     sess = _session(sid)
-    path = (body or {}).get("path")
-    if not path:
-        path = str(config.CHECKPOINT_DIR / f"{sess.name}-{sid[:8]}.zarr.zip")
-    job_id = sess.enqueue_special("save", {"path": path})
+    explicit = (body or {}).get("path")
+    path = explicit or _default_save_path(sess)
+    job_id = sess.enqueue_special("save", {"path": path, "hash_name": not explicit})
     return {"job_id": job_id, "path": path}
 
 
@@ -519,8 +537,9 @@ async def set_points_transform(sid: str, body: dict):
     affine = body["affine"]
     if not (isinstance(affine, list) and len(affine) == 6):
         raise HTTPException(400, "affine must be 6 floats [a, b, c, d, e, f]")
-    path = body.get("path") or str(config.CHECKPOINT_DIR / f"{sess.name}-{sid[:8]}.zarr.zip")
-    job_id = sess.enqueue_special("set_transform", {"affine": affine, "path": path})
+    explicit = body.get("path")
+    path = explicit or _default_save_path(sess)
+    job_id = sess.enqueue_special("set_transform", {"affine": affine, "path": path, "hash_name": not explicit})
     return {"job_id": job_id, "path": path}
 
 

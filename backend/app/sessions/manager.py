@@ -283,4 +283,6 @@ class SessionManager:
 
 def _basename(path: str) -> str:
     import os
-    return os.path.basename(path.rstrip("/")).replace(".zarr.zip", "").replace(".zarr", "")
+    from ..persistence.store import strip_content_hash
+    stem = os.path.basename(path.rstrip("/")).replace(".zarr.zip", "").replace(".zarr", "")
+    return strip_content_hash(stem)

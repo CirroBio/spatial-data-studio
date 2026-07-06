@@ -184,7 +184,10 @@ same picker → form → queue → history machinery.
   `assets/` is shared and content-hashed across snapshots) so nothing is copied. Always
   uploaded via Cirro's generic "Files" ingest process (`custom_dataset`, accepts any
   file) — the service-account identity only needs `Create dataset`/`View dataset` on
-  the target project, no `View process` permission.
+  the target project, no `View process` permission. An optional destination folder can
+  be typed in (Cirro groups datasets into folders via a `folder://<path>` dataset tag,
+  not a real API); existing folder paths for the chosen project are offered as a
+  typeahead, backend-cached per project (`GET /api/cirro/projects/{id}/folders`).
 
 ## Layout
 

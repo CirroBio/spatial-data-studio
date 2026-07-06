@@ -359,7 +359,8 @@ class Session:
         if not within_checkpoint_dir(target):
             raise ValueError("save path is outside the checkpoint directory")
         with self.lock.reading():
-            self.store_path = save_spatialdata(self.sdata, payload["path"], self.app_state)
+            self.store_path = save_spatialdata(self.sdata, payload["path"], self.app_state,
+                                               hash_name=payload.get("hash_name", False))
         self._jobs[job_id]["status"] = "completed"
         appstate.bump_versions(self.app_state, ["obsm:spatial"])
         BUS.publish("job.completed", {"session_id": self.id, "job_id": job_id, "kind": "set_transform",
@@ -372,7 +373,8 @@ class Session:
         if not within_checkpoint_dir(target):
             raise ValueError("save path is outside the checkpoint directory")
         with self.lock.reading():
-            path = save_spatialdata(self.sdata, payload["path"], self.app_state)
+            path = save_spatialdata(self.sdata, payload["path"], self.app_state,
+                                    hash_name=payload.get("hash_name", False))
         self.store_path = path
         self._jobs[job_id]["status"] = "completed"
         BUS.publish("job.completed", {"session_id": self.id, "job_id": job_id, "kind": "save",
@@ -386,7 +388,8 @@ class Session:
         upload_dir = cirro.build_upload_folder(self.store_path, payload.get("snapshot_names") or [])
         try:
             result = cirro.upload(project_id=payload["project_id"],
-                                  dataset_name=payload["dataset_name"], upload_folder=upload_dir)
+                                  dataset_name=payload["dataset_name"], upload_folder=upload_dir,
+                                  folder=payload.get("folder"))
         finally:
             shutil.rmtree(upload_dir, ignore_errors=True)
         self._jobs[job_id]["status"] = "completed"
