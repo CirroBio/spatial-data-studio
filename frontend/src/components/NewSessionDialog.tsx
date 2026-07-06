@@ -129,8 +129,8 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
     <Dialog.Root open onOpenChange={(o) => { if (!o) onClose(); }}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/60 z-40" />
-        <Dialog.Content className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-surface border border-border rounded-lg shadow-2xl w-[520px]">
-          <div className="flex items-center justify-between p-4 border-b border-border">
+        <Dialog.Content className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-surface border border-border rounded-lg shadow-2xl w-[520px] overflow-hidden flex flex-col max-h-[85vh]">
+          <div className="flex items-center justify-between p-4 border-b border-border shrink-0">
             <Dialog.Title className="text-sm font-semibold text-text">New Session</Dialog.Title>
             <Dialog.Close asChild>
               <button className="text-muted hover:text-text transition-colors" aria-label="Close">
@@ -143,8 +143,9 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
 
           <form
             onSubmit={(e) => { e.preventDefault(); submit(); }}
-            className="p-4 flex flex-col gap-4"
+            className="flex flex-col min-h-0 flex-1"
           >
+            <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
             {/* Source mode: open an existing .zarr, or import a raw dataset via a reader */}
             <div className="grid grid-cols-2 gap-1 p-0.5 bg-bg border border-border rounded">
               {(['load', 'import'] as const).map((m) => (
@@ -193,7 +194,7 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
               />
             </div>
 
-            <div className="flex flex-col gap-1.5 relative">
+            <div className="flex flex-col gap-1.5">
               <label className="text-xs font-mono text-muted">
                 {mode === 'import' ? 'Dataset folder' : 'Dataset'} <span className="text-danger">*</span>
                 <span className="ml-1 normal-case font-sans text-muted/60">
@@ -216,7 +217,7 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
               />
 
               {open && mode === 'load' && (
-                <div className="absolute top-full left-0 right-0 mt-1 z-10 max-h-60 overflow-y-auto bg-surface border border-border rounded shadow-xl">
+                <div className="mt-1 max-h-60 overflow-y-auto bg-bg border border-border rounded">
                   {datasetMatches.map((d) => (
                     <button
                       key={d.path}
@@ -247,7 +248,7 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
               )}
 
               {open && mode === 'import' && (
-                <div className="absolute top-full left-0 right-0 mt-1 z-10 max-h-60 overflow-y-auto bg-surface border border-border rounded shadow-xl">
+                <div className="mt-1 max-h-60 overflow-y-auto bg-bg border border-border rounded">
                   {path !== '' && (
                     <button
                       type="button"
@@ -287,8 +288,9 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
                 {error}
               </div>
             )}
+            </div>
 
-            <div className="flex justify-end gap-2 pt-1">
+            <div className="shrink-0 border-t border-border px-4 py-3 flex justify-end gap-2">
               <button
                 type="button"
                 onClick={onClose}
@@ -305,6 +307,15 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
               </button>
             </div>
           </form>
+
+          {loading && (
+            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-surface/80 backdrop-blur-[1px]">
+              <div className="w-8 h-8 rounded-full border-2 border-border border-t-accent animate-spin" />
+              <span className="text-sm text-text">
+                {mode === 'import' ? 'Importing dataset…' : 'Loading dataset…'}
+              </span>
+            </div>
+          )}
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
