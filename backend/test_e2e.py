@@ -146,9 +146,9 @@ def run_custom_methods_flow(client):
     st2 = client.get(f"/api/sessions/{sid2}").json()
     ch = st2["app_state"]["compute_history"]
     fn_names = [c["function"] for c in ch]
-    expected = ["normalize_total", "log1p", "pca", "neighbors", "leiden", "identify_tmas",
-                "cellular_neighborhoods", "proximity_test", "region_boundary", "infiltration_profile",
-                "milo_differential_abundance", "lisi_scores", "pseudobulk_deseq2"]
+    expected = ["normalize_total", "log1p", "pca", "neighbors", "leiden", "rank_genes_groups",
+                "identify_tmas", "cellular_neighborhoods", "proximity_test", "region_boundary",
+                "infiltration_profile", "milo_differential_abundance", "lisi_scores", "pseudobulk_deseq2"]
     assert fn_names == expected, fn_names
     print(f"[ok] reloaded: compute_history={fn_names}")
 
