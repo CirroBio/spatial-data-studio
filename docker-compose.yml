@@ -32,8 +32,14 @@ services:
       CIRRO_CLIENT_ID: "${CIRRO_CLIENT_ID:-}"
       CIRRO_CLIENT_SECRET: "${CIRRO_CLIENT_SECRET:-}"
 
-    # Soft cgroup limit consistent with SQV_CONTAINER_MEM_MB
-    mem_limit: 12g
+    # Hard OS memory limit: the container is OOM-killed if it exceeds this. Keep
+    # in sync with SQV_CONTAINER_MEM_MB above (12288 MiB == 12g) so the app's soft
+    # admission control (refuses new work at SQV_ADMISSION_PCT of it) trips first.
+    mem_limit: 12g              # docker compose / non-swarm
+    deploy:
+      resources:
+        limits:
+          memory: 12g          # docker stack deploy / swarm
 
     # Generous stop timeout so in-flight saves can flush (DESIGN §19.7)
     stop_grace_period: 120s

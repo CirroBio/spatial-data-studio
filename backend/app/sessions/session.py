@@ -85,6 +85,7 @@ class Session:
         self.parent_id = parent_id
         self.store_path = store_path
         self.extract_dir = None  # temp dir if loaded from a .zarr.zip; cleaned on close
+        self.raster_cache_dir = None  # temp store of tile-normalized rasters; cleaned on close
         self.created_at = _now()
         self.status = "ready" if sdata is not None else "loading"
         self.active_table_key = self._default_table_key()
@@ -294,6 +295,10 @@ class Session:
             # the write lock so readers never see a new sdata with a stale table key.
             if result.status != "failed" and result.new_object is not None:
                 self.sdata = result.new_object
+                # A reader's images/labels can be single-scale or huge-chunked; tile
+                # them now so the canvas never realizes a multi-GB chunk per tile.
+                from .. import rasters
+                self.raster_cache_dir = rasters.normalize_rasters(self.sdata)
                 self.active_table_key = self._default_table_key()
                 if not self.app_state["displays"]:
                     self.manager.auto_displays(self)

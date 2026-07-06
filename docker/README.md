@@ -55,8 +55,16 @@ docker run -d \
   -e SQV_WORKER_CEILING_MB=9216 \
   -e SQV_MAX_SESSIONS=4 \
   --memory=12g \
+  --memory-swap=12g \
   spatial-data-studio
 ```
+
+`--memory` is the hard OS ceiling; `--memory-swap=12g` (equal to `--memory`)
+disables swap so a runaway allocation is OOM-killed promptly instead of thrashing
+the host. `SQV_CONTAINER_MEM_MB` must be set to the same value: the app's soft
+admission control refuses new work at `SQV_ADMISSION_PCT` of it, so it trips
+*before* the OS OOM killer fires. Compose sets both via `mem_limit` /
+`deploy.resources.limits.memory` and `SQV_CONTAINER_MEM_MB` — keep them in sync.
 
 ## Environment contract (DESIGN §19.9)
 
@@ -66,8 +74,11 @@ docker run -d \
 | `SQV_CHECKPOINT_DIR`     | `/checkpoints` | Read-write volume for auto-checkpoints and saves |
 | `SQV_CONTAINER_MEM_MB`   | `8192`    | Container cgroup memory limit in MiB. Set to match `--memory` / `mem_limit`. |
 | `SQV_WORKER_CEILING_MB`  | `6144`    | Per-worker memory ceiling (must be < `SQV_CONTAINER_MEM_MB`). Triggers a catchable `MemoryError` before the OOM killer fires. |
-| `SQV_ADMISSION_PCT`      | `0.80`    | Fraction of container RAM at which new jobs are refused. |
+| `SQV_ADMISSION_PCT`      | `0.80`    | Fraction of container RAM at which new jobs, reads, and image renders are refused. |
 | `SQV_MAX_SESSIONS`       | `8`       | Maximum concurrent in-memory sessions. |
+| `SQV_IMAGE_RENDER_CONCURRENCY` | `2` | Max image tiles/thumbnails composited at once. Caps the transient memory of a zoom/pan tile burst; renders past `SQV_ADMISSION_PCT` return 503 and the canvas keeps its coarse base layer. |
+| `SQV_RASTER_BASE_PX`     | `1024`    | Coarsest image-pyramid level target (longest side) when re-tiling images at ingest. |
+| `SQV_RASTER_REBUILD_WORKERS` | `2`   | dask worker count for the one-time ingest re-tiling; bounds its peak memory. |
 | `SQV_STATIC_DIR`         | `/app/spa`| Path to the compiled SPA (baked into the image). |
 
 ## Volumes

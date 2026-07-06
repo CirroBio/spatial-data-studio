@@ -107,7 +107,12 @@ same picker → form → queue → history machinery.
   different coordinate spaces (Xenium spots are in microns; the image is in pixels), the
   server reconciles them — picking the element transform that best overlays spots onto
   the image — so points and image line up, and rotated/aligned images (e.g. an H&E) are
-  placed as quadrilaterals.
+  placed as quadrilaterals. On ingest, each image is normalized once into a 2× pyramid
+  down to a ~1024px base with tile-sized store chunks (`backend/app/rasters.py`), and
+  labels are tile-chunked (single-scale), so a single tile only ever reads one small
+  chunk — without this a reader's single-scale or coarsely-chunked raster would force a
+  multi-GB read per tile. This adds a one-time re-tiling step (a few seconds per large
+  image) when loading a raw or older dataset.
 - **Editable points transform** — when the automatic reconciliation is off, **Edit
   points transform** (canvas controls) opens an editor for the points→global affine of
   the table's region element, as either scale/rotation/translation or a raw 2×3 matrix.
@@ -257,6 +262,19 @@ open http://localhost:8080              # New Session -> /data/visium_hne.zarr
 The compose file mounts `test-data/` read-only at `/data` and a `checkpoints`
 volume at `/checkpoints`. Inside the container: `tini` → `supervisord` →
 {`nginx` edge (SSE buffering off), `uvicorn --workers 1`}.
+
+**Memory limit (two-tier).** The compose file caps the container at a hard OS
+memory limit (`mem_limit: 12g`, plus `deploy.resources.limits.memory` for swarm);
+exceeding it OOM-kills only this container instead of the host. Above that sits
+the app's *soft* admission control, which refuses new work once usage reaches
+`SQV_ADMISSION_PCT` (default 0.80) of `SQV_CONTAINER_MEM_MB` — so it trips before
+the OS OOM killer fires. **These two must stay in sync**: `SQV_CONTAINER_MEM_MB`
+(MiB) and the OS limit (`mem_limit` / `docker run --memory`) describe the same
+budget (12288 MiB == 12g). See `docker/README.md` for the manual `docker run`
+form and the full environment contract. Image tile/thumbnail compositing is
+additionally bounded by `SQV_IMAGE_RENDER_CONCURRENCY` (default 2) so a zoom/pan
+tile burst can't spike memory; renders requested past the admission boundary
+return 503 and the canvas keeps its coarse base layer until memory frees.
 
 **Enable Cirro upload (optional).** Set `CIRRO_BASE_URL`, `CIRRO_CLIENT_ID`, and
 `CIRRO_CLIENT_SECRET` in `.env` (a service-account/client-credentials identity — no

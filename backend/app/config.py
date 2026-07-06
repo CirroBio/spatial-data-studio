@@ -19,6 +19,18 @@ class Config:
 
     MAX_SESSIONS = int(os.environ.get("SQV_MAX_SESSIONS", "8"))
 
+    # Max image tiles/thumbnails composited at once. A zoom/pan burst asks for many
+    # tiles simultaneously, and each finest-level tile can realize a full multi-MB
+    # pyramid chunk; this caps the concurrent transient so the burst can't OOM.
+    IMAGE_RENDER_CONCURRENCY = int(os.environ.get("SQV_IMAGE_RENDER_CONCURRENCY", "2"))
+
+    # Raster (image/label) tiling normalized at ingest (see rasters.py). Every
+    # element is rebuilt into a 2x multiscale pyramid down to a <= RASTER_BASE_PX
+    # base, chunked at imaging.TILE_SIZE so one tile realizes one small chunk.
+    # The rebuild reads each element once; a small dask pool bounds its peak RSS.
+    RASTER_BASE_PX = int(os.environ.get("SQV_RASTER_BASE_PX", "1024"))
+    RASTER_REBUILD_WORKERS = int(os.environ.get("SQV_RASTER_REBUILD_WORKERS", "2"))
+
     # Default for thread-count form params (n_jobs etc.): SQUIDPY_N_THREADS if set,
     # else all cores on the machine.
     N_THREADS = int(os.environ.get("SQUIDPY_N_THREADS", os.cpu_count() or 1))

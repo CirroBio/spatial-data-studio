@@ -613,6 +613,38 @@ them — picking the element transform that best overlays spots onto the image �
 points and image line up, and rotated/aligned images (e.g. an H&E) are placed as
 quadrilaterals.
 
+**Ingest-time raster normalization (`backend/app/rasters.py`).** The tile server
+assumes each raster is a multiscale pyramid with tile-sized *store* chunks, but a
+reader or an older checkpoint may hand us a single scale or huge chunks (Xenium
+morphology ships as `(1, 4096, 4096)` chunks). Slicing a 512px tile out of a 4096
+chunk forces dask to realize the whole chunk (~134 MB/channel), and a zoom burst
+of such tiles OOMs the container. So `normalize_rasters` runs once when a session
+adopts a `SpatialData` (read bootstrap in `Session._run_call`, and
+`create_from_load`): every image/label that isn't already a tile-chunked pyramid
+is rebuilt via `Image2DModel`/`Labels2DModel.parse` into a 2× pyramid down to a
+`SQV_RASTER_BASE_PX` (1024) base, chunked at `imaging.TILE_SIZE`, and written to a
+per-session cache store under `CHECKPOINT_DIR`; the live elements are rebound to
+lazy refs into it. An in-memory rechunk alone can't fix this — a small tile read
+still fetches the large *store* chunk from disk — so the rewrite is the point.
+After it, one tile realizes one ~2 MB chunk. Elements are rebuilt one at a time
+and freed between (writing all four Xenium rasters together peaks ~8.8 GB); with a
+small dask pool (`SQV_RASTER_REBUILD_WORKERS`) the peak is the largest single image
+(~2.1 GB for the 3.8 GB morphology). Images get a mean-downsampled pyramid; labels
+are rebuilt **single-scale, tile-chunked only** — they aren't LOD-rendered, and a
+nearest/mode downsample of integer IDs can't stream (it materializes the whole
+array plus every level at once, ~6 GB for a 1.9 GB label), so a pure lazy rechunk
+is both correct and cheap. The check is idempotent (reloading a normalized store is
+a no-op), element coordinate transforms are preserved so §9.3 reconciliation still
+holds, and because the rebound in-memory elements are tile-chunked, `save` (§13)
+inherits the tile chunking too. The cache dir shares the `extract_dir` lifecycle —
+cleaned on close, ownership transferred to a subset child (§8.3).
+
+Two-tier memory safety for rendering: image compositing is capped by a global
+semaphore (`SQV_IMAGE_RENDER_CONCURRENCY`), and a render requested once RSS is past
+`SQV_ADMISSION_PCT` returns 503 so a burst can't push an already-loaded container
+over the OS memory limit (§11.3). The `create_from_read` path is likewise refused
+at that boundary, since a raw reader input has no cheap size estimate.
+
 ### 9.4 Image channel controls
 
 Per image channel: **toggle visibility**, **rename** (display-only name overriding raw

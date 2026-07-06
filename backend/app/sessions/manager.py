@@ -48,6 +48,10 @@ class SessionManager:
         name = name or _basename(resolved)
         sess = Session(sid, name, sdata, app_state, self, store_path=resolved)
         sess.extract_dir = extract_dir
+        # Older stores hold huge-chunked rasters; re-tile them so canvas tiles stay
+        # cheap (a no-op for stores already written in canonical form). See rasters.py.
+        from .. import rasters
+        sess.raster_cache_dir = rasters.normalize_rasters(sdata)
         if not app_state["displays"]:
             self.auto_displays(sess)
         self.sessions[sid] = sess
@@ -59,6 +63,14 @@ class SessionManager:
 
     def create_from_read(self, descriptor: dict, name: str | None = None) -> Session:
         self._check_capacity()
+        # No cheap size estimate exists for a raw reader input (the bulk is a lazy
+        # image, not resident), so gate on current headroom instead: refuse to start
+        # a read when we're already at the admission boundary. create_from_load has
+        # its own size-based _check_admission since a saved store's table cost is known.
+        if self.over_memory_boundary():
+            pct = self._rss_mb() / config.CONTAINER_MEM_MB
+            raise RuntimeError(
+                f"read blocked: memory at {pct*100:.0f}% (>= {config.ADMISSION_PCT*100:.0f}%)")
         for k, v in descriptor.get("params", {}).items():
             if k not in _READ_PATH_PARAMS or not isinstance(v, str):
                 continue
@@ -192,10 +204,12 @@ class SessionManager:
         BUS.publish("session.created", {"session_id": cid, "summary": self.summary(child)})
 
         # The re-attached images/labels above are lazy refs that still read chunks from
-        # parent.extract_dir (unpacked .zarr.zip); transfer ownership to the child so
-        # closing the parent below doesn't rmtree a directory the child still depends on.
+        # parent.extract_dir (unpacked .zarr.zip) and parent.raster_cache_dir (tiled
+        # rasters); transfer ownership to the child so closing the parent below doesn't
+        # rmtree a directory the child still depends on.
         child.extract_dir = parent.extract_dir
-        parent.extract_dir = None
+        child.raster_cache_dir = parent.raster_cache_dir
+        parent.extract_dir = parent.raster_cache_dir = None
 
         self.close(parent.id, save=False)
         return child
@@ -215,9 +229,10 @@ class SessionManager:
             if save and sess.store_path:
                 save_spatialdata(sess.sdata, sess.store_path, sess.app_state)
             sess.sdata = None
-        if sess.extract_dir:
-            import shutil
-            shutil.rmtree(sess.extract_dir, ignore_errors=True)  # unpacked .zarr.zip temp (DESIGN §13)
+        import shutil
+        for d in (sess.extract_dir, sess.raster_cache_dir):  # unpacked .zarr.zip + tiled-raster temps (DESIGN §13)
+            if d:
+                shutil.rmtree(d, ignore_errors=True)
 
     # ---- memory (DESIGN §11.3) -------------------------------------------
     def _rss_mb(self) -> float:
@@ -246,9 +261,14 @@ class SessionManager:
             raise RuntimeError(
                 f"load blocked: estimated {resident_mb:.0f} MB exceeds available {avail:.0f} MB")
 
+    def over_memory_boundary(self) -> bool:
+        """True once RSS has reached the admission boundary — the point past which
+        we refuse to start new memory-hungry work (a job, a read, a tile render)."""
+        return self._rss_mb() / config.CONTAINER_MEM_MB >= config.ADMISSION_PCT
+
     def admit_job(self, sess: Session) -> bool:
-        pct = self._rss_mb() / config.CONTAINER_MEM_MB
-        if pct >= config.ADMISSION_PCT:
+        if self.over_memory_boundary():
+            pct = self._rss_mb() / config.CONTAINER_MEM_MB
             BUS.publish("memory.warning", {"session_id": sess.id,
                         "message": f"RSS at {pct*100:.0f}% (>= {config.ADMISSION_PCT*100:.0f}%); job held"})
             return False

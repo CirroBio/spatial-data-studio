@@ -73,6 +73,24 @@ async def _read_locked(sess, fn, *a):
     return await _in_executor(_run)
 
 
+# Global cap on concurrent image compositing. deck.gl fires a burst of tile
+# requests on every zoom/pan, and each finest-level tile can realize a full
+# multi-MB pyramid chunk; without this a burst decodes them all at once and spikes
+# memory. Shared across sessions since RAM is a process-wide resource.
+_IMAGE_RENDER_SEM = asyncio.Semaphore(config.IMAGE_RENDER_CONCURRENCY)
+
+
+async def _render_image(sess, fn):
+    """Composite a tile/thumbnail under the render semaphore, refusing once RSS is
+    past the admission boundary so a zoom burst can't push an already-loaded
+    container into OOM. 503 lets the frontend keep its coarse base layer and retry
+    as memory frees (BitmapLayer just re-requests on the next viewport change)."""
+    async with _IMAGE_RENDER_SEM:
+        if _mgr().over_memory_boundary():
+            raise HTTPException(503, "image render deferred: memory boundary reached")
+        return await _read_locked(sess, fn)
+
+
 # ---- health ----------------------------------------------------------------
 @app.get("/api/healthz")
 async def healthz():
@@ -659,7 +677,7 @@ async def image_thumbnail(sid: str, element: str, max_px: int = 2048, channels: 
         return imaging.thumbnail_png(sess.sdata, element, max_px, channel_colors)
 
     try:
-        png = await _read_locked(sess, _render)
+        png = await _render_image(sess, _render)
     except KeyError as e:
         raise HTTPException(404, str(e))
     return Response(content=png, media_type="image/png",
@@ -676,7 +694,7 @@ async def image_tile(sid: str, element: str, level: int, col: int, row: int,
         return imaging.tile_png(sess.sdata, element, level, col, row, channel_colors)
 
     try:
-        png = await _read_locked(sess, _render)
+        png = await _render_image(sess, _render)
     except KeyError as e:
         raise HTTPException(404, str(e))
     return Response(content=png, media_type="image/png",
