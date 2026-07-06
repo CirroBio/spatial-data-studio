@@ -208,6 +208,9 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
                 onFocus={() => setOpen(true)}
                 onBlur={() => { blurTimer.current = setTimeout(() => setOpen(false), 150); }}
                 autoComplete="off"
+                data-lpignore="true"
+                data-1p-ignore
+                data-form-type="other"
                 spellCheck={false}
                 className="bg-bg border border-border rounded px-3 py-2 text-sm text-text placeholder-muted/50 focus:outline-none focus:border-accent font-mono"
               />
