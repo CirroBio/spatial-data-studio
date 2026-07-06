@@ -216,6 +216,12 @@ def render_plot(fn, injected: list, bound: dict, buf) -> CallResult:
     import matplotlib.pyplot as plt
 
     def _figure_from(ret):
+        # scanpy's dotplot-family plots return an unrendered BasePlot object under
+        # return_fig=True (pinned for every plot); it only produces a figure once
+        # make_figure() runs, so drive that before the generic Axes handling below.
+        if ret is not None and hasattr(ret, "make_figure") and hasattr(ret, "fig"):
+            ret.make_figure()
+            return ret.fig
         if ret is not None:
             axes = np.ravel(ret) if isinstance(ret, (list, tuple, np.ndarray)) else [ret]
             for a in axes:

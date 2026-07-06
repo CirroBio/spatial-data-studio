@@ -19,8 +19,9 @@
 - { library: scanpy, namespace: sc.pp, function: scrublet, path: pp.scrublet, effect_class: compute }
 
 # ---- scanpy tl (tools) -----------------------------------------------------
-- { library: scanpy, namespace: sc.tl, function: leiden, path: tl.leiden, effect_class: compute }
-- { library: scanpy, namespace: sc.tl, function: louvain, path: tl.louvain, effect_class: compute }
+# Leiden clustering is provided by custom.leiden (graspologic, MIT); scanpy's
+# sc.tl.leiden/sc.tl.louvain are omitted because their only backends
+# (python-igraph, leidenalg, louvain) are GPL.
 - { library: scanpy, namespace: sc.tl, function: umap, path: tl.umap, effect_class: compute }
 - { library: scanpy, namespace: sc.tl, function: tsne, path: tl.tsne, effect_class: compute }
 - { library: scanpy, namespace: sc.tl, function: diffmap, path: tl.diffmap, effect_class: compute }
@@ -39,6 +40,15 @@
 - { library: scanpy, namespace: sc.get, function: var_df, path: get.var_df, effect_class: extract }
 - { library: scanpy, namespace: sc.get, function: rank_genes_groups_df, path: get.rank_genes_groups_df, effect_class: extract }
 - { library: scanpy, namespace: sc.get, function: aggregate, path: get.aggregate, effect_class: extract }
+
+# ---- scanpy pl (plotting; read the DE result, render a server-side figure) -----
+# Visualize sc.tl.rank_genes_groups output (uns['rank_genes_groups']) — the top
+# marker genes that differentiate each group. dotplot is the default; the others
+# are the same DE result in matrix / heatmap / violin form.
+- { library: scanpy, namespace: sc.pl, function: rank_genes_groups_dotplot, path: pl.rank_genes_groups_dotplot, effect_class: plot }
+- { library: scanpy, namespace: sc.pl, function: rank_genes_groups_matrixplot, path: pl.rank_genes_groups_matrixplot, effect_class: plot }
+- { library: scanpy, namespace: sc.pl, function: rank_genes_groups_heatmap, path: pl.rank_genes_groups_heatmap, effect_class: plot }
+- { library: scanpy, namespace: sc.pl, function: rank_genes_groups_stacked_violin, path: pl.rank_genes_groups_stacked_violin, effect_class: plot }
 
 # ---- spatialdata-io readers (session bootstrap; take a path, return SpatialData) ----
 - { library: spatialdata_io, namespace: io, function: xenium, path: xenium, effect_class: read }

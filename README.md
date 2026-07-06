@@ -43,10 +43,14 @@ same picker → form → queue → history machinery.
 - **Introspected operations** — every `squidpy` `gr`/`im`/`tl`/`read`/`pl` function
   as a generated form; `copy`/`inplace` pinned, plot render-params managed.
 - **Expanded catalog** (`registry/library_catalog.yaml`) — scanpy `pp`/`tl`/`get`
-  (QC, normalization, HVG, PCA, neighbors, leiden/louvain, UMAP, rank_genes_groups, …)
+  (QC, normalization, HVG, PCA, neighbors, UMAP, rank_genes_groups, …), the scanpy
+  `pl.rank_genes_groups_*` marker-gene plots (dotplot/matrixplot/heatmap/stacked_violin,
+  which visualize `uns['rank_genes_groups']` — the genes that differentiate each group),
   and spatialdata-io readers (xenium/visium/visium_hd/merscope/cosmx), added one short
-  manifest entry each; `get.*` use an `extract` effect class.
-- **Custom functions** (non-squidpy, `namespace: custom`) — *Identify Regions (Leiden)*,
+  manifest entry each; `get.*` use an `extract` effect class. (scanpy's `sc.tl.leiden`/
+  `sc.tl.louvain` are omitted — their backends are GPL; use `custom.leiden`, below.)
+- **Custom functions** (non-squidpy, `namespace: custom`) — *Leiden clustering*
+  (graspologic, MIT), *Identify Regions (Leiden)*,
   *Edit Annotations* (rename/merge a categorical obs column's values), *Identify TMAs*
   (automatic tissue-microarray core detection), *Region composition* / *Region
   composition (plot)* (cell-type-by-region crosstab + chi-square test, then a stacked-bar
@@ -166,14 +170,21 @@ same picker → form → queue → history machinery.
   variable genes by Moran's I / Geary's C / sepal, co-occurrence, region graph
   topology, Ripley's L, ligand-receptor interactions); scanpy recipes for raw
   data such as Xenium (preprocess → Leiden + UMAP; QC → filter → cluster; marker
-  genes; cluster hierarchy + markers; Louvain clustering; t-SNE + diffusion-map
+  genes; cluster hierarchy + markers; t-SNE + diffusion-map
   embeddings; PAGA trajectory; end-to-end cluster → neighborhood enrichment); and
   scanpy-tutorial reproductions (full Visium analysis & visualization; MERFISH
   clustering for imaging-based counts). Recipes
   are JSON files under `backend/app/recipes/` discovered at startup — see
   "Contributing recipes" below. Ad-hoc export/import over history too.
 - **Persistence** — save/load `.zarr` and `.zarr.zip` (data + app state in
-  `attrs`), with full UI/region/history round-trip.
+  `attrs`), with full UI/region/history round-trip. Auto-managed checkpoint
+  filenames (Save button, no explicit path) embed a hash of the `.zarr.zip`
+  contents, e.g. `myfile-3fa21c9b8e4d.zarr.zip`; each save computes the hash
+  fresh from the current base name, so the suffix reflects that save's
+  contents instead of stacking onto the previous one. Prior checkpoint files
+  are left on disk. Loading a `.zarr.zip` with a hash suffix recomputes and
+  logs whether it still matches the file's contents (info if it does, warning
+  if not) — informational only, never blocks the load.
 - **Acknowledgements** (About icon in the header) — third-party libraries in use and
   their licenses, served by `GET /api/about/licenses` from the backend/frontend SBOMs
   (`sds-governance/sbom.json` + `sds-governance/sbom_frontend.json`).
@@ -240,8 +251,9 @@ code changes needed. To contribute one, open a PR that adds a file named
 ```
 
 Each step is `{namespace, function, params}`. Valid namespaces: squidpy `gr`, `im`,
-`tl`, `pl`, `read`; scanpy `sc.pp`, `sc.tl`, `sc.get` (there is **no `sc.pl`** — do all
-plotting with squidpy `pl.*`). Guidelines:
+`tl`, `pl`, `read`; scanpy `sc.pp`, `sc.tl`, `sc.get`, and `sc.pl` (limited to the
+`rank_genes_groups_*` marker-gene plots — do all other plotting with squidpy `pl.*`).
+Guidelines:
 
 - Only reference functions/params that exist in the installed registry. Validate with
   the preflight endpoint (`POST /api/sessions/{id}/recipe/preflight`) or by running the

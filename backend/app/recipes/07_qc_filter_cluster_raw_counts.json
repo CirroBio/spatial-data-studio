@@ -14,6 +14,6 @@
     { "namespace": "sc.pp", "function": "log1p", "params": {} },
     { "namespace": "sc.pp", "function": "pca", "params": {} },
     { "namespace": "sc.pp", "function": "neighbors", "params": {} },
-    { "namespace": "sc.tl", "function": "leiden", "params": { "flavor": "igraph", "n_iterations": 2 } }
+    { "namespace": "custom", "function": "leiden", "params": { "n_iterations": 2 } }
   ]
 }

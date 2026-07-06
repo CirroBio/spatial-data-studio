@@ -3,6 +3,7 @@ write the cluster index to a user-named obs column."""
 from __future__ import annotations
 
 from ..base import Function, ParamSpec, CallResult, run_compute, resolve_obsm_key
+from ._leiden import leiden_labels, resolve_connectivities
 
 _DOC = """Identify Regions (Leiden)
 
@@ -69,8 +70,8 @@ class IdentifyRegionsLeiden(Function):
         def mutate(ad):
             sc.pp.neighbors(ad, n_neighbors=n_neighbors, use_rep=coords,
                             random_state=random_state, key_added=neighbors_key)
-            sc.tl.leiden(ad, resolution=resolution, key_added=key_added,
-                         random_state=random_state, neighbors_key=neighbors_key,
-                         flavor="igraph", n_iterations=2, directed=False)
+            conn = resolve_connectivities(ad, neighbors_key)
+            ad.obs[key_added] = leiden_labels(conn, resolution=resolution,
+                                              random_state=random_state, n_iterations=2)
 
         return run_compute(session, mutate)

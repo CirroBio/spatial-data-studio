@@ -17,7 +17,7 @@
     { "namespace": "sc.pp", "function": "pca", "params": {} },
     { "namespace": "sc.pp", "function": "neighbors", "params": {} },
     { "namespace": "sc.tl", "function": "umap", "params": {} },
-    { "namespace": "sc.tl", "function": "leiden", "params": { "key_added": "clusters", "flavor": "igraph", "directed": false, "n_iterations": 2 } },
+    { "namespace": "custom", "function": "leiden", "params": { "key_added": "clusters", "n_iterations": 2 } },
     { "namespace": "sc.tl", "function": "rank_genes_groups", "params": { "groupby": "clusters", "method": "t-test" } }
   ]
 }

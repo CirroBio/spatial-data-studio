@@ -76,8 +76,12 @@ def run_custom_methods_flow(client):
     run_job("sc.pp", "log1p", {})
     run_job("sc.pp", "pca", {})
     run_job("sc.pp", "neighbors", {})
-    run_job("sc.tl", "leiden", {"key_added": "cell_type", "flavor": "igraph",
-                                "n_iterations": 2, "directed": False})
+    run_job("custom", "leiden", {"key_added": "cell_type", "n_iterations": 2})
+
+    # marker genes that differentiate the clusters, then the scanpy dotplot of them
+    run_job("sc.tl", "rank_genes_groups", {"groupby": "cell_type", "method": "wilcoxon"})
+    run_plot("sc.pl", "rank_genes_groups_dotplot", {"groupby": "cell_type", "n_genes": 5})
+
     run_job("custom", "identify_tmas", {})
 
     adata = MANAGER.get(sid).active_table()

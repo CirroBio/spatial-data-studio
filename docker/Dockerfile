@@ -45,7 +45,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # app-code-only changes.
 WORKDIR /app
 COPY backend/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+# celltypist declares a hard dependency on the GPL Leiden chain (leidenalg ->
+# igraph). This app never uses that code path (it clusters via graspologic-native,
+# MIT), so strip the copyleft packages after install to keep the image GPL-free.
+# The license gate (sds-governance/scan_licenses.py) fails if they reappear.
+RUN pip install --no-cache-dir -r requirements.txt \
+    && pip uninstall -y leidenalg igraph
 
 # Copy backend source
 COPY backend/ ./backend/

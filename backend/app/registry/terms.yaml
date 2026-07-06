@@ -174,12 +174,6 @@ terms:
   - match: { names: [flavor], scope: "sc.pp.highly_variable_genes" }
     widget: enum
     values: [seurat, cell_ranger, seurat_v3, seurat_v3_paper]
-  - match: { names: [flavor], scope: "sc.tl.leiden" }
-    widget: enum
-    values: [leidenalg, igraph]
-  - match: { names: [flavor], scope: "sc.tl.louvain" }
-    widget: enum
-    values: [vtraag, igraph, rapids]
   - match: { names: [method], scope: "sc.tl.rank_genes_groups" }
     widget: enum
     values: [logreg, t-test, wilcoxon, t-test_overestim_var]

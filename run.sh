@@ -17,7 +17,7 @@ PIDFILE="$PWD/.run.pids"
 VENV_BIN="$PWD/.venv-introspect/bin"
 if [[ ! -x "$VENV_BIN/python" ]]; then
   echo "error: .venv-introspect not found. Create it per README.md:" >&2
-  echo "  python3.11 -m venv .venv-introspect && . .venv-introspect/bin/activate && pip install -r backend/requirements.txt" >&2
+  echo "  python3.11 -m venv .venv-introspect && . .venv-introspect/bin/activate && pip install -r backend/requirements.txt && pip uninstall -y leidenalg igraph" >&2
   exit 1
 fi
 

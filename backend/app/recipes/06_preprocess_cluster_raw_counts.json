@@ -5,13 +5,13 @@
     "description": "Turn raw counts into Leiden clusters with a UMAP embedding (normalize → log1p → HVG → PCA → neighbors → Leiden → UMAP). For unprocessed data such as Xenium — not for already-normalized sessions.",
     "provenance": "Standard scanpy preprocessing-to-clustering path; targets unprocessed raw-count data such as Xenium."
   },
-  "readme": "Scanpy path from raw counts to Leiden clusters plus a UMAP embedding. No explicit HVG step: PCA uses an existing `highly_variable` flag if present (Visium) and all genes otherwise (targeted panels like Xenium have too few genes for a fixed n_top_genes). Leiden uses the igraph flavor (scanpy's recommended, future-proof default).",
+  "readme": "Scanpy path from raw counts to Leiden clusters plus a UMAP embedding. No explicit HVG step: PCA uses an existing `highly_variable` flag if present (Visium) and all genes otherwise (targeted panels like Xenium have too few genes for a fixed n_top_genes). Leiden clustering runs on the graspologic (MIT) implementation, not scanpy's GPL igraph/leidenalg backends.",
   "steps": [
     { "namespace": "sc.pp", "function": "normalize_total", "params": {} },
     { "namespace": "sc.pp", "function": "log1p", "params": {} },
     { "namespace": "sc.pp", "function": "pca", "params": {} },
     { "namespace": "sc.pp", "function": "neighbors", "params": {} },
-    { "namespace": "sc.tl", "function": "leiden", "params": { "flavor": "igraph", "n_iterations": 2 } },
+    { "namespace": "custom", "function": "leiden", "params": { "n_iterations": 2 } },
     { "namespace": "sc.tl", "function": "umap", "params": {} }
   ]
 }

@@ -832,7 +832,7 @@ at startup (`backend/app/recipes/__init__.py`):
 
 Steps are the same `{namespace, function, params}` descriptors used everywhere. Valid
 namespaces: squidpy `gr`/`im`/`tl`/`pl`/`read`; scanpy `sc.pp`/`sc.tl`/`sc.get` (no
-`sc.pl`). A param set to `null` is dropped before the call. The 18 bundled recipes cover
+`sc.pl`). A param set to `null` is dropped before the call. The 17 bundled recipes cover
 squidpy spatial workflows on `visium_hne`, scanpy preprocessing/clustering on raw counts
 (Xenium), and scanpy-tutorial reproductions (full Visium analysis, MERFISH clustering).
 
@@ -1201,7 +1201,8 @@ SpatialData fixture and asserts the envelope, and that plotting calls produce a 
 without mutating. Functions whose smoke inputs can't be synthesized are **visible skips**, not
 silent passes. The **license gate** reads installed package metadata, fails on
 torch/scvi or un-adjudicated copyleft, and emits a CycloneDX SBOM; `license_allowlist.yaml`
-is the durable record of the clustering-GPL decision (§25). Checks **skip** until their
+records the resolved clustering-GPL posture (§25): the copyleft chain was removed, so the
+gate now fails if `leidenalg`/`igraph` reappear. Checks **skip** until their
 seam is wired, so the gate is adoptable incrementally.
 
 ---
@@ -1315,13 +1316,17 @@ confirmed with counsel.**
 - **Baseline obligations:** bundle a `THIRD_PARTY_LICENSES` (surfaced in the in-app
   **About / Acknowledgements** view via `GET /api/about/licenses` from the SBOMs);
   preserve Apache-2.0 `NOTICE` files; respect the BSD-3 non-endorsement clause.
-- **GPL exposure — clustering (decide explicitly):** Leiden/Louvain pull GPL deps
-  (`python-igraph`, `leidenalg`, `louvain`), used by the region-from-clustering path.
-  A deliberate decision is required — comply, swap to a non-GPL method, or isolate
-  clustering as a separate process. `license_allowlist.yaml` records the decision; the
-  `release-readiness` skill blocks distribution while it is a `TODO`. Do **not** bundle
-  napari/Qt (GPL/commercial, unneeded). **scvi-tools is excluded**, so there is no
-  torch/CUDA footprint or added copyleft surface.
+- **GPL exposure — clustering (resolved, GPL removed):** Leiden/Louvain via scanpy
+  pull GPL deps (`python-igraph`, `leidenalg`, `louvain`). These were removed: Leiden
+  clustering now runs on `graspologic-native` (MIT, the Rust core `graspologic` wraps),
+  exposed as `custom.leiden` and used by the region-from-clustering path; `sc.tl.leiden`
+  and `sc.tl.louvain` are no longer offered (Louvain is dropped — Leiden supersedes it).
+  `celltypist` hard-depends on `leidenalg`, so the Docker/dev install strips
+  `leidenalg`+`igraph` after `pip install` and the annotate path over-clusters with
+  graspologic instead; the license gate fails if the GPL packages reappear.
+  `clustering_decision_todo` is now `false`. Do **not** bundle napari/Qt
+  (GPL/commercial, unneeded). **scvi-tools is excluded**, so there is no torch/CUDA
+  footprint or added copyleft surface.
 - **Pre-distribution checklist:** run `pip-licenses` + `license-checker` over the
   fully-resolved trees; generate an SBOM (the license gate emits CycloneDX); adjudicate
   every GPL/LGPL/AGPL/MPL/CC-NC license; check bundled example datasets for their own
