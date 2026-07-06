@@ -88,7 +88,9 @@ same picker → form → queue → history machinery.
   `GET /api/sessions/{id}/var-names?q=&limit=` (so datasets with tens of thousands of
   genes stay responsive — matches are found server-side, prefix hits first). The chosen
   value is saved in the session display state. **Show points** and **Show image**
-  checkboxes toggle each layer independently. Each image channel can be toggled, renamed,
+  checkboxes toggle each layer independently; these toggles, the camera (pan/zoom, and
+  the embedding's 3D orbit), and an isolated category are all saved to the session too, so
+  the view is restored on reload. Each image channel can be toggled, renamed,
   and assigned one of 8 canonical spectrum colors (the server composites channels
   by additively blending each channel's intensity tinted with its color); a togglable
   legend overlays a color swatch + label for every visible channel. A separate,

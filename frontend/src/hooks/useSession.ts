@@ -1,12 +1,13 @@
 import { useEffect, useCallback } from 'react';
 import { useAppStore } from '../store/sessionStore';
 import { getSession } from '../api';
+import { isSpatialDisplay } from '../types';
 
 export function useSession(sessionId: string | null): {
   loading: boolean;
   refresh: () => void;
 } {
-  const { setSessionState, sessionState } = useAppStore();
+  const { setSessionState, setIsolatedCategory, sessionState } = useAppStore();
 
   const load = useCallback(() => {
     if (!sessionId) {
@@ -14,9 +15,14 @@ export function useSession(sessionId: string | null): {
       return;
     }
     getSession(sessionId)
-      .then(setSessionState)
+      .then((state) => {
+        setSessionState(state);
+        // Restore the persisted isolated category (setActiveSessionId cleared it).
+        const spatial = state.app_state.displays.find(isSpatialDisplay);
+        setIsolatedCategory(spatial ? spatial.encoding.isolated_category ?? null : null);
+      })
       .catch(console.error);
-  }, [sessionId, setSessionState]);
+  }, [sessionId, setSessionState, setIsolatedCategory]);
 
   useEffect(() => {
     load();

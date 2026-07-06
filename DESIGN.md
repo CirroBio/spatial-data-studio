@@ -165,8 +165,11 @@ sdata.attrs["app_state"] = {
     { "id": "uuid", "type": "spatial_canvas",
       "encoding": { "coords": "obsm:spatial", "color_by": "obs:leiden",
                     "image_layer": "morphology_focus", "point_size": 3,
-                    "opacity": 0.8, "channels": [ /* per-index visible/name/color */ ] },
-      "viewport": { "target": [x,y], "zoom": z } }   // DEFAULT camera on load only
+                    "opacity": 0.8, "channels": [ /* per-index visible/name/color */ ],
+                    "show_points": true, "show_image": true,       // layer-visibility toggles
+                    "show_channel_legend": true,
+                    "isolated_category": "Tumor" },                 // dim all but this category
+      "viewport": { "target": [x,y], "zoom": z } }   // persisted on pan/zoom (embedding adds rotationX/rotationOrbit in 3D)
   ],
   "data_versions": { "obs:leiden": 3 },   // per-field counters bumped by structural diffs (§9)
   "regions": [ /* registered region sets — see §10.1 */ ]

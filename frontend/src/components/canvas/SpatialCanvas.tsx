@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import DeckGL from '@deck.gl/react';
 import { OrthographicView } from '@deck.gl/core';
 import { ScatterplotLayer, PolygonLayer, PathLayer } from '@deck.gl/layers';
@@ -8,7 +8,7 @@ import { useArrowField } from '../../hooks/useArrowField';
 import { getImageInfo, putDisplay, saveSnapshot } from '../../api';
 import { reportError } from '../../lib/errors';
 import TransformEditor from '../TransformEditor';
-import type { SpatialDisplaySpec, ImageInfo } from '../../types';
+import { isSpatialDisplay, type SpatialDisplaySpec, type ImageInfo } from '../../types';
 import { useArrowPositions } from './useArrowPositions';
 import { useImageTiles } from './useImageTiles';
 import { useCanvasViewState } from './useCanvasViewState';
@@ -53,9 +53,11 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   const { table: colorTable, loading: colorLoading } = useArrowField(sessionId, colorByPath, colorVersion);
 
   const [imageInfo, setImageInfo] = useState<ImageInfo | null>(null);
-  const [showPoints, setShowPoints] = useState(true);
-  const [showImage, setShowImage] = useState(display.encoding.image_layer !== null);
-  const [showLegend, setShowLegend] = useState(true);
+  // Layer-visibility toggles are persisted in the display encoding (fall back to the
+  // historical defaults when a checkpoint predates these fields).
+  const showPoints = display.encoding.show_points ?? true;
+  const showImage = display.encoding.show_image ?? (display.encoding.image_layer !== null);
+  const showLegend = display.encoding.show_channel_legend ?? true;
   const [transformOpen, setTransformOpen] = useState(false);
   const [openColorPicker, setOpenColorPicker] = useState<number | null>(null);
   const [panelCollapsed, setPanelCollapsed] = useState(false);
@@ -156,19 +158,29 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
     return result;
   }, [imageLayers, positions, colors, showPoints, display.encoding.point_size, display.encoding.opacity]);
 
-  const [pendingUpdate, setPendingUpdate] = useState<ReturnType<typeof setTimeout> | null>(null);
+  const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  function updateEncoding(patch: Partial<typeof display.encoding>) {
-    const updated: SpatialDisplaySpec = {
-      ...display,
-      encoding: { ...display.encoding, ...patch },
-    };
+  // Update the store mirror immediately, then debounce the PUT so rapid changes
+  // (a slider drag, a pan) collapse into one write. A ref (not state) holds the timer
+  // so back-to-back viewport events during a drag reliably reset the same debounce.
+  function persistDisplay(updated: SpatialDisplaySpec) {
     updateDisplay(updated);
-    if (pendingUpdate) clearTimeout(pendingUpdate);
-    const t = setTimeout(() => {
+    if (persistTimer.current) clearTimeout(persistTimer.current);
+    persistTimer.current = setTimeout(() => {
       putDisplay(sessionId, updated).catch(console.error);
     }, 500);
-    setPendingUpdate(t);
+  }
+
+  // Build from the latest store spec, not the possibly-stale prop, so an encoding
+  // edit and a viewport pan in the same debounce window don't clobber each other.
+  function currentSpec(): SpatialDisplaySpec {
+    const stored = useAppStore.getState().sessionState?.app_state.displays.find((d) => d.id === display.id);
+    return stored && isSpatialDisplay(stored) ? stored : display;
+  }
+
+  function updateEncoding(patch: Partial<typeof display.encoding>) {
+    const base = currentSpec();
+    persistDisplay({ ...base, encoding: { ...base.encoding, ...patch } });
   }
 
   const SEL = canvasMode === 'annotate'
@@ -215,7 +227,12 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
       <DeckGL
         views={VIEWS}
         viewState={viewState as unknown as Record<string, OrthographicViewState>}
-        onViewStateChange={({ viewState: vs }) => setViewState(vs as OrthographicViewState)}
+        onViewStateChange={({ viewState: vs }) => {
+          const v = vs as OrthographicViewState;
+          setViewState(v);
+          const t = v.target as number[];
+          persistDisplay({ ...currentSpec(), viewport: { target: [t[0], t[1]], zoom: v.zoom as number } });
+        }}
         layers={[...layers, ...drawLayers]}
         controller={drawMode ? { doubleClickZoom: false } : true}
         onClick={handleClick}
@@ -239,11 +256,11 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
         legendVisible={legendVisible}
         updateEncoding={updateEncoding}
         showPoints={showPoints}
-        setShowPoints={setShowPoints}
+        setShowPoints={(v) => updateEncoding({ show_points: v })}
         showImage={showImage}
-        setShowImage={setShowImage}
+        setShowImage={(v) => updateEncoding({ show_image: v })}
         showLegend={showLegend}
-        setShowLegend={setShowLegend}
+        setShowLegend={(v) => updateEncoding({ show_channel_legend: v })}
         channels={channels}
         setChannel={setChannel}
         openColorPicker={openColorPicker}

@@ -5,7 +5,10 @@ import type {
   FunctionEntry,
   ResourceSample,
   DisplaySpec,
+  SpatialDisplaySpec,
 } from '../types';
+import { isSpatialDisplay } from '../types';
+import { putDisplay } from '../api';
 
 interface AppStore {
   // sessions list
@@ -109,7 +112,7 @@ export function applyTheme(theme: 'dark' | 'light') {
 // Apply the persisted theme before first paint to avoid a flash.
 applyTheme(readTheme());
 
-export const useAppStore = create<AppStore>((set) => ({
+export const useAppStore = create<AppStore>((set, get) => ({
   sessions: [],
   setSessions: (sessions) => set({ sessions }),
   upsertSession: (summary) =>
@@ -199,7 +202,22 @@ export const useAppStore = create<AppStore>((set) => ({
   activeRegionSetId: null,
   setActiveRegionSetId: (id) => set({ activeRegionSetId: id }),
   isolatedCategory: null,
-  setIsolatedCategory: (cat) => set({ isolatedCategory: cat }),
+  // The isolated category is session-global (set from AnnotationsPanel, read by both
+  // canvases) but has no dedicated persisted slot, so it write-throughs to the spatial
+  // display's encoding and is re-hydrated on load (useSession).
+  setIsolatedCategory: (cat) => {
+    set({ isolatedCategory: cat });
+    const s = get();
+    const spatial = s.sessionState?.app_state.displays.find(isSpatialDisplay);
+    if (spatial && s.activeSessionId && (spatial.encoding.isolated_category ?? null) !== cat) {
+      const updated: SpatialDisplaySpec = {
+        ...spatial,
+        encoding: { ...spatial.encoding, isolated_category: cat },
+      };
+      s.updateDisplay(updated);
+      putDisplay(s.activeSessionId, updated).catch(console.error);
+    }
+  },
   annotationNewSetName: '',
   annotationCategoryName: '',
   annotationColor: '#e05c5c',

@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import DeckGL from '@deck.gl/react';
 import { OrthographicView, OrbitView } from '@deck.gl/core';
 import { ScatterplotLayer, PointCloudLayer } from '@deck.gl/layers';
@@ -7,7 +7,7 @@ import { useAppStore } from '../../store/sessionStore';
 import { useArrowField } from '../../hooks/useArrowField';
 import { putDisplay, addDisplay as postDisplay } from '../../api';
 import { reportError } from '../../lib/errors';
-import type { EmbeddingDisplaySpec, ObsField, ObsmField } from '../../types';
+import { isEmbeddingDisplay, type EmbeddingDisplaySpec, type ObsField, type ObsmField } from '../../types';
 import { useArrowPositions } from './useArrowPositions';
 import { useEmbeddingViewState, type EmbeddingViewState } from './useEmbeddingViewState';
 import { useSpotColors } from './useSpotColors';
@@ -153,7 +153,7 @@ function EmbeddingCanvasView({
   const { table: colorTable, loading: colorLoading } = useArrowField(sessionId, colorByPath, colorVersion);
 
   const [panelCollapsed, setPanelCollapsed] = useState(false);
-  const [pendingUpdate, setPendingUpdate] = useState<ReturnType<typeof setTimeout> | null>(null);
+  const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const positions = useArrowPositions(coordsTable, {
     xIndex: x_component,
@@ -228,14 +228,27 @@ function EmbeddingCanvasView({
     ];
   }, [positions, colors, is_3d, display.encoding.point_size, display.encoding.opacity]);
 
-  function updateEncoding(patch: Partial<EmbeddingDisplaySpec['encoding']>) {
-    const updated: EmbeddingDisplaySpec = { ...display, encoding: { ...display.encoding, ...patch } };
+  // Update the store mirror immediately, then debounce the PUT so a slider drag or a
+  // pan/rotate collapses into one write. A ref (not state) holds the timer so back-to-back
+  // viewport events during a drag reliably reset the same debounce.
+  function persistDisplay(updated: EmbeddingDisplaySpec) {
     updateDisplay(updated);
-    if (pendingUpdate) clearTimeout(pendingUpdate);
-    const t = setTimeout(() => {
+    if (persistTimer.current) clearTimeout(persistTimer.current);
+    persistTimer.current = setTimeout(() => {
       putDisplay(sessionId, updated).catch(console.error);
     }, 500);
-    setPendingUpdate(t);
+  }
+
+  // Build from the latest store spec, not the possibly-stale prop, so an encoding edit
+  // and a camera move in the same debounce window don't clobber each other.
+  function currentSpec(): EmbeddingDisplaySpec {
+    const stored = useAppStore.getState().sessionState?.app_state.displays.find((d) => d.id === display.id);
+    return stored && isEmbeddingDisplay(stored) ? stored : display;
+  }
+
+  function updateEncoding(patch: Partial<EmbeddingDisplaySpec['encoding']>) {
+    const base = currentSpec();
+    persistDisplay({ ...base, encoding: { ...base.encoding, ...patch } });
   }
 
   const colorByName = colorByLabel(colorByPath);
@@ -253,7 +266,14 @@ function EmbeddingCanvasView({
       <DeckGL
         views={views}
         viewState={viewState as unknown as Record<string, EmbeddingViewState>}
-        onViewStateChange={({ viewState: vs }) => setViewState(vs as EmbeddingViewState)}
+        onViewStateChange={({ viewState: vs }) => {
+          setViewState(vs as EmbeddingViewState);
+          const v = vs as { target: number[]; zoom: number; rotationX?: number; rotationOrbit?: number };
+          const viewport = is_3d
+            ? { target: [v.target[0], v.target[1], v.target[2] ?? 0], zoom: v.zoom, rotationX: v.rotationX, rotationOrbit: v.rotationOrbit }
+            : { target: [v.target[0], v.target[1]], zoom: v.zoom };
+          persistDisplay({ ...currentSpec(), viewport });
+        }}
         layers={layers}
         controller={true}
         getCursor={({ isDragging }) => (isDragging ? 'grabbing' : 'grab')}

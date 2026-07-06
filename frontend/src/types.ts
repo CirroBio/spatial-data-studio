@@ -107,6 +107,10 @@ export interface DisplayEncoding {
   channels?: Record<string, ChannelState>;  // per-channel on/off + rename (v3 Part 10)
   legend_visible?: boolean;  // cell-color legend (colorbar / category swatches); defaults on
   legend_title?: string;     // overrides the default title (color_by column, sans "obs:")
+  show_points?: boolean;     // points-layer visibility; defaults on
+  show_image?: boolean;      // image-layer visibility; defaults to (image_layer != null)
+  show_channel_legend?: boolean;  // image channel legend visibility; defaults on
+  isolated_category?: string | null;  // isolate one category in the color-by legend (dims the rest)
 }
 
 export interface Viewport {
