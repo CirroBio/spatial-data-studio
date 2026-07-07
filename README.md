@@ -101,7 +101,10 @@ same picker → form → queue → history machinery.
   togglable cell-color legend (bottom-right) reflects the current **Color by** — a
   viridis colorbar with the value range for numeric columns (X/layer genes and numeric
   obs), category swatches for categorical ones — with an editable title that defaults to
-  the column (gene) name. A spinner in the top-left signals when cells, colors, or image
+  the column (gene) name. A categorical column with more than 100 distinct levels (e.g.
+  an object-dtype per-cell ID column) is not colored per level — points render in a
+  neutral color and the legend notes the level count — to avoid an unusable palette and a
+  browser-hanging legend. A spinner in the top-left signals when cells, colors, or image
   tiles are (re)loading.
 - **Tiled image pyramid** — large sections (e.g. Xenium, ~34k×14k px) are drawn from
   the `SpatialData` multiscale pyramid: a coarse whole-image base plus level-of-detail
@@ -153,7 +156,11 @@ same picker → form → queue → history machinery.
   compute/plot item opens its detail in a modal over the current view (canvas or
   inspector); it shows the call's parameters and an **Edit & rerun** that reopens
   the original function form pre-filled. Clicking the selected item again
-  deselects it. New/Save session are icon buttons (hover for labels) in the top
+  deselects it. Every submitted operation (a function, a re-run, a redraw, or a
+  recipe/run-all step) appears in its list immediately with a live status badge
+  (`queued` → `running` → `completed`/`drawn`) driven straight from the SSE job
+  events, so a long-running or back-to-back job shows progress rather than
+  appearing only once it finishes. New/Save session are icon buttons (hover for labels) in the top
   toolbar. Saving blocks the whole UI behind a spinner overlay until the write
   finishes; an unobtrusive Stop button cancels it if the job is still queued
   (a save already writing to disk can't be interrupted).
@@ -350,9 +357,12 @@ split for testing — the multi-sample methods (**Milo differential abundance**,
 ## Tests
 
 - `cd backend && python test_e2e.py` — full in-process round trip (load → compute →
-  Arrow → plot → save `.zarr.zip` → reload), asserting app state + computed fields survive;
-  also exercises the six spatial/multi-sample custom methods above end to end on
-  `xenium_tma.zarr`, including their own save/reload round trip.
+  Arrow → plot → save `.zarr.zip` → reload), asserting app state + computed fields survive.
+  Also covers staged/pending recipe steps + preflight, region promote/annotate and their
+  persistence, the editable points-transform (affine applied to the Arrow fetch, persisted),
+  content-hashed checkpoint naming, `data_versions` bumping + plot invalidation/redraw,
+  persisted canvas encoding, the data-inspector endpoints, cross-session isolation, and the
+  six spatial/multi-sample custom methods end to end on `xenium_tma.zarr`.
 - `cd frontend && npx tsc --noEmit -p tsconfig.app.json && npm run build` — typecheck + build.
 - `cd frontend && npm run test:e2e` — Playwright browser e2e tests (`frontend/e2e/`). Boots the
   real backend (against `test-data/`) and the Vite dev server itself (see

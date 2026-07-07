@@ -45,7 +45,11 @@ export default function RecipeGallery({ sessionId, onClose }: Props) {
         });
       }
       await importRecipe(sessionId, { steps: recipe.steps }, mode);
-      setSessionState(await getSession(sessionId));
+      // Staging emits no SSE event, so refetch to show the new pending rows. Run
+      // mode enqueues jobs whose job.queued events insert the rows live, and a
+      // refetch here would block on the session read lock until the first step
+      // finishes.
+      if (mode === 'stage') setSessionState(await getSession(sessionId));
       pushNotification({
         kind: 'info',
         message: mode === 'stage'

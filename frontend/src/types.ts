@@ -222,6 +222,7 @@ export interface JobQueuedEvent {
   job_id: string;
   descriptor: Record<string, unknown>;
   position: number;
+  effect_class?: 'compute' | 'plot';  // absent for special (save/subset/…) jobs
 }
 
 export interface JobStartedEvent {

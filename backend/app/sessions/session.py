@@ -140,7 +140,8 @@ class Session:
                                 "keep_failures": keep_failures}
         self._queue.put((entry_id, ec, descriptor))
         BUS.publish("job.queued", {"session_id": self.id, "job_id": entry_id,
-                                   "descriptor": descriptor, "position": self._queue.qsize()})
+                                   "descriptor": descriptor, "position": self._queue.qsize(),
+                                   "effect_class": ec})
 
     def enqueue_descriptor(self, descriptor: dict, keep_failures: bool = True) -> str:
         """Run-now fast path: record + submit immediately. Frontend invocations keep
@@ -501,7 +502,8 @@ class Session:
         self._jobs[plot_id] = {"kind": "plot", "descriptor": descriptor, "status": "queued"}
         self._queue.put((plot_id, "plot", descriptor))
         BUS.publish("job.queued", {"session_id": self.id, "job_id": plot_id,
-                                   "descriptor": descriptor, "position": self._queue.qsize()})
+                                   "descriptor": descriptor, "position": self._queue.qsize(),
+                                   "effect_class": "plot"})
         return True
 
     def job_status(self, job_id: str):

@@ -6,9 +6,20 @@ import type {
   ResourceSample,
   DisplaySpec,
   SpatialDisplaySpec,
+  HistEntry,
+  PlotEntry,
 } from '../types';
 import { isSpatialDisplay } from '../types';
 import { putDisplay } from '../api';
+
+// A job's status lands in whichever collection holds it; these narrow the shared
+// status union so setEntryStatus can update the right record type without a cast.
+const HIST_STATUSES = ['pending', 'queued', 'running', 'completed', 'failed', 'cancelled'] as const;
+const PLOT_STATUSES = ['pending', 'queued', 'running', 'drawn', 'invalidated', 'failed'] as const;
+const isHistStatus = (s: HistEntry['status'] | PlotEntry['status']): s is HistEntry['status'] =>
+  (HIST_STATUSES as readonly string[]).includes(s);
+const isPlotStatus = (s: HistEntry['status'] | PlotEntry['status']): s is PlotEntry['status'] =>
+  (PLOT_STATUSES as readonly string[]).includes(s);
 
 interface AppStore {
   // sessions list
@@ -25,6 +36,14 @@ interface AppStore {
   updateDataVersions: (versions: Record<string, number>) => void;
   updateDisplay: (display: DisplaySpec) => void;
   addDisplay: (display: DisplaySpec) => void;
+  // Optimistically show a submitted compute/plot as queued straight from the
+  // job.queued event — a refetch can't do this because it blocks on the session
+  // read lock until the (already-running) job finishes.
+  addQueuedEntry: (
+    effectClass: 'compute' | 'plot',
+    base: { id: string; namespace: string; function: string; params: Record<string, unknown> },
+  ) => void;
+  setEntryStatus: (id: string, status: HistEntry['status'] | PlotEntry['status']) => void;
 
   // functions list
   functions: FunctionEntry[];
@@ -178,6 +197,36 @@ export const useAppStore = create<AppStore>((set, get) => ({
           },
         },
       };
+    }),
+  addQueuedEntry: (effectClass, base) =>
+    set((s) => {
+      if (!s.sessionState) return {};
+      const app = s.sessionState.app_state;
+      if (effectClass === 'plot') {
+        const plots = app.plots.some((p) => p.id === base.id)
+          ? app.plots.map((p) => (p.id === base.id ? { ...p, status: 'queued' as const } : p))
+          : [...app.plots, { ...base, status: 'queued' as const, references: [] }];
+        return { sessionState: { ...s.sessionState, app_state: { ...app, plots } } };
+      }
+      const compute_history = app.compute_history.some((h) => h.id === base.id)
+        ? app.compute_history.map((h) => (h.id === base.id ? { ...h, status: 'queued' as const } : h))
+        : [...app.compute_history, {
+            ...base, status: 'queued' as const, squidpy_version: s.squidpyVersion,
+            started_at: null, finished_at: null,
+          }];
+      return { sessionState: { ...s.sessionState, app_state: { ...app, compute_history } } };
+    }),
+  setEntryStatus: (id, status) =>
+    set((s) => {
+      if (!s.sessionState) return {};
+      const app = s.sessionState.app_state;
+      const compute_history = isHistStatus(status)
+        ? app.compute_history.map((h) => (h.id === id ? { ...h, status } : h))
+        : app.compute_history;
+      const plots = isPlotStatus(status)
+        ? app.plots.map((p) => (p.id === id ? { ...p, status } : p))
+        : app.plots;
+      return { sessionState: { ...s.sessionState, app_state: { ...app, compute_history, plots } } };
     }),
 
   functions: [],

@@ -26,6 +26,8 @@ export function useSSE(): void {
     updateDisplay,
     addActiveJob,
     removeActiveJob,
+    addQueuedEntry,
+    setEntryStatus,
     activeSessionId,
     setSessionState,
     pushNotification,
@@ -55,24 +57,30 @@ export function useSSE(): void {
       }
     });
 
-    // The backend appends the history/plot record at enqueue time, so refetch as
-    // soon as a job is queued/started — the entry then shows immediately (queued →
-    // running) instead of only appearing once it finishes. Job tracking is scoped to
-    // the active session so another session's activity never spins this viewer's UI.
+    // Show the row immediately from the event itself. A refetch here can't do it:
+    // GET /api/sessions takes the session read lock, which blocks until the
+    // already-running job releases the write lock — so the row would only appear
+    // once the job finished. Insert on queued, flip to running on started, and let
+    // the terminal events below refetch to reconcile the full record (the write
+    // lock is released by then). Job tracking is scoped to the active session so
+    // another session's activity never spins this viewer's UI.
     es.addEventListener('job.queued', (e: MessageEvent) => {
       const data = parseEvent<JobQueuedEvent>(e);
-      if (data.session_id === activeSessionId) {
-        addActiveJob(data.job_id);
-        getSession(data.session_id).then(setSessionState).catch(console.error);
+      if (data.session_id !== activeSessionId) return;
+      addActiveJob(data.job_id);
+      if (data.effect_class) {
+        const d = data.descriptor as { namespace: string; function: string; params?: Record<string, unknown> };
+        addQueuedEntry(data.effect_class, {
+          id: data.job_id, namespace: d.namespace, function: d.function, params: d.params ?? {},
+        });
       }
     });
 
     es.addEventListener('job.started', (e: MessageEvent) => {
       const data = parseEvent<JobStartedEvent>(e);
-      if (data.session_id === activeSessionId) {
-        addActiveJob(data.job_id);
-        getSession(data.session_id).then(setSessionState).catch(console.error);
-      }
+      if (data.session_id !== activeSessionId) return;
+      addActiveJob(data.job_id);
+      setEntryStatus(data.job_id, 'running');
     });
 
     es.addEventListener('job.completed', (e: MessageEvent) => {
@@ -89,6 +97,11 @@ export function useSSE(): void {
       // moves this viewer, re-renders their canvas, or toasts at them.
       if (data.session_id !== activeSessionId) return;
       updateDataVersions(data.data_versions);
+      // Flip the row to its terminal status from the event, not the refetch below:
+      // in a back-to-back queue (recipe / run-all) this job's completion refetch
+      // blocks on the read lock behind the NEXT job's write lock, so without this
+      // the finished row would keep showing "running" until the whole batch drains.
+      if (data.kind === 'compute') setEntryStatus(data.job_id, 'completed');
       // Save runs as a background job with no visible result; confirm it finished.
       if (data.kind === 'save') {
         pushNotification({ kind: 'info', message: 'Session saved.' });
@@ -118,6 +131,9 @@ export function useSSE(): void {
       // the user isn't left with a silently-closed form and no feedback — but only to
       // the viewer of that session, so another user's failure doesn't toast here.
       if (data.session_id !== activeSessionId) return;
+      // Frontend jobs keep failures in history (keep_failures=True); flip the row
+      // from the event so it doesn't linger as "running" behind a blocked refetch.
+      setEntryStatus(data.job_id, 'failed');
       const prefix = data.source ? `[${data.source} @ ${data.timestamp}] ` : '';
       pushNotification({ kind: 'error', message: `${prefix}${data.error ?? 'unknown error'}` });
       getSession(data.session_id).then(setSessionState).catch(console.error);
@@ -126,6 +142,7 @@ export function useSSE(): void {
     es.addEventListener('plot.drawn', (e: MessageEvent) => {
       const data = parseEvent<PlotDrawnEvent>(e);
       if (data.session_id === activeSessionId) {
+        setEntryStatus(data.plot_id, 'drawn');
         getSession(data.session_id)
           .then(setSessionState)
           .catch(console.error);
@@ -135,6 +152,7 @@ export function useSSE(): void {
     es.addEventListener('plot.invalidated', (e: MessageEvent) => {
       const data = parseEvent<PlotInvalidatedEvent>(e);
       if (data.session_id === activeSessionId) {
+        data.plot_ids.forEach((id) => setEntryStatus(id, 'invalidated'));
         getSession(data.session_id).then(setSessionState).catch(console.error);
       }
     });
@@ -160,5 +178,5 @@ export function useSSE(): void {
     return () => {
       es.close();
     };
-  }, [activeSessionId, upsertSession, setResourceSample, updateDataVersions, updateDisplay, addActiveJob, removeActiveJob, setSessionState, pushNotification, setActiveSessionId, setSessions, removeSession]);
+  }, [activeSessionId, upsertSession, setResourceSample, updateDataVersions, updateDisplay, addActiveJob, removeActiveJob, addQueuedEntry, setEntryStatus, setSessionState, pushNotification, setActiveSessionId, setSessions, removeSession]);
 }

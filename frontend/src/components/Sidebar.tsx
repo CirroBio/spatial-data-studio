@@ -126,9 +126,10 @@ export default function Sidebar({ onNewSession, sessions }: Props) {
 
   async function handleRunAllPending() {
     if (!activeSessionId) return;
+    // Each staged step's job.queued event flips its row to queued live; a refetch
+    // here would block on the session read lock until the first step finishes.
     try {
       await runAllPending(activeSessionId);
-      setSessionState(await getSession(activeSessionId));
     } catch (err) {
       reportError('Run all pending failed', err);
     }
