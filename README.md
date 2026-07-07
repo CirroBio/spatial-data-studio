@@ -138,7 +138,8 @@ same picker → form → queue → history machinery.
   (`PointCloudLayer` under `OrbitView`), hidden when the selected slot has fewer than
   three components. A session with no non-spatial `obsm` shows an empty state to run a
   dimensionality reduction first; sessions that gain one later (or predate this
-  feature) can create the view on demand via `POST /api/sessions/{id}/displays`.
+  feature) create the view on demand from a setup menu that picks the obsm slot and the
+  initial **Color by** value (`POST /api/sessions/{id}/displays`).
 - **Data inspector** — a Spatial/Embeddings/Tables switch in the viewer's top-left
   opens a paginated browser over the `SpatialData` elements: each table's `obs`/`var`
   dataframes, `shapes` GeoDataFrames (geometry as WKT), `points`, and image

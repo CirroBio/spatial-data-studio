@@ -12,6 +12,7 @@ import { useArrowPositions } from './useArrowPositions';
 import { useEmbeddingViewState, type EmbeddingViewState } from './useEmbeddingViewState';
 import { useSpotColors } from './useSpotColors';
 import EmbeddingControls from './EmbeddingControls';
+import ColorBySelect from './ColorBySelect';
 import { colorByLabel } from './colorBy';
 import { LoadingCue, CellColorLegend } from './CanvasOverlays';
 
@@ -32,6 +33,7 @@ export default function EmbeddingCanvas({ display, sessionId, obsmFields, obsFie
         sessionId={sessionId}
         obsmFields={obsmFields.filter((f) => f.name !== 'spatial')}
         obsFields={obsFields}
+        layers={layerNames}
         onCreated={addDisplay}
       />
     );
@@ -52,14 +54,18 @@ function EmbeddingEmptyState({
   sessionId,
   obsmFields,
   obsFields,
+  layers,
   onCreated,
 }: {
   sessionId: string;
   obsmFields: ObsmField[];
   obsFields: ObsField[];
+  layers: string[];
   onCreated: (display: EmbeddingDisplaySpec) => void;
 }) {
+  const firstCategorical = obsFields.find((f) => f.kind === 'categorical');
   const [selectedKey, setSelectedKey] = useState(obsmFields[0]?.name ?? '');
+  const [colorBy, setColorBy] = useState(firstCategorical ? `obs:${firstCategorical.name}` : '');
   const [creating, setCreating] = useState(false);
 
   if (obsmFields.length === 0) {
@@ -70,21 +76,24 @@ function EmbeddingEmptyState({
     );
   }
 
+  // selectedKey's initial value is captured before any embedding exists (the
+  // empty branch above), so fall back to the first available key if it's stale.
+  const embeddingKey = obsmFields.some((f) => f.name === selectedKey) ? selectedKey : obsmFields[0].name;
+
   async function handleCreate() {
-    const field = obsmFields.find((f) => f.name === selectedKey);
+    const field = obsmFields.find((f) => f.name === embeddingKey);
     const n = field?.n_components ?? 2;
-    const firstCategorical = obsFields.find((f) => f.kind === 'categorical');
     setCreating(true);
     try {
       const spec = await postDisplay(sessionId, {
         type: 'embedding_canvas',
         encoding: {
-          obsm_key: selectedKey,
+          obsm_key: embeddingKey,
           x_component: 0,
           y_component: Math.min(1, n - 1),
           z_component: Math.min(2, n - 1),
           is_3d: false,
-          color_by: firstCategorical ? `obs:${firstCategorical.name}` : '',
+          color_by: colorBy,
           point_size: 4,
           opacity: 0.85,
           colormap: 'viridis',
@@ -101,24 +110,39 @@ function EmbeddingEmptyState({
     }
   }
 
+  const labelClass = 'text-[10px] text-muted font-mono uppercase tracking-wide';
+
   return (
     <div className="flex flex-col items-center justify-center h-full gap-3 text-muted">
       <span className="text-sm">No embedding view configured for this session yet.</span>
-      <div className="flex items-center gap-2">
-        <select
-          value={selectedKey}
-          onChange={(e) => setSelectedKey(e.target.value)}
-          className="bg-bg border border-border rounded px-2 py-1 text-xs text-text focus:outline-none focus:border-accent"
-        >
-          {obsmFields.map((f) => (
-            <option key={f.name} value={f.name}>{f.name}</option>
-          ))}
-        </select>
+      <div className="flex flex-col gap-2 w-60">
+        <div className="flex flex-col gap-1">
+          <label className={labelClass}>Embedding</label>
+          <select
+            value={embeddingKey}
+            onChange={(e) => setSelectedKey(e.target.value)}
+            className="w-full bg-bg border border-border rounded px-2 py-1 text-xs text-text focus:outline-none focus:border-accent"
+          >
+            {obsmFields.map((f) => (
+              <option key={f.name} value={f.name}>{f.name}</option>
+            ))}
+          </select>
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className={labelClass}>Color by</label>
+          <ColorBySelect
+            sessionId={sessionId}
+            value={colorBy}
+            obsFields={obsFields}
+            layers={layers}
+            onChange={setColorBy}
+          />
+        </div>
         <button
           type="button"
           onClick={handleCreate}
           disabled={creating}
-          className="px-3 py-1 bg-accent hover:bg-accent/80 text-white rounded text-xs transition-colors disabled:opacity-50"
+          className="mt-1 w-full px-3 py-1 bg-accent hover:bg-accent/80 text-white rounded text-xs transition-colors disabled:opacity-50"
         >
           {creating ? 'Creating…' : 'Create embedding view'}
         </button>
