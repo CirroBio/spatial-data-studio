@@ -28,9 +28,18 @@ key_added
 """
 
 
+from ._docs import custom_doc
+
+_CITATION = ("Original tissue-microarray core detector implemented in this repository "
+             "(clustering of cell coordinates into cores).")
+_DOC = custom_doc("identify-tmas")
+
+
 class IdentifyTMAs(Function):
     source = "custom"
     key = "custom.identify_tmas"
+    citation = _CITATION
+    documentation = _DOC
     namespace = "custom"
     function = "identify_tmas"
     effect_class = "compute"

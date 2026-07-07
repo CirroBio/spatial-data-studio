@@ -23,9 +23,19 @@ def _bad_labels(adata, cell_type_key: str, labels: list) -> list:
     return [v for v in labels if v not in observed]
 
 
+from ._docs import custom_doc
+
+_CITATION = ("Original method implemented in this repository (tissue region derived from cell-type "
+             "labels; each cell's signed distance to the region margin, and the infiltration profile "
+             "along that distance).")
+_DOC = custom_doc("region-boundary-and-infiltration")
+
+
 class RegionBoundary(Function):
     source = "custom"
     key = "custom.region_boundary"
+    citation = _CITATION
+    documentation = _DOC
     namespace = "custom"
     function = "region_boundary"
     effect_class = "compute"
@@ -141,6 +151,8 @@ key_added
 class RegionBoundaryPlot(Function):
     source = "custom"
     key = "custom.region_boundary_plot"
+    citation = _CITATION
+    documentation = _DOC
     namespace = "custom"
     function = "region_boundary_plot"
     effect_class = "plot"
@@ -205,6 +217,8 @@ color_by
 class InfiltrationProfile(Function):
     source = "custom"
     key = "custom.infiltration_profile"
+    citation = _CITATION
+    documentation = _DOC
     namespace = "custom"
     function = "infiltration_profile"
     effect_class = "compute"
@@ -294,6 +308,8 @@ profile_key
 class InfiltrationProfilePlot(Function):
     source = "custom"
     key = "custom.infiltration_profile_plot"
+    citation = _CITATION
+    documentation = _DOC
     namespace = "custom"
     function = "infiltration_profile_plot"
     effect_class = "plot"

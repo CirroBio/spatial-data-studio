@@ -20,9 +20,18 @@ def _uns_key(region_key: str, cell_type_key: str) -> str:
     return f"{region_key}__{cell_type_key}_composition"
 
 
+from ._docs import custom_doc
+
+_CITATION = ("Original method implemented in this repository (per-region cell-type crosstab with "
+             "a chi-square test of independence).")
+_DOC = custom_doc("region-composition")
+
+
 class RegionComposition(Function):
     source = "custom"
     key = "custom.region_composition"
+    citation = _CITATION
+    documentation = _DOC
     namespace = "custom"
     function = "region_composition"
     effect_class = "compute"
@@ -73,6 +82,8 @@ cell_type_key
 class RegionCompositionPlot(Function):
     source = "custom"
     key = "custom.region_composition_plot"
+    citation = _CITATION
+    documentation = _DOC
     namespace = "custom"
     function = "region_composition_plot"
     effect_class = "plot"

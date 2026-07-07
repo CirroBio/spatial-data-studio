@@ -33,6 +33,31 @@ Example: the obs column picker (`ObsFieldSelect`) is shared by Color By, Draw
 Label, and Promote, with `creatable`/`categoricalOnly` props covering their
 differences.
 
+## Every function declares its provenance (always)
+
+Every function the app exposes must define two attributes — `citation` (a text
+reference) and `documentation` (a URL) — surfaced in the picker and enforced by
+`backend/test_e2e.py` (the registry round-trip asserts both are non-empty for
+every entry). Populate them by *source*, never by hardcoding per introspected
+function:
+
+- **External (library) functions** — squidpy, scanpy, spatialdata-io, and any
+  future reflected library. Do **not** set these per function. Add/keep the
+  library's entry in `backend/app/registry/library_meta.yaml`: `citation` is the
+  library's own reference (appropriate for the library as a whole); `doc_url` is a
+  template whose `{path}` is filled with each function's dotted path, so the link
+  lands on *that function's* page in the library's docs. Every reflected function
+  from the library then inherits both automatically. Adding a new library to
+  `library_catalog.yaml`/`introspect.py` means adding one `library_meta.yaml`
+  entry — nothing per function.
+- **Custom functions** (`registry/custom/`) — set both on the class: `citation`
+  points to where the method came from (a paper, online post, or tutorial; for
+  an original method, say so), and `documentation = custom_doc("<anchor>")`
+  (from `custom/_docs.py`) points to that method's section in
+  `backend/app/registry/custom/README.md`. That README section must be written to
+  explain what the method does in terms a user understands; keep its heading's
+  GitHub anchor in sync with the `custom_doc(...)` anchor.
+
 ## Orientation
 
 - Backend: FastAPI (`backend/app`). Operations are discovered by introspecting

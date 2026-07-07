@@ -15,7 +15,7 @@ import config
 
 _REQUIRED_CATALOG_KEYS = {"library", "namespace", "function", "path", "effect_class"}
 _EFFECT_CLASSES = {"compute", "plot", "read", "extract"}
-_CUSTOM_HELPERS = {"__init__.py", "tma_detect.py", "_leiden.py"}  # not Function modules
+_CUSTOM_HELPERS = {"__init__.py", "tma_detect.py", "_leiden.py", "_docs.py"}  # not Function modules
 
 
 def check_catalog() -> list[str]:

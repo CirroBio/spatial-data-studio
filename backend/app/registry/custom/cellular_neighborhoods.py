@@ -73,9 +73,19 @@ class _CNResultView:
         self.celltype_order = celltype_order
 
 
+from ._docs import custom_doc
+
+_CITATION = ("Schurch, C.M. et al. Coordinated Cellular Neighborhoods Orchestrate Antitumoral "
+             "Immunity at the Colorectal Cancer Invasive Front. Cell 182, 1341-1359 (2020). "
+             "doi:10.1016/j.cell.2020.07.005.")
+_DOC = custom_doc("cellular-neighborhoods")
+
+
 class CellularNeighborhoods(Function):
     source = "custom"
     key = "custom.cellular_neighborhoods"
+    citation = _CITATION
+    documentation = _DOC
     namespace = "custom"
     function = "cellular_neighborhoods"
     effect_class = "compute"
@@ -142,6 +152,8 @@ class CellularNeighborhoods(Function):
 class CellularNeighborhoodsPlot(Function):
     source = "custom"
     key = "custom.cellular_neighborhoods_plot"
+    citation = _CITATION
+    documentation = _DOC
     namespace = "custom"
     function = "cellular_neighborhoods_plot"
     effect_class = "plot"

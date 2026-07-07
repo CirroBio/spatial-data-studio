@@ -35,6 +35,8 @@ export interface FunctionEntry {
   doc: string;
   label: string | null;       // human title for custom functions; null for library
   source: string;             // 'custom' or the library name (squidpy | scanpy | spatialdata_io)
+  citation: string;           // reference for the method / library
+  documentation: string;      // URL to the method's docs (library page or custom README section)
   json_schema: Record<string, unknown>;
   ui_schema: Record<string, UiFieldInfo>;
   partially_supported: boolean;

@@ -214,8 +214,9 @@ library upgrade — nothing to hand-edit.
 
 Every operation — library or app-defined — is modeled by an abstract **`Function`**
 (`backend/app/registry/base.py`) with: identity (`namespace`, `name`), a generated
-**form descriptor** (JSON Schema + UI hints), an **effect class** (Section 4.5), and
-an `execute(descriptor, session) -> CallResult` contract (Section 4.7). All three
+**form descriptor** (JSON Schema + UI hints), an **effect class** (Section 4.5),
+**provenance** (`citation` + `documentation`, Section 4.3), and an
+`execute(descriptor, session) -> CallResult` contract (Section 4.7). All three
 kinds of function flow through the same picker → form → queue → history machinery.
 
 ### 4.2 Schema of record
@@ -271,6 +272,21 @@ Type → widget fallback (before the Term Dictionary refines it):
   `ParamSpec`s, zarr-safe serialization of any result the module returns as a live
   DataFrame/array) rather than reimplementing the algorithm. They register in
   `custom/__init__.py`'s `CUSTOM_FUNCTIONS` and carry `namespace: custom`.
+
+**Provenance (`citation` + `documentation`).** Every function carries a `citation`
+(a text reference) and a `documentation` URL, surfaced in the picker and required
+for all functions (enforced by `test_e2e.py`). These are populated by source, not
+hardcoded per reflected function:
+- **Library functions** inherit both from **`backend/app/registry/library_meta.yaml`**
+  (loaded by `library_meta.py`), keyed by library. Each library declares one
+  `citation` (the library's own reference) and a `doc_url` template whose `{path}`
+  is filled with the function's dotted path, so the link resolves to that
+  function's page in the library docs. Adding a library is a one-line meta entry;
+  every reflected function inherits both fields.
+- **Custom functions** set both explicitly: `citation` names where the method came
+  from (paper/post/tutorial, or "original to this repository"), and
+  `documentation = custom_doc("<anchor>")` links to that method's section in
+  **`backend/app/registry/custom/README.md`**, which describes the method for users.
 
 ### 4.4 Parameter Term Dictionary (the only library-specific knowledge)
 

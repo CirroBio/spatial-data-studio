@@ -31,9 +31,19 @@ key_added
 """
 
 
+from ._docs import custom_doc
+
+_CITATION = ("Traag, V.A., Waltman, L. & van Eck, N.J. From Louvain to Leiden: guaranteeing "
+             "well-connected communities. Sci Rep 9, 5233 (2019). doi:10.1038/s41598-019-41695-z "
+             "(partitioning via graspologic, MIT).")
+_DOC = custom_doc("leiden-clustering")
+
+
 class ClusterLeiden(Function):
     source = "custom"
     key = "custom.leiden"
+    citation = _CITATION
+    documentation = _DOC
     namespace = "custom"
     function = "leiden"
     effect_class = "compute"

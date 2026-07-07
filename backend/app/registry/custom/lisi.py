@@ -10,7 +10,12 @@ import numpy as np
 
 from ..base import (CallResult, Function, ParamSpec, capture_log, missing_obs_column, render_plot,
                     resolve_obsm_key, run_compute)
+from ._docs import custom_doc
 from ._vendor import lisi_compute, lisi_plot
+
+_CITATION = ("Korsunsky, I. et al. Fast, sensitive and accurate integration of single-cell "
+             "data with Harmony. Nat Methods 16, 1289-1296 (2019). doi:10.1038/s41592-019-0619-0 (LISI).")
+_DOC = custom_doc("lisi-scores")
 
 _KEY_ADDED_PARAM = ParamSpec(
     "key_added", {"type": "string", "default": "lisi"}, "text", None,
@@ -25,6 +30,8 @@ class LisiScores(Function):
     effect_class = "compute"
     label = "LISI scores"
     summary = "Per-cell iLISI (batch mixing) / cLISI (cell-type separation) scores."
+    citation = _CITATION
+    documentation = _DOC
     doc = """LISI scores
 
 Local Inverse Simpson's Index (Korsunsky et al., Nat Methods 2019): the
@@ -100,6 +107,8 @@ class LisiScoresPlot(Function):
     effect_class = "plot"
     label = "LISI scores (plot)"
     summary = "Score distributions (+ embedding colored by LISI) from 'LISI scores'."
+    citation = _CITATION
+    documentation = _DOC
     doc = """LISI scores (plot)
 
 Violin plot of the per-cell iLISI/cLISI distributions computed by "LISI

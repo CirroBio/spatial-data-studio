@@ -15,9 +15,18 @@ _KEY_ADDED_PARAM = ParamSpec(
     required=True, tooltip="uns key to store/read the proximity result under", role="output")
 
 
+from ._docs import custom_doc
+
+_CITATION = ("Original permutation-based proximity/avoidance test implemented in this repository "
+             "(nearest-neighbor distance between cell-type pairs vs a label-permutation null).")
+_DOC = custom_doc("proximity-and-avoidance-test")
+
+
 class ProximityTest(Function):
     source = "custom"
     key = "custom.proximity_test"
+    citation = _CITATION
+    documentation = _DOC
     namespace = "custom"
     function = "proximity_test"
     effect_class = "compute"
@@ -104,6 +113,8 @@ key_added
 class ProximityTestPlot(Function):
     source = "custom"
     key = "custom.proximity_test_plot"
+    citation = _CITATION
+    documentation = _DOC
     namespace = "custom"
     function = "proximity_test_plot"
     effect_class = "plot"

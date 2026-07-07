@@ -23,9 +23,18 @@ _KEY_ADDED_PARAM = ParamSpec(
     required=True, tooltip="uns key to store the differential-abundance results under", role="output")
 
 
+from ._docs import custom_doc
+
+_CITATION = ("Dann, E. et al. Differential abundance testing on single-cell data using k-nearest "
+             "neighbor graphs. Nat Biotechnol 40, 245-253 (2022). doi:10.1038/s41587-021-01033-z (Milo).")
+_DOC = custom_doc("milo-differential-abundance")
+
+
 class MiloDifferentialAbundance(Function):
     source = "custom"
     key = "custom.milo_differential_abundance"
+    citation = _CITATION
+    documentation = _DOC
     namespace = "custom"
     function = "milo_differential_abundance"
     effect_class = "compute"
@@ -144,6 +153,8 @@ key_added
 class MiloDifferentialAbundancePlot(Function):
     source = "custom"
     key = "custom.milo_differential_abundance_plot"
+    citation = _CITATION
+    documentation = _DOC
     namespace = "custom"
     function = "milo_differential_abundance_plot"
     effect_class = "plot"

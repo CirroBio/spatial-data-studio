@@ -458,6 +458,12 @@ def main():
         assert client.get("/api/readyz").json()["functions"] > 0
         nf = client.get("/api/functions").json()
         print(f"[ok] registry: {len(nf['functions'])} functions, squidpy {nf['squidpy_version']}")
+        # Every function must carry provenance (CLAUDE.md rule): a citation and a
+        # documentation URL — library functions inherit both from library_meta.yaml,
+        # custom functions declare them explicitly.
+        no_prov = [f["key"] for f in nf["functions"] if not f.get("citation") or not f.get("documentation")]
+        assert not no_prov, f"functions missing citation/documentation: {no_prov}"
+        print(f"[ok] all {len(nf['functions'])} functions carry citation + documentation")
 
         r = client.post("/api/sessions", json={"source": {"kind": "load", "path": DATA}})
         assert r.status_code == 200, r.text

@@ -20,6 +20,7 @@ from .base import (
     capture_log, keyset, compute_result, render_plot, short_error,
 )
 from .dictionary import DICTIONARY
+from . import library_meta
 
 # Session-held types filled by injection (DESIGN §4.6 step 2), matched on the
 # annotation's string form so we never depend on import identity. Only the FIRST
@@ -32,7 +33,8 @@ _SCALAR_SCHEMA = {bool: {"type": "boolean"}, int: {"type": "integer"},
 
 class LibraryFunction(Function):
     def __init__(self, *, key, library, path, namespace, function, effect_class, summary, doc,
-                 injected, pinned, params, partially_supported, unsupported_params):
+                 injected, pinned, params, partially_supported, unsupported_params,
+                 citation="", documentation=""):
         self.key = key
         self.source = library           # the library is the source tag (squidpy | scanpy | spatialdata_io)
         self.library = library          # importable module name: squidpy | scanpy | spatialdata_io
@@ -42,6 +44,8 @@ class LibraryFunction(Function):
         self.effect_class = effect_class
         self.summary = summary
         self.doc = doc
+        self.citation = citation        # library-wide reference (registry/library_meta.yaml)
+        self.documentation = documentation  # this function's page in the library docs
         self.label = None
         self.injected = injected           # param_name -> injection kind (adata|sdata|image)
         self.pinned = pinned               # param_name -> pinned value
@@ -326,10 +330,13 @@ def build_library_function(library: str, namespace: str, name: str, fn, *,
         ))
 
     key = key or f"{namespace}.{name}"
+    resolved_path = path or f"{namespace}.{name}"
     return LibraryFunction(
-        key=key, library=library, path=path or f"{namespace}.{name}",
+        key=key, library=library, path=resolved_path,
         namespace=namespace, function=name,
         effect_class=effect_class or _squidpy_effect(namespace), summary=summary, doc=doc,
         injected=injected, pinned=pinned, params=params,
         partially_supported=partially, unsupported_params=unsupported,
+        citation=library_meta.citation(library),
+        documentation=library_meta.documentation(library, resolved_path),
     )

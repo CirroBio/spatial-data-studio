@@ -26,9 +26,18 @@ key_added
 """
 
 
+from ._docs import custom_doc
+
+_CITATION = ("Leiden community detection (Traag, Waltman & van Eck, Sci Rep 9:5233, 2019) applied "
+             "to spatial coordinates; spatial-region variant original to this repository.")
+_DOC = custom_doc("identify-regions-leiden")
+
+
 class IdentifyRegionsLeiden(Function):
     source = "custom"
     key = "custom.identify_regions_leiden"
+    citation = _CITATION
+    documentation = _DOC
     namespace = "custom"
     function = "identify_regions_leiden"
     effect_class = "compute"

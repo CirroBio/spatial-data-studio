@@ -90,9 +90,18 @@ key_added
 """
 
 
+from ._docs import custom_doc
+
+_CITATION = ("Dominguez Conde, C. et al. Cross-tissue immune cell analysis reveals tissue-specific "
+             "features in humans. Science 376, eabl5197 (2022). doi:10.1126/science.abl5197 (CellTypist).")
+_DOC = custom_doc("annotate-cells-with-celltypist")
+
+
 class CellTypistAnnotate(Function):
     source = "custom"
     key = "custom.celltypist_annotate"
+    citation = _CITATION
+    documentation = _DOC
     namespace = "custom"
     function = "celltypist_annotate"
     effect_class = "compute"

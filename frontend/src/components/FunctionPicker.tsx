@@ -134,6 +134,29 @@ export default function FunctionPicker({ sessionId, effectClass, onClose }: Prop
               {/* Documentation — scrolls independently of the parameters */}
               <div className="w-1/2 overflow-y-auto p-4 border-r border-border">
                 <div className="text-sm font-semibold text-text font-mono mb-2">{selected.label ?? `${selected.namespace}.${selected.function}`}</div>
+                {(selected.citation || selected.documentation) && (
+                  <div className="mb-3 border-b border-border/50 pb-3 flex flex-col gap-1.5">
+                    {selected.documentation && (
+                      <a
+                        href={selected.documentation}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-xs text-accent hover:underline w-fit"
+                      >
+                        Documentation
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M7 17L17 7M17 7H8M17 7v9" />
+                        </svg>
+                      </a>
+                    )}
+                    {selected.citation && (
+                      <p className="text-[10px] leading-snug text-muted">
+                        <span className="uppercase tracking-wide text-muted/60">Citation</span>{' '}
+                        {selected.citation}
+                      </p>
+                    )}
+                  </div>
+                )}
                 {selected.doc ? (
                   <pre className="whitespace-pre-wrap break-words text-[11px] leading-snug text-muted font-mono">
                     {selected.doc}

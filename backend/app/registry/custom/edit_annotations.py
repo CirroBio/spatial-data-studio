@@ -18,9 +18,18 @@ mapping
 """
 
 
+from ._docs import custom_doc
+
+_CITATION = ("Original utility implemented in this repository (rename/merge the values of a "
+             "categorical obs column).")
+_DOC = custom_doc("edit-annotations")
+
+
 class EditAnnotations(Function):
     source = "custom"
     key = "custom.edit_annotations"
+    citation = _CITATION
+    documentation = _DOC
     namespace = "custom"
     function = "edit_annotations"
     effect_class = "compute"

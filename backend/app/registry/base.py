@@ -77,6 +77,12 @@ class Function(ABC):
     params: list                      # list[ParamSpec], in display order
     partially_supported: bool = False
     unsupported_params: list = []
+    # Provenance shown in the picker (mandatory for every function — see CLAUDE.md).
+    # Library functions inherit both from registry/library_meta.yaml (one entry per
+    # library); custom functions set them explicitly (citation = where the method
+    # came from; documentation = its section in custom/README.md).
+    citation: str = ""
+    documentation: str = ""
 
     def json_schema(self) -> dict:
         props, required = {}, []
@@ -95,6 +101,7 @@ class Function(ABC):
             "key": self.key, "namespace": self.namespace, "function": self.function,
             "effect_class": self.effect_class, "summary": self.summary, "doc": self.doc,
             "label": self.label, "source": self.source,
+            "citation": self.citation, "documentation": self.documentation,
             "json_schema": self.json_schema(), "ui_schema": self.ui_schema(),
             "partially_supported": self.partially_supported,
             "unsupported_params": self.unsupported_params,

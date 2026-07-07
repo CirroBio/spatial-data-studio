@@ -26,9 +26,19 @@ _KEY_ADDED_PARAM = ParamSpec(
     required=True, tooltip="uns key to store the differential-expression results under", role="output")
 
 
+from ._docs import custom_doc
+
+_CITATION = ("Love, M.I., Huber, W. & Anders, S. Moderated estimation of fold change and dispersion "
+             "for RNA-seq data with DESeq2. Genome Biol 15, 550 (2014). doi:10.1186/s13059-014-0550-8; "
+             "pseudobulk aggregation per Squair, J.W. et al. Nat Commun 12, 5692 (2021).")
+_DOC = custom_doc("pseudobulk-de-with-deseq2")
+
+
 class PseudobulkDESeq2(Function):
     source = "custom"
     key = "custom.pseudobulk_deseq2"
+    citation = _CITATION
+    documentation = _DOC
     namespace = "custom"
     function = "pseudobulk_deseq2"
     effect_class = "compute"
@@ -180,6 +190,8 @@ key_added
 class PseudobulkDESeq2Plot(Function):
     source = "custom"
     key = "custom.pseudobulk_deseq2_plot"
+    citation = _CITATION
+    documentation = _DOC
     namespace = "custom"
     function = "pseudobulk_deseq2_plot"
     effect_class = "plot"

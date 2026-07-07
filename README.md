@@ -38,6 +38,15 @@ run through one path; squidpy is still never named in code. **Custom functions**
 (`registry/custom/`) are hand-written `Function` subclasses. All three flow through the
 same picker → form → queue → history machinery.
 
+Every function also carries **provenance** shown in the picker — a `citation` and a
+`documentation` link (both required for all functions). Library functions inherit
+both from `registry/library_meta.yaml` (one entry per library: the library's own
+citation + a doc-URL template that resolves to each function's docs page), so a new
+library is one meta entry, not per-function edits. Custom functions declare their own
+citation (the paper/post/tutorial the method came from, or that it's original here)
+and point their documentation at a per-method section in
+[`registry/custom/README.md`](backend/app/registry/custom/README.md).
+
 ## Features
 
 - **Introspected operations** — every `squidpy` `gr`/`im`/`tl`/`read`/`pl` function

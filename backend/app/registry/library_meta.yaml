@@ -1,0 +1,23 @@
+# Per-library citation + documentation-URL metadata for reflected functions.
+#
+# External library functions (squidpy, scanpy, spatialdata-io) are introspected,
+# not declared one by one — so their provenance is declared per LIBRARY here, not
+# per function. Each library gives:
+#   citation  — the library's own reference, appropriate for the library as a whole.
+#   doc_url   — a template linking to a SINGLE function's docs page; `{path}` is the
+#               function's dotted path within the library (e.g. gr.spatial_neighbors,
+#               pp.normalize_total, xenium).
+# Add a new library here when it's added to library_catalog.yaml / introspect.py;
+# every reflected function then inherits both fields automatically.
+
+squidpy:
+  citation: "Palla, G., Spitzer, H., Klein, M. et al. Squidpy: a scalable framework for spatial omics analysis. Nat Methods 19, 171-178 (2022). doi:10.1038/s41592-021-01358-2"
+  doc_url: "https://squidpy.readthedocs.io/en/stable/api/squidpy.{path}.html"
+
+scanpy:
+  citation: "Wolf, F.A., Angerer, P. & Theis, F.J. SCANPY: large-scale single-cell gene expression data analysis. Genome Biol 19, 15 (2018). doi:10.1186/s13059-017-1382-0"
+  doc_url: "https://scanpy.readthedocs.io/en/stable/generated/scanpy.{path}.html"
+
+spatialdata_io:
+  citation: "Marconato, L., Palla, G., Yamauchi, K.A. et al. SpatialData: an open and universal data framework for spatial omics. Nat Methods 22, 58-62 (2025). doi:10.1038/s41592-024-02212-x"
+  doc_url: "https://spatialdata.scverse.org/projects/io/en/latest/generated/spatialdata_io.{path}.html"
