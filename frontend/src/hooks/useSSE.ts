@@ -34,6 +34,7 @@ export function useSSE(): void {
     setActiveSessionId,
     setSessions,
     removeSession,
+    setCirroUploads,
   } = useAppStore();
 
   useEffect(() => {
@@ -106,10 +107,6 @@ export function useSSE(): void {
       if (data.kind === 'save') {
         pushNotification({ kind: 'info', message: 'Session saved.' });
       }
-      // Cirro upload runs as a background job too; confirm it finished.
-      if (data.kind === 'cirro_upload') {
-        pushNotification({ kind: 'info', message: `Uploaded to Cirro as "${data.dataset_name}".` });
-      }
       // A lasso subset produces a child session and evicts the parent: move the
       // parent's viewers to the child and refresh the list. session.removed prunes
       // the evicted parent from every other viewer's list.
@@ -137,6 +134,24 @@ export function useSSE(): void {
       const prefix = data.source ? `[${data.source} @ ${data.timestamp}] ` : '';
       pushNotification({ kind: 'error', message: `${prefix}${data.error ?? 'unknown error'}` });
       getSession(data.session_id).then(setSessionState).catch(console.error);
+    });
+
+    // Cirro upload isn't tied to a session (it uploads selected checkpoint files),
+    // so its result events are NOT session-gated — the toast always reaches the
+    // user who started the upload, even after switching sessions.
+    es.addEventListener('cirro.upload.state', (e: MessageEvent) => {
+      const data = parseEvent<{ uploading: number; pending: number }>(e);
+      setCirroUploads({ uploading: data.uploading, pending: data.pending });
+    });
+
+    es.addEventListener('cirro.upload.completed', (e: MessageEvent) => {
+      const data = parseEvent<{ dataset_name: string }>(e);
+      pushNotification({ kind: 'info', message: `Uploaded to Cirro as "${data.dataset_name}".` });
+    });
+
+    es.addEventListener('cirro.upload.failed', (e: MessageEvent) => {
+      const data = parseEvent<{ error: string }>(e);
+      pushNotification({ kind: 'error', message: `Cirro upload failed: ${data.error}` });
     });
 
     es.addEventListener('plot.drawn', (e: MessageEvent) => {
@@ -178,5 +193,5 @@ export function useSSE(): void {
     return () => {
       es.close();
     };
-  }, [activeSessionId, upsertSession, setResourceSample, updateDataVersions, updateDisplay, addActiveJob, removeActiveJob, addQueuedEntry, setEntryStatus, setSessionState, pushNotification, setActiveSessionId, setSessions, removeSession]);
+  }, [activeSessionId, upsertSession, setResourceSample, updateDataVersions, updateDisplay, addActiveJob, removeActiveJob, addQueuedEntry, setEntryStatus, setSessionState, pushNotification, setActiveSessionId, setSessions, removeSession, setCirroUploads]);
 }

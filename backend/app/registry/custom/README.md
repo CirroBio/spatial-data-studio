@@ -55,11 +55,10 @@ repository.
 
 ## Region composition
 
-`custom.region_composition` (compute) + `custom.region_composition_plot`
-(plot). Cross-tabulates a cell-type column against a region column to get the
-cell-type proportions per region, and runs a chi-square test of independence for
-whether composition differs across regions. The plot step renders a stacked bar
-of the proportions. pandas/scipy/matplotlib only.
+`custom.region_composition` (plot). Cross-tabulates a cell-type column against a
+region column to get the cell-type proportions per region, runs a chi-square test
+of independence for whether composition differs across regions, and renders a
+stacked bar of the proportions in one step. pandas/scipy/matplotlib only.
 
 **Citation:** Original method implemented in this repository (crosstab +
 chi-square test of independence).

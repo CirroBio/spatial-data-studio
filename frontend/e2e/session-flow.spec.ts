@@ -19,7 +19,7 @@ test('loads a dataset, runs a compute function, and browses the result', async (
   // -- open an existing .zarr dataset --------------------------------------
   await page.getByRole('button', { name: 'New Session', exact: true }).click();
   const newSessionDialog = page.getByRole('dialog');
-  await newSessionDialog.getByPlaceholder(/available datasets/).click();
+  await newSessionDialog.getByPlaceholder(/saved checkpoints/).click();
   await newSessionDialog.getByText('visium_hne', { exact: false }).first().click();
   await newSessionDialog.getByRole('button', { name: 'Create' }).click();
   await expect(newSessionDialog).not.toBeVisible({ timeout: 30_000 });

@@ -156,6 +156,14 @@ and point their documentation at a per-method section in
   and `GET /api/sessions/{id}/table?path=&offset=&limit=` (JSON page).
 - **Light/dark theme** — toggle in the top toolbar; colors are CSS variables
   (`rgb(var(--…))`), the choice persists in the browser (`localStorage`).
+- **Guided tour** — a compass icon in the top toolbar (**Take the tour**) walks
+  through the main landmarks (sessions, new session, the view switcher, the
+  sidebar tabs, running an analysis, save, snapshots) with a spotlight + popover.
+  It auto-starts once on first visit and remembers completion in `localStorage`.
+  Steps point at elements by a stable `data-tour="…"` attribute rather than CSS
+  selectors, so restyles don't break it; the tour config, the Driver.js renderer
+  adapter, and the anchor registry live in `frontend/src/tours/`, and
+  `npm run check:tours` fails the build if an anchor loses its element.
 - **Region annotation** — draw a lasso to label cells into a region set (a
   categorical `obs` column) in place, or promote an existing categorical; region
   sets flow through every grouping picker automatically.
@@ -171,7 +179,15 @@ and point their documentation at a per-method section in
   (`queued` → `running` → `completed`/`drawn`) driven straight from the SSE job
   events, so a long-running or back-to-back job shows progress rather than
   appearing only once it finishes. New/Save session are icon buttons (hover for labels) in the top
-  toolbar. Saving blocks the whole UI behind a spinner overlay until the write
+  toolbar; the Save button shows a subtle dot when the session has unsaved changes
+  (any compute/plot/annotation since the last save; cleared on save). A Browse
+  snapshots icon button opens a dialog listing saved snapshots where you can preview
+  one inline or open it in a new tab; a saved snapshot captures only the current
+  viewport — the visible cells over a higher-resolution crop of that image region. A
+  session switcher next to the app name lists every currently-loaded session and
+  switches the displayed one on click (non-resident sessions are shown but not
+  selectable); to its right the title bar reports the active session's cell count
+  and the primary image's pixel dimensions. Saving blocks the whole UI behind a spinner overlay until the write
   finishes; an unobtrusive Stop button cancels it if the job is still queued
   (a save already writing to disk can't be interrupted).
 - **Recipes** — curated multi-step workflows browsable from the Compute/Plots tabs
@@ -193,6 +209,25 @@ and point their documentation at a per-method section in
   clustering for imaging-based counts). Recipes
   are JSON files under `backend/app/recipes/` discovered at startup — see
   "Contributing recipes" below. Ad-hoc export/import over history too.
+- **Offline computation** (`backend/cli.py` + `nextflow/`) — run a recipe over a
+  dataset headlessly, no server or browser. The CLI reads the input with any of the
+  app's parsing functions (a spatialdata-io/squidpy reader named by `--parser`, e.g.
+  `io.xenium`, or `zarr`/`spatialdata` to load an existing `.zarr`/`.zarr.zip`),
+  applies the `--recipe` JSON's steps through the same registry/session engine the UI
+  uses, and writes an `--output` folder holding the resulting SpatialData
+  `<name>.zarr.zip` plus, per plot step, `plots/<NN>_<namespace>.<function>/figure.{svg,pdf}`.
+  A Nextflow workflow (`nextflow/main.nf`) wraps the CLI and exposes the same
+  parameters; its container installs the pinned Python deps at runtime with `uv`, so
+  no custom image is built. See "Run offline" below.
+- **Data vs checkpoint dirs (strict separation)** — raw inputs live under the data
+  mount (`SQV_DATA_DIR`); saved sessions ("checkpoints") live under the checkpoint
+  mount (`SQV_CHECKPOINT_DIR`). New Session has two modes: **Import Data** runs a
+  spatialdata-io reader (`io.xenium`, …) or the `spatialdata.read_zarr` reader
+  (`io.read_zarr`, for opening an existing `.zarr`) against a path under the data dir;
+  **Open Checkpoint** opens a saved `.zarr`/`.zarr.zip` from the checkpoint dir. The
+  backend enforces the split (reads validated to the data dir, load/save to the
+  checkpoint dir); the "Open Checkpoint" picker and the Cirro session picker both list
+  only checkpoint-dir sessions.
 - **Persistence** — save/load `.zarr` and `.zarr.zip` (data + app state in
   `attrs`), with full UI/region/history round-trip. Auto-managed checkpoint
   filenames (Save button, no explicit path) embed a hash of the `.zarr.zip`
@@ -205,13 +240,22 @@ and point their documentation at a per-method section in
 - **Acknowledgements** (About icon in the header) — third-party libraries in use and
   their licenses, served by `GET /api/about/licenses` from the backend/frontend SBOMs
   (`sds-governance/sbom.json` + `sds-governance/sbom_frontend.json`).
-- **Cirro upload** (`backend/app/cirro.py`, optional) — upload the saved session plus
-  selected snapshots to [Cirro](https://cirro.bio/) as a dataset, via a service-account
-  (OAuth client-credentials) identity — no interactive login. Strictly additive: dark
-  unless `CIRRO_BASE_URL`, `CIRRO_CLIENT_ID`, and `CIRRO_CLIENT_SECRET` are all set. The
-  session must be saved first; the upload folder is built from symlinks (the saved
-  `.zarr.zip` plus, per selected snapshot, only the specific assets it references —
-  `assets/` is shared and content-hashed across snapshots) so nothing is copied. Always
+- **Cirro upload** (`backend/app/cirro.py`, optional) — upload selected saved
+  checkpoints and snapshots to [Cirro](https://cirro.bio/) as one dataset, via a
+  service-account (OAuth client-credentials) identity — no interactive login. Strictly
+  additive: dark unless `CIRRO_BASE_URL`, `CIRRO_CLIENT_ID`, and `CIRRO_CLIENT_SECRET`
+  are all set. The dialog (opened from the toolbar, independent of any active session)
+  multi-selects saved checkpoints (the same checkpoint list as "Open Checkpoint") and
+  snapshots (the same list as the snapshot browser); the upload runs in the background
+  via `POST /api/cirro/upload` and announces completion/failure over SSE
+  (`cirro.upload.completed`/`cirro.upload.failed`). Uploads go through a bounded queue
+  (small concurrency cap; extra uploads wait as pending), and the uploading/pending
+  counts are broadcast (`cirro.upload.state`, also `GET /api/cirro/uploads`) — while any
+  upload is in flight the toolbar button shows a non-blocking spinner and its tooltip
+  reports how many are uploading and pending. The upload folder is built from
+  symlinks (each selected `.zarr.zip` under `sessions/`, plus per selected snapshot only
+  the specific assets it references — `assets/` is shared and content-hashed across
+  snapshots) so nothing is copied. Always
   uploaded via Cirro's generic "Files" ingest process (`custom_dataset`, accepts any
   file) — the service-account identity only needs `Create dataset`/`View dataset` on
   the target project, no `View process` permission. An optional destination folder can
@@ -234,7 +278,9 @@ backend/    FastAPI app
   app/recipes/    curated analysis recipes — JSON bundle files, discovered at startup (catalog + apply)
   app/persistence/ store (.zarr / .zarr.zip)
   app/cirro.py    Cirro dataset upload (client-credentials auth, symlink-based upload folder)
+  cli.py          offline recipe runner — reuses the registry/session engine headlessly
 frontend/   React + TS + Vite + Tailwind + deck.gl SPA
+nextflow/   Nextflow workflow wrapping backend/cli.py (uv installs deps at runtime; no image build)
 docker/     single-image build (multi-stage), nginx edge, supervisor
 docs/       CONTRACT.md (REST/SSE/Arrow API)
 scripts/    test-data prep: prepare_test_data.py (Visium H&E), prepare_xenium_data.py (Xenium),
@@ -323,10 +369,12 @@ button stays hidden and the app runs normally.
 ```
 
 Launches the backend (`uvicorn`, no `--reload` — see below) and the frontend
-(`npm run dev`, Vite proxies `/api` to :8000) together. Stop with Ctrl-C or,
-from another shell, `./stop.sh`. `SQV_DATA_DIR` (set by `run.sh` to `data/` or,
-with `--test`, `test-data/`) can still be overridden directly to point at any
-other folder. If a `.env` file exists at the repo root, `run.sh` sources it
+(`npm run dev`, Vite proxies `/api` and `/snapshots` to :8000) together. Stop with
+Ctrl-C or, from another shell, `./stop.sh`. `SQV_DATA_DIR` (raw inputs; set by
+`run.sh` to `data/` or, with `--test`, `test-data/`) and `SQV_CHECKPOINT_DIR` (saved
+sessions + snapshots; `run.sh` uses `checkpoints/`) are strictly separate — imports
+read only from the data dir, load/save only from the checkpoint dir — and can each be
+overridden to point at any other folder. If a `.env` file exists at the repo root, `run.sh` sources it
 before launching uvicorn, so `CIRRO_*` config set there (see above)
 reaches the backend the same way docker compose's auto-loaded `.env` does. It
 expects a `.venv-introspect/` virtualenv at the repo root (Python 3.11;
@@ -340,6 +388,49 @@ pip install -r backend/requirements.txt
 Backend edits require restarting `run.sh` manually: the long-lived SSE stream
 (`/api/events`) never closes, so `--reload` hangs on "Waiting for connections
 to close" instead of picking up the change.
+
+## Run offline (headless CLI + Nextflow)
+
+`backend/cli.py` runs a recipe over a dataset without the server or frontend,
+reusing the same introspected registry, session worker, and persistence the app
+uses (so results match the UI). Run it from `backend/` with the dev venv:
+
+```bash
+cd backend
+# load an existing SpatialData store and run a bundled recipe
+../.venv-introspect/bin/python cli.py \
+  --parser zarr --input ../test-data/visium_hne.zarr \
+  --recipe app/recipes/01_neighborhood_enrichment.json --output ../out
+
+# or parse a raw dataset with a spatialdata-io reader
+../.venv-introspect/bin/python cli.py \
+  --parser io.xenium --input /path/to/xenium_bundle \
+  --recipe app/recipes/06_preprocess_cluster_raw_counts.json --output ../out
+
+../.venv-introspect/bin/python cli.py --list-parsers   # available parsers
+```
+
+| Flag | Meaning |
+|---|---|
+| `--parser` | reader registry key (`io.xenium`), bare reader name (`xenium`), or `zarr`/`spatialdata` to load an existing `.zarr`/`.zarr.zip` |
+| `--input` | raw data folder (reader mode) or the `.zarr`/`.zarr.zip` (zarr mode) |
+| `--recipe` | path to a recipe JSON file, or a bundled recipe name |
+| `--output` | output directory (created if absent) |
+| `--reader-params` | JSON object of extra kwargs for the reader (reader mode) |
+| `--name` | base name for the output `.zarr.zip` (default: from `--input`) |
+
+The output folder holds `<name>.zarr.zip` (the full SpatialData + app state, reloadable
+in the app) and `plots/<NN>_<namespace>.<function>/figure.{svg,pdf}` for each plot step.
+
+**Nextflow.** `nextflow/main.nf` wraps the CLI and exposes the same parameters; its
+container installs the pinned Python deps at runtime with `uv`, so there is no image to
+build. Quick run against the test dataset:
+
+```bash
+nextflow run nextflow/main.nf -profile test,docker
+```
+
+See `nextflow/README.md` for the full parameter list and a raw-reader example.
 
 ## Test dataset
 
@@ -373,8 +464,14 @@ split for testing — the multi-sample methods (**Milo differential abundance**,
   content-hashed checkpoint naming, `data_versions` bumping + plot invalidation/redraw,
   persisted canvas encoding, the data-inspector endpoints, cross-session isolation, and the
   six spatial/multi-sample custom methods end to end on `xenium_tma.zarr`.
+- `cd backend && python test_cli.py` — offline CLI (`cli.py`) round trip: loads
+  `visium_hne.zarr` in zarr mode, runs a compute + plot recipe headlessly, and asserts the
+  output `.zarr.zip` and `plots/…/figure.{svg,pdf}` are written and reload with history intact.
 - `cd frontend && npx tsc --noEmit -p tsconfig.app.json && npm run build` — typecheck + build.
+- `cd frontend && npm run check:tours` — static guard that every guided-tour anchor
+  (`frontend/src/tours/anchors.ts`) has a matching `data-tour="…"` attribute in the source.
 - `cd frontend && npm run test:e2e` — Playwright browser e2e tests (`frontend/e2e/`). Boots the
   real backend (against `test-data/`) and the Vite dev server itself (see
   `frontend/playwright.config.ts`); drives the app in Chromium to open the `visium_hne` dataset,
-  run a compute function end-to-end, and browse the result in the data inspector.
+  run a compute function end-to-end, browse the result in the data inspector, and walk the
+  guided tour through its always-present steps.

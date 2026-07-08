@@ -88,13 +88,32 @@ def _numeric_hex(vals: np.ndarray) -> list[str]:
     return [_rgb_hex(cm.viridis(float(t))) for t in norm]
 
 
-def save_snapshot(session, label: str | None = None) -> dict:
+def _visible_bounds(vp: dict | None) -> list[float] | None:
+    """World-space rectangle currently visible, from a deck.gl OrthographicView
+    viewport {target:[x,y], zoom, width, height}. None when the canvas pixel size
+    isn't known (can't size the rect) — the snapshot then falls back to the whole
+    image / all points."""
+    if not vp:
+        return None
+    target, zoom, width, height = vp.get("target"), vp.get("zoom"), vp.get("width"), vp.get("height")
+    if not target or zoom is None or not width or not height:
+        return None
+    wps = 2 ** (-float(zoom))
+    hw, hh = (width / 2) * wps, (height / 2) * wps
+    tx, ty = float(target[0]), float(target[1])
+    return [tx - hw, ty - hh, tx + hw, ty + hh]
+
+
+def save_snapshot(session, label: str | None = None, viewport: dict | None = None) -> dict:
     if session.sdata is None:
         return {"status": "failed", "error": "no data to snapshot"}
     display = _active_display(session)
     if display is None:
         return {"status": "failed", "error": "no spatial canvas display to snapshot"}
     enc = display.get("encoding", {})
+    # Snapshot only the visible area: prefer the canvas size sent with the request
+    # (the persisted viewport has target/zoom but no pixel size).
+    vis = _visible_bounds(viewport or display.get("viewport"))
 
     with session.lock.reading():
         adata = session.active_table()
@@ -102,7 +121,8 @@ def save_snapshot(session, label: str | None = None) -> dict:
         xy = np.asarray(adata.obsm[coords_key])[:, :2]
         colors = _point_colors(adata, enc.get("color_by") or "", xy.shape[0])
 
-        # content-hashed Arrow data assets (the durable, deduped data record)
+        # content-hashed Arrow data assets (the durable, deduped data record — the
+        # full field, not the visible crop, so the data record stays complete)
         assets = {}
         if enc.get("coords"):
             assets["coords"] = _write_asset(arrow.to_ipc_bytes(arrow.resolve_field(adata, enc["coords"])), "arrow")
@@ -117,14 +137,31 @@ def save_snapshot(session, label: str | None = None) -> dict:
         image_rel = None
         if image_layer and image_layer in getattr(session.sdata, "images", {}):
             channel_colors = _channel_colors(enc)
-            png = imaging.thumbnail_png(session.sdata, image_layer, 2048, channel_colors)
+            png = None
+            if vis is not None:
+                try:
+                    png, bounds = imaging.region_png(session.sdata, image_layer, vis, adata, 2048, channel_colors)
+                except ValueError:
+                    png = None  # viewport doesn't overlap the image; fall back to whole image
+            if png is None:
+                png = imaging.thumbnail_png(session.sdata, image_layer, 2048, channel_colors)
+                bounds = imaging.image_info(session.sdata, image_layer, adata)["bounds"]
             image_rel = _write_asset(png, "png")
-            bounds = imaging.image_info(session.sdata, image_layer, adata)["bounds"]
+        elif vis is not None:
+            bounds = vis  # points-only crop to the visible rect
 
     if bounds is None:
         bounds = [float(xy[:, 0].min()), float(xy[:, 1].min()), float(xy[:, 0].max()), float(xy[:, 1].max())]
 
-    view = {"encoding": enc, "viewport": display.get("viewport"), "bounds": bounds,
+    # Keep only points inside the captured bounds so the snapshot shows just the
+    # visible area (colors stays parallel to xy).
+    if vis is not None:
+        x0, y0, x1, y1 = bounds
+        inside = (xy[:, 0] >= x0) & (xy[:, 0] <= x1) & (xy[:, 1] >= y0) & (xy[:, 1] <= y1)
+        xy = xy[inside]
+        colors = [c for c, keep in zip(colors, inside.tolist()) if keep]
+
+    view = {"encoding": enc, "viewport": viewport or display.get("viewport"), "bounds": bounds,
             "image": image_rel, "assets": assets,
             "points": {"xy": xy.astype("float32").round(2).tolist(), "colors": colors,
                        "size": enc.get("point_size", 4), "opacity": enc.get("opacity", 0.85)}}

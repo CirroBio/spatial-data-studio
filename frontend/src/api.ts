@@ -90,10 +90,13 @@ export async function subsetSession(
   return res.json() as Promise<{ job_id: string }>;
 }
 
-export async function saveSnapshot(sessionId: string, label?: string): Promise<{ name: string; url: string }> {
+export async function saveSnapshot(
+  sessionId: string,
+  opts?: { label?: string; viewport?: { target: number[]; zoom: number; width: number; height: number } }
+): Promise<{ name: string; url: string }> {
   const res = await apiFetch(`/api/sessions/${sessionId}/snapshot`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(label ? { label } : {}),
+    body: JSON.stringify(opts ?? {}),
   });
   return res.json() as Promise<{ name: string; url: string }>;
 }
@@ -328,9 +331,16 @@ export async function getThirdPartyLicenses(): Promise<{ python: ThirdPartyLicen
 export interface CirroStatus { enabled: boolean }
 export interface CirroProject { id: string; name: string }
 
+export interface CirroUploads { uploading: number; pending: number }
+
 export async function getCirroStatus(): Promise<CirroStatus> {
   const res = await apiFetch('/api/cirro/status');
   return res.json() as Promise<CirroStatus>;
+}
+
+export async function getCirroUploads(): Promise<CirroUploads> {
+  const res = await apiFetch('/api/cirro/uploads');
+  return res.json() as Promise<CirroUploads>;
 }
 
 export async function getCirroProjects(): Promise<{ projects: CirroProject[] }> {
@@ -344,14 +354,13 @@ export async function getCirroFolders(projectId: string): Promise<{ folders: str
 }
 
 export async function uploadToCirro(
-  sessionId: string,
-  body: { project_id: string; dataset_name: string; snapshot_names: string[]; folder?: string }
-): Promise<{ job_id: string }> {
-  const res = await apiFetch(`/api/sessions/${sessionId}/cirro/upload`, {
+  body: { project_id: string; dataset_name: string; session_paths: string[]; snapshot_names: string[]; folder?: string }
+): Promise<{ status: string }> {
+  const res = await apiFetch('/api/cirro/upload', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  return res.json() as Promise<{ job_id: string }>;
+  return res.json() as Promise<{ status: string }>;
 }
 
 export async function getPointsTransform(

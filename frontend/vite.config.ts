@@ -16,6 +16,8 @@ export default defineConfig({
           });
         },
       },
+      // Snapshot HTML files are served by the backend's StaticFiles mount, not Vite.
+      '/snapshots': { target: 'http://127.0.0.1:8000', changeOrigin: true },
     },
   },
 });

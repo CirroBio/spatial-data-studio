@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from .config import config, browse_roots, within_roots
+from .config import config, data_roots, checkpoint_roots, within_data_dir, within_checkpoint_dir
 from .registry.introspect import REGISTRY
 from .sessions.manager import SessionManager
 from .transport.sse import BUS
@@ -178,7 +178,10 @@ def _find_datasets(roots: list[Path]) -> list[dict]:
                 dirnames[:] = []
             keep = []
             for name in sorted(dirnames, key=str.lower):
-                if name.startswith((".", "_")) or name in _SKIP_SCAN_DIRS:
+                # `.rasters` dirs are the app's own transient tile-cache stores under
+                # the checkpoint mount (rasters.normalize_rasters) — internal working
+                # data, never a loadable checkpoint.
+                if name.startswith((".", "_")) or name in _SKIP_SCAN_DIRS or name.endswith(".rasters"):
                     continue
                 full = here / name
                 if name.endswith(".zarr"):
@@ -210,12 +213,12 @@ def _mtime(p: Path) -> float:
 
 @app.get("/api/fs/browse")
 async def fs_browse(path: str | None = None, include_files: bool = False):
-    """List datasets and subfolders under the configured data roots, for the
-    New Session path picker. Scoped to DATA_DIR / CHECKPOINT_DIR — never the
-    whole filesystem. A `.zarr`/`.zarr.zip` entry is a loadable dataset; other
-    directories are navigable. With `include_files` (raw-data import, where the
-    reader's input may be any file type), regular files are listed too."""
-    roots = browse_roots()
+    """Navigate the raw-input data mount (DATA_DIR only) for the New Session
+    import flow — never the checkpoint mount or the whole filesystem. A
+    `.zarr`/`.zarr.zip` entry is a loadable dataset; other directories are
+    navigable. With `include_files` (raw-data import, where the reader's input
+    may be any file type), regular files are listed too."""
+    roots = data_roots()
     if not path:
         return {"path": "", "parent": None,
                 "entries": [{"name": str(r), "path": str(r), "kind": "dir"} for r in roots]}
@@ -223,8 +226,8 @@ async def fs_browse(path: str | None = None, include_files: bool = False):
         target = Path(path).resolve()
     except OSError:
         raise HTTPException(400, "bad path")
-    if not within_roots(target, roots):
-        raise HTTPException(403, "path is outside the allowed data roots")
+    if not within_data_dir(target):
+        raise HTTPException(403, "path is outside the data directory")
     if not target.is_dir():
         raise HTTPException(404, "not a directory")
 
@@ -251,9 +254,10 @@ async def fs_browse(path: str | None = None, include_files: bool = False):
 
 @app.get("/api/fs/datasets")
 async def fs_datasets():
-    """Every loadable dataset found by scanning folders under the data roots (incl.
-    the CWD) — the New Session picker shows these on click, no typing needed."""
-    datasets = await _in_executor(_find_datasets, browse_roots())
+    """Every saved session found by scanning the checkpoint mount (CHECKPOINT_DIR
+    only) — the New Session load picker and the Cirro upload session picker show
+    these on click, no typing needed."""
+    datasets = await _in_executor(_find_datasets, checkpoint_roots())
     return {"datasets": datasets}
 
 
@@ -436,10 +440,12 @@ async def promote_region(sid: str, body: dict):
 
 @app.post("/api/sessions/{sid}/snapshot")
 async def save_snapshot_endpoint(sid: str, body: dict | None = None):
-    """Save the current display as a self-contained read-only snapshot (v3 Part 9)."""
+    """Save the current display as a self-contained read-only snapshot (v3 Part 9).
+    body: {label?, viewport?: {target, zoom, width, height}} — the viewport (with the
+    live canvas pixel size) crops the snapshot to the visible area."""
     sess = _session(sid)
     from . import snapshots
-    result = await _in_executor(snapshots.save_snapshot, sess, (body or {}).get("label"))
+    result = await _in_executor(snapshots.save_snapshot, sess, (body or {}).get("label"), (body or {}).get("viewport"))
     if result.get("status") == "failed":
         raise HTTPException(400, result.get("error", "snapshot failed"))
     return result
@@ -481,20 +487,74 @@ async def cirro_folders(project_id: str, refresh: bool = False):
     return {"folders": cirro.list_folders(project_id, force_refresh=refresh)}
 
 
-@app.post("/api/sessions/{sid}/cirro/upload")
-async def cirro_upload(sid: str, body: dict):
-    """body: {project_id, dataset_name, snapshot_names: [str], folder?: str}."""
+# ---- Cirro upload queue. Uploads run in the background with a small concurrency
+# cap so several large uploads don't all realize at once; anything over the cap
+# waits (pending). The uploading/pending counts are broadcast over SSE
+# (cirro.upload.state) and also served by GET so a fresh page can render the
+# in-progress indicator without waiting for the next state change. ----
+_UPLOAD_CONCURRENCY = 2
+_upload_sem: asyncio.Semaphore | None = None
+_uploads_active = 0    # currently uploading
+_uploads_pending = 0   # queued behind the concurrency cap
+
+
+def _publish_upload_state():
+    BUS.publish("cirro.upload.state", {"uploading": _uploads_active, "pending": _uploads_pending})
+
+
+@app.get("/api/cirro/uploads")
+async def cirro_uploads():
+    return {"uploading": _uploads_active, "pending": _uploads_pending}
+
+
+@app.post("/api/cirro/upload")
+async def cirro_upload(body: dict):
+    """Upload user-selected saved checkpoint sessions + snapshots to Cirro as one
+    dataset, decoupled from any live session. Runs in the background (uploads can
+    be large) and announces completion/failure over SSE — cirro.upload.completed /
+    cirro.upload.failed — since it isn't tied to a session's job queue. body:
+    {project_id, dataset_name, session_paths: [str], snapshot_names: [str], folder?}."""
     if not config.cirro_enabled():
         raise HTTPException(503, "Cirro is not configured")
-    sess = _session(sid)
-    if not sess.store_path:
-        raise HTTPException(409, "save the session before uploading to Cirro")
-    job_id = sess.enqueue_special("cirro_upload", {
-        "project_id": body["project_id"],
-        "dataset_name": body["dataset_name"], "snapshot_names": body.get("snapshot_names") or [],
-        "folder": body.get("folder") or None,
-    })
-    return {"job_id": job_id}
+    session_paths = body.get("session_paths") or []
+    snapshot_names = body.get("snapshot_names") or []
+    if not session_paths and not snapshot_names:
+        raise HTTPException(400, "select at least one session or snapshot to upload")
+    resolved: list[str] = []
+    for p in session_paths:
+        target = Path(p).resolve()
+        if not within_checkpoint_dir(target) or not target.exists():
+            raise HTTPException(400, f"not a saved checkpoint session: {p}")
+        resolved.append(str(target))
+    asyncio.create_task(_run_cirro_upload(
+        body["project_id"], body["dataset_name"], resolved, snapshot_names, body.get("folder") or None))
+    return {"status": "started"}
+
+
+async def _run_cirro_upload(project_id, dataset_name, session_paths, snapshot_names, folder):
+    from . import cirro
+    global _upload_sem, _uploads_active, _uploads_pending
+    if _upload_sem is None:
+        _upload_sem = asyncio.Semaphore(_UPLOAD_CONCURRENCY)  # bind to the running loop
+
+    def _do():
+        return cirro.upload_selection(project_id=project_id, dataset_name=dataset_name,
+                                      session_paths=session_paths, snapshot_names=snapshot_names,
+                                      folder=folder)
+    _uploads_pending += 1
+    _publish_upload_state()
+    async with _upload_sem:
+        _uploads_pending -= 1
+        _uploads_active += 1
+        _publish_upload_state()
+        try:
+            result = await _in_executor(_do)
+            BUS.publish("cirro.upload.completed", {"dataset_name": result["dataset_name"]})
+        except Exception as e:
+            BUS.publish("cirro.upload.failed", {"error": str(e), "dataset_name": dataset_name})
+        finally:
+            _uploads_active -= 1
+            _publish_upload_state()
 
 
 def _default_save_path(sess) -> str:

@@ -131,15 +131,18 @@ def _symlink_snapshot(dest_root: Path, name: str) -> None:
         asset_dest.symlink_to(asset_src)
 
 
-def build_upload_folder(store_path: str, snapshot_names: list[str]) -> Path:
-    """A temp folder of symlinks: the saved session file under `session/`, and
-    each selected snapshot (HTML + only its referenced assets) under `snapshots/`.
-    Never symlinks a directory itself (most upload walkers skip symlinked dirs'
-    contents) — only real directories containing per-file symlinks."""
+def build_upload_folder(session_paths: list[str], snapshot_names: list[str]) -> Path:
+    """A temp folder of symlinks: each selected saved session file under
+    `sessions/`, and each selected snapshot (HTML + only its referenced assets)
+    under `snapshots/`. Never symlinks a directory itself (most upload walkers
+    skip symlinked dirs' contents) — only real directories containing per-file
+    symlinks."""
     tmp = Path(tempfile.mkdtemp(prefix="cirro-upload-"))
-    session_dir = tmp / "session"
-    session_dir.mkdir()
-    (session_dir / Path(store_path).name).symlink_to(Path(store_path).resolve())
+    if session_paths:
+        session_dir = tmp / "sessions"
+        session_dir.mkdir()
+        for path in session_paths:
+            (session_dir / Path(path).name).symlink_to(Path(path).resolve())
 
     if snapshot_names:
         snap_dir = tmp / "snapshots"
@@ -147,3 +150,16 @@ def build_upload_folder(store_path: str, snapshot_names: list[str]) -> Path:
         for name in snapshot_names:
             _symlink_snapshot(snap_dir, name)
     return tmp
+
+
+def upload_selection(*, project_id: str, dataset_name: str, session_paths: list[str],
+                     snapshot_names: list[str], folder: str | None = None) -> dict:
+    """Build the symlink folder for the selected sessions + snapshots, upload it
+    as one Cirro dataset, and clean up the temp folder."""
+    import shutil
+    upload_dir = build_upload_folder(session_paths, snapshot_names)
+    try:
+        return upload(project_id=project_id, dataset_name=dataset_name,
+                      upload_folder=upload_dir, folder=folder)
+    finally:
+        shutil.rmtree(upload_dir, ignore_errors=True)

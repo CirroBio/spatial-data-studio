@@ -193,6 +193,6 @@ terms:
     widget: number
     type: float
   # reader path inputs
-  - match: { names: [path, input, image_path, alignment_file] }
+  - match: { names: [path, input, image_path, alignment_file, store] }
     widget: text
     help: "Filesystem path to the dataset directory/file to read."

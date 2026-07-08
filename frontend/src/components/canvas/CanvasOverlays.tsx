@@ -75,6 +75,10 @@ export function CellColorLegend({
             </div>
           ))}
         </div>
+      ) : legend.kind === 'too-many-categories' ? (
+        <div className="text-[11px] text-muted">
+          {legend.count.toLocaleString()} categories — too many to color (limit {legend.limit}).
+        </div>
       ) : (
         <div className="flex flex-col gap-1 w-[150px]">
           <div className="h-2.5 w-full rounded-sm border border-border/50" style={{ background: VIRIDIS_CSS_GRADIENT }} />

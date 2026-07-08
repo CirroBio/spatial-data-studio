@@ -21,3 +21,7 @@ scanpy:
 spatialdata_io:
   citation: "Marconato, L., Palla, G., Yamauchi, K.A. et al. SpatialData: an open and universal data framework for spatial omics. Nat Methods 22, 58-62 (2025). doi:10.1038/s41592-024-02212-x"
   doc_url: "https://spatialdata.scverse.org/projects/io/en/latest/generated/spatialdata_io.{path}.html"
+
+spatialdata:
+  citation: "Marconato, L., Palla, G., Yamauchi, K.A. et al. SpatialData: an open and universal data framework for spatial omics. Nat Methods 22, 58-62 (2025). doi:10.1038/s41592-024-02212-x"
+  doc_url: "https://spatialdata.scverse.org/en/stable/generated/spatialdata.{path}.html"

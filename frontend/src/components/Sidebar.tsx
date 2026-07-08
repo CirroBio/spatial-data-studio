@@ -8,6 +8,7 @@ import FunctionPicker from './FunctionPicker';
 import RecipeGallery from './RecipeGallery';
 import AnnotationsPanel from './AnnotationsPanel';
 import SubsettingPanel from './SubsettingPanel';
+import { TourAnchors } from '../tours';
 import type { SessionSummary } from '../types';
 
 interface Props {
@@ -164,7 +165,7 @@ export default function Sidebar({ onNewSession, sessions }: Props) {
         onValueChange={(v) => setSidebarTab(v as 'compute' | 'plots' | 'annotations' | 'subsetting')}
         className="flex flex-col flex-1 overflow-hidden"
       >
-        <Tabs.List className="grid grid-cols-4 border-b border-border shrink-0">
+        <Tabs.List data-tour={TourAnchors.SidebarTabs} className="grid grid-cols-4 border-b border-border shrink-0">
           {(['compute', 'plots', 'annotations', 'subsetting'] as const).map((tab) => (
             <Tabs.Trigger
               key={tab}
@@ -218,12 +219,14 @@ export default function Sidebar({ onNewSession, sessions }: Props) {
           )}
           <button
             onClick={() => setShowPicker(true)}
+            data-tour={TourAnchors.AddFunction}
             className="w-full py-1.5 text-xs bg-accent hover:bg-accent/90 text-white rounded transition-colors"
           >
             + Add {sidebarTab === 'plots' ? 'plot' : 'compute'} function
           </button>
           <button
             onClick={() => setShowRecipes(true)}
+            data-tour={TourAnchors.BrowseRecipes}
             className="w-full py-1 text-[11px] bg-bg border border-border rounded text-text hover:border-accent transition-colors"
           >
             Browse recipes

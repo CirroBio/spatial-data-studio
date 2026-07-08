@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import StatusBadge, { type Status } from './StatusBadge';
 
 interface Props {
@@ -78,6 +78,8 @@ interface ModalOverlayProps {
 // Backdrop + centered panel shared by the smaller dialogs (recipe gallery, Cirro
 // upload, acknowledgements, transform editor). Closes on backdrop click or Esc.
 export function ModalOverlay({ onClose, widthClassName, children }: ModalOverlayProps) {
+  const pointerDownOnBackdrop = useRef(false);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -87,11 +89,14 @@ export function ModalOverlay({ onClose, widthClassName, children }: ModalOverlay
   }, [onClose]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
-      <div
-        className={`bg-surface border border-border rounded-lg shadow-xl flex flex-col overflow-hidden ${widthClassName}`}
-        onClick={(e) => e.stopPropagation()}
-      >
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      // Close only when the press *starts* on the backdrop, so a drag that begins
+      // inside (e.g. selecting text in an input) and releases outside won't close.
+      onMouseDown={(e) => { pointerDownOnBackdrop.current = e.target === e.currentTarget; }}
+      onClick={(e) => { if (pointerDownOnBackdrop.current && e.target === e.currentTarget) onClose(); }}
+    >
+      <div className={`bg-surface border border-border rounded-lg shadow-xl flex flex-col overflow-hidden ${widthClassName}`}>
         {children}
       </div>
     </div>
@@ -101,6 +106,8 @@ export function ModalOverlay({ onClose, widthClassName, children }: ModalOverlay
 // Shell for the compute/plot detail views — a large centered panel over the
 // current viewer (canvas or table inspector). Closes on backdrop click or Esc.
 export default function DetailModal({ onClose, children }: Props) {
+  const pointerDownOnBackdrop = useRef(false);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -112,12 +119,12 @@ export default function DetailModal({ onClose, children }: Props) {
   return (
     <div
       className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-6"
-      onClick={onClose}
+      // Close only when the press *starts* on the backdrop, so a drag that begins
+      // inside (e.g. selecting text in an input) and releases outside won't close.
+      onMouseDown={(e) => { pointerDownOnBackdrop.current = e.target === e.currentTarget; }}
+      onClick={(e) => { if (pointerDownOnBackdrop.current && e.target === e.currentTarget) onClose(); }}
     >
-      <div
-        className="bg-surface border border-border rounded-lg shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
-      >
+      <div className="bg-surface border border-border rounded-lg shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden">
         {children}
       </div>
     </div>

@@ -10,25 +10,27 @@ import psutil
 
 from . import appstate
 from .session import Session
-from ..config import config, browse_roots, within_roots
+from ..config import config, within_data_dir, within_checkpoint_dir
 from ..persistence.store import load_spatialdata, estimate_resident_mb, save_spatialdata
 from ..transport.sse import BUS
 
 # Reader params that terms.yaml documents as filesystem paths (see the
 # "reader path inputs" term). Any of these passed to a read-effect function
 # is validated against the allowed data roots before the reader ever runs.
-_READ_PATH_PARAMS = ("path", "input", "image_path", "alignment_file")
+_READ_PATH_PARAMS = ("path", "input", "image_path", "alignment_file", "store")
 
 
-def _resolve_or_raise(path: str) -> Path:
-    """Resolve `path` and ensure it falls within an allowed data root; raises
+def _resolve_or_raise(path: str, scope: str) -> Path:
+    """Resolve `path` and ensure it falls within the allowed root for `scope`
+    ("data" for raw reader inputs, "checkpoint" for saved sessions); raises
     RuntimeError otherwise (the error class both callers below surface as-is)."""
     try:
         target = Path(path).resolve()
     except OSError:
         raise RuntimeError(f"bad path: {path}")
-    if not within_roots(target, browse_roots()):
-        raise RuntimeError(f"path is outside the allowed data roots: {path}")
+    ok = within_data_dir(target) if scope == "data" else within_checkpoint_dir(target)
+    if not ok:
+        raise RuntimeError(f"path is outside the allowed {scope} directory: {path}")
     return target
 
 
@@ -41,7 +43,7 @@ class SessionManager:
     # ---- creation ---------------------------------------------------------
     def create_from_load(self, path: str, name: str | None = None) -> Session:
         self._check_capacity()
-        resolved = str(_resolve_or_raise(path))  # validated, resolved path for every fs op below
+        resolved = str(_resolve_or_raise(path, "checkpoint"))  # validated, resolved path for every fs op below
         self._check_admission(estimate_resident_mb(resolved))
         sdata, app_state, newer, extract_dir = load_spatialdata(resolved)
         sid = str(uuid.uuid4())
@@ -74,7 +76,7 @@ class SessionManager:
         for k, v in descriptor.get("params", {}).items():
             if k not in _READ_PATH_PARAMS or not isinstance(v, str):
                 continue
-            _resolve_or_raise(v)
+            _resolve_or_raise(v, "data")
         sid = str(uuid.uuid4())
         sess = Session(sid, name or descriptor.get("function", "session"), None, appstate.fresh(), self)
         self.sessions[sid] = sess
@@ -127,7 +129,7 @@ class SessionManager:
     def summary(self, sess: Session) -> dict:
         return {"id": sess.id, "name": sess.name, "status": sess.status,
                 "resident_mb": self._resident_mb(sess), "parent_id": sess.parent_id,
-                "created_at": sess.created_at}
+                "created_at": sess.created_at, "saved": sess.saved}
 
     def list_summaries(self) -> list:
         return [self.summary(s) for s in list(self.sessions.values())]

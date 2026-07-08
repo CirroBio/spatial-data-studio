@@ -51,9 +51,7 @@ def run_custom_methods_flow(client):
     import pandas as pd
     from app.main import MANAGER
 
-    r = client.post("/api/sessions", json={"source": {"kind": "load", "path": XENIUM_TMA}})
-    assert r.status_code == 200, r.text
-    sid = r.json()["id"]
+    sid = new_session(client, XENIUM_TMA)
     print(f"[ok] custom-methods session created {sid[:8]}")
 
     def run_job(namespace, function, params, timeout=180):
@@ -150,7 +148,7 @@ def run_custom_methods_flow(client):
     st2 = client.get(f"/api/sessions/{sid2}").json()
     ch = st2["app_state"]["compute_history"]
     fn_names = [c["function"] for c in ch]
-    expected = ["normalize_total", "log1p", "pca", "neighbors", "leiden", "rank_genes_groups",
+    expected = ["read_zarr", "normalize_total", "log1p", "pca", "neighbors", "leiden", "rank_genes_groups",
                 "identify_tmas", "cellular_neighborhoods", "proximity_test", "region_boundary",
                 "infiltration_profile", "milo_differential_abundance", "lisi_scores", "pseudobulk_deseq2"]
     assert fn_names == expected, fn_names
@@ -167,9 +165,27 @@ def run_custom_methods_flow(client):
 
 
 def new_session(client, path=DATA):
-    r = client.post("/api/sessions", json={"source": {"kind": "load", "path": path}})
+    """Open a checkpoint (a .zarr/.zarr.zip under the checkpoint dir) via `load`, or
+    bootstrap a raw dataset under the data dir via the `read_zarr` reader — the strict
+    data/checkpoint split means `load` only accepts checkpoint-dir paths. The read
+    bootstrap runs on the worker, so wait for the session to become ready."""
+    if str(path).startswith(str(config.CHECKPOINT_DIR)):
+        r = client.post("/api/sessions", json={"source": {"kind": "load", "path": path}})
+        assert r.status_code == 200, r.text
+        return r.json()["id"]
+    r = client.post("/api/sessions", json={"source": {
+        "kind": "read", "namespace": "io", "function": "read_zarr", "params": {"store": path}}})
     assert r.status_code == 200, r.text
-    return r.json()["id"]
+    sid = r.json()["id"]
+    t0 = time.time()
+    while time.time() - t0 < 180:
+        st = next((s for s in client.get("/api/sessions").json()["sessions"] if s["id"] == sid), None)
+        if st and st["status"] == "ready":
+            return sid
+        if st and st["status"] == "errored":
+            raise RuntimeError(f"read session {sid} errored")
+        time.sleep(0.5)
+    raise TimeoutError(f"read session {sid} did not become ready")
 
 
 def wait_job(client, sid, job_id, timeout=180):
@@ -439,11 +455,14 @@ def run_isolation_flow(client):
         "params": {"coord_type": "generic", "n_neighs": 6}})
     poll(client, a, lambda s: hist_status(s, "spatial_neighbors")[0] == "completed")
     stb = client.get(f"/api/sessions/{b}").json()
-    assert stb["app_state"]["compute_history"] == [], "session B gained A's compute history"
+    # B has only its own read_zarr bootstrap, never A's spatial_neighbors compute.
+    assert [c["function"] for c in stb["app_state"]["compute_history"]] == ["read_zarr"], \
+        "session B gained A's compute history"
     print("[ok] a compute on session A left session B's app_state untouched")
 
-    # delete the completed entry on A; a bogus/again delete is a 409
-    entry = client.get(f"/api/sessions/{a}").json()["app_state"]["compute_history"][0]["id"]
+    # delete the completed compute entry on A; a bogus/again delete is a 409
+    hist_a = client.get(f"/api/sessions/{a}").json()["app_state"]["compute_history"]
+    entry = next(c["id"] for c in hist_a if c["function"] == "spatial_neighbors")
     assert client.delete(f"/api/sessions/{a}/history/{entry}").status_code == 200
     assert client.delete(f"/api/sessions/{a}/history/{entry}").status_code == 409
     assert client.delete(f"/api/sessions/{a}/jobs/{entry}").status_code == 409  # finished -> not cancellable
@@ -465,10 +484,8 @@ def main():
         assert not no_prov, f"functions missing citation/documentation: {no_prov}"
         print(f"[ok] all {len(nf['functions'])} functions carry citation + documentation")
 
-        r = client.post("/api/sessions", json={"source": {"kind": "load", "path": DATA}})
-        assert r.status_code == 200, r.text
-        sid = r.json()["id"]
-        print(f"[ok] session created {sid[:8]} resident~{r.json()['resident_mb']}MB status={r.json()['status']}")
+        sid = new_session(client, DATA)
+        print(f"[ok] session created {sid[:8]}")
 
         st = client.get(f"/api/sessions/{sid}").json()
         print(f"[ok] fields: obs={len(st['fields']['obs'])} cols, obsm={st['fields']['obsm']}, "
@@ -589,7 +606,9 @@ def main():
         disp = st2["app_state"]["displays"]
         print(f"[ok] reloaded: compute_history={[c['function'] for c in ch]} "
               f"plots={[(p['function'],p['status']) for p in pl]} displays={len(disp)}")
-        assert [c["function"] for c in ch] == ["spatial_neighbors", "nhood_enrichment"]
+        # read_zarr is the bootstrap reader that opened the raw dataset, recorded as
+        # the first compute-history step (imports appear in history like any reader).
+        assert [c["function"] for c in ch] == ["read_zarr", "spatial_neighbors", "nhood_enrichment"]
         assert any(p["function"] == "nhood_enrichment" for p in pl)
         assert disp, "displays not preserved"
         # verify computed field survived the round trip

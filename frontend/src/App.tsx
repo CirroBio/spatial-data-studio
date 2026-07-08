@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from './store/sessionStore';
-import { getSessions, getFunctions, getCirroStatus, getReadyz } from './api';
+import { getSessions, getFunctions, getCirroStatus, getCirroUploads, getReadyz } from './api';
 import { isSpatialDisplay, isEmbeddingDisplay } from './types';
 import { resolveRegionSetColumn } from './lib/regions';
 import { useSSE } from './hooks/useSSE';
@@ -18,6 +18,7 @@ import NewSessionDialog from './components/NewSessionDialog';
 import Toaster from './components/Toaster';
 import SavingOverlay from './components/SavingOverlay';
 import StartupSplash from './components/StartupSplash';
+import { TourAnchors } from './tours';
 
 export default function App() {
   useSSE();
@@ -41,6 +42,7 @@ export default function App() {
     annotationColor,
     activeRegionSetId,
     setCirroEnabled,
+    setCirroUploads,
   } = useAppStore();
 
   useSession(activeSessionId);
@@ -95,9 +97,12 @@ export default function App() {
     })();
 
     getCirroStatus().then((s) => setCirroEnabled(s.enabled)).catch(() => setCirroEnabled(false));
+    // Initial upload-queue depth so a reload mid-upload shows the indicator before
+    // the next SSE state event; live updates arrive via cirro.upload.state.
+    getCirroUploads().then(setCirroUploads).catch(() => {});
 
     return () => { cancelled = true; };
-  }, [setSessions, setFunctions, activeSessionId, setActiveSessionId, setCirroEnabled]);
+  }, [setSessions, setFunctions, activeSessionId, setActiveSessionId, setCirroEnabled, setCirroUploads]);
 
   const display = sessionState?.app_state.displays.find(isSpatialDisplay) ?? null;
   const embeddingDisplay = sessionState?.app_state.displays.find(isEmbeddingDisplay) ?? null;
@@ -195,7 +200,7 @@ export default function App() {
         <Sidebar onNewSession={() => setShowNewSession(true)} sessions={sessions} />
         <main className="flex-1 overflow-hidden relative">
           {showViewSwitcher && (
-            <div className="absolute top-2 left-2 z-20 flex rounded-md border border-border bg-surface/90 backdrop-blur overflow-hidden text-xs shadow">
+            <div data-tour={TourAnchors.ViewSwitcher} className="absolute top-2 left-2 z-20 flex rounded-md border border-border bg-surface/90 backdrop-blur overflow-hidden text-xs shadow">
               {([
                 ['canvas', 'Spatial'],
                 ['embedding', 'Embeddings'],

@@ -4,6 +4,9 @@ import { saveSession } from '../api';
 import { reportError } from '../lib/errors';
 import AcknowledgementsDialog from './AcknowledgementsDialog';
 import CirroUploadDialog from './CirroUploadDialog';
+import SnapshotBrowser from './SnapshotBrowser';
+import SessionPicker from './SessionPicker';
+import { TourAnchors, useTour, spatialDataStudioTour } from '../tours';
 
 interface Props {
   onNewSession: () => void;
@@ -14,12 +17,23 @@ const ICON_BTN ='p-1.5 rounded border border-border bg-bg text-text hover:border
 export default function Header({ onNewSession }: Props) {
   const [showAbout, setShowAbout] = useState(false);
   const [showCirroUpload, setShowCirroUpload] = useState(false);
+  const [showSnapshots, setShowSnapshots] = useState(false);
   const {
-    activeSessionId, activeJobIds, sessions,
-    theme, setTheme, savingJobId, cirroEnabled,
+    activeSessionId, activeJobIds, sessionState,
+    theme, setTheme, savingJobId, cirroEnabled, cirroUploads,
   } = useAppStore();
-  const activeSession = sessions.find((s) => s.id === activeSessionId);
   const runningCount = activeJobIds.size;
+  const unsaved = !!activeSessionId && sessionState?.summary.saved === false;
+  // Header mounts only once the backend is ready, so the intro tour can
+  // auto-start (first visit) and be re-triggered from the button below.
+  const { start: startTour } = useTour(spatialDataStudioTour.id, true);
+  const uploadsActive = cirroUploads.uploading + cirroUploads.pending;
+  const uploadTitle = uploadsActive > 0
+    ? `Cirro: ${cirroUploads.uploading} uploading`
+      + (cirroUploads.pending ? `, ${cirroUploads.pending} pending` : '')
+    : 'Upload to Cirro';
+  const fields = sessionState?.fields;
+  const img = fields?.image_dims[0];
 
   function handleSave() {
     if (!activeSessionId) return;
@@ -32,8 +46,14 @@ export default function Header({ onNewSession }: Props) {
     <header className="flex items-center justify-between px-4 h-12 bg-surface border-b border-border shrink-0">
       <div className="flex items-center gap-3">
         <span className="text-accent font-semibold tracking-wide text-sm">Spatial Data Studio</span>
-        {activeSession && (
-          <span className="text-text/70 text-xs truncate max-w-[200px]">{activeSession.name}</span>
+        <span data-tour={TourAnchors.SessionPicker}>
+          <SessionPicker />
+        </span>
+        {fields && (
+          <span className="text-[11px] text-muted font-mono" style={{ fontVariantNumeric: 'tabular-nums' }}>
+            {fields.n_obs.toLocaleString()} cells
+            {img && ` · ${img.width.toLocaleString()} × ${img.height.toLocaleString()} px`}
+          </span>
         )}
       </div>
 
@@ -45,17 +65,38 @@ export default function Header({ onNewSession }: Props) {
           </span>
         )}
 
-        <button onClick={onNewSession} className={ICON_BTN} title="New session" aria-label="New session">
+        <button onClick={onNewSession} className={ICON_BTN} title="New session" aria-label="New session" data-tour={TourAnchors.NewSession}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M14 3v4a1 1 0 0 0 1 1h4" />
             <path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z" />
             <path d="M12 11v6M9 14h6" />
           </svg>
         </button>
-        <button onClick={handleSave} disabled={!activeSessionId || !!savingJobId} className={ICON_BTN} title="Save session" aria-label="Save session">
+        <button
+          onClick={handleSave}
+          disabled={!activeSessionId || !!savingJobId}
+          className={`${ICON_BTN} relative`}
+          title={unsaved ? 'Save session — unsaved changes' : 'Save session'}
+          aria-label={unsaved ? 'Save session (unsaved changes)' : 'Save session'}
+          data-tour={TourAnchors.SaveSession}
+        >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
             <path d="M17 21v-8H7v8M7 3v5h8" />
+          </svg>
+          {unsaved && (
+            <span
+              className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-warn"
+              title="Unsaved changes"
+            />
+          )}
+        </button>
+
+        <button onClick={() => setShowSnapshots(true)} className={ICON_BTN} title="Browse snapshots" aria-label="Browse snapshots" data-tour={TourAnchors.Snapshots}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <circle cx="8.5" cy="8.5" r="1.5" />
+            <path d="M21 15l-5-5L5 21" />
           </svg>
         </button>
 
@@ -77,6 +118,13 @@ export default function Header({ onNewSession }: Props) {
           )}
         </button>
 
+        <button onClick={startTour} className={ICON_BTN} title="Take the tour" aria-label="Take the tour">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="10" />
+            <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
+          </svg>
+        </button>
+
         <button onClick={() => setShowAbout(true)} className={ICON_BTN} title="About / Acknowledgements" aria-label="About / Acknowledgements">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="12" cy="12" r="10" />
@@ -88,23 +136,24 @@ export default function Header({ onNewSession }: Props) {
         {cirroEnabled && (
           <button
             onClick={() => setShowCirroUpload(true)}
-            disabled={!activeSessionId}
-            className={ICON_BTN}
-            title="Upload to Cirro"
-            aria-label="Upload to Cirro"
+            className={`${ICON_BTN} relative`}
+            title={uploadTitle}
+            aria-label={uploadTitle}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M7 18a4.5 4.5 0 0 1-1.44-8.77A5.5 5.5 0 0 1 16.3 6.03 4.5 4.5 0 0 1 17.5 15H17" />
               <path d="M12 12v9M9 15l3-3 3 3" />
             </svg>
+            {uploadsActive > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full border border-accent border-t-transparent animate-spin" />
+            )}
           </button>
         )}
       </div>
 
       {showAbout && <AcknowledgementsDialog onClose={() => setShowAbout(false)} />}
-      {showCirroUpload && activeSessionId && (
-        <CirroUploadDialog sessionId={activeSessionId} onClose={() => setShowCirroUpload(false)} />
-      )}
+      {showSnapshots && <SnapshotBrowser onClose={() => setShowSnapshots(false)} />}
+      {showCirroUpload && <CirroUploadDialog onClose={() => setShowCirroUpload(false)} />}
     </header>
   );
 }

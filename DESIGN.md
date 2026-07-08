@@ -258,7 +258,7 @@ Type → widget fallback (before the Term Dictionary refines it):
   *Identify Regions (Leiden)* (`leiden_regions.py`), *Edit Annotations*
   (`edit_annotations.py` — rename/merge a categorical obs column's values), *Identify
   TMAs* (`identify_tmas.py` / `tma_detect.py` — automatic tissue-microarray core
-  detection), *Region composition* + *Region composition (plot)*
+  detection), *Region composition*
   (`region_composition.py` — §11), *Annotate Cells (CellTypist)*
   (`celltypist_annotate.py` — predict a cell-type label per cell with a pre-trained
   model), and six spatial/multi-sample analysis method pairs — *Cellular
@@ -804,11 +804,11 @@ no new code** — `sc.tl.rank_genes_groups(groupby="tumor_vs_stroma")`,
 doesn't hardcode that list; the registry enumerates the live functions and region sets
 become groupable for free.
 
-**Built comparison analysis:** cell-type-by-region composition, as a custom compute +
-plot pair (`region_composition.py`): `pandas.crosstab(region, cell_type)` for
+**Built comparison analysis:** cell-type-by-region composition, as a custom plot
+step (`region_composition.py`): `pandas.crosstab(region, cell_type)` for
 proportions, `scipy.stats.chi2_contingency` for a composition-difference test, then a
-stacked-bar plot of the proportions (pandas/scipy/matplotlib only — no new
-dependencies). A broader per-region orchestration engine and faceted small-multiples
+stacked-bar plot of the proportions, all in one step (pandas/scipy/matplotlib only — no
+new dependencies). A broader per-region orchestration engine and faceted small-multiples
 display remain design directions, not built features.
 
 **Statistical caveat (designed into the UI):** comparing regions of **one** section has
@@ -1449,3 +1449,55 @@ A structured adversarial pass over the design. Each item is tagged **Resolved**
   **Accepted** — each tied to a constraint the design was given (one box, single process,
   in-place mutation, direct data path, huge datasets). Mitigations are documented in the
   relevant sections; none is a fixable design defect.
+
+---
+
+## 28. Offline computation (headless CLI + Nextflow)
+
+The same analysis engine runs headless, for batch/pipeline use with no server or
+browser. The design principle is **reuse, not a parallel implementation**: reading,
+compute, plot capture, and saving all go through the identical code paths the
+interactive server drives, so an offline recipe run produces the same object and the
+same figures as running those steps in the UI.
+
+### 28.1 CLI (`backend/cli.py`)
+
+A single-shot runner: parse an input dataset, apply a recipe, write an output folder.
+
+```
+python cli.py --parser <reader|zarr> --input <path> --recipe <file|name> --output <dir>
+```
+
+- **Parser** — `--parser` selects how the input is read, reusing the app's parsing
+  functions: a read-effect registry entry named by key (`io.xenium`) or bare function
+  name (`xenium`) drives `SessionManager.create_from_read` (§17); the sentinels
+  `zarr`/`spatialdata` load an existing `.zarr`/`.zarr.zip` via `create_from_load`
+  (§18) — the headless equivalent of the New Session "load" path.
+- **Recipe** — `--recipe` is a recipe JSON file (the §12.1 bundle format) or a bundled
+  recipe name; its `steps` are enqueued through `Session.enqueue_descriptor` exactly as
+  the UI's "Run recipe" does, and completion is awaited per step (validate-on-dequeue,
+  §6.2, still applies).
+- **Output** — the resulting `SpatialData` + app state is written with
+  `persistence.store.save_spatialdata` to `<output>/<name>.zarr.zip` (reloadable in the
+  app), and every plot step's captured `figure_svg`/`figure_pdf` (§4.6, held in
+  `Session.plot_figures`) is written to `<output>/plots/<NN>_<namespace>.<function>/
+  figure.{svg,pdf}`.
+- **Boundary reconciliation** — the server's data-root allowlist and
+  `within_checkpoint_dir` save guard (§16, §19) exist for the shared multi-tenant
+  server. The CLI owns its own paths, so it sets `SQV_DATA_DIR`/`SQV_CHECKPOINT_DIR`
+  from its arguments *before* importing `config`, lifts the memory/session admission
+  caps (single-shot, single-tenant), and saves by calling `save_spatialdata` directly
+  rather than through the guarded save job. A step failure aborts the run non-zero with
+  the captured log (fail-fast batch semantics), rather than the UI's keep-in-history
+  model. `backend/test_cli.py` exercises the whole path on `visium_hne`.
+
+### 28.2 Nextflow workflow (`nextflow/`)
+
+`nextflow/main.nf` wraps the CLI in one process, exposing the CLI's parameters
+(`parser`, `input`, `recipe`, `outdir`, `name`, `reader_params`). Its container is a
+**public `uv` image**: the pinned Python dependencies (`backend/requirements.txt`) are
+installed at **runtime** with `uv` into a venv, and the `backend/` tree is mounted in —
+so there is **no custom image to build**. The output folder is published via
+`publishDir`. A `test` profile runs the bundled neighborhood-enrichment recipe against
+`test-data/visium_hne.zarr` in `zarr` mode. Python 3.11 is required (squidpy does not
+support 3.13+).

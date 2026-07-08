@@ -58,6 +58,13 @@ def _image_array(sdata, element):
     return el
 
 
+def image_dims(sdata, element) -> tuple[int, int]:
+    """Level-0 (width, height) of an image element, from shape metadata only."""
+    el = sdata.images[element]
+    arr = _level_array(el, 0) if _is_multiscale(el) else el
+    return int(arr.shape[-1]), int(arr.shape[-2])
+
+
 def channel_names(elem) -> list[str]:
     """Channel labels for an image element, multiscale (DataTree) or plain.
     Falls back through the `c` coord, the `c` dim size, and finally a shape
@@ -318,3 +325,56 @@ def thumbnail_png(
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
+
+
+def region_png(sdata, element, world_bbox, table=None, out_px: int = 2048,
+               channel_colors: dict[int, tuple[int, int, int]] | None = None) -> tuple[bytes, list[float]]:
+    """Composite a world-space rectangle at higher resolution than the whole-image
+    thumbnail: clamp the requested bbox to the image extent, pick the coarsest
+    pyramid level whose crop is still >= `out_px` on its long side (then downscale
+    to out_px), and return (png, world bounds actually covered). Used for snapshots
+    of the current viewport. Assumes an axis-aligned pixel->world mapping (the
+    scale+translate common to Visium/Xenium); rotation is approximated by the
+    axis-aligned pixel crop."""
+    from PIL import Image
+    info = image_info(sdata, element, table)
+    a, b, c, d, e, f = info["pixel_to_world"]
+    m = np.array([[a, b, c], [d, e, f], [0, 0, 1]])
+    minv = np.linalg.inv(m)
+
+    # World rect -> level-0 pixel AABB, clamped to the image.
+    wx0, wy0, wx1, wy1 = world_bbox
+    px_bbox = _apply_bbox(minv, [wx0, wy0, wx1, wy1])
+    w0, h0 = info["width"], info["height"]
+    px0 = max(0, int(np.floor(min(px_bbox[0], px_bbox[2]))))
+    py0 = max(0, int(np.floor(min(px_bbox[1], px_bbox[3]))))
+    px1 = min(w0, int(np.ceil(max(px_bbox[0], px_bbox[2]))))
+    py1 = min(h0, int(np.ceil(max(px_bbox[1], px_bbox[3]))))
+    if px0 >= px1 or py0 >= py1:
+        raise ValueError("viewport does not overlap the image")
+
+    # Coarsest level whose crop still has >= out_px on its long side (finest first).
+    levels = info["levels"]
+    chosen = 0
+    for i, lv in enumerate(levels):
+        s = lv["width"] / w0
+        if max((px1 - px0) * s, (py1 - py0) * s) >= out_px:
+            chosen = i
+        else:
+            break
+
+    sL = levels[chosen]["width"] / w0
+    lx0, lx1 = int(px0 * sL), max(int(px0 * sL) + 1, int(round(px1 * sL)))
+    ly0, ly1 = int(py0 * sL), max(int(py0 * sL) + 1, int(round(py1 * sL)))
+    arr = _level_array(sdata.images[element], chosen)
+    region = arr[..., ly0:ly1, lx0:lx1]
+    data = np.asarray(region.data if hasattr(region, "data") else region)
+    hwc = _composite(data, _channel_norm(sdata, element), channel_colors)
+    img = Image.fromarray(hwc)
+    if max(img.size) > out_px:
+        img.thumbnail((out_px, out_px))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    # World bounds actually covered = clamped level-0 pixel box mapped back through m.
+    bounds = _apply_bbox(m, [px0, py0, px1, py1])
+    return buf.getvalue(), bounds

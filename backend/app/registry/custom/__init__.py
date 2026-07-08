@@ -4,7 +4,7 @@ from .cluster_leiden import ClusterLeiden
 from .leiden_regions import IdentifyRegionsLeiden
 from .edit_annotations import EditAnnotations
 from .identify_tmas import IdentifyTMAs
-from .region_composition import RegionComposition, RegionCompositionPlot
+from .region_composition import RegionComposition
 from .celltypist_annotate import CellTypistAnnotate
 from .cellular_neighborhoods import CellularNeighborhoods, CellularNeighborhoodsPlot
 from .milo_da import MiloDifferentialAbundance, MiloDifferentialAbundancePlot
@@ -14,7 +14,7 @@ from .boundary import RegionBoundary, RegionBoundaryPlot, InfiltrationProfile, I
 from .pseudobulk_deseq2 import PseudobulkDESeq2, PseudobulkDESeq2Plot
 
 CUSTOM_FUNCTIONS = [ClusterLeiden(), IdentifyRegionsLeiden(), EditAnnotations(), IdentifyTMAs(),
-                    RegionComposition(), RegionCompositionPlot(), CellTypistAnnotate(),
+                    RegionComposition(), CellTypistAnnotate(),
                     CellularNeighborhoods(), CellularNeighborhoodsPlot(),
                     MiloDifferentialAbundance(), MiloDifferentialAbundancePlot(),
                     LisiScores(), LisiScoresPlot(),

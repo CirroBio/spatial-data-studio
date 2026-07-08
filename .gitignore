@@ -28,3 +28,8 @@ checkpoints/
 sds-governance/sbom.json
 __pycache__/
 .pytest_cache/
+
+# Nextflow run artifacts (nextflow/)
+.nextflow/
+.nextflow.log*
+work/

@@ -6,7 +6,8 @@ are anti-conservative for this question — see `scanpy.tl.rank_genes_groups`
 for the (different) per-cell marker-detection use case. The algorithm is
 vendored from `_vendor/pb_compute.py` / `_vendor/pb_plot.py`. Compute writes
 the per-cell-type results table to `uns[key_added]`; the paired plot step
-reads it back, mirroring region_composition.py's compute/plot split."""
+reads it back, mirroring the compute-writes/plot-reads split squidpy metrics
+use (e.g. nhood_enrichment)."""
 from __future__ import annotations
 
 from ..base import CallResult, Function, ParamSpec, capture_log, missing_obs_column, render_plot, run_compute

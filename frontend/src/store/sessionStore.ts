@@ -107,6 +107,8 @@ interface AppStore {
   // Cirro upload
   cirroEnabled: boolean;
   setCirroEnabled: (on: boolean) => void;
+  cirroUploads: { uploading: number; pending: number };
+  setCirroUploads: (u: { uploading: number; pending: number }) => void;
 }
 
 export interface AppNotification {
@@ -308,4 +310,6 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   cirroEnabled: false,
   setCirroEnabled: (on) => set({ cirroEnabled: on }),
+  cirroUploads: { uploading: 0, pending: 0 },
+  setCirroUploads: (u) => set({ cirroUploads: u }),
 }));

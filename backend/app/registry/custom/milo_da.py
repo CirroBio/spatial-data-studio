@@ -3,7 +3,8 @@ conditions across small, overlapping neighborhoods of a KNN graph (Dann et al.,
 Nat Biotechnol 2021). No scanpy/squidpy equivalent exists; the algorithm is
 vendored from `_vendor/milo_da_compute.py` / `_vendor/milo_da_plot.py`. Compute
 writes the per-neighborhood results table to `uns[key_added]`; the paired plot
-step reads it back, mirroring region_composition.py's compute/plot split."""
+step reads it back, mirroring the compute-writes/plot-reads split squidpy
+metrics use (e.g. nhood_enrichment)."""
 from __future__ import annotations
 
 import numpy as np

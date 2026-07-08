@@ -1,37 +1,50 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from '../store/sessionStore';
 import {
-  getCirroFolders, getCirroProjects, getSnapshots, uploadToCirro,
-  type CirroProject,
+  getCirroFolders, getCirroProjects, getDatasets, getSnapshots, uploadToCirro,
+  type CirroProject, type DatasetEntry,
 } from '../api';
 import { formatError, reportError } from '../lib/errors';
+import type { Snapshot } from '../lib/snapshots';
 import { ModalOverlay, ModalHeader } from './DetailModal';
+import SnapshotList from './SnapshotList';
 
 interface Props {
-  sessionId: string;
   onClose: () => void;
 }
 
-export default function CirroUploadDialog({ sessionId, onClose }: Props) {
-  const { sessions, pushNotification } = useAppStore();
-  const session = sessions.find((s) => s.id === sessionId);
+function toggle(set: Set<string>, key: string): Set<string> {
+  const next = new Set(set);
+  next.has(key) ? next.delete(key) : next.add(key);
+  return next;
+}
+
+function savedAt(mtime: number): string {
+  return mtime ? new Date(mtime * 1000).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '';
+}
+
+export default function CirroUploadDialog({ onClose }: Props) {
+  const { pushNotification } = useAppStore();
 
   const [projects, setProjects] = useState<CirroProject[] | null>(null);
-  const [snapshots, setSnapshots] = useState<{ name: string; url: string }[] | null>(null);
+  const [snapshots, setSnapshots] = useState<Snapshot[] | null>(null);
+  const [sessions, setSessions] = useState<DatasetEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [projectId, setProjectId] = useState('');
-  const [datasetName, setDatasetName] = useState(session?.name ?? '');
+  const [datasetName, setDatasetName] = useState('');
   const [folder, setFolder] = useState('');
   const [folders, setFolders] = useState<string[]>([]);
+  const [selectedSessions, setSelectedSessions] = useState<Set<string>>(new Set());
   const [selectedSnapshots, setSelectedSnapshots] = useState<Set<string>>(new Set());
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    Promise.all([getCirroProjects(), getSnapshots()])
-      .then(([p, s]) => {
+    Promise.all([getCirroProjects(), getSnapshots(), getDatasets()])
+      .then(([p, s, d]) => {
         setProjects(p.projects);
         setSnapshots(s.snapshots);
+        setSessions(d.datasets);
       })
       .catch((err) => setError(formatError(err)));
   }, []);
@@ -41,20 +54,12 @@ export default function CirroUploadDialog({ sessionId, onClose }: Props) {
     getCirroFolders(projectId).then((f) => setFolders(f.folders)).catch((err) => setError(formatError(err)));
   }, [projectId]);
 
-  function toggleSnapshot(name: string) {
-    setSelectedSnapshots((prev) => {
-      const next = new Set(prev);
-      next.has(name) ? next.delete(name) : next.add(name);
-      return next;
-    });
-  }
-
   async function handleSubmit() {
     setSubmitting(true);
     try {
-      await uploadToCirro(sessionId, {
+      await uploadToCirro({
         project_id: projectId, dataset_name: datasetName.trim(),
-        snapshot_names: [...selectedSnapshots],
+        session_paths: [...selectedSessions], snapshot_names: [...selectedSnapshots],
         folder: folder.trim() || undefined,
       });
       pushNotification({ kind: 'info', message: `Uploading "${datasetName.trim()}" to Cirro…` });
@@ -65,23 +70,23 @@ export default function CirroUploadDialog({ sessionId, onClose }: Props) {
     }
   }
 
-  const canSubmit = !!projectId && !!datasetName.trim() && !submitting;
+  const loaded = projects && snapshots && sessions;
+  const canSubmit = !!projectId && !!datasetName.trim()
+    && (selectedSessions.size > 0 || selectedSnapshots.size > 0) && !submitting;
 
   return (
-    <ModalOverlay onClose={onClose} widthClassName="w-[480px] max-h-[80vh]">
+    <ModalOverlay onClose={onClose} widthClassName="w-[560px] max-h-[85vh]">
       <ModalHeader
         title="Upload to Cirro"
-        subtitle="Upload the saved session (and any selected snapshots) as a dataset."
+        subtitle="Upload selected saved sessions and snapshots as a dataset."
         onClose={onClose}
       />
 
       <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
         {error && <div className="text-xs text-danger px-1">{error}</div>}
-        {(!projects || !snapshots) && !error && (
-          <div className="text-xs text-muted px-1">Loading…</div>
-        )}
+        {!loaded && !error && <div className="text-xs text-muted px-1">Loading…</div>}
 
-        {projects && snapshots && (
+        {loaded && (
           <>
             <label className="flex flex-col gap-1 text-xs text-muted">
               Project
@@ -122,19 +127,38 @@ export default function CirroUploadDialog({ sessionId, onClose }: Props) {
             </label>
 
             <div className="flex flex-col gap-1">
-              <span className="text-xs text-muted">Snapshots to include (optional)</span>
-              {snapshots.length === 0 && <span className="text-xs text-muted/70 px-1">No saved snapshots.</span>}
-              <div className="flex flex-col gap-1 max-h-40 overflow-y-auto border border-border rounded p-1.5">
-                {snapshots.map((s) => (
-                  <label key={s.name} className="flex items-center gap-2 text-xs text-text px-1 py-0.5">
-                    <input
-                      type="checkbox"
-                      checked={selectedSnapshots.has(s.name)}
-                      onChange={() => toggleSnapshot(s.name)}
-                    />
-                    <span className="truncate">{s.name}</span>
-                  </label>
+              <span className="text-xs text-muted">Saved sessions to include</span>
+              {sessions.length === 0 && <span className="text-xs text-muted/70 px-1">No saved sessions.</span>}
+              <div className="max-h-40 overflow-y-auto border border-border rounded">
+                {sessions.map((d) => (
+                  <button
+                    key={d.path}
+                    onClick={() => setSelectedSessions((s) => toggle(s, d.path))}
+                    title={d.path}
+                    className={`w-full text-left px-3 py-2 border-b border-border/50 transition-colors flex items-center gap-2 ${
+                      selectedSessions.has(d.path) ? 'bg-accent/20 text-accent' : 'text-text hover:bg-accent-lo/30'
+                    }`}
+                  >
+                    <input type="checkbox" checked={selectedSessions.has(d.path)} readOnly tabIndex={-1} className="shrink-0 pointer-events-none" />
+                    <span className="flex flex-col min-w-0 flex-1">
+                      <span className="text-xs font-medium truncate">{d.name}</span>
+                      {savedAt(d.mtime) && <span className="text-[10px] text-muted/70 mt-0.5">{savedAt(d.mtime)}</span>}
+                    </span>
+                  </button>
                 ))}
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <span className="text-xs text-muted">Snapshots to include</span>
+              {snapshots.length === 0 && <span className="text-xs text-muted/70 px-1">No saved snapshots.</span>}
+              <div className="max-h-40 overflow-y-auto border border-border rounded">
+                <SnapshotList
+                  snapshots={snapshots}
+                  multi
+                  isSelected={(s) => selectedSnapshots.has(s.name)}
+                  onSelect={(s) => setSelectedSnapshots((prev) => toggle(prev, s.name))}
+                />
               </div>
             </div>
           </>

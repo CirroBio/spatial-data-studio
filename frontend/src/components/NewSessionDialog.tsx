@@ -157,7 +157,7 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
                     mode === m ? 'bg-accent/20 text-accent' : 'text-muted hover:text-text'
                   }`}
                 >
-                  {m === 'load' ? 'Open dataset (.zarr)' : 'Import raw data'}
+                  {m === 'load' ? 'Open Checkpoint' : 'Import Data'}
                 </button>
               ))}
             </div>
@@ -196,14 +196,14 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
 
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-mono text-muted">
-                {mode === 'import' ? 'Dataset folder' : 'Dataset'} <span className="text-danger">*</span>
+                {mode === 'import' ? 'Data folder' : 'Checkpoint'} <span className="text-danger">*</span>
                 <span className="ml-1 normal-case font-sans text-muted/60">
-                  {mode === 'import' ? '(raw dataset folder for the chosen reader)' : '(.zarr / .zarr.zip)'}
+                  {mode === 'import' ? '(raw data folder, or a .zarr, for the chosen reader)' : '(saved .zarr / .zarr.zip)'}
                 </span>
               </label>
               <input
                 type="text"
-                placeholder={mode === 'import' ? 'navigate to the raw dataset folder…' : 'click to see available datasets, or type to filter…'}
+                placeholder={mode === 'import' ? 'navigate to the data folder…' : 'click to see saved checkpoints, or type to filter…'}
                 value={path}
                 onChange={(e) => { setPath(e.target.value); setOpen(true); }}
                 onFocus={() => setOpen(true)}
@@ -238,10 +238,10 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
                   {datasetMatches.length === 0 && (
                     <div className="px-3 py-2 text-xs text-muted/60">
                       {datasetsLoading
-                        ? 'Loading datasets…'
+                        ? 'Loading checkpoints…'
                         : datasets.length
-                        ? 'No matching datasets'
-                        : 'No datasets found under the data folders'}
+                        ? 'No matching checkpoints'
+                        : 'No saved checkpoints found'}
                     </div>
                   )}
                 </div>
@@ -312,7 +312,7 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
             <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-surface/80 backdrop-blur-[1px]">
               <div className="w-8 h-8 rounded-full border-2 border-border border-t-accent animate-spin" />
               <span className="text-sm text-text">
-                {mode === 'import' ? 'Importing dataset…' : 'Loading dataset…'}
+                {mode === 'import' ? 'Importing data…' : 'Loading checkpoint…'}
               </span>
             </div>
           )}

@@ -9,7 +9,7 @@ test('loads the app shell and opens the New Session dialog', async ({ page }) =>
   await page.getByRole('button', { name: 'New Session', exact: true }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog.getByText('New Session', { exact: true })).toBeVisible();
-  await expect(dialog.getByPlaceholder(/available datasets/)).toBeVisible();
+  await expect(dialog.getByPlaceholder(/saved checkpoints/)).toBeVisible();
 
   await dialog.getByRole('button', { name: 'Cancel' }).click();
   await expect(dialog).not.toBeVisible();

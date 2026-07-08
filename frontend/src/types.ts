@@ -49,6 +49,7 @@ export interface SessionSummary {
   resident_mb: number;
   parent_id: string | null;
   created_at: string;
+  saved: boolean;  // in-memory state matches the saved checkpoint (drives the unsaved-changes dot)
 }
 
 export interface ObsField {
@@ -61,13 +62,21 @@ export interface ObsmField {
   n_components: number;
 }
 
+export interface ImageDims {
+  name: string;
+  width: number;
+  height: number;
+}
+
 export interface SessionFields {
   obs: ObsField[];
   obsm: ObsmField[];
+  n_obs: number;
   var_names_count: number;
   obsp: string[];
   layers: string[];
   images: string[];
+  image_dims: ImageDims[];
   shapes: string[];
 }
 
@@ -235,12 +244,11 @@ export interface JobStartedEvent {
 export interface JobCompletedEvent {
   session_id: string;
   job_id: string;
-  kind: 'compute' | 'plot' | 'save' | 'subset' | 'annotate' | 'promote' | 'cirro_upload' | 'set_transform';
+  kind: 'compute' | 'plot' | 'save' | 'subset' | 'annotate' | 'promote' | 'set_transform';
   structural_diff?: Record<string, string[]>;
   data_versions: Record<string, number>;
   plot_id?: string;
   child_id?: string;  // subset jobs: the new child session to switch to
-  dataset_name?: string;  // cirro_upload jobs: the dataset created in Cirro
 }
 
 export interface JobFailedEvent {

@@ -1,0 +1,72 @@
+/* Theme the Driver.js popover with the app's CSS tokens so the tour matches
+   light and dark. Driver.js uses an SVG overlay (not mix-blend-mode), so the
+   spotlight contrast is fine in both themes. */
+.driver-popover.sds-tour,
+.driver-popover {
+  background: rgb(var(--color-surface));
+  color: rgb(var(--color-text));
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
+  font-family: system-ui, -apple-system, sans-serif;
+  max-width: 320px;
+}
+
+.driver-popover .driver-popover-title {
+  color: rgb(var(--color-text));
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.driver-popover .driver-popover-description {
+  color: rgb(var(--color-muted));
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.driver-popover .driver-popover-progress-text {
+  color: rgb(var(--color-muted));
+  font-size: 11px;
+}
+
+.driver-popover .driver-popover-arrow {
+  border-color: rgb(var(--color-surface));
+}
+
+.driver-popover button.driver-popover-next-btn,
+.driver-popover button.driver-popover-prev-btn {
+  text-shadow: none;
+  background: rgb(var(--color-bg));
+  color: rgb(var(--color-text));
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 6px;
+  font-size: 12px;
+  padding: 4px 10px;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.driver-popover button.driver-popover-next-btn:hover,
+.driver-popover button.driver-popover-prev-btn:hover {
+  background: rgb(var(--color-bg));
+  border-color: rgb(var(--color-accent));
+  color: rgb(var(--color-accent));
+}
+
+.driver-popover button.driver-popover-next-btn {
+  background: rgb(var(--color-accent));
+  border-color: rgb(var(--color-accent));
+  color: #fff;
+}
+
+.driver-popover button.driver-popover-next-btn:hover {
+  background: rgb(var(--color-accent) / 0.9);
+  color: #fff;
+}
+
+.driver-popover .driver-popover-close-btn {
+  color: rgb(var(--color-muted));
+}
+
+.driver-popover .driver-popover-close-btn:hover {
+  color: rgb(var(--color-text));
+}

@@ -84,6 +84,10 @@ class Session:
         self.manager = manager
         self.parent_id = parent_id
         self.store_path = store_path
+        # True when the in-memory object matches its saved checkpoint: set on load
+        # (matches the file it came from) and after every save; cleared by any
+        # data/history mutation. Drives the "unsaved changes" indicator.
+        self.saved = store_path is not None
         self.extract_dir = None  # temp dir if loaded from a .zarr.zip; cleaned on close
         self.raster_cache_dir = None  # temp store of tile-normalized rasters; cleaned on close
         self.created_at = _now()
@@ -263,8 +267,6 @@ class Session:
                 self._run_annotate(job_id, payload)
             elif kind == "set_transform":
                 self._run_set_transform(job_id, payload)
-            elif kind == "cirro_upload":
-                self._run_cirro_upload(job_id, payload)
         except Exception as e:  # worker must never die
             self._fail(job_id, kind, str(e))
         finally:
@@ -303,14 +305,20 @@ class Session:
                 self.active_table_key = self._default_table_key()
                 if not self.app_state["displays"]:
                     self.manager.auto_displays(self)
+                self.status = "ready"  # the read bootstrap adopted the object
             result.manifest_before = manifest_before
             result.manifest_after = build_manifest(self)
 
         self._jobs[job_id]["envelope"] = _envelope(result)  # for the agent loop (Part 2/5)
 
         if result.status == "failed":
+            # A failed read bootstrap (no object ever adopted) leaves the session unusable.
+            if self.sdata is None:
+                self.status = "errored"
             self._fail(job_id, kind, result.error or "failed", log=result.log)
             return
+
+        self.saved = False  # a completed compute/plot changed the object or its cached state
 
         if kind == "plot":
             self.plot_figures[job_id] = {"svg": result.figure_svg, "pdf": result.figure_pdf}
@@ -336,6 +344,7 @@ class Session:
         with self.lock.writing():
             changed = (regions.promote(self, payload["obs_column"])
                        if payload.get("op") == "promote" else regions.assign(self, payload))
+        self.saved = False
         self._jobs[job_id]["status"] = "completed"
         diff: dict = {}
         for f in changed:
@@ -362,6 +371,7 @@ class Session:
         with self.lock.reading():
             self.store_path = save_spatialdata(self.sdata, payload["path"], self.app_state,
                                                hash_name=payload.get("hash_name", False))
+        self.saved = True
         self._jobs[job_id]["status"] = "completed"
         appstate.bump_versions(self.app_state, ["obsm:spatial"])
         BUS.publish("job.completed", {"session_id": self.id, "job_id": job_id, "kind": "set_transform",
@@ -377,26 +387,10 @@ class Session:
             path = save_spatialdata(self.sdata, payload["path"], self.app_state,
                                     hash_name=payload.get("hash_name", False))
         self.store_path = path
+        self.saved = True
         self._jobs[job_id]["status"] = "completed"
         BUS.publish("job.completed", {"session_id": self.id, "job_id": job_id, "kind": "save",
                                       "path": path, "data_versions": self.app_state["data_versions"]})
-
-    def _run_cirro_upload(self, job_id, payload):
-        import shutil
-        from .. import cirro
-        if not self.store_path:
-            raise ValueError("save the session before uploading to Cirro")
-        upload_dir = cirro.build_upload_folder(self.store_path, payload.get("snapshot_names") or [])
-        try:
-            result = cirro.upload(project_id=payload["project_id"],
-                                  dataset_name=payload["dataset_name"], upload_folder=upload_dir,
-                                  folder=payload.get("folder"))
-        finally:
-            shutil.rmtree(upload_dir, ignore_errors=True)
-        self._jobs[job_id]["status"] = "completed"
-        BUS.publish("job.completed", {"session_id": self.id, "job_id": job_id, "kind": "cirro_upload",
-                                      "dataset_name": result["dataset_name"],
-                                      "data_versions": self.app_state["data_versions"]})
 
     def _run_subset(self, job_id, payload):
         # No lock held here: perform_subset reads self.sdata under its own read lock

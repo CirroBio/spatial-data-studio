@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
+    "check:tours": "node scripts/check-tour-anchors.mjs",
     "test:e2e": "playwright test"
   },
   "dependencies": {
@@ -18,6 +19,7 @@
     "@radix-ui/react-tabs": "^1.1.0",
     "@radix-ui/react-tooltip": "^1.1.0",
     "apache-arrow": "^18.0.0",
+    "driver.js": "^1.6.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-hook-form": "^7.53.0",

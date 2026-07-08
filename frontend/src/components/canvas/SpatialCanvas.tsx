@@ -34,7 +34,13 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
 
   async function handleSnapshot() {
     try {
-      const r = await saveSnapshot(sessionId);
+      // Send the live viewport + canvas pixel size so the snapshot captures only
+      // the visible area (the persisted viewport has no pixel size).
+      const viewport = viewState && canvasSize && typeof viewState.zoom === 'number'
+        ? { target: (viewState.target as number[]).slice(0, 2), zoom: viewState.zoom,
+            width: canvasSize.width, height: canvasSize.height }
+        : undefined;
+      const r = await saveSnapshot(sessionId, { viewport });
       window.open(r.url, '_blank');
       pushNotification({ kind: 'info', message: 'Snapshot saved.' });
     } catch (e) {

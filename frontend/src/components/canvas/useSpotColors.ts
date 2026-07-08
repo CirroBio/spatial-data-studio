@@ -3,8 +3,15 @@ import * as arrow from 'apache-arrow';
 import type { ArrowPositions } from './useArrowPositions';
 import { buildCategoricalPalette, buildNumericColormap } from './colorUtils';
 
+// Above this many distinct levels a categorical coloring is meaningless (the
+// palette only has 15 colors) and rendering one legend row per level can hang or
+// crash the browser — e.g. an object-dtype obs column of per-cell IDs/barcodes,
+// which the backend serves as a categorical. Past the cap we skip the coloring.
+export const MAX_CATEGORICAL_LEVELS = 100;
+
 export type ColorLegend =
   | { kind: 'categorical'; items: { label: string; color: [number, number, number] }[] }
+  | { kind: 'too-many-categories'; count: number; limit: number }
   | { kind: 'numeric'; min: number; max: number };
 
 interface Params {
@@ -32,6 +39,18 @@ export function useSpotColors(
       if (!codeCol || !catJson) return null;
 
       const categories: string[] = JSON.parse(catJson) as string[];
+      if (categories.length > MAX_CATEGORICAL_LEVELS) {
+        // Failsafe: don't attempt the per-level coloring. Fill a neutral uniform
+        // color so the points still render and the layout stays visible.
+        const alpha = Math.round(opacity * 255);
+        for (let i = 0; i < n; i++) {
+          result[i * 4] = 128;
+          result[i * 4 + 1] = 128;
+          result[i * 4 + 2] = 128;
+          result[i * 4 + 3] = alpha;
+        }
+        return result;
+      }
       const palette = buildCategoricalPalette(categories);
       const categoryColors: [number, number, number][] = categories.map(
         (cat) => palette.get(cat) ?? [128, 128, 128]
@@ -74,6 +93,9 @@ export function useSpotColors(
       const catJson = meta?.get('categories');
       if (!catJson) return null;
       const categories = JSON.parse(catJson) as string[];
+      if (categories.length > MAX_CATEGORICAL_LEVELS) {
+        return { kind: 'too-many-categories' as const, count: categories.length, limit: MAX_CATEGORICAL_LEVELS };
+      }
       const palette = buildCategoricalPalette(categories);
       return {
         kind: 'categorical' as const,

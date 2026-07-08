@@ -10,7 +10,9 @@ class Config:
     # Data mounts (DESIGN §19.9)
     DATA_DIR = Path(os.environ.get("SQV_DATA_DIR", "/data"))            # read mount (inputs)
     CHECKPOINT_DIR = Path(os.environ.get("SQV_CHECKPOINT_DIR", "/checkpoints"))  # rw mount
-    SNAPSHOTS_DIR = Path(os.environ.get("SQV_SNAPSHOTS_DIR", "/checkpoints/snapshots"))  # v3 Part 9
+    # Snapshots live under the checkpoint mount by default, so setting
+    # SQV_CHECKPOINT_DIR alone is enough; override independently only if needed.
+    SNAPSHOTS_DIR = Path(os.environ.get("SQV_SNAPSHOTS_DIR", str(CHECKPOINT_DIR / "snapshots")))  # v3 Part 9
 
     # Memory accounting (DESIGN §11, §19.5) — evaluated against the container limit.
     CONTAINER_MEM_MB = _mb("SQV_CONTAINER_MEM_MB", 8192)
@@ -58,29 +60,41 @@ except OSError:
     pass  # read-only or unavailable mount; save endpoints surface the error per-call
 
 
-# ---- shared data-root allowlist (used by both the fs/browse API and session
-# load-admission, so a client can never point either at an arbitrary path) ----
-def browse_roots() -> list[Path]:
-    seen, roots = set(), []
-    # The process CWD is included so datasets sitting in folders under wherever the
-    # server was launched are discoverable without configuring SQV_DATA_DIR.
-    for p in (config.DATA_DIR, config.CHECKPOINT_DIR, Path.cwd()):
-        try:
-            rp = p.resolve()
-        except OSError:
-            continue
-        if rp.exists() and rp.is_dir() and rp not in seen:
-            seen.add(rp)
-            roots.append(rp)
-    return roots
+# ---- data-root allowlists. Raw inputs and saved sessions live in strictly
+# separate mounts: spatialdata-io readers may only read from DATA_DIR, and
+# session load/save may only touch CHECKPOINT_DIR. A client can never point
+# either flow at an arbitrary path, nor cross the two. ----
+def _existing_root(p: Path) -> Path | None:
+    try:
+        rp = p.resolve()
+    except OSError:
+        return None
+    return rp if rp.exists() and rp.is_dir() else None
 
 
-def within_roots(target: Path, roots: list[Path]) -> bool:
-    return any(target == r or r in target.parents for r in roots)
+def data_roots() -> list[Path]:
+    """Read mount for raw inputs (spatialdata-io readers / import browsing)."""
+    rp = _existing_root(config.DATA_DIR)
+    return [rp] if rp else []
+
+
+def checkpoint_roots() -> list[Path]:
+    """RW mount for saved sessions (load, the dataset picker, Cirro upload source)."""
+    rp = _existing_root(config.CHECKPOINT_DIR)
+    return [rp] if rp else []
+
+
+def _within_dir(target: Path, root: Path) -> bool:
+    root = root.resolve()
+    return target == root or root in target.parents
+
+
+def within_data_dir(target: Path) -> bool:
+    """True if `target` is DATA_DIR or somewhere beneath it (raw-input reads)."""
+    return _within_dir(target, config.DATA_DIR)
 
 
 def within_checkpoint_dir(target: Path) -> bool:
-    """True if `target` is CHECKPOINT_DIR itself or somewhere beneath it (save /
+    """True if `target` is CHECKPOINT_DIR or somewhere beneath it (save / load /
     set-transform paths must land there)."""
-    checkpoint_dir = config.CHECKPOINT_DIR.resolve()
-    return target == checkpoint_dir or checkpoint_dir in target.parents
+    return _within_dir(target, config.CHECKPOINT_DIR)

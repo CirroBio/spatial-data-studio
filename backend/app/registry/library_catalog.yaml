@@ -50,6 +50,10 @@
 - { library: scanpy, namespace: sc.pl, function: rank_genes_groups_heatmap, path: pl.rank_genes_groups_heatmap, effect_class: plot }
 - { library: scanpy, namespace: sc.pl, function: rank_genes_groups_stacked_violin, path: pl.rank_genes_groups_stacked_violin, effect_class: plot }
 
+# ---- spatialdata readers (session bootstrap; take a path, return SpatialData) ----
+# read_zarr opens an existing SpatialData .zarr as raw input (the "Import Data" flow);
+# app-saved checkpoints (.zarr.zip, with app_state) use the separate load path.
+- { library: spatialdata, namespace: io, function: read_zarr, path: read_zarr, effect_class: read }
 # ---- spatialdata-io readers (session bootstrap; take a path, return SpatialData) ----
 - { library: spatialdata_io, namespace: io, function: xenium, path: xenium, effect_class: read }
 - { library: spatialdata_io, namespace: io, function: visium, path: visium, effect_class: read }

@@ -110,16 +110,21 @@ def to_ipc_bytes(batch: pa.RecordBatch) -> bytes:
 
 def describe_fields(adata, sdata) -> dict:
     """Field inventory for SessionState.fields (frontend pickers)."""
+    from .. import imaging
     obs = [{"name": c, "kind": field_kind(adata, "obs", c)} for c in adata.obs.columns]
     images = list(getattr(sdata, "images", {}).keys()) if sdata is not None else []
     shapes = list(getattr(sdata, "shapes", {}).keys()) if sdata is not None else []
+    image_dims = [{"name": n, "width": w, "height": h}
+                  for n in images for (w, h) in [imaging.image_dims(sdata, n)]]
     return {
         "obs": obs,
         "obsm": [{"name": k, "n_components": int(np.asarray(v).shape[1])} for k, v in adata.obsm.items()],
         "obsp": list(adata.obsp.keys()),
         "layers": list(adata.layers.keys()),
+        "n_obs": int(adata.n_obs),
         "var_names_count": int(adata.n_vars),
         "var_names_sample": [str(v) for v in adata.var_names[:50]],
         "images": images,
+        "image_dims": image_dims,
         "shapes": shapes,
     }

@@ -3,7 +3,8 @@ quality: iLISI scores batch mixing, cLISI scores cell-type separation. No
 scanpy/squidpy equivalent exists (it lives in scib/harmonypy); the algorithm is
 vendored from `_vendor/lisi_compute.py` / `_vendor/lisi_plot.py`. Compute writes
 per-cell scores to `obs` and a JSON-safe summary to `uns[key_added]`; the paired
-plot step reads both back, mirroring region_composition.py's compute/plot split."""
+plot step reads both back, mirroring the compute-writes/plot-reads split squidpy
+metrics use (e.g. nhood_enrichment)."""
 from __future__ import annotations
 
 import numpy as np

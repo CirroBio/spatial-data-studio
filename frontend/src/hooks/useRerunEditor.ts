@@ -5,7 +5,7 @@ import { reportError } from '../lib/errors';
 import type { SessionFields } from '../types';
 
 export const EMPTY_FIELDS: SessionFields = {
-  obs: [], obsm: [], var_names_count: 0, obsp: [], layers: [], images: [], shapes: [],
+  obs: [], obsm: [], n_obs: 0, var_names_count: 0, obsp: [], layers: [], images: [], image_dims: [], shapes: [],
 };
 
 interface RerunItem {
