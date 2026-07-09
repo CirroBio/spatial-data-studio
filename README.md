@@ -222,9 +222,17 @@ and point their documentation at a per-method section in
 - **Data vs checkpoint dirs (strict separation)** — raw inputs live under the data
   mount (`SQV_DATA_DIR`); saved sessions ("checkpoints") live under the checkpoint
   mount (`SQV_CHECKPOINT_DIR`). New Session has two modes: **Import Data** runs a
-  spatialdata-io reader (`io.xenium`, …) or the `spatialdata.read_zarr` reader
-  (`io.read_zarr`, for opening an existing `.zarr`) against a path under the data dir;
+  spatialdata-io reader (`io.xenium`, …) or the **SpatialData zarr** reader
+  (`io.read_zarr`, for opening an existing SpatialData store — a `.zarr` directory,
+  or a `.zarr.zip` / `.zarr.tar.gz` archive) against a path under the data dir;
   **Open Checkpoint** opens a saved `.zarr`/`.zarr.zip` from the checkpoint dir. The
+  dialog is a two-pane picker — source options (mode, reader, session name) on the
+  left, a persistent file browser on the right: Open Checkpoint lists saved
+  checkpoints (searchable), Import Data navigates the data dir (breadcrumb + up).
+  Selection is restricted to a folder or a file per the chosen reader
+  (spatialdata-io readers take a raw acquisition folder — opening it selects it; the
+  zarr reader takes either), and an empty session name is auto-filled from the
+  selected file/folder. The
   backend enforces the split (reads validated to the data dir, load/save to the
   checkpoint dir); the "Open Checkpoint" picker and the Cirro session picker both list
   only checkpoint-dir sessions.
