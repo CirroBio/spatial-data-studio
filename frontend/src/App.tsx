@@ -164,6 +164,7 @@ export default function App() {
     if (mainView === 'embedding') {
       return (
         <EmbeddingCanvas
+          key={activeSessionId}
           display={embeddingDisplay}
           sessionId={activeSessionId}
           obsmFields={sessionState?.fields.obsm ?? []}
@@ -177,6 +178,7 @@ export default function App() {
     if (display) {
       return (
         <SpatialCanvas
+          key={activeSessionId}
           display={display}
           sessionId={activeSessionId}
           canvasMode={canvasMode}

@@ -42,6 +42,14 @@ class Config:
 
     STATIC_DIR = Path(os.environ.get("SQV_STATIC_DIR", "")) or None  # built SPA, optional
 
+    # Built standalone snapshot viewer (frontend `npm run build:viewer` -> dist-viewer/).
+    # Copied into a Cirro upload bundle when snapshots are included, so the dataset
+    # ships a self-contained web page that renders its snapshots. Defaults to the
+    # repo's frontend/dist-viewer relative to this file.
+    SNAPSHOT_VIEWER_DIR = Path(os.environ.get(
+        "SQV_SNAPSHOT_VIEWER_DIR",
+        str(Path(__file__).resolve().parents[2] / "frontend" / "dist-viewer")))
+
     # ---- Cirro upload. Strictly additive; off unless all three vars are set. ----
     CIRRO_BASE_URL = os.environ.get("CIRRO_BASE_URL", "")
     CIRRO_CLIENT_ID = os.environ.get("CIRRO_CLIENT_ID", "")

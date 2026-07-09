@@ -4,12 +4,14 @@ import { reportError } from '../lib/errors';
 import type { Snapshot } from '../lib/snapshots';
 import { ModalOverlay, ModalHeader } from './DetailModal';
 import SnapshotList from './SnapshotList';
+import SnapshotViewer from './SnapshotViewer';
 
 interface Props {
   onClose: () => void;
+  initialSelect?: string | null;  // snapshot name to preselect (e.g. a just-saved one)
 }
 
-export default function SnapshotBrowser({ onClose }: Props) {
+export default function SnapshotBrowser({ onClose, initialSelect }: Props) {
   const [snapshots, setSnapshots] = useState<Snapshot[] | null>(null);
   const [failed, setFailed] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
@@ -18,10 +20,11 @@ export default function SnapshotBrowser({ onClose }: Props) {
     getSnapshots()
       .then(({ snapshots: s }) => {
         setSnapshots(s);
-        if (s.length) setSelected(s[0].url);
+        const target = (initialSelect && s.find((x) => x.name === initialSelect)) || s[0];
+        if (target) setSelected(target.url);
       })
       .catch((err) => { reportError('Failed to load snapshots', err); setFailed(true); });
-  }, []);
+  }, [initialSelect]);
 
   return (
     <ModalOverlay onClose={onClose} widthClassName="w-[900px] max-w-[95vw] h-[80vh]">
@@ -49,23 +52,9 @@ export default function SnapshotBrowser({ onClose }: Props) {
 
         <div className="flex-1 min-w-0 flex flex-col p-3 gap-2">
           {selected ? (
-            <>
-              <div className="flex justify-end shrink-0">
-                <a
-                  href={selected}
-                  target="_blank"
-                  rel="noopener"
-                  className="text-xs text-accent hover:underline"
-                >
-                  Open in new tab ↗
-                </a>
-              </div>
-              <iframe
-                src={selected}
-                title="snapshot preview"
-                className="flex-1 min-h-0 w-full bg-bg border border-border rounded"
-              />
-            </>
+            <div className="flex-1 min-h-0 w-full bg-bg border border-border rounded overflow-hidden">
+              <SnapshotViewer key={selected} url={selected} />
+            </div>
           ) : (
             <div className="flex-1 flex items-center justify-center text-xs text-muted/70">
               Select a snapshot to preview it.

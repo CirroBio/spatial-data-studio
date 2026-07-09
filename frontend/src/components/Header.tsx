@@ -17,10 +17,10 @@ const ICON_BTN ='p-1.5 rounded border border-border bg-bg text-text hover:border
 export default function Header({ onNewSession }: Props) {
   const [showAbout, setShowAbout] = useState(false);
   const [showCirroUpload, setShowCirroUpload] = useState(false);
-  const [showSnapshots, setShowSnapshots] = useState(false);
   const {
     activeSessionId, activeJobIds, sessionState,
     theme, setTheme, savingJobId, cirroEnabled, cirroUploads,
+    snapshotsOpen, snapshotsInitialSelect, openSnapshots, closeSnapshots,
   } = useAppStore();
   const runningCount = activeJobIds.size;
   const unsaved = !!activeSessionId && sessionState?.summary.saved === false;
@@ -92,7 +92,7 @@ export default function Header({ onNewSession }: Props) {
           )}
         </button>
 
-        <button onClick={() => setShowSnapshots(true)} className={ICON_BTN} title="Browse snapshots" aria-label="Browse snapshots" data-tour={TourAnchors.Snapshots}>
+        <button onClick={() => openSnapshots()} className={ICON_BTN} title="Browse snapshots" aria-label="Browse snapshots" data-tour={TourAnchors.Snapshots}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <rect x="3" y="3" width="18" height="18" rx="2" />
             <circle cx="8.5" cy="8.5" r="1.5" />
@@ -152,7 +152,7 @@ export default function Header({ onNewSession }: Props) {
       </div>
 
       {showAbout && <AcknowledgementsDialog onClose={() => setShowAbout(false)} />}
-      {showSnapshots && <SnapshotBrowser onClose={() => setShowSnapshots(false)} />}
+      {snapshotsOpen && <SnapshotBrowser onClose={closeSnapshots} initialSelect={snapshotsInitialSelect} />}
       {showCirroUpload && <CirroUploadDialog onClose={() => setShowCirroUpload(false)} />}
     </header>
   );

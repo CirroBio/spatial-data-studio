@@ -12,7 +12,8 @@ import { isSpatialDisplay, type SpatialDisplaySpec, type ImageInfo } from '../..
 import { useArrowPositions } from './useArrowPositions';
 import { useImageTiles } from './useImageTiles';
 import { useCanvasViewState } from './useCanvasViewState';
-import { useSpotColors } from './useSpotColors';
+import { useSpotColors, arrowToColorSource } from './useSpotColors';
+import { buildSpotLayer } from './buildSpotLayer';
 import { useImageChannels } from './useImageChannels';
 import CanvasControls from './CanvasControls';
 import { colorByLabel } from './colorBy';
@@ -30,18 +31,17 @@ interface Props {
 }
 
 export default function SpatialCanvas({ display, sessionId, canvasMode, annotationTarget }: Props) {
-  const { sessionState, updateDisplay, isolatedCategory, pushNotification } = useAppStore();
+  const { sessionState, updateDisplay, isolatedCategory, pushNotification, openSnapshots } = useAppStore();
 
   async function handleSnapshot() {
     try {
-      // Send the live viewport + canvas pixel size so the snapshot captures only
-      // the visible area (the persisted viewport has no pixel size).
-      const viewport = viewState && canvasSize && typeof viewState.zoom === 'number'
-        ? { target: (viewState.target as number[]).slice(0, 2), zoom: viewState.zoom,
-            width: canvasSize.width, height: canvasSize.height }
+      // Capture the live viewport so the snapshot opens where the user was looking
+      // (the persisted display viewport can lag behind a mid-pan snapshot).
+      const viewport = viewState && typeof viewState.zoom === 'number'
+        ? { target: (viewState.target as number[]).slice(0, 2), zoom: viewState.zoom }
         : undefined;
-      const r = await saveSnapshot(sessionId, { viewport });
-      window.open(r.url, '_blank');
+      const r = await saveSnapshot(sessionId, { viewport, display_id: display.id });
+      openSnapshots(r.name);
       pushNotification({ kind: 'info', message: 'Snapshot saved.' });
     } catch (e) {
       reportError('Snapshot failed', e);
@@ -109,8 +109,9 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
     }
   }, [sessionId, display.encoding.image_layer]);
 
+  const colorSource = useMemo(() => arrowToColorSource(colorTable), [colorTable]);
   const { colors, colorLegend } = useSpotColors({
-    colorTable,
+    colorSource,
     positions,
     opacity: display.encoding.opacity,
     isolatedCategory,
@@ -133,32 +134,10 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
     const result: Layer[] = [...imageLayers];
 
     if (showPoints && positions && colors) {
-      const b = positions.bounds;
-      const area = Math.max(1, (b.d0max - b.d0min) * (b.d1max - b.d1min));
-      const spacing = Math.sqrt(area / Math.max(1, positions.numRows));
-      const worldRadius = (display.encoding.point_size / 8) * spacing;
-      result.push(
-        new ScatterplotLayer({
-          id: 'spots',
-          data: {
-            length: positions.numRows,
-            attributes: {
-              getPosition: { value: positions.positions, size: 2 },
-              getFillColor: { value: colors, size: 4, normalized: true },
-            },
-          },
-          getRadius: worldRadius,
-          radiusUnits: 'common',
-          radiusMinPixels: 0.5,
-          opacity: display.encoding.opacity,
-          pickable: false,
-          updateTriggers: {
-            getFillColor: colors,
-            getPosition: positions.positions,
-            getRadius: worldRadius,
-          },
-        })
-      );
+      result.push(buildSpotLayer(positions, colors, {
+        pointSize: display.encoding.point_size,
+        opacity: display.encoding.opacity,
+      }));
     }
 
     return result;

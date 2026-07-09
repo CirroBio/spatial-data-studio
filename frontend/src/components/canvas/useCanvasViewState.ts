@@ -1,12 +1,12 @@
 import { useState, useEffect, useCallback, useRef, type RefObject } from 'react';
 import type { OrthographicViewState } from '@deck.gl/core';
 import type { SpatialDisplaySpec, ImageInfo } from '../../types';
-import type { ArrowPositions } from './useArrowPositions';
+import type { ScatterPositions } from './useArrowPositions';
 
 const ZOOM_LIMITS = { minZoom: -8, maxZoom: 8 };
 
 interface Params {
-  positions: ArrowPositions | null;
+  positions: ScatterPositions | null;
   imageInfo: ImageInfo | null;
   showImage: boolean;
   display: SpatialDisplaySpec;
@@ -64,24 +64,19 @@ export function useCanvasViewState(
     return { target: [centerX, centerY, 0], zoom, ...ZOOM_LIMITS };
   }, [positions, showImage, imageInfo]);
 
-  // Set initial view state from the saved display viewport, else fit to data.
-  // Wait for the image bounds before the first fit when a tissue image is shown, so
-  // the whole section (which can extend beyond the spots) is framed, not just the spots.
+  // A freshly loaded session always frames its data (the persisted display viewport
+  // is not restored here — it only seeds a snapshot's viewport server-side). The
+  // canvas is remounted per session (key on the session id in App), so this runs
+  // once per session load. Wait for the image bounds before the first fit when a
+  // tissue image is shown, so the whole section (which can extend beyond the spots)
+  // is framed, not just the spots.
   useEffect(() => {
     if (viewState) return;
-    if (display.viewport) {
-      setViewState({
-        target: [display.viewport.target[0], display.viewport.target[1], 0],
-        zoom: display.viewport.zoom,
-        ...ZOOM_LIMITS,
-      });
-      return;
-    }
     if (!positions) return;
     if (display.encoding.image_layer && !imageInfo) return;
     const fit = fitToData();
     if (fit) setViewState(fit);
-  }, [fitToData, display.viewport, display.encoding.image_layer, imageInfo, positions, viewState]);
+  }, [fitToData, display.encoding.image_layer, imageInfo, positions, viewState]);
 
   return { containerRef, canvasSize, viewState, setViewState, fitToData };
 }

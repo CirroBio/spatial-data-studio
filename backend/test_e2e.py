@@ -256,6 +256,61 @@ def run_staging_flow(client):
     print("[ok] run-all completes staged step; editing a completed step is refused")
 
 
+def run_sharding_shape_flow():
+    """_reshard_array must produce a shard shape divisible by the inner chunk for
+    ANY raster level, including a pyramid level whose dimension is < the 512 inner
+    chunk (visium's levels are all >512, so its checkpoints never exercised this;
+    a 4-channel image with a small coarsest level does — zarr rejects a shard not
+    divisible by its inner chunk)."""
+    import json
+    import shutil
+    import tempfile
+    import zarr
+    from app.persistence import store as store_mod
+    for shape in [(4, 430, 1411), (1, 700, 500), (3, 11757, 11291), (430, 430)]:
+        d = tempfile.mkdtemp()
+        p = os.path.join(d, "arr")
+        zarr.create_array(store=p, shape=shape, chunks=shape, dtype="uint8")[:] = 3
+        store_mod._reshard_array(p)  # must not raise
+        meta = json.load(open(os.path.join(p, "zarr.json")))
+        shard = meta["chunk_grid"]["configuration"]["chunk_shape"]
+        inner = next(c["configuration"]["chunk_shape"] for c in meta["codecs"]
+                     if c["name"] == "sharding_indexed")
+        assert all(s % i == 0 for s, i in zip(shard, inner)), \
+            f"shard {shard} not divisible by inner {inner} for {shape}"
+        assert int(zarr.open_array(p, mode="r")[tuple(slice(0, min(2, s)) for s in shape)].sum()) > 0
+        shutil.rmtree(d)
+    print("[ok] reshard produces divisible shards for large/small/sub-chunk levels")
+
+
+def run_snapshot_flow(client, sid):
+    """A snapshot is a JSON config pointing at an (auto-saved, content-hashed)
+    checkpoint plus a baked render manifest; the browser viewer reads the checkpoint
+    directly. Verify save -> list -> config shape -> servable checkpoint."""
+    disp = client.get(f"/api/sessions/{sid}").json()["app_state"]["displays"]
+    spatial = next((d for d in disp if d["type"] == "spatial_canvas"), None)
+    assert spatial, "no spatial display to snapshot"
+    r = client.post(f"/api/sessions/{sid}/snapshot",
+                    json={"label": "e2e-snap", "viewport": {"target": [100, 100], "zoom": -2},
+                          "display_id": spatial["id"]})
+    assert r.status_code == 200, r.text
+    snap = r.json()
+    assert snap["name"].endswith(".json"), snap
+
+    listing = client.get("/api/snapshots").json()["snapshots"]
+    entry = next((s for s in listing if s["name"] == snap["name"]), None)
+    assert entry and entry["kind"] == "spatial" and entry["checkpoint_url"], f"not listed: {listing}"
+
+    cfg = client.get(snap["url"]).json()
+    assert cfg["schema"] == 1 and cfg["checkpoint"]["url"].startswith("/api/checkpoints/")
+    assert cfg["render"]["image"] and cfg["render"]["image"]["pixel_to_world"], "missing image manifest"
+    assert cfg["render"]["channels"], "missing per-channel manifest"
+    ck = client.get(cfg["checkpoint"]["url"], headers={"Range": "bytes=0-9"})
+    assert ck.status_code == 206, f"referenced checkpoint not servable: {ck.status_code}"
+    print(f"[ok] snapshot {snap['name']} -> checkpoint {cfg['checkpoint']['name']} "
+          f"(channels={len(cfg['render']['channels'])})")
+
+
 def run_regions_flow(client):
     """Region promote + annotate round-trip and its registry persistence (recent
     'Region composition' work)."""
@@ -325,6 +380,47 @@ def run_transform_flow(client):
 
     # a malformed affine is rejected up front
     assert client.post(f"/api/sessions/{sid}/points-transform", json={"affine": [1, 2, 3]}).status_code == 400
+
+
+def run_incremental_save_flow(client, checkpoint_path):
+    """Loading a checkpoint we wrote yields an incremental-capable session: a
+    table-only compute then saves by rewriting just the table element and reusing the
+    on-disk sharded rasters, so no reshard runs. Asserts the incremental branch is
+    taken, the raster files are left untouched, and the change round-trips."""
+    from app.main import MANAGER
+    from app.persistence import store
+    sid = new_session(client, checkpoint_path)
+    sess = MANAGER.get(sid)
+    assert store.can_update_incrementally(sess.sdata, sess.extract_dir), \
+        "a checkpoint-loaded session should be incremental-capable"
+
+    # normalize_total mutates only .X, which the structural diff can't see (keyset
+    # doesn't track X) — the active table must still be marked dirty, or the change
+    # would be silently dropped by the incremental save.
+    client.post(f"/api/sessions/{sid}/jobs", json={
+        "namespace": "sc.pp", "function": "normalize_total", "params": {}})
+    st = poll(client, sid, lambda s: hist_status(s, "normalize_total")[0] == "completed")
+    assert not hist_status(st, "normalize_total")[1], "expected an empty structural_diff for X-only op"
+    assert not sess.force_full and sess.active_table_key in sess.dirty_tables, \
+        f"X-only compute not marked dirty: force_full={sess.force_full} tables={sess.dirty_tables}"
+
+    def raster_mtimes():
+        base = os.path.join(str(sess.sdata.path), "images")
+        return {os.path.join(r, f): os.path.getmtime(os.path.join(r, f))
+                for r, _, fs in os.walk(base) for f in fs}
+
+    before = raster_mtimes()
+    out = os.path.join(str(config.CHECKPOINT_DIR), "incremental_session.zarr.zip")
+    sv = client.post(f"/api/sessions/{sid}/save", json={"path": out}).json()
+    assert wait_job(client, sid, sv["job_id"])["status"] == "completed"
+    assert raster_mtimes() == before, "images were rewritten during an incremental save"
+    assert not sess.dirty_tables and not sess.force_full, "dirty state not cleared after save"
+    print(f"[ok] incremental save reused {len(before)} raster files untouched")
+
+    sid2 = new_session(client, out)
+    r = client.get(f"/api/sessions/{sid2}/data/obsp:spatial_distances")
+    assert r.status_code == 200, r.text
+    print("[ok] incremental-saved table change survived reload")
 
 
 def run_content_hash_flow(client):
@@ -616,10 +712,48 @@ def main():
         assert resp.status_code == 200
         print("[ok] computed obsp survived reload")
 
+        # --- new checkpoint format: sharded rasters, browser-readable, logs relocated ---
+        import json as _json
+        import zipfile as _zip
+        name = os.path.basename(out)
+        with _zip.ZipFile(out) as zf:
+            root = _json.loads(zf.read("zarr.json"))
+            cm = root["consolidated_metadata"]["metadata"]
+            # a raster array must report the sharding codec THROUGH consolidated metadata
+            # (else zarrita reads the pre-shard byte layout and decodes garbage)
+            raster = next(k for k, v in cm.items()
+                          if k.startswith("images/") and v.get("node_type") == "array")
+            codecs = [c.get("name") for c in cm[raster]["codecs"]]
+            assert "sharding_indexed" in codecs, f"{raster} not sharded in consolidated tree: {codecs}"
+            # app_state present but with no inline worker logs (relocated to logs/)
+            saved_state = root["attributes"]["app_state"]
+            assert all("_log" not in r for r in
+                       saved_state["compute_history"] + saved_state["plots"]), "logs not relocated"
+            logfiles = [n for n in zf.namelist() if n.startswith("logs/")]
+        print(f"[ok] sharded checkpoint: {raster} codecs={codecs}; "
+              f"root zarr.json={zf.getinfo('zarr.json').file_size/1024:.0f}KB; logs relocated={len(logfiles)}")
+
+        # /api/checkpoints serves it with HTTP Range (206) so zarrita can byte-range-read it
+        rng = client.get(f"/api/checkpoints/{name}", headers={"Range": "bytes=0-99"})
+        assert rng.status_code == 206 and len(rng.content) == 100 and "content-range" in \
+            {k.lower() for k in rng.headers}, f"range not honored: {rng.status_code} {len(rng.content)}"
+        assert client.get("/api/checkpoints/not-a-checkpoint.txt").status_code == 404
+        print(f"[ok] /api/checkpoints range 206 Content-Range={rng.headers.get('content-range')}")
+
+        # a relocated log is still fetchable after reload via the existing /log endpoint
+        plot_id = next(p["id"] for p in pl if p["function"] == "nhood_enrichment")
+        lg = client.get(f"/api/sessions/{sid2}/jobs/{plot_id}/log")
+        assert lg.status_code == 200 and isinstance(lg.json().get("log"), str), lg.text
+        print(f"[ok] relocated plot log fetched after reload ({len(lg.json()['log'])} chars)")
+
+        run_snapshot_flow(client, sid)
+
         print("\n--- feature flows ---")
+        run_sharding_shape_flow()
         run_staging_flow(client)
         run_regions_flow(client)
         run_transform_flow(client)
+        run_incremental_save_flow(client, out)
         run_content_hash_flow(client)
         run_invalidation_flow(client)
         run_encoding_persistence_flow(client)

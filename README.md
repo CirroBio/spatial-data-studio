@@ -101,9 +101,11 @@ and point their documentation at a per-method section in
   `GET /api/sessions/{id}/var-names?q=&limit=` (so datasets with tens of thousands of
   genes stay responsive — matches are found server-side, prefix hits first). The chosen
   value is saved in the session display state. **Show points** and **Show image**
-  checkboxes toggle each layer independently; these toggles, the camera (pan/zoom, and
-  the embedding's 3D orbit), and an isolated category are all saved to the session too, so
-  the view is restored on reload. Each image channel can be toggled, renamed,
+  checkboxes toggle each layer independently; these toggles and an isolated category are
+  saved to the session and restored on reload. The camera (pan/zoom, and the embedding's
+  3D orbit) is saved too — a snapshot uses it as its viewport — but loading a session
+  always fits the view to the data (the spot extent, unioned with the image when shown)
+  rather than restoring the last camera. Each image channel can be toggled, renamed,
   and assigned one of 8 canonical spectrum colors (the server composites channels
   by additively blending each channel's intensity tinted with its color); a togglable
   legend overlays a color swatch + label for every visible channel. A separate,
@@ -181,9 +183,14 @@ and point their documentation at a per-method section in
   appearing only once it finishes. New/Save session are icon buttons (hover for labels) in the top
   toolbar; the Save button shows a subtle dot when the session has unsaved changes
   (any compute/plot/annotation since the last save; cleared on save). A Browse
-  snapshots icon button opens a dialog listing saved snapshots where you can preview
-  one inline or open it in a new tab; a saved snapshot captures only the current
-  viewport — the visible cells over a higher-resolution crop of that image region. A
+  snapshots icon button opens a dialog listing saved snapshots and previews the
+  selected one inline in a read-only viewer. A snapshot is just a small JSON config
+  (viewport + encoding + a baked render manifest) that points at a checkpoint; the
+  viewer opens that checkpoint `.zarr.zip` directly in the browser (via zarrita.js
+  over HTTP range requests) and renders the image + cells from it — no snapshot ships
+  any pixels or data of its own. Saving a snapshot first writes the session to a
+  content-hashed checkpoint (so the config points at bytes that won't change under
+  it), then records the view. A
   session switcher next to the app name lists every currently-loaded session and
   switches the displayed one on click (non-resident sessions are shown but not
   selectable); to its right the title bar reports the active session's cell count
@@ -237,14 +244,28 @@ and point their documentation at a per-method section in
   checkpoint dir); the "Open Checkpoint" picker and the Cirro session picker both list
   only checkpoint-dir sessions.
 - **Persistence** — save/load `.zarr` and `.zarr.zip` (data + app state in
-  `attrs`), with full UI/region/history round-trip. Auto-managed checkpoint
-  filenames (Save button, no explicit path) embed a hash of the `.zarr.zip`
-  contents, e.g. `myfile-3fa21c9b8e4d.zarr.zip`; each save computes the hash
-  fresh from the current base name, so the suffix reflects that save's
-  contents instead of stacking onto the previous one. Prior checkpoint files
-  are left on disk. Loading a `.zarr.zip` with a hash suffix recomputes and
-  logs whether it still matches the file's contents (info if it does, warning
-  if not) — informational only, never blocks the load.
+  `attrs`), with full UI/region/history round-trip. A `.zarr.zip` checkpoint is a
+  single-file, browser-readable store: Zarr v3 with consolidated metadata, zipped
+  uncompressed (STORED) so each entry is a contiguous byte span, and the large
+  image/label arrays are written with the **Zarr v3 sharding codec** (small inner
+  chunks packed into a few shard objects) so a browser can range-read a viewport
+  cheaply — the same file the snapshot viewer reads directly. Re-saving a session that
+  was loaded from a checkpoint is **incremental**: only the elements that changed (a
+  table, an edited transform, the app-state blob) are rewritten, and the already-sharded
+  rasters are reused untouched — so a save after a compute doesn't re-shard the whole
+  image pyramid. A fresh import, or a change that touches a raster, does the full write.
+  Per-compute
+  worker logs are relocated out of `attrs["app_state"]` (which is inlined into the
+  store's root metadata and would otherwise be downloaded in full on open) into
+  gzipped files under `logs/`, fetched lazily by the log endpoint. The `.zarr.zip`
+  is served for direct browser reads (HTTP Range) at `GET /api/checkpoints/<name>`.
+  Auto-managed checkpoint filenames (Save button, no explicit path) embed a hash of
+  the `.zarr.zip` contents, e.g. `myfile-3fa21c9b8e4d.zarr.zip`; each save computes
+  the hash fresh from the current base name, so the suffix reflects that save's
+  contents instead of stacking onto the previous one. Prior checkpoint files are
+  left on disk. Loading a `.zarr.zip` with a hash suffix recomputes and logs whether
+  it still matches the file's contents (info if it does, warning if not) —
+  informational only, never blocks the load.
 - **Acknowledgements** (About icon in the header) — third-party libraries in use and
   their licenses, served by `GET /api/about/licenses` from the backend/frontend SBOMs
   (`sds-governance/sbom.json` + `sds-governance/sbom_frontend.json`).

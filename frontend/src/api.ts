@@ -6,6 +6,7 @@ import type {
   DisplaySpec,
   ImageInfo,
 } from './types';
+import type { Snapshot } from './lib/snapshots';
 
 async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   const res = await fetch(path, init);
@@ -92,7 +93,7 @@ export async function subsetSession(
 
 export async function saveSnapshot(
   sessionId: string,
-  opts?: { label?: string; viewport?: { target: number[]; zoom: number; width: number; height: number } }
+  opts?: { label?: string; viewport?: { target: number[]; zoom: number }; display_id?: string }
 ): Promise<{ name: string; url: string }> {
   const res = await apiFetch(`/api/sessions/${sessionId}/snapshot`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -101,9 +102,9 @@ export async function saveSnapshot(
   return res.json() as Promise<{ name: string; url: string }>;
 }
 
-export async function getSnapshots(): Promise<{ snapshots: { name: string; url: string }[] }> {
+export async function getSnapshots(): Promise<{ snapshots: Snapshot[] }> {
   const res = await apiFetch('/api/snapshots');
-  return res.json() as Promise<{ snapshots: { name: string; url: string }[] }>;
+  return res.json() as Promise<{ snapshots: Snapshot[] }>;
 }
 
 export async function getObsValues(

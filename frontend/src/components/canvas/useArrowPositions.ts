@@ -1,7 +1,11 @@
 import { useMemo } from 'react';
 import * as arrow from 'apache-arrow';
 
-export interface ArrowPositions {
+// Flat, stride-2-or-3 point positions plus per-axis bounds, consumed by
+// buildSpotLayer and the fit-to-data view-state helpers. Sourced from an Arrow
+// obsm batch (useArrowPositions) or directly from a checkpoint obsm array
+// (SnapshotViewer).
+export interface ScatterPositions {
   positions: Float32Array;
   numRows: number;
   bounds: { d0min: number; d0max: number; d1min: number; d1max: number; d2min?: number; d2max?: number };
@@ -19,7 +23,7 @@ interface AxisIndices {
 export function useArrowPositions(
   table: arrow.Table | null,
   { xIndex = 0, yIndex = 1, zIndex }: AxisIndices = {},
-): ArrowPositions | null {
+): ScatterPositions | null {
   return useMemo(() => {
     if (!table) return null;
     const xCol = table.getChild(`d${xIndex}`);

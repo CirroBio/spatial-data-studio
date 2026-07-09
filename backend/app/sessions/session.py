@@ -88,6 +88,17 @@ class Session:
         # (matches the file it came from) and after every save; cleared by any
         # data/history mutation. Drives the "unsaved changes" indicator.
         self.saved = store_path is not None
+        # Which parts of the object changed since the last save, so a save can rewrite
+        # only those (see _write_checkpoint). `force_full` trips whenever a raster or
+        # other non-table element changed, since those can't be updated incrementally.
+        self.dirty_tables: set[str] = set()
+        self.dirty_transforms: set[str] = set()
+        self.force_full = False
+        # Serializes checkpoint writes. Saves hold only the RWLock read lock (so data
+        # reads can continue during a multi-GB zip), but an incremental save mutates
+        # the backing store in place, and snapshot saves run off the serial worker (in
+        # the FastAPI thread pool) — so two saves could otherwise clobber the store.
+        self._save_lock = threading.Lock()
         self.extract_dir = None  # temp dir if loaded from a .zarr.zip; cleaned on close
         self.raster_cache_dir = None  # temp store of tile-normalized rasters; cleaned on close
         self.created_at = _now()
@@ -298,6 +309,7 @@ class Session:
             # the write lock so readers never see a new sdata with a stale table key.
             if result.status != "failed" and result.new_object is not None:
                 self.sdata = result.new_object
+                self.force_full = True  # a freshly adopted object must be written whole once
                 # A reader's images/labels can be single-scale or huge-chunked; tile
                 # them now so the canvas never realizes a multi-GB chunk per tile.
                 from .. import rasters
@@ -321,6 +333,10 @@ class Session:
         self.saved = False  # a completed compute/plot changed the object or its cached state
 
         if kind == "plot":
+            # A plot mutates nothing but may cache uns['<col>_colors'] on the active
+            # table (see the write-lock note above), so that element is now dirty.
+            if self.active_table_key:
+                self.dirty_tables.add(self.active_table_key)
             self.plot_figures[job_id] = {"svg": result.figure_svg, "pdf": result.figure_pdf}
             self._set_status(job_id, kind, "drawn", log=result.log)
             BUS.publish("plot.drawn", {"session_id": self.id, "plot_id": job_id})
@@ -330,6 +346,7 @@ class Session:
 
         # compute
         self._set_status(job_id, kind, "completed", structural_diff=result.structural_diff, log=result.log)
+        self._mark_dirty(result.structural_diff)
         appstate.bump_versions(self.app_state, result.changed_fields)
         invalidated = self._invalidate_plots(result.changed_fields)
         BUS.publish("job.completed", {"session_id": self.id, "job_id": job_id, "kind": "compute",
@@ -350,6 +367,7 @@ class Session:
         for f in changed:
             elem, key = f.split(":", 1)
             diff.setdefault(elem, []).append(key)
+        self._mark_dirty(diff)
         appstate.bump_versions(self.app_state, changed)
         invalidated = self._invalidate_plots(changed)
         BUS.publish("job.completed", {"session_id": self.id, "job_id": job_id, "kind": "annotate",
@@ -358,20 +376,58 @@ class Session:
         if invalidated:
             BUS.publish("plot.invalidated", {"session_id": self.id, "plot_ids": invalidated})
 
+    def _mark_dirty(self, structural_diff: dict) -> None:
+        """Record which elements a data mutation touched so the next save rewrites only
+        those. The mutation ran on the active table, so mark it unconditionally — the
+        structural diff can't see an in-place `X`-only change (`keyset` doesn't track
+        `X`), and the active table is cheap to rewrite regardless. The diff is used to
+        catch OTHER changed table elements (`tables` facet) and to force a full save
+        when a raster or geometry element changed (those can't be updated in place)."""
+        from ..registry.base import _TABLE_FACETS
+        if self.active_table_key:
+            self.dirty_tables.add(self.active_table_key)
+        for facet, keys in structural_diff.items():
+            if facet == "tables":
+                self.dirty_tables.update(keys)
+            elif facet not in _TABLE_FACETS:
+                self.force_full = True
+
+    def _clear_dirty(self) -> None:
+        self.dirty_tables.clear()
+        self.dirty_transforms.clear()
+        self.force_full = False
+
+    def _write_checkpoint(self, path: str, hash_name: bool) -> str:
+        """Persist the object to `path`, incrementally when possible: rewrite only the
+        changed table/transform elements (reusing the on-disk sharded rasters) when the
+        session is still backed by the sharded store it loaded from and no raster
+        changed; otherwise re-serialize the whole object. The caller holds the read
+        lock and updates saved-state after this returns."""
+        from ..persistence.store import (save_spatialdata, update_checkpoint,
+                                          can_update_incrementally)
+        with self._save_lock:
+            if (path.endswith(".zarr.zip") and not self.force_full
+                    and can_update_incrementally(self.sdata, self.extract_dir)):
+                return update_checkpoint(self.sdata, path, self.app_state,
+                                         tables=self.dirty_tables, transforms=self.dirty_transforms,
+                                         hash_name=hash_name)
+            return save_spatialdata(self.sdata, path, self.app_state, hash_name=hash_name)
+
     def _run_set_transform(self, job_id, payload):
         """Set the points->global transform on the active table's region element and
         persist to disk so it survives a session restart (§3.1 mutating job)."""
         from . import transform
-        from ..persistence.store import save_spatialdata
         with self.lock.writing():
-            transform.set_affine6(self.sdata, self.active_table(), payload["affine"])
+            region = transform.set_affine6(self.sdata, self.active_table(), payload["affine"])
+        if region:
+            self.dirty_transforms.add(region)
         target = Path(payload["path"]).resolve()
         if not within_checkpoint_dir(target):
             raise ValueError("save path is outside the checkpoint directory")
         with self.lock.reading():
-            self.store_path = save_spatialdata(self.sdata, payload["path"], self.app_state,
-                                               hash_name=payload.get("hash_name", False))
+            self.store_path = self._write_checkpoint(payload["path"], payload.get("hash_name", False))
         self.saved = True
+        self._clear_dirty()
         self._jobs[job_id]["status"] = "completed"
         appstate.bump_versions(self.app_state, ["obsm:spatial"])
         BUS.publish("job.completed", {"session_id": self.id, "job_id": job_id, "kind": "set_transform",
@@ -379,15 +435,14 @@ class Session:
                                       "data_versions": self.app_state["data_versions"]})
 
     def _run_save(self, job_id, payload):
-        from ..persistence.store import save_spatialdata
         target = Path(payload["path"]).resolve()
         if not within_checkpoint_dir(target):
             raise ValueError("save path is outside the checkpoint directory")
         with self.lock.reading():
-            path = save_spatialdata(self.sdata, payload["path"], self.app_state,
-                                    hash_name=payload.get("hash_name", False))
+            path = self._write_checkpoint(payload["path"], payload.get("hash_name", False))
         self.store_path = path
         self.saved = True
+        self._clear_dirty()
         self._jobs[job_id]["status"] = "completed"
         BUS.publish("job.completed", {"session_id": self.id, "job_id": job_id, "kind": "save",
                                       "path": path, "data_versions": self.app_state["data_versions"]})
@@ -507,8 +562,16 @@ class Session:
     def get_log(self, job_id: str):
         for kind in ("compute", "plot"):
             rec = self._find_record(job_id, kind)
-            if rec and "_log" in rec:
+            if rec is None:
+                continue
+            if "_log" in rec:
                 return rec["_log"], rec["status"]
+            # Reloaded checkpoint: the log was relocated out of app_state into the
+            # store's logs/ (see persistence.store); read it back lazily.
+            from ..persistence.store import read_log
+            log = read_log(self.extract_dir or self.store_path, job_id)
+            if log is not None:
+                return log, rec["status"]
         if job_id in self._failed_logs:
             return self._failed_logs[job_id], "failed"
         return None, None

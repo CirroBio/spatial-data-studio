@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import config, data_roots, checkpoint_roots, within_data_dir, within_checkpoint_dir
@@ -440,12 +440,14 @@ async def promote_region(sid: str, body: dict):
 
 @app.post("/api/sessions/{sid}/snapshot")
 async def save_snapshot_endpoint(sid: str, body: dict | None = None):
-    """Save the current display as a self-contained read-only snapshot (v3 Part 9).
-    body: {label?, viewport?: {target, zoom, width, height}} — the viewport (with the
-    live canvas pixel size) crops the snapshot to the visible area."""
+    """Save a display as a JSON snapshot config pointing at an (auto-saved,
+    content-hashed) checkpoint the browser viewer reads directly. body:
+    {label?, viewport?: {target, zoom}, display_id?}."""
     sess = _session(sid)
     from . import snapshots
-    result = await _in_executor(snapshots.save_snapshot, sess, (body or {}).get("label"), (body or {}).get("viewport"))
+    b = body or {}
+    result = await _in_executor(snapshots.save_snapshot, sess, b.get("label"),
+                                b.get("viewport"), b.get("display_id"))
     if result.get("status") == "failed":
         raise HTTPException(400, result.get("error", "snapshot failed"))
     return result
@@ -455,6 +457,21 @@ async def save_snapshot_endpoint(sid: str, body: dict | None = None):
 async def list_snapshots_endpoint():
     from . import snapshots
     return {"snapshots": snapshots.list_snapshots()}
+
+
+@app.api_route("/api/checkpoints/{name}", methods=["GET", "HEAD"])
+async def get_checkpoint(name: str):
+    """Serve a saved checkpoint `.zarr.zip` for direct browser reads (zarrita.js
+    over HTTP range). FileResponse honors Range (206) and HEAD (zarrita probes the
+    size before range-reading). Scoped to `*.zarr.zip` inside CHECKPOINT_DIR so the
+    transient `.rasters` caches and the snapshots dir that also live under that
+    mount are never exposed."""
+    if not name.endswith(".zarr.zip") or "/" in name or "\\" in name:
+        raise HTTPException(404, "not found")
+    target = (config.CHECKPOINT_DIR / name).resolve()
+    if not within_checkpoint_dir(target) or not target.is_file():
+        raise HTTPException(404, "not found")
+    return FileResponse(str(target), media_type="application/zip")
 
 
 @app.get("/api/about/licenses")
@@ -796,11 +813,11 @@ async def events(request: Request):
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
-# ---- snapshots (read-only HTML + content-hashed assets, v3 Part 9) ---------
+# ---- snapshots (read-only JSON configs; the browser viewer reads the referenced
+# checkpoint directly via /api/checkpoints) ----------------------------------
 try:
     config.SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
-    (config.SNAPSHOTS_DIR / "assets").mkdir(parents=True, exist_ok=True)
-    app.mount("/snapshots", StaticFiles(directory=str(config.SNAPSHOTS_DIR), html=True), name="snapshots")
+    app.mount("/snapshots", StaticFiles(directory=str(config.SNAPSHOTS_DIR)), name="snapshots")
 except OSError:
     pass  # read-only mount; the save endpoint surfaces the error per-call
 

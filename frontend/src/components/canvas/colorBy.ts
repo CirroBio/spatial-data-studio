@@ -11,8 +11,8 @@ export interface ColorBy {
   gene: string;    // gene name (X and layers slots)
 }
 
-export function parseColorBy(path: string): ColorBy {
-  const [slot, key = ''] = path.split(/:(.*)/s);
+export function parseColorBy(path: string | null | undefined): ColorBy {
+  const [slot, key = ''] = (path ?? '').split(/:(.*)/s);
   if (slot === 'X') return { slot: 'X', column: '', layer: '', gene: key };
   if (slot === 'layers') {
     const [layer, gene = ''] = key.split(/\/(.*)/s);
@@ -22,7 +22,7 @@ export function parseColorBy(path: string): ColorBy {
 }
 
 // Human label for legends: the obs column, or the gene (annotated with its layer).
-export function colorByLabel(path: string): string {
+export function colorByLabel(path: string | null | undefined): string {
   const c = parseColorBy(path);
   if (c.slot === 'obs') return c.column;
   if (c.slot === 'layers') return c.gene ? `${c.gene} (${c.layer})` : '';

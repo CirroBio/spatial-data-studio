@@ -142,6 +142,14 @@ def _channel_norm(sdata, element) -> np.ndarray:
     return norm
 
 
+def channel_contrast_limits(sdata, element) -> list[float]:
+    """Per-channel upper contrast bound (the `_channel_norm` denominator) baked into
+    a snapshot config so the browser compositor reproduces the server's brightness:
+    displayed = clip(value / limit, 0, 1). Derived from the coarsest level, matching
+    what the tile/thumbnail server uses."""
+    return [float(x) for x in _channel_norm(sdata, element)]
+
+
 def _composite(data_cyx: np.ndarray, norm: np.ndarray,
                channel_colors: dict[int, tuple[int, int, int]] | None) -> np.ndarray:
     """Additively blend each visible channel's normalized intensity, tinted with its

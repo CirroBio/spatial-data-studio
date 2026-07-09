@@ -68,8 +68,9 @@ ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_cate
 | POST | `/api/sessions/{id}/save` | `{path?}` | `{job_id, path}` (queued save) |
 | GET  | `/api/sessions/{id}/points-transform` | — | `{affine:[a,b,c,d,e,f], element}` (points→global affine of the active table's region element) |
 | POST | `/api/sessions/{id}/points-transform` | `{affine:[a,b,c,d,e,f], path?}` | `{job_id, path}` (sets the affine and persists to disk) |
-| POST | `/api/sessions/{id}/snapshot` | `{label?}` | self-contained read-only snapshot result |
-| GET  | `/api/snapshots` | — | `{snapshots:[...]}` |
+| POST | `/api/sessions/{id}/snapshot` | `{label?, viewport?:{target,zoom}, display_id?}` | `{name,url}` — writes a JSON snapshot config pointing at an (auto-saved, content-hashed) checkpoint |
+| GET  | `/api/snapshots` | — | `{snapshots:[{name,url,label,created,kind,checkpoint_url}]}` |
+| GET/HEAD | `/api/checkpoints/{name}` | — | the checkpoint `.zarr.zip` bytes for direct browser reads (HTTP Range → 206); `name` must be `*.zarr.zip` in CHECKPOINT_DIR |
 | GET  | `/api/about/licenses` | — | `{python:[...], npm:[...]}` (third-party licenses, in-app Acknowledgements) |
 | GET  | `/api/cirro/status` | — | `{enabled:bool}` |
 | GET  | `/api/cirro/projects` | — | `{projects:[...]}` (503 if Cirro is not configured) |

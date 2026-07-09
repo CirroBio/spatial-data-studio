@@ -104,6 +104,13 @@ interface AppStore {
   pushNotification: (n: Omit<AppNotification, 'id'>) => void;
   dismissNotification: (id: number) => void;
 
+  // Snapshot browser modal — opened from the header button and, after saving a
+  // snapshot, from the canvas (preselecting the freshly saved one).
+  snapshotsOpen: boolean;
+  snapshotsInitialSelect: string | null;  // snapshot name to preselect
+  openSnapshots: (selectName?: string) => void;
+  closeSnapshots: () => void;
+
   // Cirro upload
   cirroEnabled: boolean;
   setCirroEnabled: (on: boolean) => void;
@@ -307,6 +314,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set((s) => ({ notifications: [...s.notifications, { ...n, id: ++_notificationSeq }] })),
   dismissNotification: (id) =>
     set((s) => ({ notifications: s.notifications.filter((x) => x.id !== id) })),
+
+  snapshotsOpen: false,
+  snapshotsInitialSelect: null,
+  openSnapshots: (selectName) =>
+    set({ snapshotsOpen: true, snapshotsInitialSelect: selectName ?? null }),
+  closeSnapshots: () => set({ snapshotsOpen: false, snapshotsInitialSelect: null }),
 
   cirroEnabled: false,
   setCirroEnabled: (on) => set({ cirroEnabled: on }),

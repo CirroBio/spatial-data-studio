@@ -1,18 +1,29 @@
-export type Snapshot = { name: string; url: string };
+import type { SnapshotConfig } from '../types';
 
-// Snapshot files are named `YYYY-MM-DDTHH-MM-SS_<slug>.html` (the time uses '-'
-// separators). Split into a readable timestamp + slug label; fall back to the raw
-// name when it doesn't match.
-export function describe(name: string): { when: string; label: string } {
-  const stamp = name.slice(0, 19);
-  const iso = `${stamp.slice(0, 10)}T${stamp.slice(11).replace(/-/g, ':')}`;
-  const d = new Date(iso);
-  if (name[10] === 'T' && name[19] === '_' && !Number.isNaN(d.getTime())) {
-    const slug = name.slice(20, -5);
-    return {
-      when: d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }),
-      label: slug || name,
-    };
-  }
-  return { when: '', label: name };
+// A saved snapshot as returned by GET /api/snapshots. `url` serves the JSON
+// SnapshotConfig; `checkpoint_url` is the immutable .zarr.zip it reads from.
+export type Snapshot = {
+  name: string;
+  url: string;
+  label: string;
+  created: string;  // ISO timestamp
+  kind: 'spatial' | 'embedding';
+  checkpoint_url: string;
+};
+
+// Fetch a snapshot's JSON config. Plain fetch (not the /api client) so the same
+// SnapshotViewer works both in the app (served /snapshots/*.json) and in the
+// standalone bundle (relative snapshots/*.json).
+export async function fetchSnapshotConfig(url: string): Promise<SnapshotConfig> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`snapshot config ${url}: ${res.status}`);
+  return res.json() as Promise<SnapshotConfig>;
+}
+
+// Format the ISO `created` timestamp for display; empty string if unparseable.
+export function formatCreated(created: string): string {
+  const d = new Date(created);
+  return Number.isNaN(d.getTime())
+    ? ''
+    : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 }

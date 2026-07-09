@@ -226,6 +226,38 @@ export interface ImageInfo {
   tile_size: number;
 }
 
+// ---- Snapshots (read-only checkpoint views; see CONTRACT.md) ---------------
+// A snapshot is a JSON config pointing at an immutable checkpoint .zarr.zip that
+// the browser reads directly via zarrita. SnapshotViewer renders render.* against
+// the shared canvas layers.
+export interface SnapshotChannel {
+  visible: boolean;
+  color: string;           // "#rrggbb"
+  contrast_limit: number;  // upper bound; JS clips value/limit to [0,1]
+}
+
+export interface SnapshotRender {
+  coords: string;                             // "obsm:<key>"
+  coords_transform?: number[];                // 6-float points->global affine applied to obsm:spatial
+  color_by: string;                           // "obs:x" | "X:GENE" | "layers:l/gene" | ""
+  image: ImageInfo | null;                    // the element's ImageInfo; null for embeddings / no image
+  channels: Record<string, SnapshotChannel>;  // per-channel color/contrast, keyed by channel index string
+  point_size: number;
+  opacity: number;
+}
+
+export interface SnapshotConfig {
+  schema: number;
+  kind: 'spatial' | 'embedding';
+  label: string;
+  created: string;
+  checkpoint: { name: string; url: string };
+  table: string;
+  viewport: { target: number[]; zoom: number; rotationX?: number; rotationOrbit?: number };
+  encoding: DisplayEncoding | EmbeddingEncoding;
+  render: SnapshotRender;
+}
+
 // SSE event payloads
 
 export interface JobQueuedEvent {

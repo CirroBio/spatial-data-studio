@@ -1,16 +1,16 @@
 import { useState, useMemo, useRef } from 'react';
 import DeckGL from '@deck.gl/react';
 import { OrthographicView, OrbitView } from '@deck.gl/core';
-import { ScatterplotLayer, PointCloudLayer } from '@deck.gl/layers';
 import type { Layer } from '@deck.gl/core';
 import { useAppStore } from '../../store/sessionStore';
 import { useArrowField } from '../../hooks/useArrowField';
-import { putDisplay, addDisplay as postDisplay } from '../../api';
+import { putDisplay, addDisplay as postDisplay, saveSnapshot } from '../../api';
 import { reportError } from '../../lib/errors';
 import { isEmbeddingDisplay, type EmbeddingDisplaySpec, type ObsField, type ObsmField } from '../../types';
 import { useArrowPositions } from './useArrowPositions';
 import { useEmbeddingViewState, type EmbeddingViewState } from './useEmbeddingViewState';
-import { useSpotColors } from './useSpotColors';
+import { useSpotColors, arrowToColorSource } from './useSpotColors';
+import { buildSpotLayer } from './buildSpotLayer';
 import EmbeddingControls from './EmbeddingControls';
 import ColorBySelect from './ColorBySelect';
 import { colorByLabel } from './colorBy';
@@ -164,7 +164,7 @@ function EmbeddingCanvasView({
   layerNames: string[];
   obsmFields: ObsmField[];
 }) {
-  const { sessionState, updateDisplay, isolatedCategory } = useAppStore();
+  const { sessionState, updateDisplay, isolatedCategory, pushNotification, openSnapshots } = useAppStore();
   const dataVersions = sessionState?.data_versions ?? {};
 
   const { is_3d, x_component, y_component, z_component } = display.encoding;
@@ -188,15 +188,29 @@ function EmbeddingCanvasView({
   const { containerRef, viewState, setViewState, fitToData } = useEmbeddingViewState({
     positions,
     is3d: is_3d,
-    display,
   });
 
+  const colorSource = useMemo(() => arrowToColorSource(colorTable), [colorTable]);
   const { colors, colorLegend } = useSpotColors({
-    colorTable,
+    colorSource,
     positions,
     opacity: display.encoding.opacity,
     isolatedCategory,
   });
+
+  async function handleSnapshot() {
+    try {
+      const target = viewState?.target as number[] | undefined;
+      const viewport = viewState && target && typeof viewState.zoom === 'number'
+        ? { target: target.slice(0, 2), zoom: viewState.zoom }
+        : undefined;
+      const r = await saveSnapshot(sessionId, { viewport, display_id: display.id });
+      openSnapshots(r.name);
+      pushNotification({ kind: 'info', message: 'Snapshot saved.' });
+    } catch (e) {
+      reportError('Snapshot failed', e);
+    }
+  }
 
   const legendVisible = display.encoding.legend_visible !== false;
   const legendTitle = display.encoding.legend_title || colorByLabel(colorByPath);
@@ -208,48 +222,11 @@ function EmbeddingCanvasView({
 
   const layers = useMemo(() => {
     if (!positions || !colors) return [] as Layer[];
-    const b = positions.bounds;
-    const area = Math.max(1, (b.d0max - b.d0min) * (b.d1max - b.d1min));
-    const spacing = Math.sqrt(area / Math.max(1, positions.numRows));
-    if (is_3d) {
-      return [
-        new PointCloudLayer({
-          // Distinct id from the 2D layer below — reusing one id across a
-          // ScatterplotLayer/PointCloudLayer swap makes deck.gl try to update
-          // the old layer's attributes (e.g. getRadius) onto the new class.
-          id: 'embedding-points-3d',
-          data: {
-            length: positions.numRows,
-            attributes: {
-              getPosition: { value: positions.positions, size: 3 },
-              getColor: { value: colors, size: 4, normalized: true },
-            },
-          },
-          pointSize: Math.max(1, display.encoding.point_size),
-          opacity: display.encoding.opacity,
-          updateTriggers: { getColor: colors, getPosition: positions.positions },
-        }),
-      ];
-    }
-    const worldRadius = (display.encoding.point_size / 8) * spacing;
-    return [
-      new ScatterplotLayer({
-        id: 'embedding-points-2d',
-        data: {
-          length: positions.numRows,
-          attributes: {
-            getPosition: { value: positions.positions, size: 2 },
-            getFillColor: { value: colors, size: 4, normalized: true },
-          },
-        },
-        getRadius: worldRadius,
-        radiusUnits: 'common',
-        radiusMinPixels: 0.5,
-        opacity: display.encoding.opacity,
-        pickable: false,
-        updateTriggers: { getFillColor: colors, getPosition: positions.positions, getRadius: worldRadius },
-      }),
-    ];
+    return [buildSpotLayer(positions, colors, {
+      pointSize: display.encoding.point_size,
+      opacity: display.encoding.opacity,
+      is3d: is_3d,
+    })];
   }, [positions, colors, is_3d, display.encoding.point_size, display.encoding.opacity]);
 
   // Update the store mirror immediately, then debounce the PUT so a slider drag or a
@@ -319,6 +296,7 @@ function EmbeddingCanvasView({
         panelCollapsed={panelCollapsed}
         setPanelCollapsed={setPanelCollapsed}
         onFit={() => { const fit = fitToData(); if (fit) setViewState(fit); }}
+        onSnapshot={handleSnapshot}
       />
     </div>
   );

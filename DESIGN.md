@@ -88,7 +88,7 @@ parameter.
                               │ read / write
                               ▼
                    Local folders + SpatialData .zarr / .zarr.zip
-                   + snapshots/ (HTML) + Cirro (optional)
+                   + snapshots/ (JSON configs) + Cirro (optional)
 ```
 
 **Runtime model:** one OS process. Each session owns one in-memory `SpatialData`
@@ -919,29 +919,46 @@ computable.
 
 ## 14. Snapshots
 
-Save the current display as a self-contained, **read-only** view the recipient can pan
-and zoom but not edit (`backend/app/snapshots.py`).
+A snapshot is a small **JSON config** describing a **read-only** view over an immutable
+checkpoint (`backend/app/snapshots.py`). It ships no pixels or data of its own — the
+browser viewer opens the referenced checkpoint `.zarr.zip` directly (zarrita.js over HTTP
+range requests) and renders the image + cells from it, reusing the live canvas rendering.
 
-- **Read-only viewer:** a standalone `.html` embedding the captured view-state plus an
-  **inlined vanilla-canvas renderer** (not deck.gl, no external deps) that draws the
-  captured points over the image with pan/zoom, coloring points with the same `uns`
-  palette the live canvas uses. (This is a deliberate deviation from a second compiled
-  deck.gl bundle — it keeps each snapshot folder from shipping a whole SPA build.) The
-  embedded payload is XSS-guarded.
-- **What is captured:** the session view-state — active canvas, camera, channel on/off +
-  names, point styling, image selection, colormap/opacity. No compute or editing state.
-- **Files & content-hash dedupe:**
-  ```
-  snapshots/
-    2026-06-30T14-22-05_tumor-margin.html   # the view + a manifest of assets it needs
-    assets/
-      <sha256-of-bytes>.arrow                # one per data field (coords, color channels)
-      <sha256-of-bytes>.png                  # composited image for the captured view
-  ```
-  The folder is the shareable unit. Filenames are a content hash of the bytes, so
-  identical fields across snapshots **dedupe** and successive snapshots **never
-  overwrite** older ones. `SNAPSHOTS_DIR` is configurable (default `./snapshots`).
+- **Config:** `{schema, kind, label, created, checkpoint:{name,url}, table, viewport,
+  encoding, render}` where `render` bakes what the browser can't derive from the raw
+  arrays: the image geometry (`image_info` — bounds, `pixel_to_world`, pyramid levels,
+  channel names) and per-channel `{visible, color, contrast_limit}` (the contrast limit
+  is `imaging._channel_norm`, coarsest-level-derived like the tile server, so the browser
+  compositor `sum(clip(value/limit, 0, 1) * color)` reproduces the live look). The
+  categorical palette / numeric range are **not** baked — the viewer derives them with
+  the same `colorUtils` from the same immutable arrays.
+- **Immutable target:** saving a snapshot first writes the session to a content-hashed
+  `.zarr.zip` (so the config points at bytes that won't change under it), then bakes the
+  manifest — both under one continuous read lock so no compute can interleave. The
+  checkpoint is served for direct browser reads (HTTP Range) at
+  `GET /api/checkpoints/<name>`; the config is served at `/snapshots/<name>.json`.
+- **Files:** `snapshots/<stamp>_<slug>.json`. `SNAPSHOTS_DIR` is configurable (default
+  `<checkpoint dir>/snapshots`). Both spatial and embedding displays can be snapshotted
+  (`POST /api/sessions/{id}/snapshot` with an optional `display_id`).
 - **Invocation:** a **Save snapshot** action (canvas controls).
+
+### 14.1 Checkpoint on-disk format (browser-readable)
+
+The same `.zarr.zip` that reloads as a live session is the source the snapshot viewer
+reads. To make a browser read cheap over one HTTP-served file:
+
+- **Zarr v3 + consolidated metadata** (spatialdata's default) + **ZIP_STORED** (each entry
+  is a contiguous byte span a range request maps to directly).
+- **Sharding codec** on the image/label arrays, added on save (`store._shard_rasters`):
+  small inner chunks (`512`) packed into a few shards (`4096`), so a viewport read fetches
+  a tiny shard index plus a handful of small chunks instead of one giant chunk — without
+  exploding the object/zip-entry count. spatialdata 0.7.3 has no write-time sharding
+  option, so each raster level is recreated region-by-region (peak memory ~one shard),
+  then metadata is **re-consolidated** (the consolidated tree the browser reads must
+  report the sharded codec, or zarrita would decode the pre-shard byte layout).
+- **Worker logs relocated** out of `attrs["app_state"]` (inlined into the store's root
+  `zarr.json`, downloaded in full on open) into gzipped `logs/<record_id>.log.gz`, read
+  back lazily by `session.get_log` (the existing `/jobs/{id}/log` endpoint).
 
 ---
 
@@ -1037,14 +1054,26 @@ structures). Therefore: **monitor closely, expose live, guard at boundaries.**
 ## 18. Persistence
 
 - **Save / export:** write the active `SpatialData` to a `.zarr.zip` (data + `attrs`
-  state blob) — the complete, portable project. A zip is write-once, so this is for
-  explicit export. Save is enqueued as a **special queue job** (§24.5) so it captures a
-  consistent snapshot serialized against in-flight compute. Saving blocks the UI behind a
-  spinner; a Stop button cancels it while still queued (a save already writing to disk
-  can't be interrupted).
-- **Checkpoints** (graceful shutdown, optional auto-checkpoint, editable-transform save)
-  use a **plain `.zarr` directory store**, which supports fast incremental element-level
-  writes; only changed elements are rewritten.
+  state blob) — the complete, portable project, and the artifact the in-SPA snapshot
+  viewer byte-range-reads directly. Save is enqueued as a **special queue job** (§24.5) so
+  it captures a consistent snapshot serialized against in-flight compute. Saving blocks the
+  UI behind a spinner; a Stop button cancels it while still queued (a save already writing
+  to disk can't be interrupted).
+- **Incremental save:** a session loaded from a `.zarr.zip` is unpacked into a writable,
+  already-sharded directory store (its `extract_dir`) that backs the live object. Re-saving
+  such a session rewrites only the elements that changed since the last save — a changed
+  table element (delete its on-disk dir, then `write_element`, since spatialdata 0.7.3
+  refuses to overwrite an element inside its own store), an edited coordinate transform
+  (`write_transformations`), and always `attrs` (`write_attrs`) — then re-consolidates
+  metadata and re-zips the directory. Rasters are Dask-backed from these same files and are
+  never touched, so the expensive decompress/recompress/**reshard** pass is skipped
+  entirely. This is gated on the store already being sharded (`can_update_incrementally`);
+  a compute that changes a raster or other non-table element, or a fresh import whose store
+  isn't sharded yet, falls back to the full write (`save_spatialdata`, which reshards). The
+  session tracks which elements are dirty (`dirty_tables`, `dirty_transforms`, `force_full`)
+  from each mutation's `structural_diff`. Save staging happens inside the checkpoint mount
+  so the final commit is a same-filesystem rename, and the auto-named content hash is
+  accumulated during the zip write rather than by re-reading the finished archive.
 - **Load:** open a `.zarr.zip` (or `.zarr`); hydrate the object and restore UI from
   `attrs` (§5). `attrs["app_state"]` runs through a **schema migration** keyed on
   `schema_version`; a blob newer than the app opens read-only with a warning.

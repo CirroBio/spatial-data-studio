@@ -1,4 +1,4 @@
-import { describe, type Snapshot } from '../lib/snapshots';
+import { formatCreated, type Snapshot } from '../lib/snapshots';
 
 interface Props {
   snapshots: Snapshot[];
@@ -9,13 +9,14 @@ interface Props {
   multi?: boolean;
 }
 
-// The scrollable list of saved snapshots (row = parsed date + slug label), shared by
+// The scrollable list of saved snapshots (row = label + kind + saved time), shared by
 // the Snapshot browser and the Cirro upload picker so both read the same way.
 export default function SnapshotList({ snapshots, isSelected, onSelect, multi }: Props) {
   return (
     <>
       {snapshots.map((s) => {
-        const { when, label } = describe(s.name);
+        const when = formatCreated(s.created);
+        const label = s.label || s.name;
         const active = isSelected(s);
         return (
           <button
@@ -31,7 +32,9 @@ export default function SnapshotList({ snapshots, isSelected, onSelect, multi }:
             )}
             <span className="flex flex-col min-w-0 flex-1">
               <span className="text-xs font-medium truncate">{label}</span>
-              {when && <span className="text-[10px] text-muted/70 mt-0.5">{when}</span>}
+              <span className="text-[10px] text-muted/70 mt-0.5">
+                {s.kind}{when && ` · ${when}`}
+              </span>
             </span>
           </button>
         );

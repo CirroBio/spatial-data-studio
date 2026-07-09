@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useRef, type RefObject } from 'react';
 import type { OrthographicViewState, OrbitViewState } from '@deck.gl/core';
-import type { EmbeddingDisplaySpec, Viewport } from '../../types';
-import type { ArrowPositions } from './useArrowPositions';
+import type { ScatterPositions } from './useArrowPositions';
 
 const ZOOM_LIMITS = { minZoom: -8, maxZoom: 8 };
 const DEFAULT_ROTATION_X = 25;
@@ -9,22 +8,8 @@ const DEFAULT_ROTATION_X = 25;
 export type EmbeddingViewState = OrthographicViewState | OrbitViewState;
 
 interface Params {
-  positions: ArrowPositions | null;
+  positions: ScatterPositions | null;
   is3d: boolean;
-  display: EmbeddingDisplaySpec;
-}
-
-function viewStateFromViewport(viewport: Viewport, is3d: boolean): EmbeddingViewState {
-  if (is3d) {
-    return {
-      target: [viewport.target[0], viewport.target[1], viewport.target[2] ?? 0],
-      zoom: viewport.zoom,
-      rotationX: viewport.rotationX ?? DEFAULT_ROTATION_X,
-      rotationOrbit: viewport.rotationOrbit ?? 0,
-      ...ZOOM_LIMITS,
-    };
-  }
-  return { target: [viewport.target[0], viewport.target[1], 0], zoom: viewport.zoom, ...ZOOM_LIMITS };
 }
 
 // 2D-or-3D view state for the embeddings scatter: an OrthographicView (pan/zoom)
@@ -32,7 +17,7 @@ function viewStateFromViewport(viewport: Viewport, is3d: boolean): EmbeddingView
 // useCanvasViewState — the view-state shape and view class genuinely differ, and
 // there's no image layer/bounds to union in here.
 export function useEmbeddingViewState(
-  { positions, is3d, display }: Params,
+  { positions, is3d }: Params,
 ): {
   containerRef: RefObject<HTMLDivElement>;
   canvasSize: { width: number; height: number } | null;
@@ -75,17 +60,15 @@ export function useEmbeddingViewState(
     return { target: [centerX, centerY, 0], zoom, ...ZOOM_LIMITS };
   }, [positions, is3d]);
 
-  // Initial view state: the saved display viewport, else fit to data.
+  // A freshly loaded session always frames its data; the persisted display viewport
+  // is not restored here (the canvas is remounted per session — key on the session id
+  // in App — so this runs once per session load).
   useEffect(() => {
     if (viewState) return;
-    if (display.viewport) {
-      setViewState(viewStateFromViewport(display.viewport, is3d));
-      return;
-    }
     if (!positions) return;
     const fit = fitToData();
     if (fit) setViewState(fit);
-  }, [fitToData, display.viewport, positions, viewState, is3d]);
+  }, [fitToData, positions, viewState]);
 
   // The 2D and 3D view-state shapes aren't interchangeable — re-fit on toggle
   // rather than trying to carry an orthographic pan/zoom into an orbit camera.
