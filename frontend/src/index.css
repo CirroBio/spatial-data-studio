@@ -56,6 +56,15 @@ body {
   font-family: system-ui, -apple-system, sans-serif;
 }
 
+/* LastPass ignores data-lpignore on our inputs and injects a floating icon
+   (div[data-lastpass-icon-root]) with `display` set inline at !important, so a
+   stylesheet `display:none` can't win. It doesn't touch `visibility`, so hide it
+   that way. The app has no login fields, so suppressing it everywhere is safe. */
+div[data-lastpass-icon-root] {
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
