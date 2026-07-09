@@ -169,6 +169,31 @@ def _annot_str(annot) -> str:
     return getattr(annot, "__name__", None) or str(annot)
 
 
+def _resolve_hints(fn) -> dict:
+    """Best-effort type-hint resolution (DESIGN §17). scanpy/squidpy use
+    `from __future__ import annotations`, so raw annotations are strings and a
+    single unresolvable forward ref (e.g. a `TYPE_CHECKING`-only `AnnData`) makes
+    `typing.get_type_hints` raise for the *whole* function. Resolve each annotation
+    independently so one bad name doesn't drop every param to its string form —
+    otherwise numeric params (`float`/`int`) fall through to a text widget and reach
+    the library as strings (e.g. `sc.tl.umap(alpha="1.0")` -> numba typing error)."""
+    try:
+        return typing.get_type_hints(fn)
+    except Exception:
+        pass
+    ns = {**vars(typing), **getattr(fn, "__globals__", {})}
+    hints = {}
+    for name, annot in getattr(fn, "__annotations__", {}).items():
+        if not isinstance(annot, str):
+            hints[name] = annot
+            continue
+        try:
+            hints[name] = eval(annot, ns)  # annotation source is the trusted library
+        except Exception:
+            pass  # leave unresolved; caller falls back to the raw string annotation
+    return hints
+
+
 def _injection_kind(annot) -> str | None:
     s = _annot_str(annot)
     for token, kind in _INJECT_TOKENS:
@@ -274,10 +299,7 @@ def build_library_function(library: str, namespace: str, name: str, fn, *,
         sig = inspect.signature(fn)
     except (ValueError, TypeError):
         return None
-    try:
-        hints = typing.get_type_hints(fn)
-    except Exception:
-        hints = {}  # DESIGN §17: forward-ref / optional-dep failures fall back to raw annotations
+    hints = _resolve_hints(fn)
 
     overrides = overrides or {}
     injected, pinned, params, unsupported = {}, {}, [], []
