@@ -2,14 +2,17 @@
 
 Auth is service-account style (OAuth client-credentials): `config.cirro_enabled()`
 gates the feature on three env vars being present, no interactive login. Upload
-builds a temp folder of symlinks — the saved `.zarr.zip` plus the files each
-selected snapshot actually references — so nothing is copied, then hands that
-folder to the Cirro SDK's own directory uploader.
+builds a temp folder of symlinks — the saved `.zarr.zip` checkpoints plus each
+selected snapshot's JSON config and the checkpoint it references — so nothing is
+copied, then hands that folder to the Cirro SDK's own directory uploader. When
+snapshots are included, the built standalone viewer (`frontend/dist-viewer`) is
+copied to the bundle root alongside a `snapshots/index.json` manifest, so the
+uploaded dataset is a self-contained web page that renders its own snapshots.
 """
 from __future__ import annotations
 
 import json
-import re
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -101,54 +104,94 @@ def upload(*, project_id: str, dataset_name: str, upload_folder: Path, folder: s
     return {"dataset_id": dataset.id, "dataset_name": dataset.name}
 
 
-def _referenced_assets(html_path: Path) -> list[str]:
-    """Snapshot HTML embeds `const V = {...}` with the specific asset/image paths
-    it uses; assets/ is shared and content-hashed across every snapshot, so this
-    picks out only the files this one snapshot actually needs."""
-    m = re.search(r"const V = (\{.*\});\n", html_path.read_text())
-    if not m:
-        return []
-    view = json.loads(m.group(1))
-    paths = list((view.get("assets") or {}).values())
-    if view.get("image"):
-        paths.append(view["image"])
-    return paths
+def _referenced_checkpoint(config_path: Path) -> str | None:
+    """The checkpoint `.zarr.zip` filename a JSON snapshot config points at."""
+    try:
+        cfg = json.loads(config_path.read_text())
+    except (OSError, ValueError):
+        return None
+    return (cfg.get("checkpoint") or {}).get("name")
 
 
-def _symlink_snapshot(dest_root: Path, name: str) -> None:
+def _symlink_snapshot(snap_dir: Path, session_dir: Path, name: str) -> None:
+    """Symlink a snapshot's JSON config under `snapshots/`, and the checkpoint it
+    references under `sessions/` (deduped) so the uploaded bundle is self-contained
+    — the viewer needs the config and its checkpoint together."""
     src = (config.SNAPSHOTS_DIR / name).resolve()
     if not src.is_file():
         raise ValueError(f"snapshot '{name}' not found")
-    dest_dir = dest_root / Path(name).stem
-    dest_dir.mkdir(parents=True)
-    (dest_dir / name).symlink_to(src)
-    for rel in _referenced_assets(src):
-        asset_src = (config.SNAPSHOTS_DIR / rel).resolve()
-        if not asset_src.is_file():
+    (snap_dir / name).symlink_to(src)
+    ckpt = _referenced_checkpoint(src)
+    if ckpt:
+        ckpt_src = (config.CHECKPOINT_DIR / ckpt).resolve()
+        dest = session_dir / ckpt
+        if ckpt_src.is_file() and not dest.exists():
+            dest.symlink_to(ckpt_src)
+
+
+def _write_snapshot_manifest(snap_dir: Path, snapshot_names: list[str]) -> None:
+    """A `snapshots/index.json` the standalone viewer reads to populate its picker,
+    newest first (matching `list_snapshots`). Each entry carries just what the picker
+    needs; the viewer fetches the full config from `snapshots/<name>` on selection."""
+    entries = []
+    for name in sorted(snapshot_names, reverse=True):
+        try:
+            cfg = json.loads((config.SNAPSHOTS_DIR / name).read_text())
+        except (OSError, ValueError):
             continue
-        asset_dest = dest_dir / rel
-        asset_dest.parent.mkdir(parents=True, exist_ok=True)
-        asset_dest.symlink_to(asset_src)
+        entries.append({
+            "name": name,
+            "label": cfg.get("label", name),
+            "created": cfg.get("created", ""),
+            "kind": cfg.get("kind", "spatial"),
+        })
+    (snap_dir / "index.json").write_text(json.dumps(entries))
+
+
+def _copy_viewer(tmp: Path) -> None:
+    """Copy the built standalone snapshot viewer to the bundle root so the uploaded
+    dataset renders its own snapshots. `viewer.html` becomes `index.html` (opened by
+    default on a static host); everything else (the hashed assets/) is copied as-is."""
+    viewer_dir = config.SNAPSHOT_VIEWER_DIR
+    if not (viewer_dir.exists() and (viewer_dir / "viewer.html").is_file()):
+        raise RuntimeError(
+            f"standalone snapshot viewer not built at {viewer_dir}; "
+            "run `npm run build:viewer` in frontend/ (or set SQV_SNAPSHOT_VIEWER_DIR)")
+    for item in viewer_dir.iterdir():
+        if item.name == "viewer.html":
+            shutil.copy2(item, tmp / "index.html")
+        elif item.is_dir():
+            shutil.copytree(item, tmp / item.name)
+        else:
+            shutil.copy2(item, tmp / item.name)
 
 
 def build_upload_folder(session_paths: list[str], snapshot_names: list[str]) -> Path:
-    """A temp folder of symlinks: each selected saved session file under
-    `sessions/`, and each selected snapshot (HTML + only its referenced assets)
-    under `snapshots/`. Never symlinks a directory itself (most upload walkers
-    skip symlinked dirs' contents) — only real directories containing per-file
-    symlinks."""
+    """A temp folder of symlinks: each selected saved checkpoint under `sessions/`,
+    and each selected snapshot's JSON config under `snapshots/` (with its referenced
+    checkpoint added to `sessions/`). Never symlinks a directory itself (most upload
+    walkers skip symlinked dirs' contents) — only real directories of per-file
+    symlinks. When snapshots are included, the built standalone viewer is copied to
+    the bundle root plus a `snapshots/index.json` manifest, so the dataset ships a
+    self-contained web page rendering its snapshots."""
     tmp = Path(tempfile.mkdtemp(prefix="cirro-upload-"))
-    if session_paths:
-        session_dir = tmp / "sessions"
-        session_dir.mkdir()
-        for path in session_paths:
-            (session_dir / Path(path).name).symlink_to(Path(path).resolve())
+    session_dir = tmp / "sessions"
+    session_dir.mkdir()
+    for path in session_paths:
+        dest = session_dir / Path(path).name
+        if not dest.exists():
+            dest.symlink_to(Path(path).resolve())
 
     if snapshot_names:
         snap_dir = tmp / "snapshots"
         snap_dir.mkdir()
         for name in snapshot_names:
-            _symlink_snapshot(snap_dir, name)
+            _symlink_snapshot(snap_dir, session_dir, name)
+        _write_snapshot_manifest(snap_dir, snapshot_names)
+        _copy_viewer(tmp)
+
+    if not any(session_dir.iterdir()):
+        session_dir.rmdir()  # no sessions and no referenced checkpoints
     return tmp
 
 

@@ -971,10 +971,10 @@ dark unless `CIRRO_BASE_URL`, `CIRRO_CLIENT_ID`, and `CIRRO_CLIENT_SECRET` are a
 - **Auth:** a service-account (OAuth client-credentials) identity — **no interactive
   login**, gated by `config.cirro_enabled()`.
 - **Flow:** the session must be **saved first**. `build_upload_folder()` builds a temp
-  folder from **symlinks** (the saved `.zarr.zip` plus, per selected snapshot, only the
-  specific `assets/` it references — `assets/` is shared and content-hashed across
-  snapshots), so nothing is copied. `upload()` calls the Cirro SDK's
-  `project.upload_dataset`. Driven by a `cirro_upload` worker job.
+  folder from **symlinks** (each selected `.zarr.zip` under `sessions/`, and each selected
+  snapshot's JSON config under `snapshots/` with the checkpoint it references added to
+  `sessions/`), so nothing is copied and the bundle is self-contained. `upload()` calls
+  the Cirro SDK's `project.upload_dataset`. Driven by a `cirro_upload` worker job.
 - **UI:** a dialog listing Cirro projects, a dataset name, an optional folder (free-text
   with typeahead, see below), and saved snapshots (multi-select). Uploads always use the
   generic "Files" ingest process (`custom_dataset`), so there is no process picker.

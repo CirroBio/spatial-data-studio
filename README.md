@@ -282,9 +282,17 @@ and point their documentation at a per-method section in
   counts are broadcast (`cirro.upload.state`, also `GET /api/cirro/uploads`) — while any
   upload is in flight the toolbar button shows a non-blocking spinner and its tooltip
   reports how many are uploading and pending. The upload folder is built from
-  symlinks (each selected `.zarr.zip` under `sessions/`, plus per selected snapshot only
-  the specific assets it references — `assets/` is shared and content-hashed across
-  snapshots) so nothing is copied. Always
+  symlinks (each selected `.zarr.zip` under `sessions/`, and each selected snapshot's
+  JSON config under `snapshots/` with the checkpoint it references added to
+  `sessions/`) so nothing is copied and the bundle stays self-contained. When
+  snapshots are included the bundle also ships the built standalone snapshot viewer
+  at its root (`index.html` + `assets/`, from `frontend/dist-viewer` — see
+  `SQV_SNAPSHOT_VIEWER_DIR`) plus a `snapshots/index.json` manifest, so the uploaded
+  dataset is a self-contained web page: a picker switches between the bundled
+  snapshots (kept in the `?snapshot=` query param) and each renders read-only from
+  the bundle's own zarr, exactly like the in-app viewer. Build it with
+  `npm run build:viewer` in `frontend/` (the upload errors if it hasn't been built).
+  Always
   uploaded via Cirro's generic "Files" ingest process (`custom_dataset`, accepts any
   file) — the service-account identity only needs `Create dataset`/`View dataset` on
   the target project, no `View process` permission. An optional destination folder can
@@ -417,6 +425,11 @@ pip install -r backend/requirements.txt
 Backend edits require restarting `run.sh` manually: the long-lived SSE stream
 (`/api/events`) never closes, so `--reload` hangs on "Waiting for connections
 to close" instead of picking up the change.
+
+Testing a Cirro upload that includes snapshots also needs the standalone snapshot
+viewer built once (it's copied into the bundle): `cd frontend && npm run build:viewer`
+(output `frontend/dist-viewer/`, where the backend looks by default). `run.sh` does
+not build it — rebuild after changing the viewer.
 
 ## Run offline (headless CLI + Nextflow)
 
