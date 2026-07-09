@@ -40,6 +40,9 @@ export interface FunctionEntry {
   json_schema: Record<string, unknown>;
   ui_schema: Record<string, UiFieldInfo>;
   partially_supported: boolean;
+  // For `read` functions: whether the import picker accepts a folder, a file, or
+  // either as the input path. null/undefined for non-readers.
+  input_kind?: 'folder' | 'file' | 'either' | null;
 }
 
 export interface SessionSummary {

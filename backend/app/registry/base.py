@@ -77,6 +77,9 @@ class Function(ABC):
     params: list                      # list[ParamSpec], in display order
     partially_supported: bool = False
     unsupported_params: list = []
+    # For `read` functions only: whether the New Session import picker should accept
+    # a "folder", a "file", or "either" as the input path. None for non-readers.
+    input_kind: str | None = None
     # Provenance shown in the picker (mandatory for every function — see CLAUDE.md).
     # Library functions inherit both from registry/library_meta.yaml (one entry per
     # library); custom functions set them explicitly (citation = where the method
@@ -105,6 +108,7 @@ class Function(ABC):
             "json_schema": self.json_schema(), "ui_schema": self.ui_schema(),
             "partially_supported": self.partially_supported,
             "unsupported_params": self.unsupported_params,
+            "input_kind": self.input_kind,
         }
 
     @abstractmethod

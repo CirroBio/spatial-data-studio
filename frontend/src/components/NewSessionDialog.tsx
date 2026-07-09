@@ -372,7 +372,7 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
                 disabled={loading || !selectedPath}
                 className="px-4 py-2 bg-accent hover:bg-accent/80 disabled:opacity-50 text-white rounded text-sm transition-colors"
               >
-                {loading ? 'Creating...' : 'Create'}
+                {loading ? 'Loading...' : 'Load'}
               </button>
             </div>
           </form>

@@ -146,3 +146,16 @@ type (others are skipped). The plot step renders a volcano for a chosen cell typ
 **Citation:** Love, Huber & Anders, *Moderated estimation of fold change and
 dispersion for RNA-seq data with DESeq2*, Genome Biol 15:550 (2014); pseudobulk
 aggregation per Squair et al., Nat Commun 12:5692 (2021).
+
+## SpatialData zarr import
+
+`io.read_zarr` (read). Opens an existing SpatialData store as a new session for
+the "Import Data" flow. Accepts either a `.zarr` directory or a compressed
+archive of one (`.zarr.zip` or `.zarr.tar.gz`); an archive is unpacked to a
+temporary directory the session owns and removes on close. Wraps
+`spatialdata.read_zarr` — the reflected reader alone only opens a `.zarr`
+directory, so the archive handling is added here. Any `app_state` in the object
+is ignored (raw import, not a checkpoint reload).
+
+**Citation:** SpatialData (Marconato et al., Nat Methods 22, 58-62 (2025));
+`.zarr.zip` / `.zarr.tar.gz` archive extraction original to this repository.

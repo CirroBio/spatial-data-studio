@@ -52,6 +52,10 @@ class LibraryFunction(Function):
         self.params = params
         self.partially_supported = partially_supported
         self.unsupported_params = unsupported_params
+        # Every reflected library reader (spatialdata-io Xenium/Visium/… ) takes a
+        # raw acquisition directory; the SpatialData-zarr importer that also accepts
+        # archive files is the custom reader, which sets its own input_kind.
+        self.input_kind = "folder" if effect_class == "read" else None
 
     def _callable(self):
         obj = importlib.import_module(self.library)

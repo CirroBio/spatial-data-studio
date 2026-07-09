@@ -236,7 +236,7 @@ async def fs_browse(path: str | None = None, include_files: bool = False):
         for child in sorted(target.iterdir(), key=lambda c: c.name.lower()):
             if child.name.startswith("."):
                 continue
-            if child.name.endswith((".zarr", ".zarr.zip")):
+            if child.name.endswith((".zarr", ".zarr.zip", ".zarr.tar.gz", ".zarr.tgz")):
                 out.append({"name": child.name, "path": str(child), "kind": "dataset"})
             elif child.is_dir():
                 out.append({"name": child.name, "path": str(child), "kind": "dir"})

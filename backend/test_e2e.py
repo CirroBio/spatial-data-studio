@@ -164,6 +164,56 @@ def run_custom_methods_flow(client):
     print("\nCUSTOM METHODS E2E CHECKS PASSED")
 
 
+def run_zarr_import_flow(client):
+    """SpatialData-zarr importer (io.read_zarr): exercises the underlying archive
+    reader on a .zarr dir, a .zarr.zip, and a .zarr.tar.gz, then an API import
+    round-trip for each archive (placed under the data dir) into a ready session."""
+    import shutil
+    import tarfile
+    import zipfile
+
+    from app.persistence.store import read_spatialdata_archive
+
+    staging = tempfile.mkdtemp(dir=str(config.DATA_DIR))  # archives must live under DATA_DIR
+    zip_path = os.path.join(staging, "xenium_tma.zarr.zip")
+    targz_path = os.path.join(staging, "xenium_tma.zarr.tar.gz")
+    try:
+        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_STORED) as zf:
+            for root, _, files in os.walk(XENIUM_TMA):
+                for f in files:
+                    full = os.path.join(root, f)
+                    zf.write(full, os.path.relpath(full, XENIUM_TMA))
+        with tarfile.open(targz_path, "w:gz") as tf:
+            tf.add(XENIUM_TMA, arcname=os.path.basename(XENIUM_TMA))
+
+        # underlying method: every format reads to a SpatialData with tables; only
+        # archives allocate a temp extract dir (the caller owns its cleanup).
+        for label, p, expect_tmp in [("dir", XENIUM_TMA, False), ("zip", zip_path, True),
+                                     ("tar.gz", targz_path, True)]:
+            sdata, extract_dir = read_spatialdata_archive(p)
+            assert list(getattr(sdata, "tables", {}).keys()), f"{label}: no tables read"
+            assert (extract_dir is not None) == expect_tmp, f"{label}: extract_dir={extract_dir}"
+            if extract_dir:
+                shutil.rmtree(extract_dir, ignore_errors=True)
+            print(f"[ok] read_spatialdata_archive({label}) -> tables={list(sdata.tables.keys())}")
+
+        # API import round-trip: each archive bootstraps a ready session via io.read_zarr.
+        for label, p in [("zip", zip_path), ("tar.gz", targz_path)]:
+            r = client.post("/api/sessions", json={"source": {
+                "kind": "read", "namespace": "io", "function": "read_zarr", "params": {"store": p}}})
+            assert r.status_code == 200, r.text
+            sid = r.json()["id"]
+            st = poll(client, sid, lambda s: s["summary"]["status"] in ("ready", "errored"))
+            assert st["summary"]["status"] == "ready", f"{label} import errored"
+            assert [c["function"] for c in st["app_state"]["compute_history"]] == ["read_zarr"]
+            assert st["fields"]["obs"], f"{label}: no obs fields after import"
+            assert client.delete(f"/api/sessions/{sid}").status_code == 200
+            print(f"[ok] imported {label} archive -> ready session {sid[:8]}")
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+    print("[ok] SpatialData-zarr import flow passed")
+
+
 def new_session(client, path=DATA):
     """Open a checkpoint (a .zarr/.zarr.zip under the checkpoint dir) via `load`, or
     bootstrap a raw dataset under the data dir via the `read_zarr` reader — the strict
@@ -759,6 +809,7 @@ def main():
         run_encoding_persistence_flow(client)
         run_inspector_flow(client)
         run_isolation_flow(client)
+        run_zarr_import_flow(client)
 
         run_custom_methods_flow(client)
 
