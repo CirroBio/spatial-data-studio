@@ -261,6 +261,16 @@ function EmbeddingCanvasView({
     persistDisplay({ ...base, encoding: { ...base.encoding, ...patch } });
   }
 
+  // Persist a camera move as the display's viewport; 3D keeps the orbit angles,
+  // 2D just target + zoom.
+  function commitViewState(vs: EmbeddingViewState) {
+    const v = vs as { target: number[]; zoom: number; rotationX?: number; rotationOrbit?: number };
+    const viewport = is_3d
+      ? { target: [v.target[0], v.target[1], v.target[2] ?? 0], zoom: v.zoom, rotationX: v.rotationX, rotationOrbit: v.rotationOrbit }
+      : { target: [v.target[0], v.target[1]], zoom: v.zoom };
+    persistDisplay({ ...currentSpec(), viewport });
+  }
+
   const colorByName = colorByLabel(colorByPath);
 
   if (!viewState) {
@@ -272,17 +282,23 @@ function EmbeddingCanvasView({
   }
 
   return (
-    <div ref={containerRef} className="w-full h-full relative bg-bg">
+    <div
+      ref={containerRef}
+      className="w-full h-full relative bg-bg"
+      // Right-drag pans the orbit camera; swallow the browser context menu over the canvas
+      // so the gesture isn't interrupted (form fields in the overlay panel keep theirs).
+      onContextMenu={(e) => { if ((e.target as HTMLElement).tagName === 'CANVAS') e.preventDefault(); }}
+    >
       <DeckGL
+        // Remount on the 2D/3D toggle: deck.gl reuses the controller instance across an
+        // in-place view-class swap (Orthographic <-> Orbit), leaving drag/zoom wedged until
+        // the canvas is torn down. Keying on is_3d forces a fresh controller for the new view.
+        key={is_3d ? '3d' : '2d'}
         views={views}
         viewState={viewState as unknown as Record<string, EmbeddingViewState>}
         onViewStateChange={({ viewState: vs }) => {
           setViewState(vs as EmbeddingViewState);
-          const v = vs as { target: number[]; zoom: number; rotationX?: number; rotationOrbit?: number };
-          const viewport = is_3d
-            ? { target: [v.target[0], v.target[1], v.target[2] ?? 0], zoom: v.zoom, rotationX: v.rotationX, rotationOrbit: v.rotationOrbit }
-            : { target: [v.target[0], v.target[1]], zoom: v.zoom };
-          persistDisplay({ ...currentSpec(), viewport });
+          commitViewState(vs as EmbeddingViewState);
         }}
         layers={layers}
         controller={true}
@@ -306,6 +322,13 @@ function EmbeddingCanvasView({
         setPanelCollapsed={setPanelCollapsed}
         onFit={() => { const fit = fitToData(); if (fit) setViewState(fit); }}
       />
+
+      {is_3d && (
+        <div className="absolute bottom-3 left-3 text-[10px] leading-tight text-muted/70 font-mono select-none pointer-events-none">
+          <div>Left-drag · rotate</div>
+          <div>Right-drag · move</div>
+        </div>
+      )}
     </div>
   );
 }

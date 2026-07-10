@@ -156,7 +156,9 @@ and point their documentation at a per-method section in
   its components to plot (so `obsm:X_pca`'s 50 components aren't limited to the first
   two); a **3D** toggle adds a Z-component picker and switches to an orbit camera
   (`PointCloudLayer` under `OrbitView`), hidden when the selected slot has fewer than
-  three components. A session with no non-spatial `obsm` shows an empty state to run a
+  three components. In 3D a left-drag rotates the orbit camera and a right-drag traverses
+  (pans) across the view; scroll zooms, and a subtle hint in the bottom-left corner spells
+  this out. A session with no non-spatial `obsm` shows an empty state to run a
   dimensionality reduction first; sessions that gain one later (or predate this
   feature) create the view on demand from a setup menu that picks the obsm slot and the
   initial **Color by** value (`POST /api/sessions/{id}/displays`).

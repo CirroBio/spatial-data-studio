@@ -4,6 +4,10 @@ import type { ScatterPositions } from './useArrowPositions';
 
 const ZOOM_LIMITS = { minZoom: -8, maxZoom: 8 };
 const DEFAULT_ROTATION_X = 25;
+// Let the orbit camera tilt through the full pitch circle (deck defaults to +/-90,
+// which walls the drag at straight-down/up); +/-180 lets a rotate-drag reach every
+// angle, including inverted.
+const ROTATION_LIMITS = { minRotationX: -180, maxRotationX: 180 };
 
 export type EmbeddingViewState = OrthographicViewState | OrbitViewState;
 
@@ -55,7 +59,7 @@ export function useEmbeddingViewState(
     const zoom = Math.log2(Math.min((pxW * MARGIN) / extentX, (pxH * MARGIN) / extentY));
     if (is3d) {
       const centerZ = d2min !== undefined && d2max !== undefined ? (d2min + d2max) / 2 : 0;
-      return { target: [centerX, centerY, centerZ], zoom, rotationX: DEFAULT_ROTATION_X, rotationOrbit: 0, ...ZOOM_LIMITS };
+      return { target: [centerX, centerY, centerZ], zoom, rotationX: DEFAULT_ROTATION_X, rotationOrbit: 0, ...ROTATION_LIMITS, ...ZOOM_LIMITS };
     }
     return { target: [centerX, centerY, 0], zoom, ...ZOOM_LIMITS };
   }, [positions, is3d]);
@@ -72,6 +76,8 @@ export function useEmbeddingViewState(
 
   // The 2D and 3D view-state shapes aren't interchangeable — re-fit on toggle
   // rather than trying to carry an orthographic pan/zoom into an orbit camera.
+  // (DeckGL is also remounted on toggle — see the key in EmbeddingCanvas — so its
+  // controller is rebuilt for the new view class instead of reusing the stale one.)
   const is3dRef = useRef(is3d);
   useEffect(() => {
     if (is3dRef.current === is3d) return;
