@@ -59,6 +59,15 @@ HASH_LEN = 12
 _HASH_SUFFIX_RE = re.compile(rf"-[0-9a-f]{{{HASH_LEN}}}$")
 
 
+def _invalidate_dataset_scan() -> None:
+    """A checkpoint just landed in the mount — drop the cached load/upload picker
+    scan (datasets.py) so the new file shows up on the picker's next open. This is
+    the single write boundary every checkpoint goes through (save / incremental
+    update / set-transform / snapshot autosave / close-with-save)."""
+    from .. import datasets
+    datasets.invalidate()
+
+
 def strip_content_hash(stem: str) -> str:
     """Remove a previously-appended content-hash suffix from a checkpoint's base
     name (without extension), so re-saving replaces it instead of stacking a new
@@ -127,12 +136,15 @@ def save_spatialdata(sdata, path: str, app_state: dict, hash_name: bool = False)
     sdata.attrs["app_state"] = persisted
     try:
         if path.endswith(".zarr.zip"):
-            return _save_zip(sdata, path, hash_name, logs)
-        return _save_dir(sdata, path, logs)
+            written = _save_zip(sdata, path, hash_name, logs)
+        else:
+            written = _save_dir(sdata, path, logs)
     finally:
         # Restore the identity between sdata.attrs and the live session app_state
         # (they are the same object during a live session).
         sdata.attrs["app_state"] = original if original is not None else app_state
+    _invalidate_dataset_scan()
+    return written
 
 
 def _save_dir(sdata, path: str, logs: dict[str, str]) -> str:
@@ -239,9 +251,11 @@ def update_checkpoint(sdata, path: str, app_state: dict, *, tables: set[str],
         sdata.write_attrs()
         _write_logs(work_dir, logs)
         sdata.write_consolidated_metadata()
-        return _zip_from_dir(work_dir, path, hash_name)
+        written = _zip_from_dir(work_dir, path, hash_name)
     finally:
         sdata.attrs["app_state"] = original if original is not None else app_state
+    _invalidate_dataset_scan()
+    return written
 
 
 def _zip_from_dir(src_dir: str, path: str, hash_name: bool) -> str:

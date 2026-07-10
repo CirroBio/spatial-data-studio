@@ -30,6 +30,10 @@ INGEST_PROCESS_ID = "custom_dataset"
 FOLDER_TAG_PREFIX = "folder://"
 
 _client_cache = None
+# The project list, cached after the first (network + auth) fetch. Prewarmed at
+# startup when Cirro is configured (see prewarm.py) so the upload dialog's project
+# dropdown is populated the moment it opens; changes rarely within a run.
+_projects_cache: list[dict] | None = None
 # project_id -> sorted list of known folder paths (including ancestor paths).
 # Populated lazily from `list_datasets()`, which is otherwise an expensive full
 # per-project scan; refreshed on demand rather than on every keystroke of the
@@ -53,8 +57,11 @@ def _client():
     return _client_cache
 
 
-def list_projects() -> list[dict]:
-    return [{"id": p.id, "name": p.name} for p in _client().list_projects()]
+def list_projects(force_refresh: bool = False) -> list[dict]:
+    global _projects_cache
+    if force_refresh or _projects_cache is None:
+        _projects_cache = [{"id": p.id, "name": p.name} for p in _client().list_projects()]
+    return _projects_cache
 
 
 def _normalize_folder_path(raw: str) -> str:

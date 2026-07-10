@@ -13,6 +13,8 @@ from .sessions.manager import SessionManager
 from .transport.sse import BUS
 from .transport import arrow
 from .transport import tables
+from .prewarm import PREWARM
+from . import datasets
 from . import imaging
 
 MANAGER: SessionManager | None = None
@@ -27,10 +29,23 @@ async def lifespan(app: FastAPI):
     BUS.bind_loop(asyncio.get_running_loop())
     _READY = True
     sampler = asyncio.create_task(_resource_loop())
+    PREWARM.start()
+    _submit_prewarm_tasks()
     try:
         yield
     finally:
         sampler.cancel()
+        PREWARM.stop()
+
+
+def _submit_prewarm_tasks():
+    """Warm the menu lists that are otherwise paid on first open (readers are
+    already built by REGISTRY.build above). Best-effort and off the event loop —
+    see prewarm.py."""
+    PREWARM.submit("datasets", lambda: datasets.list_datasets(checkpoint_roots()))
+    if config.cirro_enabled():
+        from . import cirro
+        PREWARM.submit("cirro.projects", cirro.list_projects)
 
 
 async def _resource_loop():
@@ -142,75 +157,6 @@ async def create_session(body: dict):
 
 
 # ---- filesystem browse (for the New Session path typeahead) ----------------
-# Dirs never worth walking for datasets (vendored/build/staging; `_`-prefixed dirs
-# like a reader's raw-bundle staging folder are skipped so their internal zarrs
-# don't surface as loadable sessions).
-_SKIP_SCAN_DIRS = {".git", "node_modules", "__pycache__", "venv", ".cache", "dist", "build"}
-_DATASET_MAX_DEPTH = 4
-_DATASET_CAP = 1000
-
-
-def _looks_like_sdata_zarr(p: Path) -> bool:
-    if p.name.endswith(".zarr.zip"):
-        return True  # a saved session / prepared bundle; can't cheaply peek inside
-    # A SpatialData .zarr directory holds element groups; a bare/foreign zarr does not.
-    return any((p / g).is_dir() for g in ("tables", "images", "shapes", "points", "labels"))
-
-
-def _find_datasets(roots: list[Path]) -> list[dict]:
-    """Recursively find loadable SpatialData datasets under the roots (flat list)."""
-    import os
-
-    def rel(p: Path) -> str:
-        for r in roots:
-            try:
-                return str(p.relative_to(r))
-            except ValueError:
-                continue
-        return str(p)
-
-    found: dict[str, dict] = {}
-    for root in roots:
-        base = len(root.parts)
-        for dirpath, dirnames, filenames in os.walk(root):
-            here = Path(dirpath)
-            if len(here.parts) - base >= _DATASET_MAX_DEPTH:
-                dirnames[:] = []
-            keep = []
-            for name in sorted(dirnames, key=str.lower):
-                # `.rasters` dirs are the app's own transient tile-cache stores under
-                # the checkpoint mount (rasters.normalize_rasters) — internal working
-                # data, never a loadable checkpoint.
-                if name.startswith((".", "_")) or name in _SKIP_SCAN_DIRS or name.endswith(".rasters"):
-                    continue
-                full = here / name
-                if name.endswith(".zarr"):
-                    if not _looks_like_sdata_zarr(full):
-                        continue  # never descend into a .zarr's internals
-                    found.setdefault(str(full.resolve()),
-                                     {"name": rel(full), "path": str(full), "mtime": _mtime(full)})
-                    continue
-                keep.append(name)
-            dirnames[:] = keep
-            for name in filenames:
-                if name.endswith(".zarr.zip"):
-                    full = here / name
-                    found.setdefault(str(full.resolve()),
-                                     {"name": rel(full), "path": str(full), "mtime": _mtime(full)})
-            if len(found) >= _DATASET_CAP:
-                break
-    # Newest first: saved sessions the user just wrote surface at the top.
-    return sorted(found.values(), key=lambda e: e["mtime"], reverse=True)
-
-
-def _mtime(p: Path) -> float:
-    import os
-    try:
-        return os.path.getmtime(p)
-    except OSError:
-        return 0.0
-
-
 @app.get("/api/fs/browse")
 async def fs_browse(path: str | None = None, include_files: bool = False):
     """Navigate the raw-input data mount (DATA_DIR only) for the New Session
@@ -256,9 +202,10 @@ async def fs_browse(path: str | None = None, include_files: bool = False):
 async def fs_datasets():
     """Every saved session found by scanning the checkpoint mount (CHECKPOINT_DIR
     only) — the New Session load picker and the Cirro upload session picker show
-    these on click, no typing needed."""
-    datasets = await _in_executor(_find_datasets, checkpoint_roots())
-    return {"datasets": datasets}
+    these on click, no typing needed. Served from the prewarmed cache
+    (datasets.py); rescanned only after a save invalidates it."""
+    found = await _in_executor(datasets.list_datasets, checkpoint_roots())
+    return {"datasets": found}
 
 
 @app.get("/api/sessions/{sid}")

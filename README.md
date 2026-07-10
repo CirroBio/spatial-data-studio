@@ -97,6 +97,12 @@ and point their documentation at a per-method section in
   registry, so a slow cold start doesn't look like an app with nothing to load.
   The session list and the New Session dataset picker also show a "Loading…"
   state rather than looking empty while their first fetch is in flight.
+- **Menu prewarming** (`backend/app/prewarm.py`) — a background async queue warms
+  the menu lists that are otherwise paid lazily on first open, off the event loop,
+  so they are ready the moment the user needs them: the saved-dataset scan
+  (`GET /api/fs/datasets`, cached in `datasets.py` and invalidated on each save)
+  and, when Cirro is configured, the Cirro project list. Warm tasks are
+  best-effort — a failure just means the endpoint computes on demand as before.
 - **deck.gl canvas** — binary Arrow scatter colored by any per-cell value over the
   tissue image; world-unit point sizing. **Color by** first picks a slot (`obs`, `X`
   gene expression, or a `layer`) and then the column within it: obs columns from a
@@ -328,6 +334,8 @@ backend/    FastAPI app
   app/transport/  arrow (field -> Arrow IPC), tables (element inventory + dataframe page JSON), sse
   app/recipes/    curated analysis recipes — JSON bundle files, discovered at startup (catalog + apply)
   app/persistence/ store (.zarr / .zarr.zip)
+  app/datasets.py saved-checkpoint scan for the load/upload pickers (prewarmed cache)
+  app/prewarm.py  background async queue that warms slow first-open menu lists off the event loop
   app/cirro.py    Cirro dataset upload (client-credentials auth, symlink-based upload folder)
   cli.py          offline recipe runner — reuses the registry/session engine headlessly
 frontend/   React + TS + Vite + Tailwind + deck.gl SPA
