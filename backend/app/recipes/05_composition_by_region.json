@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "name": "Cell types & neighborhoods by region",
+    "description": "After regions are annotated, plot how cell-type composition and how neighborhood composition differ across regions — two stacked-bar crosstabs (cell types by region, then neighborhoods by region).",
+    "provenance": "Region composition (per-region crosstab + chi-square), original to this repository. Step 5 of the Xenium region-analysis workflow."
+  },
+  "readme": "Step 5 of the workflow — run after you have annotated regions (draw labels or promote an obs column into a region set) and produced cell-type labels (recipe 3) and neighborhoods (recipe 4). Draws two stacked-bar charts: cell-type proportions per region, then neighborhood proportions per region, each with a descriptive chi-square p-value (single section, n=1 per region). Set `region_key` to your annotated region column.",
+  "params": [
+    { "name": "region_key", "schema": { "type": "string", "default": "region" }, "widget": "obs_categorical", "bound_to": "obs", "required": true, "tooltip": "annotated region column to compare across" },
+    { "name": "cell_type_key", "schema": { "type": "string", "default": "cell_type" }, "widget": "obs_categorical", "bound_to": "obs", "required": true, "tooltip": "cell-type column to break down by region" },
+    { "name": "neighborhood_key", "schema": { "type": "string", "default": "cellular_neighborhood" }, "widget": "obs_categorical", "bound_to": "obs", "required": true, "tooltip": "neighborhood column to break down by region" }
+  ],
+  "steps": [
+    { "namespace": "custom", "function": "region_composition", "params": { "region_key": { "$param": "region_key" }, "cell_type_key": { "$param": "cell_type_key" } } },
+    { "namespace": "custom", "function": "region_composition", "params": { "region_key": { "$param": "region_key" }, "cell_type_key": { "$param": "neighborhood_key" } } }
+  ]
+}

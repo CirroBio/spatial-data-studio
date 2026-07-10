@@ -5,6 +5,7 @@ import type {
   SessionState,
   DisplaySpec,
   ImageInfo,
+  UiFieldInfo,
 } from './types';
 import type { Snapshot } from './lib/snapshots';
 
@@ -81,7 +82,7 @@ export async function browsePath(path?: string, includeFiles = false): Promise<F
 
 export async function subsetSession(
   id: string,
-  body: { polygons: number[][][]; coordinate_system?: string; save_parent?: boolean; name?: string }
+  body: { polygons: number[][][]; coordinate_system?: string; name?: string }
 ): Promise<{ job_id: string }> {
   const res = await apiFetch(`/api/sessions/${id}/subset`, {
     method: 'POST',
@@ -246,10 +247,25 @@ export async function getTablePreview(
   return res.json() as Promise<TablePreview>;
 }
 
+// A recipe-level parameter declaration — same shape as a function's ParamSpec,
+// with the default carried in schema.default.
+export interface RecipeParam {
+  name: string;
+  schema: Record<string, unknown>;
+  widget: string;
+  bound_to: string | null;
+  required: boolean;
+  tooltip: string;
+}
+
 export interface BundledRecipe {
   name: string;
   description: string;
   steps: { namespace: string; function: string; params: Record<string, unknown> }[];
+  params: RecipeParam[];
+  // Derived from `params` so the gallery can render the same FunctionForm the picker uses.
+  json_schema: Record<string, unknown>;
+  ui_schema: Record<string, UiFieldInfo>;
 }
 
 export async function getBundledRecipes(): Promise<{ recipes: BundledRecipe[] }> {
@@ -265,9 +281,15 @@ export interface RecipePreflight {
 
 // Validate a recipe against the installed registry before running it: which
 // functions are missing, and which referenced keys no earlier step produces.
+// `params` + `param_values` are resolved server-side first, so referenced-key
+// checks reflect the chosen values.
 export async function preflightRecipe(
   sessionId: string,
-  recipe: { steps: BundledRecipe['steps'] },
+  recipe: {
+    steps: BundledRecipe['steps'];
+    params?: RecipeParam[];
+    param_values?: Record<string, unknown>;
+  },
 ): Promise<RecipePreflight> {
   const res = await apiFetch(`/api/sessions/${sessionId}/recipe/preflight`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },

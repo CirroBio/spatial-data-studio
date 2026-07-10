@@ -175,8 +175,11 @@ key_added
                 genes=list(ad.var_names),
             )
             ad.uns[key_added] = {
+                # str(): cell-type labels become zarr subgroup names on save, so a
+                # numeric celltype_key (e.g. integer cluster ids) must be stringified
+                # or anndata's writer fails ('float' object has no attribute 'encode').
                 "per_celltype": {
-                    ct: {"columns": de.results.columns.tolist(),
+                    str(ct): {"columns": de.results.columns.tolist(),
                         "gene": de.results.index.astype(str).tolist(),
                         "values": de.results.to_dict(orient="list")}
                     for ct, de in result.per_celltype.items()
@@ -213,16 +216,16 @@ Parameters
 key_added
     uns key used by the "Pseudobulk DE (DESeq2)" step.
 cell_type
-    Which cell type's DE result to plot (must be a key of
-    uns[key_added]["per_celltype"]).
+    Which cell type's DE result to plot (a key of
+    uns[key_added]["per_celltype"]); blank plots the first available.
 alpha
     Significance threshold used to color the MA/volcano panels.
 """
     params = [
         ParamSpec("key_added", {"type": "string", "default": "pseudobulk_de"}, "text", None,
                   required=True, tooltip="uns key used by the compute step"),
-        ParamSpec("cell_type", {"type": "string"}, "text", None, required=True,
-                  tooltip="which cell type's DE result to plot (see the compute step's log for valid names)"),
+        ParamSpec("cell_type", {"type": "string"}, "text", None, required=False,
+                  tooltip="which cell type's DE result to plot (blank = the first available)"),
         ParamSpec("alpha", {"type": "number", "default": 0.05}, "number", None,
                   required=False, tooltip="significance threshold for MA/volcano coloring"),
     ]
@@ -236,6 +239,10 @@ alpha
             return CallResult(status="failed",
                               error=f"run 'Pseudobulk DE (DESeq2)' for this key first (uns['{key_added}'] not found)")
         per_celltype = adata.uns[key_added].get("per_celltype", {})
+        if not per_celltype:
+            return CallResult(status="failed", error=f"uns['{key_added}'] has no per-cell-type results")
+        if not cell_type:
+            cell_type = sorted(per_celltype)[0]
         if cell_type not in per_celltype:
             return CallResult(status="failed",
                               error=f"cell type {cell_type!r} not found in uns['{key_added}']['per_celltype']; "

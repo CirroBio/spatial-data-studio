@@ -12,6 +12,7 @@ from .lisi import LisiScores, LisiScoresPlot
 from .proximity import ProximityTest, ProximityTestPlot
 from .boundary import RegionBoundary, RegionBoundaryPlot, InfiltrationProfile, InfiltrationProfilePlot
 from .pseudobulk_deseq2 import PseudobulkDESeq2, PseudobulkDESeq2Plot
+from .region_feature_kruskal import RegionFeatureKruskal, RegionFeatureKruskalPlot
 from .read_spatialdata import ReadSpatialDataZarr
 
 CUSTOM_FUNCTIONS = [ClusterLeiden(), IdentifyRegionsLeiden(), EditAnnotations(), IdentifyTMAs(),
@@ -22,4 +23,5 @@ CUSTOM_FUNCTIONS = [ClusterLeiden(), IdentifyRegionsLeiden(), EditAnnotations(),
                     ProximityTest(), ProximityTestPlot(),
                     RegionBoundary(), RegionBoundaryPlot(), InfiltrationProfile(), InfiltrationProfilePlot(),
                     PseudobulkDESeq2(), PseudobulkDESeq2Plot(),
+                    RegionFeatureKruskal(), RegionFeatureKruskalPlot(),
                     ReadSpatialDataZarr()]

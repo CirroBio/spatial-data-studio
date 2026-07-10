@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "name": "Neighborhood analysis (cellular neighborhoods)",
+    "description": "Find recurring tissue neighborhoods (niches) by clustering each cell's local cell-type composition, writing a neighborhood label per cell to obs[neighborhood_key], and plot the neighborhood map + composition.",
+    "provenance": "Cellular neighborhoods (Schurch et al., Cell 2020). Step 4 of the Xenium region-analysis workflow."
+  },
+  "readme": "Step 4 of the workflow (run 'Assign cell-type labels (CellTypist)' first, or use any cell-type/cluster column). For each cell, counts the cell types among its spatial neighbours and clusters those composition vectors into `n_neighborhoods` recurring niches, written to `obs[neighborhood_key]`. The plot shows the spatial neighborhood map, a cell-type × neighborhood enrichment heatmap, and the per-neighborhood composition. Needs `obsm['spatial']`. Follow with the by-region recipes (5 and 6).",
+  "params": [
+    { "name": "cell_type_key", "schema": { "type": "string", "default": "cell_type" }, "widget": "obs_categorical", "bound_to": "obs", "required": true, "tooltip": "cell-type/cluster column whose local composition defines the neighborhoods" },
+    { "name": "n_neighborhoods", "schema": { "type": "integer", "default": 10 }, "widget": "number", "bound_to": null, "required": false, "tooltip": "number of recurring neighborhoods (niches) to find" },
+    { "name": "neighborhood_key", "schema": { "type": "string", "default": "cellular_neighborhood" }, "widget": "text", "bound_to": null, "required": true, "tooltip": "obs column to write the neighborhood label into" }
+  ],
+  "steps": [
+    { "namespace": "custom", "function": "cellular_neighborhoods", "params": { "cell_type_key": { "$param": "cell_type_key" }, "n_neighborhoods": { "$param": "n_neighborhoods" }, "key_added": { "$param": "neighborhood_key" } } },
+    { "namespace": "custom", "function": "cellular_neighborhoods_plot", "params": { "key_added": { "$param": "neighborhood_key" } } }
+  ]
+}

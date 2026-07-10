@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "name": "Region gene-expression differences (Kruskal-Wallis)",
+    "description": "For each cell type, test which genes differ in expression across regions with the Kruskal-Wallis H-test (non-parametric, multi-sample), then plot the top region-varying genes for one cell type as a gene × region heatmap.",
+    "provenance": "Kruskal-Wallis H-test (Kruskal & Wallis, JASA 1952) with Benjamini-Hochberg FDR; original to this repository. Step 6 of the Xenium region-analysis workflow."
+  },
+  "readme": "Step 6 of the workflow — run after regions are annotated and cell types assigned (recipe 3). Within each cell type, compares every gene's expression across the annotated regions with the Kruskal-Wallis test and BH-adjusts across genes; results land in `uns[key_added]`. The plot draws a gene × region mean-expression heatmap (per-gene z-scored) for one cell type — leave `cell_type` blank to auto-pick the most differential one. Uses the normalized/log `.X` from recipe 1, not raw counts.",
+  "params": [
+    { "name": "cell_type_key", "schema": { "type": "string", "default": "cell_type" }, "widget": "obs_categorical", "bound_to": "obs", "required": true, "tooltip": "cell-type column; one Kruskal-Wallis test set per level" },
+    { "name": "region_key", "schema": { "type": "string", "default": "region" }, "widget": "obs_categorical", "bound_to": "obs", "required": true, "tooltip": "annotated region column; the groups each gene is compared across" },
+    { "name": "cell_type", "schema": { "type": "string" }, "widget": "text", "bound_to": null, "required": false, "tooltip": "which cell type's heatmap to plot (blank = the most differential one)" },
+    { "name": "key_added", "schema": { "type": "string", "default": "region_kruskal" }, "widget": "text", "bound_to": null, "required": true, "tooltip": "uns key to store the per-cell-type results under" }
+  ],
+  "steps": [
+    { "namespace": "custom", "function": "region_feature_kruskal", "params": { "celltype_key": { "$param": "cell_type_key" }, "region_key": { "$param": "region_key" }, "key_added": { "$param": "key_added" } } },
+    { "namespace": "custom", "function": "region_feature_kruskal_plot", "params": { "key_added": { "$param": "key_added" }, "cell_type": { "$param": "cell_type" } } }
+  ]
+}

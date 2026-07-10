@@ -3,15 +3,24 @@ import { useForm } from 'react-hook-form';
 import type { FunctionEntry, SessionFields } from '../../types';
 import { getObsValues } from '../../api';
 
+interface SubmitAction {
+  key: string;
+  label: string;
+  variant?: 'primary' | 'secondary';
+}
+
 interface Props {
   fn: FunctionEntry;
   fields: SessionFields;
   sessionId: string;
-  onSubmit: (params: Record<string, unknown>) => void;
+  // The clicked action's key is passed when `submitActions` is used.
+  onSubmit: (params: Record<string, unknown>, actionKey?: string) => void;
   submitting?: boolean;
   // Pre-fill the form (e.g. editing a prior call's params before re-running).
   initialValues?: Record<string, unknown>;
   submitLabel?: string;
+  // Render one button per action instead of the single submit button.
+  submitActions?: SubmitAction[];
 }
 
 // Inverse of processSubmit: turn stored params back into the form's field shapes
@@ -56,7 +65,9 @@ interface JsonSchemaProperty {
   items?: { type?: string };
 }
 
-export default function FunctionForm({ fn, fields, sessionId, onSubmit, submitting, initialValues, submitLabel }: Props) {
+export default function FunctionForm({ fn, fields, sessionId, onSubmit, submitting, initialValues, submitLabel, submitActions }: Props) {
+  // Which action button was clicked; read at submit time to route the params.
+  const [pendingAction, setPendingAction] = useState<string | undefined>(undefined);
   const { register, handleSubmit, watch, formState: { errors } } = useForm<Record<string, unknown>>({
     defaultValues: initialValues ? paramsToFormValues(fn, initialValues) : undefined,
   });
@@ -127,20 +138,40 @@ export default function FunctionForm({ fn, fields, sessionId, onSubmit, submitti
       }
       params[mapParam] = cleaned;
     }
-    onSubmit(params);
+    onSubmit(params, pendingAction);
   }
 
   const paramKeys = Object.keys(properties);
 
   const runButton = (
     <div className="shrink-0 border-t border-border px-4 py-3">
-      <button
-        type="submit"
-        disabled={submitting}
-        className="w-full px-4 py-2 bg-accent hover:bg-accent/80 disabled:opacity-50 text-white rounded text-sm transition-colors"
-      >
-        {submitting ? 'Running...' : submitLabel ?? 'Run'}
-      </button>
+      {submitActions ? (
+        <div className="flex gap-1.5">
+          {submitActions.map((a) => (
+            <button
+              key={a.key}
+              type="submit"
+              onClick={() => setPendingAction(a.key)}
+              disabled={submitting}
+              className={
+                a.variant === 'secondary'
+                  ? 'flex-1 px-4 py-2 bg-bg border border-border hover:border-accent disabled:opacity-50 text-text rounded text-sm transition-colors'
+                  : 'flex-1 px-4 py-2 bg-accent hover:bg-accent/80 disabled:opacity-50 text-white rounded text-sm transition-colors'
+              }
+            >
+              {a.label}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <button
+          type="submit"
+          disabled={submitting}
+          className="w-full px-4 py-2 bg-accent hover:bg-accent/80 disabled:opacity-50 text-white rounded text-sm transition-colors"
+        >
+          {submitting ? 'Running...' : submitLabel ?? 'Run'}
+        </button>
+      )}
     </div>
   );
 

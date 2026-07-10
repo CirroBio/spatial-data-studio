@@ -33,6 +33,11 @@ export default function FunctionPicker({ sessionId, effectClass, onClose }: Prop
       fn.key.toLowerCase().includes(q) ||
       fn.summary.toLowerCase().includes(q)
     );
+  }).sort((a, b) => {
+    // Custom functions first, then library functions; stable within each group.
+    const ac = a.source === 'custom' ? 0 : 1;
+    const bc = b.source === 'custom' ? 0 : 1;
+    return ac - bc;
   });
 
   async function handleSubmit(params: Record<string, unknown>) {

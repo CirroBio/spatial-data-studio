@@ -147,6 +147,22 @@ type (others are skipped). The plot step renders a volcano for a chosen cell typ
 dispersion for RNA-seq data with DESeq2*, Genome Biol 15:550 (2014); pseudobulk
 aggregation per Squair et al., Nat Commun 12:5692 (2021).
 
+## Region feature differences (Kruskal-Wallis)
+
+`custom.region_feature_kruskal` (compute) + `custom.region_feature_kruskal_plot`
+(plot). For each cell type, tests which genes differ in expression **across
+regions** with the Kruskal-Wallis H-test — the non-parametric, multi-sample
+analogue of one-way ANOVA — and Benjamini-Hochberg FDR-adjusts across genes. The
+compute step stores the top genes per cell type (statistic, p-value, adjusted
+p-value, and per-region mean expression) in `uns[key_added]`; the plot step draws
+a gene × region heatmap of per-gene z-scored mean expression for one cell type
+(blank picks the most differential cell type). The test compares individual cells
+within one section, so its p-values describe this sample — use *Pseudobulk DE
+(DESeq2)* when you have biological replicates per condition.
+
+**Citation:** original method implemented in this repository; Kruskal & Wallis,
+*Use of ranks in one-criterion variance analysis*, JASA 47:583-621 (1952).
+
 ## SpatialData zarr import
 
 `io.read_zarr` (read). Opens an existing SpatialData store as a new session for

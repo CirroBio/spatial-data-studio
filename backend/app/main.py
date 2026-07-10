@@ -638,11 +638,14 @@ async def export_recipe(sid: str):
 
 @app.post("/api/sessions/{sid}/recipe/run")
 async def run_recipe(sid: str, recipe: dict):
-    """Import a recipe: run now (queue all steps) or stage as PENDING (spec §5.3)."""
+    """Import a recipe: run now (queue all steps) or stage as PENDING (spec §5.3).
+    A recipe carrying declared `params` + caller `param_values` is resolved first
+    ($param references filled in); an ad-hoc {steps} import resolves to itself."""
     from . import recipes
     sess = _session(sid)
     mode = recipe.get("mode") or "run"
-    n = recipes.run_steps(sess, recipe.get("steps", []), mode)
+    steps = recipes.resolve_steps(recipe, recipe.get("param_values"))
+    n = recipes.run_steps(sess, steps, mode)
     return {"staged" if mode == "stage" else "queued": n}
 
 
@@ -676,8 +679,11 @@ def _preflight(recipe: dict) -> dict:
 
 @app.post("/api/sessions/{sid}/recipe/preflight")
 async def preflight_recipe(sid: str, recipe: dict):
+    """Validate against the installed registry. Recipe params are resolved first
+    so referenced-key checks reflect the caller's chosen `param_values`."""
+    from . import recipes
     _session(sid)
-    return _preflight(recipe)
+    return _preflight({"steps": recipes.resolve_steps(recipe, recipe.get("param_values"))})
 
 
 # ---- Arrow data path -------------------------------------------------------

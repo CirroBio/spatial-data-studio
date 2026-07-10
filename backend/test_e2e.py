@@ -43,11 +43,11 @@ def hist_status(st, fn):
 
 
 def run_custom_methods_flow(client):
-    """Chains one session through normalize/PCA/cluster and all 7 custom.* compute
+    """Chains one session through normalize/PCA/cluster and all 8 custom.* compute
     + plot pairs via the real job API, then a save/reload round trip. Exercises
-    the new cellular-neighborhoods, Milo, LISI, proximity, region-boundary /
-    infiltration, and pseudobulk-DESeq2 methods end to end (not just unit-level
-    FakeSession smoke tests)."""
+    the cellular-neighborhoods, Milo, LISI, proximity, region-boundary /
+    infiltration, pseudobulk-DESeq2, and region-feature-Kruskal methods end to end
+    (not just unit-level FakeSession smoke tests)."""
     import pandas as pd
     from app.main import MANAGER
 
@@ -130,6 +130,15 @@ def run_custom_methods_flow(client):
     print(f"[ok] pseudobulk_deseq2 produced DE results for: {pb_cell_types}")
     run_plot("custom", "pseudobulk_deseq2_plot", {"cell_type": pb_cell_type})
 
+    # region feature differences (Kruskal-Wallis) by region, per cell type — the
+    # TMA cores stand in for annotated regions here.
+    run_job("custom", "region_feature_kruskal", {"celltype_key": "cell_type", "region_key": "tma_core"})
+    adata = MANAGER.get(sid).active_table()
+    rk_cell_types = sorted(adata.uns["region_kruskal"]["per_celltype"])
+    assert rk_cell_types, "no cell type had >=2 regions for the Kruskal-Wallis test"
+    print(f"[ok] region_feature_kruskal produced results for: {rk_cell_types}")
+    run_plot("custom", "region_feature_kruskal_plot", {})
+
     # persistence round-trip: confirm the new .uns payloads (mask arrays,
     # per-celltype tables) actually survive the zarr checkpoint, not just json.dumps.
     out = os.path.join(str(config.CHECKPOINT_DIR), "custom_methods_session.zarr.zip")
@@ -150,7 +159,8 @@ def run_custom_methods_flow(client):
     fn_names = [c["function"] for c in ch]
     expected = ["read_zarr", "normalize_total", "log1p", "pca", "neighbors", "leiden", "rank_genes_groups",
                 "identify_tmas", "cellular_neighborhoods", "proximity_test", "region_boundary",
-                "infiltration_profile", "milo_differential_abundance", "lisi_scores", "pseudobulk_deseq2"]
+                "infiltration_profile", "milo_differential_abundance", "lisi_scores", "pseudobulk_deseq2",
+                "region_feature_kruskal"]
     assert fn_names == expected, fn_names
     print(f"[ok] reloaded: compute_history={fn_names}")
 
@@ -304,6 +314,46 @@ def run_staging_flow(client):
     assert client.put(f"/api/sessions/{sid}/pending/{step_id}",
                       json={"params": {"n_neighs": 8}}).status_code == 409
     print("[ok] run-all completes staged step; editing a completed step is refused")
+
+
+def run_recipe_params_flow(client):
+    """Recipe-level parameters: every bundled recipe declares valid param specs and
+    dangling-free $param references; caller param_values override a step's value on
+    stage; declared defaults apply when no value is given."""
+    recipes = client.get("/api/recipes").json()["recipes"]
+
+    # invariant: each declared param is well-formed; each $param reference names one.
+    for r in recipes:
+        declared = {p["name"] for p in r["params"]}
+        for p in r["params"]:
+            assert p.get("name") and p.get("widget") and p.get("schema"), (r["name"], p)
+        for step in r["steps"]:
+            for val in step["params"].values():
+                if isinstance(val, dict) and list(val.keys()) == ["$param"]:
+                    assert val["$param"] in declared, (r["name"], step["function"], val)
+    print(f"[ok] {len(recipes)} recipes: param specs valid, no dangling $param references")
+
+    recipe = next(r for r in recipes if r["name"] == "Neighborhood enrichment")
+    body = {"steps": recipe["steps"], "params": recipe["params"]}
+
+    def staged_params(sid, fn):
+        st = client.get(f"/api/sessions/{sid}").json()
+        rec = next(r for r in st["app_state"]["compute_history"]
+                   if r["function"] == fn and r["status"] == "pending")
+        return rec["params"]
+
+    # override: n_neighs -> 4 lands in the resolved spatial_neighbors step
+    sid = new_session(client)
+    assert client.post(f"/api/sessions/{sid}/recipe/run",
+                       json={**body, "param_values": {"n_neighs": 4}, "mode": "stage"}).json()["staged"] == 3
+    assert staged_params(sid, "spatial_neighbors")["n_neighs"] == 4, staged_params(sid, "spatial_neighbors")
+
+    # default: no param_values -> the declared default (6) applies
+    sid = new_session(client)
+    assert client.post(f"/api/sessions/{sid}/recipe/run",
+                       json={**body, "mode": "stage"}).json()["staged"] == 3
+    assert staged_params(sid, "spatial_neighbors")["n_neighs"] == 6, staged_params(sid, "spatial_neighbors")
+    print("[ok] recipe param_values override step params; defaults apply otherwise")
 
 
 def run_sharding_shape_flow():
@@ -801,6 +851,7 @@ def main():
         print("\n--- feature flows ---")
         run_sharding_shape_flow()
         run_staging_flow(client)
+        run_recipe_params_flow(client)
         run_regions_flow(client)
         run_transform_flow(client)
         run_incremental_save_flow(client, out)

@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "name": "Spatial point patterns (Ripley's L)",
+    "description": "Test whether each region's spots are clustered or dispersed across space with Ripley's L statistic.",
+    "provenance": "Adapted from the squidpy 'Ripley' vignette; targets the visium_hne example."
+  },
+  "readme": "Runs Ripley's L statistic on `obs['cluster']` (builds its own neighborhood internally) and plots the per-region curves.",
+  "params": [
+    { "name": "cluster_key", "schema": { "type": "string", "default": "cluster" }, "widget": "obs_categorical", "bound_to": "obs", "required": true, "tooltip": "obs column holding the region/cluster labels" }
+  ],
+  "steps": [
+    { "namespace": "gr", "function": "ripley", "params": { "cluster_key": { "$param": "cluster_key" }, "mode": "L" } },
+    { "namespace": "pl", "function": "ripley", "params": { "cluster_key": { "$param": "cluster_key" }, "mode": "L" } }
+  ]
+}

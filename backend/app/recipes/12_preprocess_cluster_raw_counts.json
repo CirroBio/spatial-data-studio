@@ -6,12 +6,16 @@
     "provenance": "Standard scanpy preprocessing-to-clustering path; targets unprocessed raw-count data such as Xenium."
   },
   "readme": "Scanpy path from raw counts to Leiden clusters plus a UMAP embedding. No explicit HVG step: PCA uses an existing `highly_variable` flag if present (Visium) and all genes otherwise (targeted panels like Xenium have too few genes for a fixed n_top_genes). Leiden clustering runs on the graspologic (MIT) implementation, not scanpy's GPL igraph/leidenalg backends.",
+  "params": [
+    { "name": "cluster_key", "schema": { "type": "string", "default": "leiden" }, "widget": "text", "bound_to": null, "required": true, "tooltip": "obs column to write the Leiden cluster labels into" },
+    { "name": "resolution", "schema": { "type": "number", "default": 1.0 }, "widget": "number", "bound_to": null, "required": false, "tooltip": "Leiden resolution: higher = more, smaller clusters" }
+  ],
   "steps": [
     { "namespace": "sc.pp", "function": "normalize_total", "params": {} },
     { "namespace": "sc.pp", "function": "log1p", "params": {} },
     { "namespace": "sc.pp", "function": "pca", "params": {} },
     { "namespace": "sc.pp", "function": "neighbors", "params": {} },
-    { "namespace": "custom", "function": "leiden", "params": { "n_iterations": 2 } },
+    { "namespace": "custom", "function": "leiden", "params": { "key_added": { "$param": "cluster_key" }, "resolution": { "$param": "resolution" }, "n_iterations": 2 } },
     { "namespace": "sc.tl", "function": "umap", "params": {} }
   ]
 }

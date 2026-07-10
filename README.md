@@ -68,7 +68,7 @@ and point their documentation at a per-method section in
   categorical `<key_added>` column plus a `<key_added>_conf` confidence column; input is
   log1p/1e4-normalized on a copy by default, and the chosen model is downloaded on first use).
 - **Spatial & multi-sample analysis methods** (non-squidpy, `namespace: custom`, vendored
-  unmodified under `registry/custom/_vendor/`, numpy/scipy/scikit-learn only) — six
+  unmodified under `registry/custom/_vendor/`, numpy/scipy/scikit-learn only) — seven
   compute + plot Function pairs for methods scanpy/squidpy don't provide:
   *Cellular Neighborhoods* (windowed cell-type composition clustered into recurring
   tissue niches); *Milo differential abundance* (tests which overlapping kNN
@@ -80,10 +80,13 @@ and point their documentation at a per-method section in
   infiltration distance* + *Infiltration profile* (derive a tissue region from cell-type
   labels with no hand-drawn geometry, compute each cell's signed distance to the region
   margin, then profile a target population's abundance as a function of that distance —
-  the infiltration curve); and *Pseudobulk DE (DESeq2)* (sums raw counts per
+  the infiltration curve); *Pseudobulk DE (DESeq2)* (sums raw counts per
   sample × cell type and runs PyDESeq2 with an explicit contrast, the replicate-aware
   alternative to `rank_genes_groups` for condition comparisons — requires ≥2 pseudobulk
-  samples per condition per cell type, skipped otherwise, and raw integer counts).
+  samples per condition per cell type, skipped otherwise, and raw integer counts); and
+  *Region feature differences (Kruskal-Wallis)* (for each cell type, ranks the genes
+  whose expression differs across annotated regions with the non-parametric multi-sample
+  Kruskal-Wallis H-test + BH-FDR, then a gene × region mean-expression heatmap).
 - **Data manifest** (`backend/app/manifest`) — an extensible, text representation of
   session state (tables + dtypes, categoricals with counts, region sets, images/channels,
   summaries) captured before/after every call; a human-readable diff.
@@ -193,29 +196,40 @@ and point their documentation at a per-method section in
   it), then records the view. A
   session switcher next to the app name lists every currently-loaded session and
   switches the displayed one on click (non-resident sessions are shown but not
-  selectable); to its right the title bar reports the active session's cell count
+  selectable); each row has a delete control (hover to reveal) that removes the
+  session. To its right the title bar reports the active session's cell count
   and the primary image's pixel dimensions. Saving blocks the whole UI behind a spinner overlay until the write
   finishes; an unobtrusive Stop button cancels it if the job is still queued
   (a save already writing to disk can't be interrupted).
 - **Recipes** — curated multi-step workflows browsable from the Compute/Plots tabs
   (**Browse recipes**, with a search box filtering by name/description/step), served
-  by `GET /api/recipes`, applied through `/recipe/run`. Each recipe offers **Run**
-  (queues every step immediately) or **Stage** (loads the steps as editable *pending*
-  entries). A pending step shows a dashed `pending` badge in the Compute/Plots list;
+  by `GET /api/recipes`, applied through `/recipe/run`. Clicking **Select** on a recipe
+  opens its parameter form (the same form the function picker uses, pre-filled with the
+  recipe's defaults), and that form's footer offers **Run** (queues every step
+  immediately) or **Stage** (loads the steps as editable *pending* entries). A recipe
+  can declare its own **parameters** — a curated handful of knobs (cluster column,
+  neighbor count, filter thresholds, DE test, …) that map into the params of the
+  individual steps; your choices thread through every step that references them. A pending step shows a dashed `pending` badge in the Compute/Plots list;
   opening it lets you **Edit params** (Save keeps it pending) and **Run** it on its
   own, and a **Run all pending (N)** button in the tab footer submits every staged
-  step in order. Loading a recipe file (**Load recipe**) stages it the same way so
-  its parameters can be reviewed before running.
-  squidpy spatial recipes for `visium_hne` (neighborhood enrichment, spatially
-  variable genes by Moran's I / Geary's C / sepal, co-occurrence, region graph
-  topology, Ripley's L, ligand-receptor interactions); scanpy recipes for raw
-  data such as Xenium (preprocess → Leiden + UMAP; QC → filter → cluster; marker
-  genes; cluster hierarchy + markers; t-SNE + diffusion-map
-  embeddings; PAGA trajectory; end-to-end cluster → neighborhood enrichment); and
-  scanpy-tutorial reproductions (full Visium analysis & visualization; MERFISH
-  clustering for imaging-based counts). Recipes
-  are JSON files under `backend/app/recipes/` discovered at startup — see
-  "Contributing recipes" below. Ad-hoc export/import over history too.
+  step in order. Loading a recipe file (**Load recipe**) stages it the same way (its
+  declared defaults applied) so its parameters can be reviewed before running.
+  The gallery leads with a **guided Xenium region-analysis workflow** (run in order):
+  preprocess & QC (Xenium) → Leiden cluster & top marker genes → assign cell-type
+  labels (CellTypist) → neighborhood analysis (cellular neighborhoods) → cell types &
+  neighborhoods by region → region gene-expression differences (Kruskal-Wallis); the
+  last two use whatever region column you annotated. After that: squidpy spatial
+  recipes for `visium_hne` (neighborhood enrichment, spatially variable genes by
+  Moran's I / Geary's C / sepal, co-occurrence, region graph topology, Ripley's L,
+  ligand-receptor interactions); scanpy recipes for raw data such as Xenium
+  (preprocess → Leiden + UMAP; QC → filter → cluster; marker genes; cluster hierarchy
+  + markers; t-SNE + diffusion-map embeddings; PAGA trajectory; end-to-end cluster →
+  neighborhood enrichment); scanpy-tutorial reproductions (full Visium analysis &
+  visualization; MERFISH clustering for imaging-based counts); and a replicate-aware
+  *Pseudobulk differential expression (DESeq2)* recipe (bulk-like per-sample × cell-type
+  DE between two conditions, with an MA + volcano plot). Recipes are JSON files
+  under `backend/app/recipes/` discovered at startup — see "Contributing recipes"
+  below. Ad-hoc export/import over history too.
 - **Offline computation** (`backend/cli.py` + `nextflow/`) — run a recipe over a
   dataset headlessly, no server or browser. The CLI reads the input with any of the
   app's parsing functions (a spatialdata-io/squidpy reader named by `--parser`, e.g.
@@ -343,9 +357,17 @@ code changes needed. To contribute one, open a PR that adds a file named
     "provenance": "The squidpy/scanpy vignette or API it is adapted from, and the target dataset."
   },
   "readme": "Longer notes shown with the recipe: assumptions, preconditions, gotchas.",
+  "params": [
+    { "name": "cluster_key", "schema": { "type": "string", "default": "cluster" },
+      "widget": "obs_categorical", "bound_to": "obs", "required": true,
+      "tooltip": "obs column holding the cluster/region labels" },
+    { "name": "n_neighs", "schema": { "type": "integer", "default": 6 },
+      "widget": "number", "bound_to": null, "required": false,
+      "tooltip": "neighbors per node in the spatial graph" }
+  ],
   "steps": [
-    { "namespace": "sc.pp", "function": "normalize_total", "params": {} },
-    { "namespace": "gr", "function": "spatial_neighbors", "params": { "coord_type": "grid", "n_neighs": 6 } }
+    { "namespace": "gr", "function": "spatial_neighbors", "params": { "coord_type": "grid", "n_neighs": { "$param": "n_neighs" } } },
+    { "namespace": "gr", "function": "nhood_enrichment", "params": { "cluster_key": { "$param": "cluster_key" }, "seed": 0 } }
   ]
 }
 ```
@@ -353,6 +375,21 @@ code changes needed. To contribute one, open a PR that adds a file named
 Each step is `{namespace, function, params}`. Valid namespaces: squidpy `gr`, `im`,
 `tl`, `pl`, `read`; scanpy `sc.pp`, `sc.tl`, `sc.get`, and `sc.pl` (limited to the
 `rank_genes_groups_*` marker-gene plots — do all other plotting with squidpy `pl.*`).
+
+**Recipe parameters (optional).** A recipe can declare a top-level `params` array of
+the knobs worth exposing — the same `{name, schema, widget, bound_to, required,
+tooltip}` shape a function's parameters use, with the default carried in
+`schema.default`. A step param value of the form `{ "$param": "<name>" }` is replaced
+by that recipe param's value before the step runs, so one knob can feed several steps
+(and a produced key plus its consumers, e.g. a `custom.leiden` `key_added` and a
+downstream `sc.tl.paga` `groups`). Omit `params` entirely for a fixed recipe. Expose a
+curated handful (1–4) — cluster column, neighbor count, filter thresholds, DE test —
+not every step param. Widgets are the ones the picker form understands: `number`,
+`text`, `select` (with `schema.enum`), `obs_categorical`, `multitext`, `json`. Use
+`text` for a cluster column the recipe *produces* and `obs_categorical` for one it only
+*consumes*. A `$param` that resolves to `null` is dropped from the step (same as a
+literal `null`), so it applies the function's own default.
+
 Guidelines:
 
 - Only reference functions/params that exist in the installed registry. Validate with
@@ -449,6 +486,12 @@ cd backend
   --parser io.xenium --input /path/to/xenium_bundle \
   --recipe app/recipes/06_preprocess_cluster_raw_counts.json --output ../out
 
+# override a recipe's declared parameters
+../.venv-introspect/bin/python cli.py \
+  --parser zarr --input ../test-data/visium_hne.zarr \
+  --recipe app/recipes/01_neighborhood_enrichment.json \
+  --recipe-params '{"n_neighs": 4}' --output ../out
+
 ../.venv-introspect/bin/python cli.py --list-parsers   # available parsers
 ```
 
@@ -457,6 +500,7 @@ cd backend
 | `--parser` | reader registry key (`io.xenium`), bare reader name (`xenium`), or `zarr`/`spatialdata` to load an existing `.zarr`/`.zarr.zip` |
 | `--input` | raw data folder (reader mode) or the `.zarr`/`.zarr.zip` (zarr mode) |
 | `--recipe` | path to a recipe JSON file, or a bundled recipe name |
+| `--recipe-params` | JSON object of recipe-parameter overrides (fills the recipe's `$param` refs; declared defaults apply otherwise) |
 | `--output` | output directory (created if absent) |
 | `--reader-params` | JSON object of extra kwargs for the reader (reader mode) |
 | `--name` | base name for the output `.zarr.zip` (default: from `--input`) |

@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "name": "Preprocess & QC (Xenium)",
+    "description": "The preprocessing/QC path commonly used for Xenium and other imaging-based panels: QC metrics → drop low-count cells and rare genes → normalize → log1p → PCA → neighbors → UMAP. Leaves the data ready to cluster (recipe 2). No HVG selection (targeted panels have too few genes).",
+    "provenance": "Adapted from the squidpy/scanpy Xenium analysis tutorial (10x Xenium); targets unprocessed raw-count imaging-based data."
+  },
+  "readme": "Step 1 of the Xenium region-analysis workflow. Computes QC metrics, filters low-count cells (`min_counts`) and rare genes (`min_cells`), then normalizes to median total counts, log1p-transforms, and runs PCA → neighbors → UMAP. No highly-variable-gene step: targeted panels (a few hundred genes) are kept whole. Follow with 'Cluster (Leiden) & top marker genes'. `percent_top` uses small cutoffs suited to short gene panels.",
+  "params": [
+    { "name": "min_counts", "schema": { "type": "integer", "default": 10 }, "widget": "number", "bound_to": null, "required": false, "tooltip": "drop cells with fewer than this many total transcripts" },
+    { "name": "min_cells", "schema": { "type": "integer", "default": 5 }, "widget": "number", "bound_to": null, "required": false, "tooltip": "drop genes detected in fewer than this many cells" }
+  ],
+  "steps": [
+    { "namespace": "sc.pp", "function": "calculate_qc_metrics", "params": { "inplace": true, "percent_top": [10, 50] } },
+    { "namespace": "sc.pp", "function": "filter_cells", "params": { "min_counts": { "$param": "min_counts" } } },
+    { "namespace": "sc.pp", "function": "filter_genes", "params": { "min_cells": { "$param": "min_cells" } } },
+    { "namespace": "sc.pp", "function": "normalize_total", "params": {} },
+    { "namespace": "sc.pp", "function": "log1p", "params": {} },
+    { "namespace": "sc.pp", "function": "pca", "params": {} },
+    { "namespace": "sc.pp", "function": "neighbors", "params": {} },
+    { "namespace": "sc.tl", "function": "umap", "params": {} }
+  ]
+}

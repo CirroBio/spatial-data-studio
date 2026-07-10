@@ -43,6 +43,9 @@ def _parse_args(argv):
                    help="path to the raw data folder (reader mode) or the .zarr/.zarr.zip (zarr mode)")
     p.add_argument("--recipe", required=True,
                    help="path to a recipe JSON file, or the name of a bundled recipe")
+    p.add_argument("--recipe-params", default=None,
+                   help="JSON object of recipe-level parameter overrides (see the recipe's "
+                        "`params`); values fill the recipe's $param references, defaults apply otherwise")
     p.add_argument("--output", required=True, help="output directory (created if absent)")
     p.add_argument("--reader-params", default=None,
                    help="JSON object of extra kwargs merged into the reader call (reader mode only)")
@@ -96,18 +99,21 @@ def _output_name(args) -> str:
     return stem or "session"
 
 
-def _load_recipe_steps(recipe_arg: str) -> list:
-    """Steps of a recipe given as a file path, or (fallback) a bundled recipe name."""
+def _load_recipe_steps(recipe_arg: str, param_values: dict | None) -> list:
+    """Resolved steps of a recipe given as a file path, or (fallback) a bundled
+    recipe name. `param_values` fills the recipe's $param references (declared
+    defaults apply where a value is absent)."""
+    from app import recipes
     path = Path(recipe_arg)
     if path.is_file():
-        return json.loads(path.read_text()).get("steps", [])
-    from app import recipes
-    for r in recipes.catalog():
-        if r["name"] == recipe_arg:
-            return r["steps"]
-    names = ", ".join(r["name"] for r in recipes.catalog())
-    raise SystemExit(f"recipe {recipe_arg!r} is neither an existing file nor a bundled recipe. "
-                     f"Bundled: {names}")
+        recipe = json.loads(path.read_text())
+    else:
+        recipe = next((r for r in recipes.catalog() if r["name"] == recipe_arg), None)
+        if recipe is None:
+            names = ", ".join(r["name"] for r in recipes.catalog())
+            raise SystemExit(f"recipe {recipe_arg!r} is neither an existing file nor a bundled "
+                             f"recipe. Bundled: {names}")
+    return recipes.resolve_steps(recipe, param_values)
 
 
 def _open_session(manager, args, reader):
@@ -182,7 +188,8 @@ def main(argv=None) -> int:
         return 0
 
     reader = None if args.parser in ZARR_PARSERS else _resolve_reader(REGISTRY, args.parser)
-    steps = _load_recipe_steps(args.recipe)
+    param_values = json.loads(args.recipe_params) if args.recipe_params else None
+    steps = _load_recipe_steps(args.recipe, param_values)
 
     manager = SessionManager(REGISTRY)
     sess = _open_session(manager, args, reader)
