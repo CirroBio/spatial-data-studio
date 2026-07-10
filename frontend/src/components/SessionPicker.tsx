@@ -1,15 +1,33 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useAppStore } from '../store/sessionStore';
+import { deleteSession } from '../api';
+import { reportError } from '../lib/errors';
 
 // Header switcher over the currently-loaded sessions. Selecting a resident
 // session calls setActiveSessionId, which drives the whole view swap (useSession
 // refetches on the id change). Non-resident (evicted/errored) sessions can't be
-// displayed without a reload, so they show but aren't selectable — matching the
-// gating in the Subset tab's lineage tree.
+// displayed without a reload, so they show but aren't selectable. Each row also
+// exposes a delete control.
 export default function SessionPicker() {
-  const { sessions, activeSessionId, setActiveSessionId } = useAppStore();
+  const { sessions, activeSessionId, setActiveSessionId, removeSession } = useAppStore();
   if (sessions.length === 0) return null;
   const active = sessions.find((s) => s.id === activeSessionId);
+
+  async function handleDelete(e: React.MouseEvent, id: string, name: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!window.confirm(`Delete session "${name}"? Any unsaved changes are lost.`)) return;
+    try {
+      await deleteSession(id);
+      removeSession(id);
+      if (activeSessionId === id) {
+        const next = sessions.find((s) => s.id !== id && s.status === 'ready');
+        setActiveSessionId(next ? next.id : null);
+      }
+    } catch (err) {
+      reportError('Delete session failed', err);
+    }
+  }
 
   return (
     <DropdownMenu.Root>
@@ -42,7 +60,7 @@ export default function SessionPicker() {
                 disabled={!isResident}
                 onSelect={() => setActiveSessionId(s.id)}
                 className={[
-                  'flex items-center gap-2 px-3 py-1.5 text-xs outline-none',
+                  'group flex items-center gap-2 px-3 py-1.5 text-xs outline-none',
                   isActive ? 'bg-accent-lo text-text' : 'text-text/80',
                   isResident ? 'cursor-pointer data-[highlighted]:bg-accent-lo/40' : 'opacity-50 cursor-default',
                 ].join(' ')}
@@ -65,6 +83,13 @@ export default function SessionPicker() {
                     <path d="M20 6L9 17l-5-5" />
                   </svg>
                 )}
+                <button
+                  onClick={(e) => handleDelete(e, s.id, s.name)}
+                  title="Delete session"
+                  className="w-4 h-4 flex items-center justify-center rounded text-muted/50 opacity-0 group-hover:opacity-100 hover:text-danger hover:bg-danger/10 transition-all shrink-0"
+                >
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 6L6 18M6 6l12 12" /></svg>
+                </button>
               </DropdownMenu.Item>
             );
           })}

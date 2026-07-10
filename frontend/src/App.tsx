@@ -28,7 +28,6 @@ export default function App() {
     setFunctions,
     activeSessionId,
     setActiveSessionId,
-    sessions,
     selectedComputeId,
     selectedPlotId,
     setSelectedComputeId,
@@ -199,7 +198,7 @@ export default function App() {
     <div className="flex flex-col h-full bg-bg text-text">
       <Header onNewSession={() => setShowNewSession(true)} />
       <div className="flex flex-1 overflow-hidden">
-        <Sidebar onNewSession={() => setShowNewSession(true)} sessions={sessions} />
+        <Sidebar onNewSession={() => setShowNewSession(true)} />
         <main className="flex-1 overflow-hidden relative">
           {showViewSwitcher && (
             <div data-tour={TourAnchors.ViewSwitcher} className="absolute top-2 left-2 z-20 flex rounded-md border border-border bg-surface/90 backdrop-blur overflow-hidden text-xs shadow">

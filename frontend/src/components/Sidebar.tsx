@@ -9,11 +9,9 @@ import RecipeGallery from './RecipeGallery';
 import AnnotationsPanel from './AnnotationsPanel';
 import SubsettingPanel from './SubsettingPanel';
 import { TourAnchors } from '../tours';
-import type { SessionSummary } from '../types';
 
 interface Props {
   onNewSession: () => void;
-  sessions: SessionSummary[];
 }
 
 interface HistoryItem {
@@ -77,7 +75,7 @@ function HistoryList({
   );
 }
 
-export default function Sidebar({ onNewSession, sessions }: Props) {
+export default function Sidebar({ onNewSession }: Props) {
   const {
     sessionState,
     sidebarTab,
@@ -202,7 +200,7 @@ export default function Sidebar({ onNewSession, sessions }: Props) {
         </Tabs.Content>
 
         <Tabs.Content value="subsetting" className="flex-1 overflow-y-auto">
-          <SubsettingPanel onNewSession={onNewSession} sessions={sessions} />
+          <SubsettingPanel onNewSession={onNewSession} />
         </Tabs.Content>
       </Tabs.Root>
 

@@ -163,10 +163,10 @@ class SessionManager:
             raise ValueError("no valid polygon in selection")
         geom = polys[0] if len(polys) == 1 else MultiPolygon(polys)
 
-        # Everything that reads parent.sdata (the query itself, the image/label
-        # re-attach, and the optional save_parent save) happens under parent's own
-        # read lock. close() below acquires parent's write lock itself, so that call
-        # must happen AFTER this block releases the read lock — the caller
+        # Everything that reads parent.sdata (the query itself and the image/label
+        # re-attach) happens under parent's own read lock. close() below acquires
+        # parent's write lock itself, so that call must happen AFTER this block
+        # releases the read lock — the caller
         # (Session._run_subset) runs on parent's own worker thread, and the RWLock
         # isn't reentrant: holding either lock across the close() call would
         # self-deadlock.
@@ -195,10 +195,6 @@ class SessionManager:
             child_state["plots"] = []
             child_state["data_versions"] = {}
             result.attrs["app_state"] = child_state
-
-            # parent eviction (§8.3)
-            if payload.get("save_parent") and parent.store_path:
-                save_spatialdata(parent.sdata, parent.store_path, parent.app_state)
 
         cid = str(uuid.uuid4())
         child = Session(cid, f"{parent.name}-subset", result, child_state, self, parent_id=parent.id)
