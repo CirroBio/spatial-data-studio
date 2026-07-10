@@ -10,7 +10,7 @@ import type {
   PlotEntry,
 } from '../types';
 import { isSpatialDisplay } from '../types';
-import { putDisplay } from '../api';
+import { putDisplay, getSession } from '../api';
 
 // A job's status lands in whichever collection holds it; these narrow the shared
 // status union so setEntryStatus can update the right record type without a cast.
@@ -33,6 +33,10 @@ interface AppStore {
   setActiveSessionId: (id: string | null) => void;
   sessionState: SessionState | null;
   setSessionState: (state: SessionState | null) => void;
+  // Refetch a session's full state, applying it only if that session is still active
+  // when the fetch resolves. getSession blocks on the read lock while a job runs, so a
+  // switch during a compute can let a stale resolve clobber the now-active session.
+  refreshSessionState: (sessionId: string) => Promise<void>;
   updateDataVersions: (versions: Record<string, number>) => void;
   updateDisplay: (display: DisplaySpec) => void;
   addDisplay: (display: DisplaySpec) => void;
@@ -180,6 +184,21 @@ export const useAppStore = create<AppStore>((set, get) => ({
     ),
   sessionState: null,
   setSessionState: (state) => set({ sessionState: state }),
+  refreshSessionState: async (sessionId) => {
+    try {
+      const state = await getSession(sessionId);
+      if (get().activeSessionId !== sessionId) return; // switched away mid-fetch
+      set({ sessionState: state });
+      // Restore the persisted isolated category (setActiveSessionId cleared it).
+      const spatial = state.app_state.displays.find(isSpatialDisplay);
+      get().setIsolatedCategory(spatial ? spatial.encoding.isolated_category ?? null : null);
+    } catch (err) {
+      get().pushNotification({
+        kind: 'error',
+        message: `Failed to refresh session: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+  },
   updateDataVersions: (versions) =>
     set((s) => {
       if (!s.sessionState) return {};

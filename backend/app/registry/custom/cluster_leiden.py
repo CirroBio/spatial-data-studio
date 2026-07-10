@@ -9,7 +9,7 @@ from __future__ import annotations
 from ..base import Function, ParamSpec, CallResult, run_compute
 from ._leiden import leiden_labels, resolve_connectivities
 
-_DOC = """Leiden clustering
+_HELP = """Leiden clustering
 
 Run Leiden community detection on the nearest-neighbour graph built by
 `sc.pp.neighbors` (obsp['connectivities']) and store the cluster index as a
@@ -49,21 +49,18 @@ class ClusterLeiden(Function):
     effect_class = "compute"
     label = "Leiden clustering"
     summary = "Leiden community detection on the neighbours graph into a new obs column."
-    doc = _DOC
+    doc = _HELP
     partially_supported = False
     unsupported_params: list = []
 
     params = [
-        ParamSpec("resolution", {"type": "number", "default": 1.0}, "number", None,
-                  required=False, tooltip="higher = more, smaller clusters"),
-        ParamSpec("n_iterations", {"type": "integer", "default": 2}, "number", None,
-                  required=False, tooltip="Leiden refinement iterations"),
-        ParamSpec("random_state", {"type": "integer", "default": 0}, "number", None,
-                  required=False, tooltip="random seed"),
-        ParamSpec("neighbors_key", {"type": "string", "default": ""}, "text", None,
-                  required=False, tooltip="uns key of a specific neighbours graph (empty = the standard one)"),
-        ParamSpec("key_added", {"type": "string", "default": "leiden"}, "text", None,
-                  required=True, tooltip="obs column to write cluster labels into", role="output"),
+        ParamSpec.number("resolution", default=1.0, tooltip="higher = more, smaller clusters"),
+        ParamSpec.number("n_iterations", default=2, integer=True, tooltip="Leiden refinement iterations"),
+        ParamSpec.number("random_state", default=0, integer=True, tooltip="random seed"),
+        ParamSpec.text("neighbors_key", default="",
+                       tooltip="uns key of a specific neighbours graph (empty = the standard one)"),
+        ParamSpec.text("key_added", default="leiden", required=True, output=True,
+                       tooltip="obs column to write cluster labels into"),
     ]
 
     def execute(self, params: dict, session) -> CallResult:

@@ -6,7 +6,8 @@ React/TypeScript SPA for the Spatial Data Studio spatial omics analysis tool.
 
 - Vite 5 + React 18 + TypeScript 5 (strict)
 - Tailwind CSS 3
-- deck.gl 9 (`OrthographicView` for 2D world-coordinate spatial data)
+- deck.gl 9 (`OrthographicView` for 2D world-coordinate spatial/embedding scatter;
+  `OrbitView` + `PointCloudLayer` for the 3D embeddings mode)
 - apache-arrow 18 (Arrow IPC field data decoding)
 - Radix UI (dialog, dropdown-menu, tabs, tooltip)
 - react-hook-form

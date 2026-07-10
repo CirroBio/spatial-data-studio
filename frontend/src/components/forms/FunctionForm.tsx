@@ -283,7 +283,11 @@ export default function FunctionForm({ fn, fields, sessionId, onSubmit, submitti
           return (
             <div key={key} className="flex flex-col gap-1">
               {label}
-              <select {...reg(key)} className={inputClass}>
+              <select
+                defaultValue={typeof prop.default === 'string' ? prop.default : ''}
+                {...reg(key)}
+                className={inputClass}
+              >
                 <option value="">-- select --</option>
                 {(prop.enum ?? []).map((opt) => (
                   <option key={opt} value={opt}>{opt}</option>

@@ -48,6 +48,7 @@ ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_cate
 | GET  | `/api/fs/browse?path=&include_files=` | — | `{path, parent, entries:[{name, path, kind:"dir"\|"dataset"\|"file"}]}` (folder navigation for raw-data import) |
 | GET  | `/api/sessions/{id}` | — | `SessionState` |
 | GET  | `/api/sessions/{id}/obs/{column}/values` | — | `{column, values:[{value,count}]}` (unique values of a categorical column, for Edit Annotations) |
+| GET  | `/api/sessions/{id}/var-names?q=&limit=` | — | `{names:[str]}` (server-side gene-name search, prefix matches first; keeps type-to-search responsive on datasets with tens of thousands of genes) |
 | DELETE | `/api/sessions/{id}` | `{save?:bool}` | `{ok:true}` |
 | POST | `/api/sessions/{id}/jobs` | `Descriptor` | `{job_id, status}` |
 | DELETE | `/api/sessions/{id}/jobs/{jobId}` | — | `{ok:true}` (queued only) |
@@ -75,6 +76,7 @@ ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_cate
 | GET  | `/api/cirro/status` | — | `{enabled:bool}` |
 | GET  | `/api/cirro/projects` | — | `{projects:[...]}` (503 if Cirro is not configured) |
 | GET  | `/api/cirro/projects/{id}/folders?refresh=` | — | `{folders:[str]}` (known `folder://` tag paths in the project, backend-cached; `refresh=true` forces a rescan) |
+| GET  | `/api/cirro/uploads` | — | `{uploading:int, pending:int}` (upload-queue depth; also broadcast as `cirro.upload.state` over SSE) |
 | POST | `/api/cirro/upload` | `{project_id, dataset_name, session_paths:[str], snapshot_names:[str], folder?}` | `{status:"started"}` (background; announces `cirro.upload.completed`/`failed` over SSE; always uses the generic "Files" ingest process; `folder` → `folder://<path>` dataset tag; including snapshots also bundles the standalone viewer + `snapshots/index.json` at the dataset root) |
 | GET  | `/api/sessions/{id}/data/{fieldPath}` | fieldPath e.g. `obs:leiden`, `obsm:spatial`, `X:Sox17`, `obsp:spatial_distances` | Arrow IPC stream (application/vnd.apache.arrow.stream) |
 | GET  | `/api/sessions/{id}/elements` | — | `{tables:[{name,n_obs,n_vars,active}], shapes, points, images, labels}` (data inspector inventory) |

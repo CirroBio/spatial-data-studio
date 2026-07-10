@@ -7,11 +7,11 @@ from __future__ import annotations
 
 from ..base import CallResult, Function, ParamSpec, capture_log, missing_obs_column, render_plot
 
-_REGION_PARAM = ParamSpec(
-    "region_key", {"type": "string"}, "obs_categorical", "obs_categorical", required=True,
+_REGION_PARAM = ParamSpec.obs_categorical(
+    "region_key", required=True,
     tooltip="Region set (categorical obs column) to compare across")
-_CELL_TYPE_PARAM = ParamSpec(
-    "cell_type_key", {"type": "string"}, "obs_categorical", "obs_categorical", required=True,
+_CELL_TYPE_PARAM = ParamSpec.obs_categorical(
+    "cell_type_key", required=True,
     tooltip="Categorical obs column (cell types/clusters) to break down by region")
 
 from ._docs import custom_doc

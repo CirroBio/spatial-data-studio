@@ -106,6 +106,12 @@ class Session:
         self.active_table_key = self._default_table_key()
 
         self.lock = RWLock()
+        # Guards the job/history bookkeeping (`_jobs` and the app_state collections)
+        # that the event-loop thread (endpoints) and the worker thread both touch, so
+        # a cancel/dequeue claim is atomic and iteration never races a mutation. It is
+        # only ever held for quick dict/list operations — never across an RWLock
+        # acquire — so it cannot deadlock against the compute write lock.
+        self._book = threading.Lock()
         self._queue: "queue.Queue" = queue.Queue()
         self._jobs = {}                 # job_id -> {descriptor, status, kind, started}
         self._failed_logs = {}          # job_id -> log (FAILED vanish from history; log still fetchable)
@@ -240,12 +246,15 @@ class Session:
         return job_id
 
     def cancel(self, job_id: str) -> bool:
-        """Cancel a QUEUED job only (RUNNING is non-interruptible, §6.1)."""
-        job = self._jobs.get(job_id)
-        if not job or job["status"] != "queued":
-            return False
-        job["status"] = "cancelled"  # worker skips cancelled entries
-        self._drop_history(job_id, job.get("kind"))
+        """Cancel a QUEUED job only (RUNNING is non-interruptible, §6.1). Claims the
+        job under _book so it can't race the worker's dequeue: the worker flips the
+        same status to "running" under _book, so exactly one of cancel/run wins."""
+        with self._book:
+            job = self._jobs.get(job_id)
+            if not job or job["status"] != "queued":
+                return False
+            job["status"] = "cancelled"  # worker skips cancelled entries
+            self._drop_history(job_id, job.get("kind"))
         return True
 
     # ---- worker loop ------------------------------------------------------
@@ -255,12 +264,25 @@ class Session:
                 job_id, kind, payload = self._queue.get(timeout=0.5)
             except queue.Empty:
                 continue
-            if self._jobs.get(job_id, {}).get("status") == "cancelled":
-                continue
+            # Claim the job atomically against cancel(): once it flips to "running"
+            # here, a concurrent cancel() sees status != "queued" and refuses, so a
+            # cancelled job can never still execute and mutate the object (§6.1 audit
+            # model). The old check-then-run left a window where a job cancelled after
+            # the check still ran while its history record was dropped.
+            with self._book:
+                job = self._jobs.get(job_id)
+                if job is None or job["status"] == "cancelled":
+                    continue
+                job["status"] = "running"
             if not self.manager.admit_job(self):
                 self._fail(job_id, kind, "memory boundary (>=80%) reached; refused to dequeue")
                 continue
-            self._dispatch(job_id, kind, payload)
+            try:
+                self._dispatch(job_id, kind, payload)
+            except Exception as e:  # a bookkeeping error must never kill the worker
+                import traceback
+                traceback.print_exc()
+                self._fail(job_id, kind, str(e))
 
     def _dispatch(self, job_id, kind, payload):
         self._jobs[job_id]["status"] = "running"
@@ -290,7 +312,7 @@ class Session:
         """Bound worker job bookkeeping. Queued/running entries are always kept; the
         durable record lives in app_state. Old terminal entries (and their logs) are
         dropped beyond a recent window."""
-        terminal = [jid for jid, j in self._jobs.items()
+        terminal = [jid for jid, j in list(self._jobs.items())
                     if j["status"] in ("completed", "drawn", "failed", "cancelled")]
         for jid in terminal[:-self._TERMINAL_JOB_CAP] if len(terminal) > self._TERMINAL_JOB_CAP else []:
             self._jobs.pop(jid, None)
@@ -308,6 +330,9 @@ class Session:
             # Adopt a returned object (read bootstrap / Edge B) while still holding
             # the write lock so readers never see a new sdata with a stale table key.
             if result.status != "failed" and result.new_object is not None:
+                if self.sdata is not None and self.sdata is not result.new_object:
+                    from .. import imaging
+                    imaging.evict_caches(self.sdata)  # old id() is about to be freed
                 self.sdata = result.new_object
                 self.force_full = True  # a freshly adopted object must be written whole once
                 # A reader's images/labels can be single-scale or huge-chunked; tile
@@ -475,7 +500,7 @@ class Session:
 
     def _find_record(self, job_id, kind):
         coll = self.app_state["plots"] if kind == "plot" else self.app_state["compute_history"]
-        for r in coll:
+        for r in list(coll):  # snapshot: the event-loop thread may append concurrently
             if r["id"] == job_id:
                 return r
         return None
@@ -502,7 +527,7 @@ class Session:
                     rec["status"] = "failed"
                     rec["_log"] = log or error
             else:
-                self.app_state["plots"] = [r for r in self.app_state["plots"] if r["id"] != job_id]
+                self.app_state["plots"] = [r for r in list(self.app_state["plots"]) if r["id"] != job_id]
         descriptor = self._jobs.get(job_id, {}).get("descriptor") or {}
         source = f"{descriptor['namespace']}.{descriptor['function']}" if "function" in descriptor else kind
         BUS.publish("job.failed", {"session_id": self.id, "job_id": job_id, "error": error,
@@ -514,7 +539,7 @@ class Session:
         is in app_state["plots"], not compute_history, and redraw_plot/delete_entry
         both refuse queued/running records, so a plot left there is stuck forever."""
         coll_key = "plots" if kind == "plot" else "compute_history"
-        self.app_state[coll_key] = [r for r in self.app_state[coll_key] if r["id"] != job_id]
+        self.app_state[coll_key] = [r for r in list(self.app_state[coll_key]) if r["id"] != job_id]
 
     def _references(self, params: dict) -> list:
         refs = []
@@ -535,7 +560,7 @@ class Session:
     def _invalidate_plots(self, changed_fields) -> list:
         changed = set(changed_fields)
         invalidated = []
-        for p in self.app_state["plots"]:
+        for p in list(self.app_state["plots"]):
             if p["status"] == "drawn" and set(p.get("references", [])) & changed:
                 p["status"] = "invalidated"
                 invalidated.append(p["id"])

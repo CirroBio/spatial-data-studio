@@ -57,11 +57,11 @@ key_added
     uns key / obs column prefix for the results.
 """
     params = [
-        ParamSpec("use_rep", {"type": "string", "default": "X_pca"}, "obsm_key", "obsm",
+        ParamSpec("use_rep", {"type": "string", "default": "X_pca"}, "obsm_key", None,
                   required=False, tooltip="obsm key of the embedding to score"),
-        ParamSpec("batch_key", {"type": "string"}, "obs_categorical", "obs_categorical",
+        ParamSpec("batch_key", {"type": "string"}, "obs_categorical", None,
                   required=False, tooltip="batch/sample id (categorical obs column) for iLISI"),
-        ParamSpec("label_key", {"type": "string"}, "obs_categorical", "obs_categorical",
+        ParamSpec("label_key", {"type": "string"}, "obs_categorical", None,
                   required=False, tooltip="cell-type/cluster column (categorical obs column) for cLISI"),
         ParamSpec("perplexity", {"type": "number", "default": 30}, "number", None,
                   required=False, tooltip="effective neighborhood size"),

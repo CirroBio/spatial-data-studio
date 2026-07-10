@@ -7,7 +7,7 @@
   },
   "readme": "Ranks differentially expressed marker genes per cluster with the chosen test, filters to the significant ones, then draws a dotplot of the top marker genes per cluster. Requires the `groupby` obs column — `leiden` is present on visium_hne, or run 'Preprocess & cluster (raw counts)' / 'QC, filter & cluster (raw counts)' first.",
   "params": [
-    { "name": "groupby", "schema": { "type": "string", "default": "leiden" }, "widget": "obs_categorical", "bound_to": "obs", "required": true, "tooltip": "obs column of cluster labels to rank markers within" },
+    { "name": "groupby", "schema": { "type": "string", "default": "leiden" }, "widget": "obs_categorical", "bound_to": null, "required": true, "tooltip": "obs column of cluster labels to rank markers within" },
     { "name": "method", "schema": { "type": "string", "enum": ["wilcoxon", "t-test", "t-test_overestim_var", "logreg"], "default": "wilcoxon" }, "widget": "select", "bound_to": null, "required": false, "tooltip": "differential-expression test used to rank genes" },
     { "name": "n_genes", "schema": { "type": "integer", "default": 5 }, "widget": "number", "bound_to": null, "required": false, "tooltip": "top marker genes per cluster shown in the dotplot" }
   ],

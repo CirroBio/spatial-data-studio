@@ -22,9 +22,22 @@ TILE_SIZE = 512
 _TILE_CACHE_MAX = 512  # composited tile PNGs kept in memory (LRU)
 
 # element pixels -> composited tile PNG bytes, and element -> per-channel norm.
-# Keyed partly by id(sdata) so a session's caches drop when its object is GC'd.
+# Keyed by (id(sdata), ...). id() is only unique among *live* objects, so entries
+# MUST be evicted when a session closes (see evict_caches): otherwise they leak, and
+# a later session whose sdata is allocated at the same address would read another
+# image's stale norm/tiles for a same-named element.
 _tile_cache: "OrderedDict[tuple, bytes]" = OrderedDict()
-_norm_cache: dict[tuple, np.ndarray] = {}
+_norm_cache: "OrderedDict[tuple, np.ndarray]" = OrderedDict()
+_NORM_CACHE_MAX = 256  # per-channel norm arrays kept in memory (LRU)
+
+
+def evict_caches(sdata) -> None:
+    """Drop every cache entry belonging to `sdata`. Call before a session's object is
+    released so a reused id() can't serve another image's cached norm/tiles."""
+    sid = id(sdata)
+    for cache in (_tile_cache, _norm_cache):
+        for key in [k for k in cache if k[0] == sid]:
+            cache.pop(key, None)
 
 
 # ---- multiscale access -----------------------------------------------------
@@ -129,6 +142,7 @@ def _channel_norm(sdata, element) -> np.ndarray:
     key = (id(sdata), element)
     cached = _norm_cache.get(key)
     if cached is not None:
+        _norm_cache.move_to_end(key)
         return cached
     arr = _image_array(sdata, element)
     data = np.asarray(arr.data if hasattr(arr, "data") else arr)
@@ -139,6 +153,8 @@ def _channel_norm(sdata, element) -> np.ndarray:
     else:
         norm = np.array([max(float(np.percentile(data[c], 99.9)), 1.0) for c in range(data.shape[0])])
     _norm_cache[key] = norm
+    if len(_norm_cache) > _NORM_CACHE_MAX:
+        _norm_cache.popitem(last=False)
     return norm
 
 

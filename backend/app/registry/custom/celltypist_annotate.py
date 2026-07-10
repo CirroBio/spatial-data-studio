@@ -56,7 +56,7 @@ def _over_cluster(src):
     return leiden_labels(clust.obsp["connectivities"], resolution=resolution,
                          random_state=0, n_iterations=2)
 
-_DOC = """Annotate Cells (CellTypist)
+_HELP = """Annotate Cells (CellTypist)
 
 Predict a cell-type label for every cell with a pre-trained CellTypist model
 (logistic-regression classifier) and store it as a categorical obs column,
@@ -107,20 +107,20 @@ class CellTypistAnnotate(Function):
     effect_class = "compute"
     label = "Annotate Cells (CellTypist)"
     summary = "Predict a cell-type label per cell with a pre-trained CellTypist model."
-    doc = _DOC
+    doc = _HELP
     partially_supported = False
     unsupported_params: list = []
 
     params = [
         ParamSpec("model", {"type": "string", "default": _DEFAULT_MODEL},
                   "select", None, required=False, tooltip="pre-trained CellTypist model"),
-        ParamSpec("layer", {"type": "string"}, "layer_key", "layers",
+        ParamSpec("layer", {"type": "string"}, "layer_key", None,
                   required=False, tooltip="counts layer to annotate on (blank = .X)"),
         ParamSpec("normalize", {"type": "boolean", "default": True}, "checkbox", None,
                   required=False, tooltip="normalise to log1p / 1e4 counts on a copy first"),
         ParamSpec("majority_voting", {"type": "boolean", "default": True}, "checkbox", None,
                   required=False, tooltip="refine labels by majority vote within subclusters"),
-        ParamSpec("over_clustering", {"type": "string"}, "obs_categorical", "obs_categorical",
+        ParamSpec("over_clustering", {"type": "string"}, "obs_categorical", None,
                   required=False, tooltip="subcluster column for voting (blank = heuristic)"),
         ParamSpec("key_added", {"type": "string", "default": "cell_type"}, "text", None,
                   required=True, tooltip="obs column to write cell-type labels into", role="output"),

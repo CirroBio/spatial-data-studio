@@ -141,9 +141,23 @@ class SessionManager:
             fields = describe_fields(sess.active_table(), sess.sdata)
         except RuntimeError:
             pass
-        return {"summary": self.summary(sess), "app_state": sess.app_state,
+        # Snapshot the mutable collections: the worker thread appends to / rewrites
+        # compute_history/plots and bumps data_versions as bookkeeping AFTER releasing
+        # the write lock, so returning the live app_state would let FastAPI serialize
+        # it (post-lock) mid-mutation — a torn read or "changed size during iteration".
+        # list(<list>) is a single atomic C copy under the GIL; the per-record dict()
+        # then iterates that snapshot, never the live list.
+        app_state = sess.app_state
+        safe_state = {
+            **app_state,
+            "compute_history": [dict(r) for r in list(app_state.get("compute_history", []))],
+            "plots": [dict(r) for r in list(app_state.get("plots", []))],
+            "displays": [dict(d) for d in list(app_state.get("displays", []))],
+            "data_versions": dict(app_state.get("data_versions", {})),
+        }
+        return {"summary": self.summary(sess), "app_state": safe_state,
                 "queue": sess.queue_view(), "fields": fields,
-                "data_versions": sess.app_state["data_versions"]}
+                "data_versions": safe_state["data_versions"]}
 
     # ---- subset → child (DESIGN §8) --------------------------------------
     def perform_subset(self, parent: Session, payload: dict) -> Session:
@@ -226,6 +240,11 @@ class SessionManager:
         with sess.lock.writing():
             if save and sess.store_path:
                 save_spatialdata(sess.sdata, sess.store_path, sess.app_state)
+            # Evict this object's image caches before releasing it — they key on
+            # id(sdata), which a later session's object could reuse (imaging.py).
+            if sess.sdata is not None:
+                from .. import imaging
+                imaging.evict_caches(sess.sdata)
             sess.sdata = None
         import shutil
         for d in (sess.extract_dir, sess.raster_cache_dir):  # unpacked .zarr.zip + tiled-raster temps (DESIGN §13)

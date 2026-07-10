@@ -8,7 +8,7 @@
   "readme": "Step 3 of the workflow (run 'Cluster (Leiden) & top marker genes' first). Runs CellTypist with majority voting over the Leiden clusters (`cluster_key` used as the over-clustering), so the per-cell predictions are consolidated into one cell-type label per cluster, written to `obs[cell_type_key]` (plus a `<cell_type_key>_conf` confidence column). Pick a `model` matching your tissue — see https://www.celltypist.org/models (e.g. `Human_Lung_Atlas.pkl` for lung, `Immune_All_Low.pkl` for immune). The first use of a model downloads it (needs network). Follow with 'Neighborhood analysis (cellular neighborhoods)'.",
   "params": [
     { "name": "model", "schema": { "type": "string", "default": "Immune_All_Low.pkl" }, "widget": "select", "bound_to": null, "required": true, "tooltip": "pre-trained CellTypist model (see celltypist.org/models); match your tissue" },
-    { "name": "cluster_key", "schema": { "type": "string", "default": "leiden" }, "widget": "obs_categorical", "bound_to": "obs", "required": true, "tooltip": "cluster column to vote within, so each cluster gets one cell-type label" },
+    { "name": "cluster_key", "schema": { "type": "string", "default": "leiden" }, "widget": "obs_categorical", "bound_to": null, "required": true, "tooltip": "cluster column to vote within, so each cluster gets one cell-type label" },
     { "name": "cell_type_key", "schema": { "type": "string", "default": "cell_type" }, "widget": "text", "bound_to": null, "required": true, "tooltip": "obs column to write the predicted cell-type labels into" }
   ],
   "steps": [

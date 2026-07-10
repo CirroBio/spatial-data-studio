@@ -40,7 +40,7 @@ class EditAnnotations(Function):
     unsupported_params: list = []
 
     params = [
-        ParamSpec("obs_column", {"type": "string"}, "obs_categorical", "obs_categorical",
+        ParamSpec("obs_column", {"type": "string"}, "obs_categorical", None,
                   required=True, tooltip="categorical obs column to edit"),
         ParamSpec("mapping", {"type": "object"}, "obs_value_map", "obs_column",
                   required=True, tooltip="replacement text per unique value"),

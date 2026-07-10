@@ -602,7 +602,10 @@ def _preflight(recipe: dict) -> dict:
     each step's function exists in the installed registry (§5.2)."""
     produced: set[str] = set()
     referenced, unknown = [], []
-    _REF_SLOTS = ("obs", "obs_categorical", "obs_numeric", "obsp", "obsm", "layers")
+    # Widgets whose value names a pre-existing dataset key (the picker facets). The
+    # widget is the source of truth for the binding, so preflight keys off it rather
+    # than bound_to (which is inert except for obs_value_map).
+    _REF_WIDGETS = ("obs_categorical", "obs_key", "obsm_key", "obsp_key", "layer_key")
     for step in recipe.get("steps", []):
         e = REGISTRY.get(f"{step['namespace']}.{step['function']}")
         if e is None:
@@ -616,10 +619,10 @@ def _preflight(recipe: dict) -> dict:
             vals = [v for v in (val if isinstance(val, list) else [val]) if isinstance(v, str) and v]
             if spec.role == "output":
                 produced.update(vals)
-            elif spec.bound_to in _REF_SLOTS:
+            elif spec.widget in _REF_WIDGETS:
                 for v in vals:
                     referenced.append({"step": step["function"], "param": name,
-                                       "ref": v, "bound_to": spec.bound_to})
+                                       "ref": v, "widget": spec.widget})
     unresolved = [r for r in referenced if r["ref"] not in produced]
     return {"produced": sorted(produced), "unresolved": unresolved, "unknown_functions": unknown}
 

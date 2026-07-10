@@ -9,10 +9,10 @@ reading, compute, plot capture, and saving are not reimplemented anywhere below.
 Run from the `backend/` directory (like `test_e2e.py`):
 
     python cli.py --parser io.xenium --input /path/to/xenium_bundle \\
-        --recipe app/recipes/06_preprocess_cluster_raw_counts.json --output out/
+        --recipe app/recipes/12_preprocess_cluster_raw_counts.json --output out/
 
     python cli.py --parser zarr --input ../test-data/visium_hne.zarr \\
-        --recipe app/recipes/01_neighborhood_enrichment.json --output out/
+        --recipe app/recipes/07_neighborhood_enrichment.json --output out/
 
 `--parser` selects a spatialdata-io / squidpy reader by its registry key
 (`io.xenium`) or bare function name (`xenium`), or the sentinel `zarr`/

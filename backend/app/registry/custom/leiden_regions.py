@@ -5,7 +5,7 @@ from __future__ import annotations
 from ..base import Function, ParamSpec, CallResult, run_compute, resolve_obsm_key
 from ._leiden import leiden_labels, resolve_connectivities
 
-_DOC = """Identify Regions (Leiden)
+_HELP = """Identify Regions (Leiden)
 
 Run Leiden community detection on a nearest-neighbour graph built directly from
 the spatial coordinates, and store the resulting cluster index as a categorical
@@ -43,12 +43,12 @@ class IdentifyRegionsLeiden(Function):
     effect_class = "compute"
     label = "Identify Regions (Leiden)"
     summary = "Leiden clustering on spatial coordinates into a new obs column."
-    doc = _DOC
+    doc = _HELP
     partially_supported = False
     unsupported_params: list = []
 
     params = [
-        ParamSpec("coords", {"type": "string", "default": "spatial"}, "obsm_key", "obsm",
+        ParamSpec("coords", {"type": "string", "default": "spatial"}, "obsm_key", None,
                   required=False, tooltip="obsm key of the coordinates to cluster on"),
         ParamSpec("n_neighbors", {"type": "integer", "default": 15}, "number", None,
                   required=False, tooltip="neighbourhood size for the kNN graph"),

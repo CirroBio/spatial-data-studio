@@ -6,9 +6,25 @@ import { formatError } from '../lib/errors';
 type CacheKey = string; // `${sessionId}:${fieldPath}:${version}`
 
 const cache = new Map<CacheKey, arrow.Table>();
+const CACHE_MAX = 24; // Arrow tables are large; keep only a small working set.
 
 function cacheKey(sessionId: string, fieldPath: string, version: number): CacheKey {
   return `${sessionId}:${fieldPath}:${version}`;
+}
+
+// Insert, evicting superseded versions of the same field and capping total size, so
+// the module cache can't grow unbounded as data_versions bump over a long session.
+function cacheSet(sessionId: string, fieldPath: string, key: CacheKey, table: arrow.Table): void {
+  const prefix = `${sessionId}:${fieldPath}:`;
+  for (const k of cache.keys()) {
+    if (k !== key && k.startsWith(prefix)) cache.delete(k);
+  }
+  cache.set(key, table);
+  while (cache.size > CACHE_MAX) {
+    const oldest = cache.keys().next().value;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
 }
 
 export function useArrowField(
@@ -45,7 +61,7 @@ export function useArrowField(
     getFieldData(sessionId, fieldPath)
       .then((t) => {
         if (controller.signal.aborted) return;
-        cache.set(key, t);
+        cacheSet(sessionId, fieldPath, key, t);
         setTable(t);
         setLoading(false);
       })

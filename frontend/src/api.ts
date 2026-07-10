@@ -275,7 +275,7 @@ export async function getBundledRecipes(): Promise<{ recipes: BundledRecipe[] }>
 
 export interface RecipePreflight {
   produced: string[];
-  unresolved: { step: string; param: string; ref: string; bound_to: string }[];
+  unresolved: { step: string; param: string; ref: string; widget: string }[];
   unknown_functions: string[];
 }
 

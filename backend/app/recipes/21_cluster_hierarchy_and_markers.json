@@ -7,7 +7,7 @@
   },
   "readme": "Orders the clusters into a dendrogram by expression similarity, then ranks marker genes per cluster with the chosen test and keeps the significant ones. Requires the `groupby` obs column — `leiden` is present on visium_hne, or run a preprocessing recipe first. Extends 'Marker genes per cluster' with the between-cluster hierarchy.",
   "params": [
-    { "name": "groupby", "schema": { "type": "string", "default": "leiden" }, "widget": "obs_categorical", "bound_to": "obs", "required": true, "tooltip": "obs column of cluster labels for the dendrogram and marker ranking" },
+    { "name": "groupby", "schema": { "type": "string", "default": "leiden" }, "widget": "obs_categorical", "bound_to": null, "required": true, "tooltip": "obs column of cluster labels for the dendrogram and marker ranking" },
     { "name": "method", "schema": { "type": "string", "enum": ["wilcoxon", "t-test", "t-test_overestim_var", "logreg"], "default": "wilcoxon" }, "widget": "select", "bound_to": null, "required": false, "tooltip": "differential-expression test used to rank genes" }
   ],
   "steps": [

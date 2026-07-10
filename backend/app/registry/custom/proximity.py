@@ -61,11 +61,11 @@ key_added
     uns key to store the result under.
 """
     params = [
-        ParamSpec("cell_type_key", {"type": "string"}, "obs_categorical", "obs_categorical",
+        ParamSpec("cell_type_key", {"type": "string"}, "obs_categorical", None,
                   required=True, tooltip="cell-type/cluster column to test between"),
-        ParamSpec("coords", {"type": "string", "default": "spatial"}, "obsm_key", "obsm",
+        ParamSpec("coords", {"type": "string", "default": "spatial"}, "obsm_key", None,
                   required=False, tooltip="obsm key of the coordinates"),
-        ParamSpec("library_key", {"type": "string"}, "obs_categorical", "obs_categorical",
+        ParamSpec("library_key", {"type": "string"}, "obs_categorical", None,
                   required=False, tooltip="sample/section id column; permute labels within each sample"),
         ParamSpec("n_perm", {"type": "integer", "default": 500}, "number", None,
                   required=False, tooltip="number of label permutations (larger = slower, more precise)"),

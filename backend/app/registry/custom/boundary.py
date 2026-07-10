@@ -83,11 +83,11 @@ key_added
     and the uns key storing its run parameters.
 """
     params = [
-        ParamSpec("cell_type_key", {"type": "string"}, "obs_categorical", "obs_categorical",
+        ParamSpec("cell_type_key", {"type": "string"}, "obs_categorical", None,
                   required=True, tooltip="cell-type/cluster column containing the interior label(s)"),
         ParamSpec("interior_labels", {"type": "array", "items": {"type": "string"}}, "multitext", None,
                   required=True, tooltip="one or more cell_type_key values forming the region interior"),
-        ParamSpec("coords", {"type": "string", "default": "spatial"}, "obsm_key", "obsm",
+        ParamSpec("coords", {"type": "string", "default": "spatial"}, "obsm_key", None,
                   required=False, tooltip="obsm key of the coordinates"),
         ParamSpec("method", {"type": "string", "enum": ["mask", "soft"], "default": "mask"}, "select", None,
                   required=False, tooltip="mask = rasterized density + distance transform; soft = local interior fraction"),
@@ -253,7 +253,7 @@ profile_key
     params = [
         ParamSpec("key_added", {"type": "string", "default": "boundary"}, "text", None,
                   required=True, tooltip="prefix used by a prior 'Region boundary' run"),
-        ParamSpec("cell_type_key", {"type": "string"}, "obs_categorical", "obs_categorical",
+        ParamSpec("cell_type_key", {"type": "string"}, "obs_categorical", None,
                   required=True, tooltip="cell-type/cluster column the target_labels come from"),
         ParamSpec("target_labels", {"type": "array", "items": {"type": "string"}}, "multitext", None,
                   required=True, tooltip="one or more cell_type_key values to profile"),

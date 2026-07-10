@@ -10,33 +10,55 @@ for the API.
 
 ```
 app/
-  main.py                FastAPI app, routes, lifespan (build registry, resource sampler, SSE loop)
-  config.py              env-driven config (memory limits, mounts, cadence)
+  main.py                FastAPI app, routes, lifespan (build registry, resource sampler, SSE loop, prewarm)
+  config.py              env-driven config (memory limits, mounts, cadence, Cirro creds)
   registry/
-    introspect.py        discovery + signature->JSON-Schema + type-injection + effect class (§4)
-    terms.yaml + dictionary.py   Parameter Term Dictionary — THE ONLY library-specific knowledge, keyed
-                          by parameter term (not by function); superseded conventions.py (see root README)
+    base.py              abstract Function + contract envelope + shared compute/plot helpers (§4)
+    library_fn.py        the one reflection executor for squidpy/scanpy/spatialdata-io
+    introspect.py        Registry: discovery + signature->JSON-Schema + type-injection + effect class (§4)
+    library_catalog.yaml opt-in library manifests; library_meta.py + .yaml supply per-library provenance
+    terms.yaml + dictionary.py   Parameter Term Dictionary — THE ONLY library-specific knowledge, keyed by term
+    custom/              hand-written non-squidpy Function subclasses (+ _vendor/ numerical code, README.md)
+  manifest/              data-manifest contributor registry + seed contributors (§Part 3)
   sessions/
     manager.py           SessionManager: load/create, subset->child, memory admission, resource sampling (§8,§11)
     session.py           Session: SpatialData + FIFO queue + worker thread + RW lock + app_state (§6,§20.2)
-    adapter.py           the single CallAdapter.execute (§4.6) — inject/bind/validate/run/diff/effect-handle
+    adapter.py           the single CallAdapter.execute (§4.6) — routes a descriptor to Function.execute
     appstate.py          versioned app_state in sdata.attrs["app_state"] + migration (§3.2,§13)
+    regions.py           lasso membership -> region-set obs column; transform.py: points->global affine
   transport/
     arrow.py             field-path resolver -> Arrow IPC (obs/obsm/var/X dense, obsp CSR triplets) (§3.3)
+    tables.py            data-inspector element inventory + paginated dataframe JSON
     sse.py               single multiplexed SSE bus with Last-Event-ID resume (§14.2)
   persistence/
-    store.py             save/load .zarr (dir) and .zarr.zip (dir+zip; direct zip write is broken in spatialdata 0.7.3)
-  imaging.py             image element -> thumbnail PNG + world-coord bounds for a deck.gl BitmapLayer (§9.2)
+    store.py             save/load .zarr (dir) and .zarr.zip (browser-readable, sharded, incremental re-save)
+  recipes/               curated analysis recipes (JSON, discovered at startup) + catalog/apply
+  imaging.py             tiled image pyramid + channel compositing + coordinate reconciliation (§9.2)
+  rasters.py             ingest-time re-tiling into a tile-chunked sharded pyramid
+  snapshots.py           JSON snapshot-config write/list
+  datasets.py            saved-checkpoint scan for the load/upload pickers (prewarmed cache)
+  prewarm.py             background queue that warms slow first-open menu lists off the event loop
+  cirro.py               Cirro dataset upload (client-credentials auth, symlink bundle)
+  acknowledgements.py    third-party license catalog from the SBOMs
+cli.py                   offline recipe runner — reuses the registry/session engine headlessly
 ```
 
 ## Run locally
 
+The canonical dev venv is `.venv-introspect/` at the repo root (Python 3.11;
+squidpy does not support 3.13+), created as in the root README:
+
 ```bash
-python3.11 -m venv .venv && . .venv/bin/activate     # squidpy needs <=3.12; 3.11 validated
-pip install -r requirements.txt
+cd ..                                                # repo root
+python3.11 -m venv .venv-introspect && . .venv-introspect/bin/activate
+pip install -r backend/requirements.txt
+pip uninstall -y leidenalg igraph                    # GPL Leiden backends; use custom.leiden
+cd backend
 SQV_DATA_DIR=../data SQV_CHECKPOINT_DIR=../checkpoints SQV_CONTAINER_MEM_MB=16384 \
   uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
+
+For the full launcher (backend + frontend together) use `../run.sh`.
 
 Create a session from the test dataset:
 

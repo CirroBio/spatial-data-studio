@@ -14,10 +14,10 @@ from ..base import (CallResult, Function, ParamSpec, capture_log, missing_obs_co
 from ._vendor import milo_da_compute, milo_da_plot
 
 _SAMPLE_PARAM = ParamSpec(
-    "sample_key", {"type": "string"}, "obs_categorical", "obs_categorical", required=True,
+    "sample_key", {"type": "string"}, "obs_categorical", None, required=True,
     tooltip="Per-cell sample/replicate id (categorical obs column)")
 _CONDITION_PARAM = ParamSpec(
-    "condition_key", {"type": "string"}, "obs_categorical", "obs_categorical", required=True,
+    "condition_key", {"type": "string"}, "obs_categorical", None, required=True,
     tooltip="Per-cell condition (categorical obs column with exactly 2 levels)")
 _KEY_ADDED_PARAM = ParamSpec(
     "key_added", {"type": "string", "default": "milo"}, "text", None,
@@ -79,9 +79,9 @@ key_added
     params = [
         _SAMPLE_PARAM,
         _CONDITION_PARAM,
-        ParamSpec("use_rep", {"type": "string", "default": "X_pca"}, "obsm_key", "obsm",
+        ParamSpec("use_rep", {"type": "string", "default": "X_pca"}, "obsm_key", None,
                   required=False, tooltip="obsm key of the embedding to build the KNN graph on"),
-        ParamSpec("cell_type_key", {"type": "string"}, "obs_categorical", "obs_categorical",
+        ParamSpec("cell_type_key", {"type": "string"}, "obs_categorical", None,
                   required=False, tooltip="optional cell-type/cluster column, for annotating neighborhoods"),
         ParamSpec("k", {"type": "integer", "default": 30}, "number", None,
                   required=False, tooltip="KNN graph size"),

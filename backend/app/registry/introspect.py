@@ -19,7 +19,7 @@ import yaml
 from .base import Function
 from .dictionary import DICTIONARY
 from .library_fn import build_library_function
-from .custom import CUSTOM_FUNCTIONS
+from .custom import CUSTOM_FUNCTIONS, check_custom_functions
 
 warnings.filterwarnings("ignore")
 
@@ -59,6 +59,9 @@ class Registry:
         self.coverage = DICTIONARY.coverage_report()
         for fn in CUSTOM_FUNCTIONS:
             self.entries[fn.key] = fn
+        problems = check_custom_functions()
+        if problems:
+            raise RuntimeError("custom function registry self-check failed:\n  " + "\n  ".join(problems))
         return self
 
     def _load_catalog(self):

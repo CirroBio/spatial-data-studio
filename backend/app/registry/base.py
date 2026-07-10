@@ -27,16 +27,84 @@ _TABLE_FACETS = ["obs", "var", "obsm", "obsp", "layers", "uns"]
 _SDATA_FACETS = ["images", "labels", "points", "shapes", "tables"]
 _FACET_TO_ELEMENT = {"obs": "obs", "var": "var", "obsm": "obsm", "obsp": "obsp", "layers": "layers"}
 
+# Closed vocabularies for a ParamSpec / Function, mirrored from the frontend so the
+# form can't be handed a value it doesn't render. WIDGETS is the exact `UiWidget`
+# union in frontend/src/types.ts; EFFECT_CLASSES / ROLES are `EffectClass` and the
+# role field there. The registry self-check (custom/__init__.py) enforces these.
+WIDGETS = frozenset({
+    "checkbox", "number", "text", "select", "multitext", "obs_key", "obs_categorical",
+    "var_names", "layer_key", "obsm_key", "obsp_key", "library_id", "obs_value_map", "json",
+})
+EFFECT_CLASSES = frozenset({"compute", "plot", "read", "extract"})
+ROLES = frozenset({"input", "output"})
+
 
 @dataclass
 class ParamSpec:
     name: str
     schema: dict          # JSON Schema fragment
-    widget: str
-    bound_to: str | None
+    widget: str           # a WIDGETS member
+    bound_to: str | None  # None for every widget except obs_value_map (names its companion field param)
     required: bool
     tooltip: str = ""
     role: str = "input"   # input | output (output params name a slot the step creates)
+
+    # Named-intent constructors: one per common parameter kind, each baking in the
+    # correct widget and schema skeleton so a contributor picks intent, not magic
+    # strings. bound_to is always None (only obs_value_map sets it, via the plain
+    # constructor). The positional ParamSpec(...) constructor still works.
+    @classmethod
+    def obs_categorical(cls, name: str, *, required: bool = False, tooltip: str = "") -> "ParamSpec":
+        """A picker over the categorical obs columns."""
+        return cls(name, {"type": "string"}, "obs_categorical", None, required=required, tooltip=tooltip)
+
+    @classmethod
+    def obs_column(cls, name: str, *, required: bool = False, tooltip: str = "") -> "ParamSpec":
+        """A picker over all obs columns."""
+        return cls(name, {"type": "string"}, "obs_key", None, required=required, tooltip=tooltip)
+
+    @classmethod
+    def obsm_key(cls, name: str, *, default: str = "spatial", required: bool = False,
+                 tooltip: str = "") -> "ParamSpec":
+        """A picker over obsm keys (embeddings/coordinates)."""
+        return cls(name, {"type": "string", "default": default}, "obsm_key", None,
+                   required=required, tooltip=tooltip)
+
+    @classmethod
+    def number(cls, name: str, *, default=None, required: bool = False, tooltip: str = "",
+               integer: bool = False) -> "ParamSpec":
+        """A numeric input; pass integer=True for an int-typed schema."""
+        schema = {"type": "integer" if integer else "number"}
+        if default is not None:
+            schema["default"] = default
+        return cls(name, schema, "number", None, required=required, tooltip=tooltip)
+
+    @classmethod
+    def text(cls, name: str, *, default: str = "", required: bool = False, tooltip: str = "",
+             output: bool = False) -> "ParamSpec":
+        """A free-text input. output=True marks a param that names a slot the step
+        creates (e.g. key_added), setting role='output'."""
+        schema = {"type": "string"}
+        if default is not None:
+            schema["default"] = default
+        return cls(name, schema, "text", None, required=required, tooltip=tooltip,
+                   role="output" if output else "input")
+
+    @classmethod
+    def choice(cls, name: str, choices, *, default=None, required: bool = False,
+               tooltip: str = "") -> "ParamSpec":
+        """A dropdown over a fixed set of string choices."""
+        schema = {"type": "string", "enum": list(choices)}
+        if default is not None:
+            schema["default"] = default
+        return cls(name, schema, "select", None, required=required, tooltip=tooltip)
+
+    @classmethod
+    def flag(cls, name: str, *, default: bool = False, required: bool = False,
+             tooltip: str = "") -> "ParamSpec":
+        """A boolean checkbox."""
+        return cls(name, {"type": "boolean", "default": default}, "checkbox", None,
+                   required=required, tooltip=tooltip)
 
 
 @dataclass
@@ -69,7 +137,7 @@ class Function(ABC):
     key: str
     namespace: str
     function: str
-    effect_class: str                 # compute | plot | read
+    effect_class: str                 # compute | plot | read | extract (see EFFECT_CLASSES)
     summary: str = ""
     doc: str = ""
     label: str | None = None          # human title for the picker; squidpy uses namespace.function

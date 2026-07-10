@@ -61,14 +61,14 @@ and point their documentation at a per-method section in
 - **Custom functions** (non-squidpy, `namespace: custom`) — *Leiden clustering*
   (graspologic, MIT), *Identify Regions (Leiden)*,
   *Edit Annotations* (rename/merge a categorical obs column's values), *Identify TMAs*
-  (automatic tissue-microarray core detection), *Region composition* / *Region
-  composition (plot)* (cell-type-by-region crosstab + chi-square test, then a stacked-bar
-  plot of the proportions — pandas/scipy/matplotlib only), and *Annotate Cells (CellTypist)*
+  (automatic tissue-microarray core detection), *Region composition* (cell-type-by-region
+  crosstab + chi-square test, then a stacked-bar plot of the proportions in one step —
+  pandas/scipy/matplotlib only), and *Annotate Cells (CellTypist)*
   (predict a cell-type label per cell with a pre-trained CellTypist model, writing a
   categorical `<key_added>` column plus a `<key_added>_conf` confidence column; input is
   log1p/1e4-normalized on a copy by default, and the chosen model is downloaded on first use).
 - **Spatial & multi-sample analysis methods** (non-squidpy, `namespace: custom`, vendored
-  unmodified under `registry/custom/_vendor/`, numpy/scipy/scikit-learn only) — seven
+  unmodified under `registry/custom/_vendor/`, numpy/scipy/scikit-learn only) — eight
   compute + plot Function pairs for methods scanpy/squidpy don't provide:
   *Cellular Neighborhoods* (windowed cell-type composition clustered into recurring
   tissue niches); *Milo differential abundance* (tests which overlapping kNN
@@ -376,7 +376,7 @@ code changes needed. To contribute one, open a PR that adds a file named
   "readme": "Longer notes shown with the recipe: assumptions, preconditions, gotchas.",
   "params": [
     { "name": "cluster_key", "schema": { "type": "string", "default": "cluster" },
-      "widget": "obs_categorical", "bound_to": "obs", "required": true,
+      "widget": "obs_categorical", "bound_to": null, "required": true,
       "tooltip": "obs column holding the cluster/region labels" },
     { "name": "n_neighs", "schema": { "type": "integer", "default": 6 },
       "widget": "number", "bound_to": null, "required": false,
@@ -404,8 +404,9 @@ curated handful (1–4) — cluster column, neighbor count, filter thresholds, D
 not every step param. Widgets are the ones the picker form understands: `number`,
 `text`, `select` (with `schema.enum`), `obs_categorical`, `multitext`, `json`. Use
 `text` for a cluster column the recipe *produces* and `obs_categorical` for one it only
-*consumes*. A `$param` that resolves to `null` is dropped from the step (same as a
-literal `null`), so it applies the function's own default.
+*consumes*; leave `bound_to` `null` (the widget alone drives the picker). A `$param`
+that resolves to `null` is dropped from the step (same as a literal `null`), so it
+applies the function's own default.
 
 Guidelines:
 
@@ -474,6 +475,7 @@ squidpy does not support 3.13+):
 ```bash
 python3.11 -m venv .venv-introspect && . .venv-introspect/bin/activate
 pip install -r backend/requirements.txt
+pip uninstall -y leidenalg igraph   # GPL Leiden backends; use custom.leiden instead
 ```
 
 Backend edits require restarting `run.sh` manually: the long-lived SSE stream
@@ -496,17 +498,17 @@ cd backend
 # load an existing SpatialData store and run a bundled recipe
 ../.venv-introspect/bin/python cli.py \
   --parser zarr --input ../test-data/visium_hne.zarr \
-  --recipe app/recipes/01_neighborhood_enrichment.json --output ../out
+  --recipe app/recipes/07_neighborhood_enrichment.json --output ../out
 
 # or parse a raw dataset with a spatialdata-io reader
 ../.venv-introspect/bin/python cli.py \
   --parser io.xenium --input /path/to/xenium_bundle \
-  --recipe app/recipes/06_preprocess_cluster_raw_counts.json --output ../out
+  --recipe app/recipes/12_preprocess_cluster_raw_counts.json --output ../out
 
 # override a recipe's declared parameters
 ../.venv-introspect/bin/python cli.py \
   --parser zarr --input ../test-data/visium_hne.zarr \
-  --recipe app/recipes/01_neighborhood_enrichment.json \
+  --recipe app/recipes/07_neighborhood_enrichment.json \
   --recipe-params '{"n_neighs": 4}' --output ../out
 
 ../.venv-introspect/bin/python cli.py --list-parsers   # available parsers
@@ -560,13 +562,19 @@ split for testing — the multi-sample methods (**Milo differential abundance**,
 
 ## Tests
 
+- `cd backend && ./check-contribution.sh` — the contribution gate: builds the registry,
+  runs the custom-function self-check (closed widget/`effect_class`/`role` vocab, the
+  `bound_to` contract, that every custom `key` is unique, and that every
+  `custom_doc(...)` anchor resolves in `registry/custom/README.md`), asserts every
+  function carries `citation` + `documentation`, and confirms the recipes load. Prints
+  `OK N functions M recipes`. Run this before opening a PR (see `CONTRIBUTING.md`).
 - `cd backend && python test_e2e.py` — full in-process round trip (load → compute →
   Arrow → plot → save `.zarr.zip` → reload), asserting app state + computed fields survive.
   Also covers staged/pending recipe steps + preflight, region promote/annotate and their
   persistence, the editable points-transform (affine applied to the Arrow fetch, persisted),
   content-hashed checkpoint naming, `data_versions` bumping + plot invalidation/redraw,
   persisted canvas encoding, the data-inspector endpoints, cross-session isolation, and the
-  six spatial/multi-sample custom methods end to end on `xenium_tma.zarr`.
+  eight spatial/multi-sample custom methods end to end on `xenium_tma.zarr`.
 - `cd backend && python test_cli.py` — offline CLI (`cli.py`) round trip: loads
   `visium_hne.zarr` in zarr mode, runs a compute + plot recipe headlessly, and asserts the
   output `.zarr.zip` and `plots/…/figure.{svg,pdf}` are written and reload with history intact.

@@ -29,7 +29,9 @@ export default function PlotDetail() {
 
   useEffect(() => {
     if (!activeSessionId || !selectedPlotId || !item) return;
-    if (item.status !== 'drawn') return;
+    // Clear any prior figure so switching to a pending/failed/invalidated plot never
+    // paints the previous plot's SVG under the new item's state.
+    if (item.status !== 'drawn') { setSvgContent(''); return; }
     const url = getFigureUrl(activeSessionId, selectedPlotId);
     fetch(url)
       .then((r) => r.text())

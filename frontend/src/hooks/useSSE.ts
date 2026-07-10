@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { useAppStore } from '../store/sessionStore';
-import { getSession, getSessions } from '../api';
+import { getSessions } from '../api';
 import type {
   JobQueuedEvent,
   JobStartedEvent,
@@ -30,6 +30,7 @@ export function useSSE(): void {
     setEntryStatus,
     activeSessionId,
     setSessionState,
+    refreshSessionState,
     pushNotification,
     setActiveSessionId,
     setSessions,
@@ -115,7 +116,7 @@ export function useSSE(): void {
         getSessions().then(({ sessions }) => setSessions(sessions)).catch(console.error);
         return;
       }
-      getSession(data.session_id).then(setSessionState).catch(console.error);
+      void refreshSessionState(data.session_id);
     });
 
     es.addEventListener('job.failed', (e: MessageEvent) => {
@@ -133,7 +134,7 @@ export function useSSE(): void {
       setEntryStatus(data.job_id, 'failed');
       const prefix = data.source ? `[${data.source} @ ${data.timestamp}] ` : '';
       pushNotification({ kind: 'error', message: `${prefix}${data.error ?? 'unknown error'}` });
-      getSession(data.session_id).then(setSessionState).catch(console.error);
+      void refreshSessionState(data.session_id);
     });
 
     // Cirro upload isn't tied to a session (it uploads selected checkpoint files),
@@ -158,9 +159,7 @@ export function useSSE(): void {
       const data = parseEvent<PlotDrawnEvent>(e);
       if (data.session_id === activeSessionId) {
         setEntryStatus(data.plot_id, 'drawn');
-        getSession(data.session_id)
-          .then(setSessionState)
-          .catch(console.error);
+        void refreshSessionState(data.session_id);
       }
     });
 
@@ -168,7 +167,7 @@ export function useSSE(): void {
       const data = parseEvent<PlotInvalidatedEvent>(e);
       if (data.session_id === activeSessionId) {
         data.plot_ids.forEach((id) => setEntryStatus(id, 'invalidated'));
-        getSession(data.session_id).then(setSessionState).catch(console.error);
+        void refreshSessionState(data.session_id);
       }
     });
 
@@ -193,5 +192,5 @@ export function useSSE(): void {
     return () => {
       es.close();
     };
-  }, [activeSessionId, upsertSession, setResourceSample, updateDataVersions, updateDisplay, addActiveJob, removeActiveJob, addQueuedEntry, setEntryStatus, setSessionState, pushNotification, setActiveSessionId, setSessions, removeSession, setCirroUploads]);
+  }, [activeSessionId, upsertSession, setResourceSample, updateDataVersions, updateDisplay, addActiveJob, removeActiveJob, addQueuedEntry, setEntryStatus, setSessionState, refreshSessionState, pushNotification, setActiveSessionId, setSessions, removeSession, setCirroUploads]);
 }

@@ -5,7 +5,7 @@ from __future__ import annotations
 from ..base import Function, ParamSpec, CallResult, run_compute, resolve_obsm_key
 from .tma_detect import assign_cores, NAMING_SCHEMES
 
-_DOC = """Identify TMAs
+_HELP = """Identify TMAs
 
 Automatically detect the cores of a tissue microarray from the spatial layout of
 the cells and label each cell with the core it belongs to. The grid dimensions
@@ -45,12 +45,12 @@ class IdentifyTMAs(Function):
     effect_class = "compute"
     label = "Identify TMAs"
     summary = "Auto-detect tissue-microarray cores and label each cell."
-    doc = _DOC
+    doc = _HELP
     partially_supported = False
     unsupported_params: list = []
 
     params = [
-        ParamSpec("coords", {"type": "string", "default": "spatial"}, "obsm_key", "obsm",
+        ParamSpec("coords", {"type": "string", "default": "spatial"}, "obsm_key", None,
                   required=False, tooltip="obsm key of the coordinates"),
         ParamSpec("angle", {"type": "number", "default": 0.0}, "number", None,
                   required=False, tooltip="clockwise rotation in degrees before detection"),

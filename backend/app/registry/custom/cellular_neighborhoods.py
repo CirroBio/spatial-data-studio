@@ -96,9 +96,9 @@ class CellularNeighborhoods(Function):
     unsupported_params: list = []
 
     params = [
-        ParamSpec("cell_type_key", {"type": "string"}, "obs_categorical", "obs_categorical",
+        ParamSpec("cell_type_key", {"type": "string"}, "obs_categorical", None,
                   required=True, tooltip="cell-type/cluster column to build window compositions from"),
-        ParamSpec("library_key", {"type": "string"}, "obs_categorical", "obs_categorical",
+        ParamSpec("library_key", {"type": "string"}, "obs_categorical", None,
                   required=False, tooltip="sample/slide column (blank = single sample); windows stay within a sample"),
         ParamSpec("n_neighs", {"type": "integer", "default": 20}, "number", None,
                   required=False, tooltip="window size (nearest neighbors per cell, including self)"),
@@ -163,7 +163,7 @@ class CellularNeighborhoodsPlot(Function):
 
     params = [
         ParamSpec("key_added", {"type": "string", "default": "cellular_neighborhood"}, "obs_categorical",
-                  "obs_categorical", required=True,
+                  None, required=True,
                   tooltip="obs/uns key from a previous 'Cellular Neighborhoods' run"),
     ]
 

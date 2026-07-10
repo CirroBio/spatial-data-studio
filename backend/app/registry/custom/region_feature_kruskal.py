@@ -11,10 +11,10 @@ from ..base import CallResult, Function, ParamSpec, capture_log, missing_obs_col
 from ._docs import custom_doc
 
 _CELLTYPE_PARAM = ParamSpec(
-    "celltype_key", {"type": "string"}, "obs_categorical", "obs_categorical", required=True,
+    "celltype_key", {"type": "string"}, "obs_categorical", None, required=True,
     tooltip="Cell type/cluster column (categorical obs); one Kruskal-Wallis test set per level")
 _REGION_PARAM = ParamSpec(
-    "region_key", {"type": "string"}, "obs_categorical", "obs_categorical", required=True,
+    "region_key", {"type": "string"}, "obs_categorical", None, required=True,
     tooltip="Region set (categorical obs column); the groups each gene is compared across")
 
 _CITATION = ("Original method implemented in this repository: per-cell-type Kruskal-Wallis H-test of "
@@ -127,7 +127,7 @@ key_added
     params = [
         _CELLTYPE_PARAM,
         _REGION_PARAM,
-        ParamSpec("layer", {"type": "string"}, "layer_key", "layers", required=False,
+        ParamSpec("layer", {"type": "string"}, "layer_key", None, required=False,
                   tooltip="expression layer to test (blank = .X); use normalized/log values"),
         ParamSpec("min_cells", {"type": "integer", "default": 10}, "number", None, required=False,
                   tooltip="min cells of the cell type a region needs to be included"),

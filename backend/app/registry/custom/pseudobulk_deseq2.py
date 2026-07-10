@@ -14,13 +14,13 @@ from ..base import CallResult, Function, ParamSpec, capture_log, missing_obs_col
 from ._vendor import pb_compute, pb_plot
 
 _SAMPLE_PARAM = ParamSpec(
-    "sample_key", {"type": "string"}, "obs_categorical", "obs_categorical", required=True,
+    "sample_key", {"type": "string"}, "obs_categorical", None, required=True,
     tooltip="Per-cell sample/replicate id (categorical obs column)")
 _CONDITION_PARAM = ParamSpec(
-    "condition_key", {"type": "string"}, "obs_categorical", "obs_categorical", required=True,
+    "condition_key", {"type": "string"}, "obs_categorical", None, required=True,
     tooltip="Per-cell condition (categorical obs column)")
 _CELLTYPE_PARAM = ParamSpec(
-    "celltype_key", {"type": "string"}, "obs_categorical", "obs_categorical", required=True,
+    "celltype_key", {"type": "string"}, "obs_categorical", None, required=True,
     tooltip="Per-cell type/cluster (categorical obs column); one DESeq2 fit per level")
 _KEY_ADDED_PARAM = ParamSpec(
     "key_added", {"type": "string", "default": "pseudobulk_de"}, "text", None,
@@ -100,9 +100,9 @@ key_added
                   tooltip="condition value tested (blank = auto-infer for a 2-level column)"),
         ParamSpec("ref_level", {"type": "string"}, "text", None, required=False,
                   tooltip="condition value used as reference (blank = auto-infer)"),
-        ParamSpec("batch_key", {"type": "string"}, "obs_categorical", "obs_categorical",
+        ParamSpec("batch_key", {"type": "string"}, "obs_categorical", None,
                   required=False, tooltip="optional batch/covariate column added to the design"),
-        ParamSpec("layer", {"type": "string"}, "layer_key", "layers",
+        ParamSpec("layer", {"type": "string"}, "layer_key", None,
                   required=False, tooltip="raw-counts layer to aggregate (blank = .X)"),
         ParamSpec("min_cells", {"type": "integer", "default": 10}, "number", None,
                   required=False, tooltip="min cells per (sample x cell type) pseudobulk group"),

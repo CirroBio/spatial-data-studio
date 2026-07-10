@@ -80,6 +80,14 @@ admission control refuses new work at `SQV_ADMISSION_PCT` of it, so it trips
 | `SQV_RASTER_BASE_PX`     | `1024`    | Coarsest image-pyramid level target (longest side) when re-tiling images at ingest. |
 | `SQV_RASTER_REBUILD_WORKERS` | `2`   | dask worker count for the one-time ingest re-tiling; bounds its peak memory. |
 | `SQV_STATIC_DIR`         | `/app/spa`| Path to the compiled SPA (baked into the image). |
+| `SQV_SNAPSHOTS_DIR`      | `<SQV_CHECKPOINT_DIR>/snapshots` | Where snapshot JSON configs are written; defaults under the checkpoint mount, override only if needed. |
+| `SQV_SNAPSHOT_VIEWER_DIR`| `frontend/dist-viewer` | Built standalone snapshot viewer copied into a Cirro upload bundle when snapshots are included (`npm run build:viewer`). |
+| `SQUIDPY_N_THREADS`      | all cores | Default for thread-count form params (`n_jobs`, etc.). |
+| `SQV_RESOURCE_HZ`        | `2`       | Resource-sample broadcast cadence (Hz) for the RAM/CPU strip. |
+| `SQV_LONG_RUNNING_S`     | `120`     | Long-running-job watchdog threshold (seconds). |
+| `CIRRO_BASE_URL`         | _(unset)_ | Cirro API base URL. Upload is dark unless all three `CIRRO_*` are set. |
+| `CIRRO_CLIENT_ID`        | _(unset)_ | Cirro service-account (client-credentials) id. |
+| `CIRRO_CLIENT_SECRET`    | _(unset)_ | Cirro service-account secret. |
 
 ## Volumes
 
@@ -116,17 +124,3 @@ buffering without also applying the same setting.
 The HEALTHCHECK uses `/api/healthz` with generous tolerances (60 s start
 period, 3 retries) to avoid false restarts caused by GIL-blocking jobs
 (DESIGN §19.8).
-
-## Replacing the frontend placeholder
-
-The current `frontend/` tree is a build placeholder (static HTML). When the
-Vite frontend is ready:
-
-1. Replace `frontend/` with the real Vite project.
-2. Update `frontend/package.json` `"build"` script to `"vite build"` (or
-   whatever the project uses).
-3. Rebuild the image: `docker build -f docker/Dockerfile -t spatial-data-studio .`
-
-No changes to `docker/Dockerfile`, `nginx.conf`, or `supervisord.conf` are
-needed — Stage 1 runs `npm run build` and copies `frontend/dist/` regardless
-of what generates it.

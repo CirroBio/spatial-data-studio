@@ -1125,7 +1125,7 @@ Arrow IPC (binary). See `docs/CONTRACT.md` for the full contract.
 | `GET` | `/api/sessions/{id}/image/{element}/tile/{level}/{col}/{row}?channels=` | Image pyramid tile (PNG) |
 | `GET` | `/api/sessions/{id}/image/{element}/info` | Pyramid levels, tile size, `pixel_to_world` |
 | `POST` | `/api/sessions/{id}/snapshot` | Save an HTML snapshot |
-| `POST` | `/api/sessions/{id}/cirro/upload` | Upload session + snapshots to Cirro |
+| `POST` | `/api/cirro/upload` | Upload selected checkpoints + snapshots to Cirro (session-independent) |
 | `GET` | `/api/about/licenses` | Third-party licenses (from SBOMs) |
 
 ### 19.2 SSE event types

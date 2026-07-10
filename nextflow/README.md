@@ -11,7 +11,7 @@ the pinned Python deps at runtime with [uv](https://docs.astral.sh/uv/), and inv
 
 ## Quick run (test profile + docker)
 
-Runs the bundled `01_neighborhood_enrichment` recipe over the bundled
+Runs the bundled `07_neighborhood_enrichment` recipe over the bundled
 `test-data/visium_hne.zarr` store:
 
 ```bash
@@ -26,7 +26,7 @@ Output lands in `./results/analysis/` (see [Output layout](#output-layout)).
 nextflow run nextflow/main.nf -profile docker \
     --parser io.xenium \
     --input  /path/to/xenium_bundle \
-    --recipe backend/app/recipes/06_preprocess_cluster_raw_counts.json \
+    --recipe backend/app/recipes/12_preprocess_cluster_raw_counts.json \
     --name   my_xenium_sample \
     --outdir results
 ```
@@ -61,7 +61,7 @@ Profiles:
 - `docker` — runs the process in the public uv image
   `ghcr.io/astral-sh/uv:python3.11-bookworm` (`docker.enabled = true`).
 - `test` — sets `--parser zarr`, `--input` to the bundled `visium_hne.zarr`, and
-  `--recipe` to the bundled `01_neighborhood_enrichment.json`. Combine with
+  `--recipe` to the bundled `07_neighborhood_enrichment.json`. Combine with
   `docker`: `-profile test,docker`.
 
 ## uv-at-runtime rationale
@@ -99,7 +99,7 @@ If a recipe hits a function that does, install them at runtime with `--os_packag
 nextflow run nextflow/main.nf -profile docker \
     --os_packages 'libgl1 libglib2.0-0 libgomp1' \
     --parser io.xenium --input /path/to/xenium_bundle \
-    --recipe backend/app/recipes/06_preprocess_cluster_raw_counts.json
+    --recipe backend/app/recipes/12_preprocess_cluster_raw_counts.json
 ```
 
 ## Output layout

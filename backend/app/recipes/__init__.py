@@ -37,6 +37,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from ..registry.base import WIDGETS
+
 _RECIPES_DIR = Path(__file__).parent
 
 
@@ -44,6 +46,12 @@ def _load_bundled() -> dict[str, dict]:
     bundled = {}
     for path in sorted(_RECIPES_DIR.glob("*.json")):
         recipe = json.loads(path.read_text())
+        # A recipe param renders through the same form as a function param, so its
+        # widget must be in the closed set (registry/base.py) — keep the two paths
+        # from drifting.
+        bad = [p["name"] for p in recipe.get("params", []) if p.get("widget") not in WIDGETS]
+        if bad:
+            raise ValueError(f"{path.name}: param(s) {bad} use a widget not in the closed set {sorted(WIDGETS)}")
         bundled[recipe["meta"]["name"]] = recipe
     return bundled
 
