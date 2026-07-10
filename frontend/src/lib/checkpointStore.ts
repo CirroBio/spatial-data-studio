@@ -6,8 +6,39 @@ import ZipFileStore from '@zarrita/storage/zip';
 import type { ColorSource } from '../components/canvas/useSpotColors';
 import { defaultChannelColor } from '../components/canvas/colorUtils';
 
+// Range-GET reader for ZipFileStore. Unlike zarrita's built-in HTTPRangeReader,
+// it never issues a HEAD: it derives the total length from the `Content-Range`
+// header of a single-byte range GET. Cirro serves checkpoints through
+// render-service-worker/s3/… as method-specific presigned S3 GET URLs, which
+// reject HEAD with 403 (SignatureDoesNotMatch) — so getLength()'s HEAD would
+// abort the whole open before any chunk is read.
+class RangeGetReader {
+  length?: number;
+  constructor(readonly url: string) {}
+
+  async getLength(): Promise<number> {
+    if (this.length === undefined) {
+      const req = await fetch(this.url, { headers: { Range: 'bytes=0-0' } });
+      if (!req.ok) throw new Error(`failed length probe ${this.url}, status: ${req.status}: ${req.statusText}`);
+      const contentRange = req.headers.get('content-range'); // "bytes 0-0/<total>"
+      const total = contentRange?.split('/')[1];
+      const length = total ? Number(total) : Number(req.headers.get('content-length'));
+      if (!Number.isFinite(length)) throw new Error(`could not determine length of ${this.url}`);
+      this.length = length;
+    }
+    return this.length;
+  }
+
+  async read(offset: number, size: number): Promise<Uint8Array<ArrayBuffer>> {
+    if (size === 0) return new Uint8Array(0);
+    const req = await fetch(this.url, { headers: { Range: `bytes=${offset}-${offset + size - 1}` } });
+    if (!req.ok) throw new Error(`failed range GET ${this.url}, status: ${req.status} offset: ${offset} size: ${size}: ${req.statusText}`);
+    return new Uint8Array(await req.arrayBuffer());
+  }
+}
+
 async function openRoot(url: string) {
-  const store = await ZipFileStore.fromUrl(url);
+  const store = new ZipFileStore(new RangeGetReader(url));
   const root = await zarr.open(store, { kind: 'group' });
   return { store, root };
 }
