@@ -296,8 +296,11 @@ and point their documentation at a per-method section in
   service-account (OAuth client-credentials) identity — no interactive login. Strictly
   additive: dark unless `CIRRO_BASE_URL`, `CIRRO_CLIENT_ID`, and `CIRRO_CLIENT_SECRET`
   are all set. The dialog (opened from the toolbar, independent of any active session)
-  multi-selects saved checkpoints (the same checkpoint list as "Open Checkpoint") and
-  snapshots (the same list as the snapshot browser); the upload runs in the background
+  multi-selects saved checkpoints (the same checkpoint list as "Open Checkpoint");
+  the snapshot list is then populated from just those sessions — a snapshot can only
+  ship with the session it sources its data from — and any of them can be included too.
+  The destination folder is a creatable combobox (pick an existing folder or type a new
+  path). The upload runs in the background
   via `POST /api/cirro/upload` and announces completion/failure over SSE
   (`cirro.upload.completed`/`cirro.upload.failed`). Uploads go through a bounded queue
   (small concurrency cap; extra uploads wait as pending), and the uploading/pending
@@ -317,10 +320,14 @@ and point their documentation at a per-method section in
   Always
   uploaded via Cirro's generic "Files" ingest process (`custom_dataset`, accepts any
   file) — the service-account identity only needs `Create dataset`/`View dataset` on
-  the target project, no `View process` permission. An optional destination folder can
-  be typed in (Cirro groups datasets into folders via a `folder://<path>` dataset tag,
-  not a real API); existing folder paths for the chosen project are offered as a
-  typeahead, backend-cached per project (`GET /api/cirro/projects/{id}/folders`).
+  the target project, no `View process` permission. The dialog uses the same two-pane
+  layout as New Session: the dataset options (project, dataset name, checkpoint/snapshot
+  selection) on the left, and a folder browser on the right. The optional destination
+  folder is picked from the chosen project's existing folders, or a new path is typed to
+  create one (Cirro groups datasets into folders via a `folder://<path>` dataset tag, not
+  a real API); folder paths are backend-cached per project
+  (`GET /api/cirro/projects/{id}/folders`). The project list itself is cached too
+  (`GET /api/cirro/projects`) and prewarmed at startup when Cirro is configured.
 
 ## Layout
 
