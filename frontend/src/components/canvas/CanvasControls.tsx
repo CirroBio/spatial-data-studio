@@ -28,7 +28,6 @@ interface CanvasControlsProps {
   setPanelCollapsed: (v: boolean) => void;
   onFit: () => void;
   onEditTransform: () => void;
-  onSnapshot: () => void;
 }
 
 export default function CanvasControls({
@@ -53,7 +52,6 @@ export default function CanvasControls({
   setPanelCollapsed,
   onFit,
   onEditTransform,
-  onSnapshot,
 }: CanvasControlsProps) {
   return (
     <CanvasSettingsShell collapsed={panelCollapsed} onToggleCollapsed={setPanelCollapsed}>
@@ -188,14 +186,6 @@ export default function CanvasControls({
           className="py-1 text-[11px] bg-bg border border-border rounded text-text hover:border-accent transition-colors"
         >
           Edit points transform
-        </button>
-
-        <button
-          type="button"
-          onClick={onSnapshot}
-          className="py-1 text-[11px] rounded text-muted hover:text-text transition-colors"
-        >
-          Save snapshot
         </button>
       </div>
     </CanvasSettingsShell>

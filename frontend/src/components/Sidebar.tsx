@@ -225,9 +225,9 @@ export default function Sidebar({ onNewSession }: Props) {
           <button
             onClick={() => setShowRecipes(true)}
             data-tour={TourAnchors.BrowseRecipes}
-            className="w-full py-1 text-[11px] bg-bg border border-border rounded text-text hover:border-accent transition-colors"
+            className="w-full py-1.5 text-xs bg-accent hover:bg-accent/90 text-white rounded transition-colors"
           >
-            Browse recipes
+            + Add recipe
           </button>
           <div className="flex gap-1">
             <button

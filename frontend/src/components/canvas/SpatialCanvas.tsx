@@ -31,22 +31,7 @@ interface Props {
 }
 
 export default function SpatialCanvas({ display, sessionId, canvasMode, annotationTarget }: Props) {
-  const { sessionState, updateDisplay, isolatedCategory, pushNotification, openSnapshots } = useAppStore();
-
-  async function handleSnapshot() {
-    try {
-      // Capture the live viewport so the snapshot opens where the user was looking
-      // (the persisted display viewport can lag behind a mid-pan snapshot).
-      const viewport = viewState && typeof viewState.zoom === 'number'
-        ? { target: (viewState.target as number[]).slice(0, 2), zoom: viewState.zoom }
-        : undefined;
-      const r = await saveSnapshot(sessionId, { viewport, display_id: display.id });
-      openSnapshots(r.name);
-      pushNotification({ kind: 'info', message: 'Snapshot saved.' });
-    } catch (e) {
-      reportError('Snapshot failed', e);
-    }
-  }
+  const { sessionState, updateDisplay, isolatedCategory, pushNotification, openSnapshots, setSnapshotHandler } = useAppStore();
   const fields = sessionState?.fields;
   const dataVersions = sessionState?.data_versions ?? {};
 
@@ -89,6 +74,29 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
     sessionId,
     updateDisplay,
   });
+
+  // Snapshot is triggered from the header menu; register a handler that reads the
+  // live viewport via a ref (so the snapshot opens where the user was looking, not
+  // at the possibly-stale persisted viewport) and reports itself while mounted.
+  const viewStateRef = useRef(viewState);
+  viewStateRef.current = viewState;
+  const handleSnapshot = useCallback(async () => {
+    try {
+      const vs = viewStateRef.current;
+      const viewport = vs && typeof vs.zoom === 'number'
+        ? { target: (vs.target as number[]).slice(0, 2), zoom: vs.zoom }
+        : undefined;
+      const r = await saveSnapshot(sessionId, { viewport, display_id: display.id });
+      openSnapshots(r.name);
+      pushNotification({ kind: 'info', message: 'Snapshot saved.' });
+    } catch (e) {
+      reportError('Snapshot failed', e);
+    }
+  }, [sessionId, display.id, openSnapshots, pushNotification]);
+  useEffect(() => {
+    setSnapshotHandler(handleSnapshot);
+    return () => setSnapshotHandler(null);
+  }, [handleSnapshot, setSnapshotHandler]);
 
   // Clear any in-progress drawing when leaving/entering a draw mode.
   useEffect(() => {
@@ -254,7 +262,6 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
         setPanelCollapsed={setPanelCollapsed}
         onFit={() => { const fit = fitToData(); if (fit) setViewState(fit); }}
         onEditTransform={() => setTransformOpen(true)}
-        onSnapshot={handleSnapshot}
       />
 
       {transformOpen && <TransformEditor sessionId={sessionId} onClose={() => setTransformOpen(false)} />}

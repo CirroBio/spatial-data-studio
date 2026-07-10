@@ -111,6 +111,16 @@ interface AppStore {
   openSnapshots: (selectName?: string) => void;
   closeSnapshots: () => void;
 
+  // Save Snapshot lives in the settings panel but must capture the active canvas's
+  // live viewport, so whichever canvas is mounted registers its handler here
+  // (null on the tables view / when no canvas is mounted → the menu item disables).
+  snapshotHandler: (() => void) | null;
+  setSnapshotHandler: (fn: (() => void) | null) => void;
+
+  // The collapsible right-hand settings sidebar — toggled from the header hamburger.
+  menuOpen: boolean;
+  setMenuOpen: (open: boolean) => void;
+
   // Cirro upload
   cirroEnabled: boolean;
   setCirroEnabled: (on: boolean) => void;
@@ -320,6 +330,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
   openSnapshots: (selectName) =>
     set({ snapshotsOpen: true, snapshotsInitialSelect: selectName ?? null }),
   closeSnapshots: () => set({ snapshotsOpen: false, snapshotsInitialSelect: null }),
+
+  snapshotHandler: null,
+  setSnapshotHandler: (fn) => set({ snapshotHandler: fn }),
+
+  menuOpen: false,
+  setMenuOpen: (open) => set({ menuOpen: open }),
 
   cirroEnabled: false,
   setCirroEnabled: (on) => set({ cirroEnabled: on }),

@@ -3,9 +3,7 @@
 // a value here has no matching `data-tour="..."` attribute in the source.
 export const TourAnchors = {
   SessionPicker: 'session-picker',
-  NewSession: 'new-session',
-  SaveSession: 'save-session',
-  Snapshots: 'snapshots',
+  Menu: 'menu',
   ViewSwitcher: 'view-switcher',
   SidebarTabs: 'sidebar-tabs',
   AddFunction: 'add-function',

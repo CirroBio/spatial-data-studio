@@ -16,7 +16,6 @@ interface Props {
   panelCollapsed: boolean;
   setPanelCollapsed: (v: boolean) => void;
   onFit: () => void;
-  onSnapshot: () => void;
 }
 
 // One row of the X/Y/Z axis pickers: which component of the selected obsm array
@@ -60,7 +59,6 @@ export default function EmbeddingControls({
   panelCollapsed,
   setPanelCollapsed,
   onFit,
-  onSnapshot,
 }: Props) {
   const { obsm_key, x_component, y_component, z_component, is_3d } = display.encoding;
   const nComponents = obsmFields.find((f) => f.name === obsm_key)?.n_components ?? 2;
@@ -144,14 +142,6 @@ export default function EmbeddingControls({
         className="py-1 text-[11px] bg-bg border border-border rounded text-text hover:border-accent transition-colors"
       >
         Fit to data
-      </button>
-
-      <button
-        type="button"
-        onClick={onSnapshot}
-        className="py-1 text-[11px] rounded text-muted hover:text-text transition-colors"
-      >
-        Save snapshot
       </button>
     </CanvasSettingsShell>
   );

@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from 'react';
+import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import DeckGL from '@deck.gl/react';
 import { OrthographicView, OrbitView } from '@deck.gl/core';
 import type { Layer } from '@deck.gl/core';
@@ -164,7 +164,7 @@ function EmbeddingCanvasView({
   layerNames: string[];
   obsmFields: ObsmField[];
 }) {
-  const { sessionState, updateDisplay, isolatedCategory, pushNotification, openSnapshots } = useAppStore();
+  const { sessionState, updateDisplay, isolatedCategory, pushNotification, openSnapshots, setSnapshotHandler } = useAppStore();
   const dataVersions = sessionState?.data_versions ?? {};
 
   const { is_3d, x_component, y_component, z_component } = display.encoding;
@@ -198,11 +198,16 @@ function EmbeddingCanvasView({
     isolatedCategory,
   });
 
-  async function handleSnapshot() {
+  // Snapshot is triggered from the header menu; register a handler that reads the
+  // live camera via a ref so the snapshot opens where the user was looking.
+  const viewStateRef = useRef(viewState);
+  viewStateRef.current = viewState;
+  const handleSnapshot = useCallback(async () => {
     try {
-      const target = viewState?.target as number[] | undefined;
-      const viewport = viewState && target && typeof viewState.zoom === 'number'
-        ? { target: target.slice(0, 2), zoom: viewState.zoom }
+      const vs = viewStateRef.current;
+      const target = vs?.target as number[] | undefined;
+      const viewport = vs && target && typeof vs.zoom === 'number'
+        ? { target: target.slice(0, 2), zoom: vs.zoom }
         : undefined;
       const r = await saveSnapshot(sessionId, { viewport, display_id: display.id });
       openSnapshots(r.name);
@@ -210,7 +215,11 @@ function EmbeddingCanvasView({
     } catch (e) {
       reportError('Snapshot failed', e);
     }
-  }
+  }, [sessionId, display.id, openSnapshots, pushNotification]);
+  useEffect(() => {
+    setSnapshotHandler(handleSnapshot);
+    return () => setSnapshotHandler(null);
+  }, [handleSnapshot, setSnapshotHandler]);
 
   const legendVisible = display.encoding.legend_visible !== false;
   const legendTitle = display.encoding.legend_title || colorByLabel(colorByPath);
@@ -296,7 +305,6 @@ function EmbeddingCanvasView({
         panelCollapsed={panelCollapsed}
         setPanelCollapsed={setPanelCollapsed}
         onFit={() => { const fit = fitToData(); if (fit) setViewState(fit); }}
-        onSnapshot={handleSnapshot}
       />
     </div>
   );

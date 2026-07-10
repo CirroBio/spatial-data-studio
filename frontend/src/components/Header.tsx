@@ -1,46 +1,19 @@
-import { useState } from 'react';
 import { useAppStore } from '../store/sessionStore';
-import { saveSession } from '../api';
-import { reportError } from '../lib/errors';
-import AcknowledgementsDialog from './AcknowledgementsDialog';
-import CirroUploadDialog from './CirroUploadDialog';
-import SnapshotBrowser from './SnapshotBrowser';
 import SessionPicker from './SessionPicker';
-import { TourAnchors, useTour, spatialDataStudioTour } from '../tours';
-
-interface Props {
-  onNewSession: () => void;
-}
+import { TourAnchors } from '../tours';
 
 const ICON_BTN ='p-1.5 rounded border border-border bg-bg text-text hover:border-accent hover:text-accent transition-colors disabled:opacity-40 disabled:hover:border-border disabled:hover:text-text';
 
-export default function Header({ onNewSession }: Props) {
-  const [showAbout, setShowAbout] = useState(false);
-  const [showCirroUpload, setShowCirroUpload] = useState(false);
+export default function Header() {
   const {
-    activeSessionId, activeJobIds, sessionState,
-    theme, setTheme, savingJobId, cirroEnabled, cirroUploads,
-    snapshotsOpen, snapshotsInitialSelect, openSnapshots, closeSnapshots,
+    activeSessionId, activeJobIds, sessionState, cirroUploads,
+    menuOpen, setMenuOpen,
   } = useAppStore();
   const runningCount = activeJobIds.size;
   const unsaved = !!activeSessionId && sessionState?.summary.saved === false;
-  // Header mounts only once the backend is ready, so the intro tour can
-  // auto-start (first visit) and be re-triggered from the button below.
-  const { start: startTour } = useTour(spatialDataStudioTour.id, true);
   const uploadsActive = cirroUploads.uploading + cirroUploads.pending;
-  const uploadTitle = uploadsActive > 0
-    ? `Cirro: ${cirroUploads.uploading} uploading`
-      + (cirroUploads.pending ? `, ${cirroUploads.pending} pending` : '')
-    : 'Upload to Cirro';
   const fields = sessionState?.fields;
   const img = fields?.image_dims[0];
-
-  function handleSave() {
-    if (!activeSessionId) return;
-    saveSession(activeSessionId)
-      .then(({ job_id }) => useAppStore.getState().setSavingJobId(job_id))
-      .catch((err) => reportError('Save failed', err));
-  }
 
   return (
     <header className="flex items-center justify-between px-4 h-12 bg-surface border-b border-border shrink-0">
@@ -65,95 +38,22 @@ export default function Header({ onNewSession }: Props) {
           </span>
         )}
 
-        <button onClick={onNewSession} className={ICON_BTN} title="New session" aria-label="New session" data-tour={TourAnchors.NewSession}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M14 3v4a1 1 0 0 0 1 1h4" />
-            <path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z" />
-            <path d="M12 11v6M9 14h6" />
-          </svg>
-        </button>
         <button
-          onClick={handleSave}
-          disabled={!activeSessionId || !!savingJobId}
+          onClick={() => setMenuOpen(!menuOpen)}
           className={`${ICON_BTN} relative`}
-          title={unsaved ? 'Save session — unsaved changes' : 'Save session'}
-          aria-label={unsaved ? 'Save session (unsaved changes)' : 'Save session'}
-          data-tour={TourAnchors.SaveSession}
+          title="Menu"
+          aria-label="Menu"
+          aria-expanded={menuOpen}
+          data-tour={TourAnchors.Menu}
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
-            <path d="M17 21v-8H7v8M7 3v5h8" />
+            <path d="M3 12h18M3 6h18M3 18h18" />
           </svg>
-          {unsaved && (
-            <span
-              className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-warn"
-              title="Unsaved changes"
-            />
+          {(unsaved || uploadsActive > 0) && (
+            <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-warn" />
           )}
         </button>
-
-        <button onClick={() => openSnapshots()} className={ICON_BTN} title="Browse snapshots" aria-label="Browse snapshots" data-tour={TourAnchors.Snapshots}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="3" y="3" width="18" height="18" rx="2" />
-            <circle cx="8.5" cy="8.5" r="1.5" />
-            <path d="M21 15l-5-5L5 21" />
-          </svg>
-        </button>
-
-        <button
-          onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-          className={ICON_BTN}
-          title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-          aria-label="Toggle theme"
-        >
-          {theme === 'dark' ? (
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="4" />
-              <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
-            </svg>
-          ) : (
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-            </svg>
-          )}
-        </button>
-
-        <button onClick={startTour} className={ICON_BTN} title="Take the tour" aria-label="Take the tour">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="10" />
-            <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
-          </svg>
-        </button>
-
-        <button onClick={() => setShowAbout(true)} className={ICON_BTN} title="About / Acknowledgements" aria-label="About / Acknowledgements">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="10" />
-            <path d="M12 16v-4M12 8h.01" />
-          </svg>
-        </button>
-
-        {/* Cirro upload — only when a service-account identity is configured */}
-        {cirroEnabled && (
-          <button
-            onClick={() => setShowCirroUpload(true)}
-            className={`${ICON_BTN} relative`}
-            title={uploadTitle}
-            aria-label={uploadTitle}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M7 18a4.5 4.5 0 0 1-1.44-8.77A5.5 5.5 0 0 1 16.3 6.03 4.5 4.5 0 0 1 17.5 15H17" />
-              <path d="M12 12v9M9 15l3-3 3 3" />
-            </svg>
-            {uploadsActive > 0 && (
-              <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full border border-accent border-t-transparent animate-spin" />
-            )}
-          </button>
-        )}
       </div>
-
-      {showAbout && <AcknowledgementsDialog onClose={() => setShowAbout(false)} />}
-      {snapshotsOpen && <SnapshotBrowser onClose={closeSnapshots} initialSelect={snapshotsInitialSelect} />}
-      {showCirroUpload && <CirroUploadDialog onClose={() => setShowCirroUpload(false)} />}
     </header>
   );
 }

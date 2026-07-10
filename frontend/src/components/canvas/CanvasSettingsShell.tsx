@@ -28,7 +28,8 @@ export default function CanvasSettingsShell({ collapsed, onToggleCollapsed, chil
 
   return (
     <div className="absolute top-3 right-3 z-10 bg-surface/90 border border-border rounded p-3 flex flex-col gap-2 min-w-[200px] backdrop-blur-sm">
-      <div className="flex justify-end -mt-1 -mr-1">
+      <div className="flex items-center justify-between -mt-1 -mr-1">
+        <span className="text-xs font-semibold text-muted uppercase tracking-wide">Display Settings</span>
         <button
           type="button"
           onClick={() => onToggleCollapsed(true)}

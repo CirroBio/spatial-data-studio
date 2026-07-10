@@ -7,6 +7,7 @@ import { useSSE } from './hooks/useSSE';
 import { useSession } from './hooks/useSession';
 import Header from './components/Header';
 import Sidebar from './components/Sidebar';
+import SettingsPanel from './components/SettingsPanel';
 import ResourceStrip from './components/ResourceStrip';
 import SpatialCanvas from './components/canvas/SpatialCanvas';
 import EmbeddingCanvas from './components/canvas/EmbeddingCanvas';
@@ -196,7 +197,7 @@ export default function App() {
 
   return (
     <div className="flex flex-col h-full bg-bg text-text">
-      <Header onNewSession={() => setShowNewSession(true)} />
+      <Header />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar onNewSession={() => setShowNewSession(true)} />
         <main className="flex-1 overflow-hidden relative">
@@ -221,6 +222,7 @@ export default function App() {
           )}
           {renderMain()}
         </main>
+        <SettingsPanel onNewSession={() => setShowNewSession(true)} />
       </div>
       <ResourceStrip />
       <Toaster />
