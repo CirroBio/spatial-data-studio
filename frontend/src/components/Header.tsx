@@ -13,7 +13,9 @@ export default function Header() {
   const unsaved = !!activeSessionId && sessionState?.summary.saved === false;
   const uploadsActive = cirroUploads.uploading + cirroUploads.pending;
   const fields = sessionState?.fields;
-  const img = fields?.image_dims[0];
+  // `fields` is an empty object while a session is still loading (the backend has
+  // no table yet), so guard every access — image_dims/n_obs are absent until ready.
+  const img = fields?.image_dims?.[0];
 
   return (
     <header className="flex items-center justify-between px-4 h-12 bg-surface border-b border-border shrink-0">
@@ -22,7 +24,7 @@ export default function Header() {
         <span data-tour={TourAnchors.SessionPicker}>
           <SessionPicker />
         </span>
-        {fields && (
+        {fields?.n_obs != null && (
           <span className="text-[11px] text-muted font-mono" style={{ fontVariantNumeric: 'tabular-nums' }}>
             {fields.n_obs.toLocaleString()} cells
             {img && ` · ${img.width.toLocaleString()} × ${img.height.toLocaleString()} px`}
