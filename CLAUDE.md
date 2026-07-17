@@ -29,9 +29,8 @@ distinct code element — backend or frontend — search for an existing element
 that already does something similar and adapt it (e.g. a new parameter or
 flag) instead of writing a new one. A new element is justified only when the
 behavior is substantively different, not merely a variant of an existing one.
-Example: the obs column picker (`ObsFieldSelect`) is shared by Color By, Draw
-Label, and Promote, with `creatable`/`categoricalOnly` props covering their
-differences.
+Example: the obs column picker (`ObsFieldSelect`) is shared by Color By and Draw
+Label, with the `creatable` prop covering their difference.
 
 ## Every function declares its provenance (always)
 

@@ -1,9 +1,9 @@
-import { PolygonLayer, PathLayer, ScatterplotLayer } from '@deck.gl/layers';
+import { PolygonLayer, PathLayer, ScatterplotLayer, TextLayer } from '@deck.gl/layers';
 import { PathStyleExtension } from '@deck.gl/extensions';
 import type { PathStyleExtensionProps } from '@deck.gl/extensions';
 import type { Layer } from '@deck.gl/core';
 import type { ShapeAnnotation, ShapeGeometry } from '../../schemas/annotations';
-import { shapeOutline, shapeHandles, arrowheadTriangle } from '../../lib/shapeAnnotations';
+import { shapeOutline, shapeHandles, shapeCentroid, arrowheadTriangle, ROTATE_HANDLE_ID } from '../../lib/shapeAnnotations';
 
 type Point = [number, number];
 
@@ -25,11 +25,15 @@ function dashArray(dash: ShapeAnnotation['stroke']['dash']): [number, number] {
 /** Persisted shape-annotation render layers: fill polygons, stroke paths, and
  * arrowhead markers. `overrides` swaps in a live-drag geometry for the shape
  * currently being edited so dragging a handle previews without waiting on the
- * debounced API round trip. Rendered whenever shapes exist, independent of
- * whether the Annotations tab (and its edit interactions) is active. */
+ * debounced API round trip. `unitsPerPixel` (world units per screen pixel at the
+ * current zoom) converts each arrow's pixel size into the world-space triangle
+ * geometry, so the arrowhead stays a constant on-screen size like the stroke
+ * width. Rendered whenever shapes exist, independent of whether the Annotations
+ * tab (and its edit interactions) is active. */
 export function buildShapeAnnotationLayers(
   shapes: ShapeAnnotation[],
   overrides: Record<string, ShapeGeometry> = {},
+  unitsPerPixel = 1,
 ): Layer[] {
   if (!shapes.length) return [];
 
@@ -50,9 +54,11 @@ export function buildShapeAnnotationLayers(
     }));
   }
 
-  layers.push(new PathLayer<typeof resolved[number], PathStyleExtensionProps<typeof resolved[number]>>({
+  // A text label has no stroked outline (it renders via its own TextLayer below).
+  const stroked = resolved.filter((s) => s.geometry.kind !== 'text');
+  layers.push(new PathLayer<typeof stroked[number], PathStyleExtensionProps<typeof stroked[number]>>({
     id: 'shape-stroke',
-    data: resolved,
+    data: stroked,
     getPath: (d) => (d.geometry.kind === 'line' ? shapeOutline(d.geometry) : [...shapeOutline(d.geometry), shapeOutline(d.geometry)[0]]),
     getColor: (d) => [...hexToRgb(d.stroke.color), 255],
     getWidth: (d) => d.stroke.width,
@@ -64,12 +70,12 @@ export function buildShapeAnnotationLayers(
   }));
 
   const arrowheads: { id: string; points: Point[] }[] = [];
-  const arrowSize = 10;
   for (const s of resolved) {
     if (s.geometry.kind !== 'line') continue;
     const [v0, v1] = s.geometry.vertices;
-    if (s.stroke.arrowEnd) arrowheads.push({ id: `${s.id}-end`, points: arrowheadTriangle(v0, v1, arrowSize) });
-    if (s.stroke.arrowStart) arrowheads.push({ id: `${s.id}-start`, points: arrowheadTriangle(v1, v0, arrowSize) });
+    const size = s.stroke.arrowSize * unitsPerPixel;
+    if (s.stroke.arrowEnd) arrowheads.push({ id: `${s.id}-end`, points: arrowheadTriangle(v0, v1, size) });
+    if (s.stroke.arrowStart) arrowheads.push({ id: `${s.id}-start`, points: arrowheadTriangle(v1, v0, size) });
   }
   if (arrowheads.length) {
     layers.push(new PolygonLayer<typeof arrowheads[number]>({
@@ -84,18 +90,57 @@ export function buildShapeAnnotationLayers(
     }));
   }
 
+  const texts = resolved.filter((s) => s.geometry.kind === 'text');
+  if (texts.length) {
+    layers.push(new TextLayer<typeof texts[number]>({
+      id: 'shape-text',
+      data: texts,
+      getPosition: (d) => (d.geometry.kind === 'text' ? d.geometry.position : [0, 0]),
+      getText: (d) => (d.geometry.kind === 'text' ? d.geometry.text : ''),
+      getSize: (d) => (d.geometry.kind === 'text' ? d.geometry.fontSize : 16),
+      // Stored rotation is radians CW about the anchor (world/screen y is down here);
+      // TextLayer getAngle is degrees CCW, hence the negation.
+      getAngle: (d) => (d.geometry.kind === 'text' ? -(d.geometry.rotation * 180) / Math.PI : 0),
+      getColor: (d) => [...hexToRgb(d.stroke.color), 255],
+      sizeUnits: 'pixels',
+      getTextAnchor: 'middle',
+      getAlignmentBaseline: 'center',
+      characterSet: 'auto', // render whatever characters the user typed
+      pickable: true,
+      parameters: OVERLAY_PARAMS,
+    }));
+  }
+
   return layers;
 }
 
 /** Edit-handle overlay for the selected shape, shown only while the shape
- * annotation editor is active. */
-export function buildShapeHandleLayer(geometry: ShapeGeometry): Layer {
-  const handles = shapeHandles(geometry);
-  return new ScatterplotLayer<typeof handles[number]>({
+ * annotation editor is active: a connector arm from the centroid out to the
+ * green rotate handle, then the round vertex/radius/rotate handles on top. */
+export function buildShapeHandleLayer(geometry: ShapeGeometry, unitsPerPixel = 1): Layer[] {
+  const handles = shapeHandles(geometry, unitsPerPixel);
+  if (!handles.length) return [];
+  const layers: Layer[] = [];
+
+  const rotateHandle = handles.find((h) => h.id === ROTATE_HANDLE_ID);
+  if (rotateHandle) {
+    layers.push(new PathLayer<Point[]>({
+      id: 'shape-handle-rotate-arm',
+      data: [[shapeCentroid(geometry), rotateHandle.position]],
+      getPath: (d) => d,
+      getColor: [56, 178, 88, 200],
+      getWidth: 1.5,
+      widthUnits: 'pixels',
+      pickable: false,
+      parameters: OVERLAY_PARAMS,
+    }));
+  }
+
+  layers.push(new ScatterplotLayer<typeof handles[number]>({
     id: 'shape-handles',
     data: handles,
     getPosition: (d) => d.position,
-    getFillColor: [255, 255, 255, 255],
+    getFillColor: (d) => (d.id === ROTATE_HANDLE_ID ? [56, 178, 88, 255] : [255, 255, 255, 255]),
     getLineColor: [51, 136, 255, 255],
     stroked: true,
     lineWidthUnits: 'pixels',
@@ -104,7 +149,9 @@ export function buildShapeHandleLayer(geometry: ShapeGeometry): Layer {
     radiusUnits: 'pixels',
     pickable: true,
     parameters: OVERLAY_PARAMS,
-  });
+  }));
+
+  return layers;
 }
 
 /** Live preview layers for an in-progress drag (creating a shape, or dragging an

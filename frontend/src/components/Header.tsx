@@ -7,7 +7,7 @@ const ICON_BTN ='p-1.5 rounded border border-border bg-bg text-text hover:border
 export default function Header() {
   const {
     activeSessionId, activeJobIds, sessionState, cirroUploads,
-    menuOpen, setMenuOpen,
+    menuOpen, setMenuOpen, leftMenuOpen, setLeftMenuOpen,
   } = useAppStore();
   const runningCount = activeJobIds.size;
   const unsaved = !!activeSessionId && sessionState?.summary.saved === false;
@@ -20,6 +20,18 @@ export default function Header() {
   return (
     <header className="flex items-center justify-between px-4 h-12 bg-surface border-b border-border shrink-0">
       <div className="flex items-center gap-3">
+        <button
+          onClick={() => setLeftMenuOpen(!leftMenuOpen)}
+          className={ICON_BTN}
+          title={leftMenuOpen ? 'Hide sidebar' : 'Show sidebar'}
+          aria-label="Toggle sidebar"
+          aria-expanded={leftMenuOpen}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <path d="M9 3v18" />
+          </svg>
+        </button>
         <span className="text-accent font-semibold tracking-wide text-sm">Spatial Data Studio</span>
         <span data-tour={TourAnchors.SessionPicker}>
           <SessionPicker />

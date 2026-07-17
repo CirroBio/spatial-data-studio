@@ -85,14 +85,3 @@ def _update_registry(st: dict, adata, set_name: str, primary: str, color: str | 
             hexc = PALETTE[i % len(PALETTE)]
         cats.append({"label": str(label), "color": hexc, "n_cells": int(counts.get(label, 0))})
     entry["categories"] = cats
-
-
-def promote(session, obs_column: str) -> list:
-    """Promote an existing categorical obs column to a region set (§3.2)."""
-    adata = session.active_table()
-    if obs_column not in adata.obs.columns:
-        raise ValueError(f"obs column '{obs_column}' not found")
-    if not isinstance(adata.obs[obs_column].dtype, pd.CategoricalDtype):
-        adata.obs[obs_column] = adata.obs[obs_column].astype("category")
-    _update_registry(session.app_state, adata, obs_column, primary="", color=None)
-    return [f"obs:{obs_column}"]

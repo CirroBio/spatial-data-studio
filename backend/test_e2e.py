@@ -413,19 +413,10 @@ def run_snapshot_flow(client, sid):
 
 
 def run_regions_flow(client):
-    """Region promote + annotate round-trip and its registry persistence (recent
+    """Region annotate round-trip and its registry persistence (recent
     'Region composition' work)."""
     sid = new_session(client)
     n_obs = n_obs_of(client, sid)
-
-    # promote an existing categorical (leiden) to a region set
-    job = client.post(f"/api/sessions/{sid}/regions/promote", json={"obs_column": "leiden"}).json()
-    assert wait_job(client, sid, job["job_id"])["status"] == "completed"
-    regions = client.get(f"/api/sessions/{sid}").json()["app_state"]["regions"]
-    leiden_set = next(r for r in regions if r["obs_column"] == "leiden")
-    assert leiden_set["categories"] and all("n_cells" in c and "color" in c for c in leiden_set["categories"])
-    assert sum(c["n_cells"] for c in leiden_set["categories"]) == n_obs, "promote cell counts != n_obs"
-    print(f"[ok] promote leiden -> region set with {len(leiden_set['categories'])} categories, cells sum to n_obs")
 
     # annotate: label every cell inside a polygon covering the full spatial extent
     spatial = fetch_arrow(client, sid, "obsm:spatial")
@@ -449,18 +440,19 @@ def run_regions_flow(client):
     assert wait_job(client, sid, sv["job_id"])["status"] == "completed"
     st2 = client.get(f"/api/sessions/{new_session(client, out)}").json()
     cols = {r["obs_column"] for r in st2["app_state"]["regions"]}
-    assert {"leiden", "my_regions"} <= cols, cols
+    assert "my_regions" in cols, cols
     print("[ok] regions registry survives save + reload")
 
 
 def run_shape_annotations_flow(client):
-    """Shape-annotation editor round trip: create a line/box/ellipse, update one's
+    """Shape-annotation editor round trip: create a line/box/text label, update one's
     geometry + style, delete another, and confirm the `sdata.shapes["annotations"]`
     element persists across save + reload (spec: shape annotations editor)."""
     sid = new_session(client)
 
     def stroke(**over):
-        base = {"color": "#3388ff", "width": 2, "dash": "solid", "arrowStart": False, "arrowEnd": False, "z": 0}
+        base = {"color": "#3388ff", "width": 2, "dash": "solid",
+                "arrowStart": False, "arrowEnd": False, "arrowSize": 10, "z": 0}
         return {**base, **over}
 
     def fill(**over):
@@ -477,30 +469,45 @@ def run_shape_annotations_flow(client):
     job = client.post(f"/api/sessions/{sid}/shape-annotations", json=box).json()
     assert wait_job(client, sid, job["job_id"])["status"] == "completed"
 
+    text = {"geometry": {"kind": "text", "position": [3, 7], "text": "Tumor region",
+                         "fontSize": 18, "rotation": 0.5},
+            "stroke": stroke(color="#e05c5c")}
+    job = client.post(f"/api/sessions/{sid}/shape-annotations", json=text).json()
+    assert wait_job(client, sid, job["job_id"])["status"] == "completed"
+
     shapes = client.get(f"/api/sessions/{sid}/shape-annotations").json()["shapes"]
-    assert len(shapes) == 2, shapes
+    assert len(shapes) == 3, shapes
     line_id = next(s["id"] for s in shapes if s["geometry"]["kind"] == "line")
     box_id = next(s["id"] for s in shapes if s["geometry"]["kind"] == "box")
+    text_id = next(s["id"] for s in shapes if s["geometry"]["kind"] == "text")
     assert shapes[0]["stroke"]["z"] == 0 and "fill" not in next(s for s in shapes if s["id"] == line_id)
-    print(f"[ok] created line + box shape annotations ({len(shapes)} total)")
+    text_shape = next(s for s in shapes if s["id"] == text_id)
+    assert text_shape["geometry"]["position"] == [3.0, 7.0], text_shape
+    assert text_shape["geometry"]["text"] == "Tumor region", text_shape
+    assert text_shape["geometry"]["fontSize"] == 18, text_shape
+    assert text_shape["geometry"]["rotation"] == 0.5, text_shape
+    assert "fill" not in text_shape, text_shape  # text has no interior to fill
+    print(f"[ok] created line + box + text shape annotations ({len(shapes)} total)")
 
     # update: move the line's endpoint and restyle it
     updated_line = {"geometry": {"kind": "line", "vertices": [[0, 0], [20, 0]]},
-                    "stroke": stroke(color="#ff0000", width=4, arrowEnd=True, arrowStart=True)}
+                    "stroke": stroke(color="#ff0000", width=4, arrowEnd=True, arrowStart=True, arrowSize=24)}
     job = client.put(f"/api/sessions/{sid}/shape-annotations/{line_id}", json=updated_line).json()
     assert wait_job(client, sid, job["job_id"])["status"] == "completed"
     shapes = client.get(f"/api/sessions/{sid}/shape-annotations").json()["shapes"]
     line_shape = next(s for s in shapes if s["id"] == line_id)
     assert line_shape["geometry"]["vertices"] == [[0.0, 0.0], [20.0, 0.0]], line_shape
     assert line_shape["stroke"]["color"] == "#ff0000" and line_shape["stroke"]["arrowStart"], line_shape
+    assert line_shape["stroke"]["arrowSize"] == 24, line_shape
     print("[ok] updated line geometry + stroke style")
 
-    # delete: the box is removed, the line remains
+    # delete: the box is removed, the line + text remain. Updating the line above
+    # re-appended it (drop + concat), so it now sorts after the untouched text.
     job = client.delete(f"/api/sessions/{sid}/shape-annotations/{box_id}").json()
     assert wait_job(client, sid, job["job_id"])["status"] == "completed"
     shapes = client.get(f"/api/sessions/{sid}/shape-annotations").json()["shapes"]
-    assert [s["id"] for s in shapes] == [line_id], shapes
-    print("[ok] deleted box shape, line shape remains")
+    assert [s["id"] for s in shapes] == [text_id, line_id], shapes
+    print("[ok] deleted box shape, line + text shapes remain")
 
     # persistence: the annotations element survives save + reload
     out = os.path.join(str(config.CHECKPOINT_DIR), "shape_annotations_session.zarr.zip")
@@ -508,7 +515,9 @@ def run_shape_annotations_flow(client):
     assert wait_job(client, sid, sv["job_id"])["status"] == "completed"
     sid2 = new_session(client, out)
     shapes2 = client.get(f"/api/sessions/{sid2}/shape-annotations").json()["shapes"]
-    assert [s["id"] for s in shapes2] == [line_id], shapes2
+    assert [s["id"] for s in shapes2] == [text_id, line_id], shapes2
+    reloaded_text = next(s for s in shapes2 if s["id"] == text_id)
+    assert reloaded_text["geometry"]["text"] == "Tumor region", reloaded_text
     print("[ok] shape-annotations element survives save + reload")
 
 

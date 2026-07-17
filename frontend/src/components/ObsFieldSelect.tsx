@@ -8,7 +8,6 @@ interface Props {
   // When true, render a creatable combobox (type a new name or pick an existing
   // field) instead of a plain dropdown — used where a new obs column is allowed.
   creatable?: boolean;
-  categoricalOnly?: boolean;
   placeholder?: string;
   className?: string;
 }
@@ -21,12 +20,10 @@ export default function ObsFieldSelect({
   value,
   onChange,
   creatable = false,
-  categoricalOnly = false,
   placeholder = 'Select column...',
   className,
 }: Props) {
   const listId = useId();
-  const options = categoricalOnly ? fields.filter((f) => f.kind === 'categorical') : fields;
   const cls = className ?? INPUT_CLASS;
 
   if (creatable) {
@@ -41,7 +38,7 @@ export default function ObsFieldSelect({
           className={`${cls} placeholder:text-muted/40`}
         />
         <datalist id={listId}>
-          {options.map((f) => (
+          {fields.map((f) => (
             <option key={f.name} value={f.name} />
           ))}
         </datalist>
@@ -49,11 +46,11 @@ export default function ObsFieldSelect({
     );
   }
 
-  const known = options.some((f) => f.name === value);
+  const known = fields.some((f) => f.name === value);
   return (
     <select value={value} onChange={(e) => onChange(e.target.value)} className={cls}>
       {!known && <option value="">{placeholder}</option>}
-      {options.map((f) => (
+      {fields.map((f) => (
         <option key={f.name} value={f.name}>{f.name}</option>
       ))}
     </select>

@@ -19,16 +19,21 @@ def list_shape_annotations(session) -> list:
     for shape_id, row in gdf.iterrows():
         params = json.loads(row["params"])
         geometry = {"kind": row["kind"], **params}
+        if row["kind"] == "text":
+            geometry.setdefault("rotation", 0.0)  # labels persisted before rotation existed
         stroke = {
             "color": row["stroke_color"],
             "width": float(row["stroke_width"]),
             "dash": row["stroke_dash"],
             "arrowStart": bool(row["stroke_arrow_start"]),
             "arrowEnd": bool(row["stroke_arrow_end"]),
+            # Default matches defaultStroke() in the frontend zod schema; the
+            # fallback covers shapes persisted before arrow size was editable.
+            "arrowSize": float(row.get("stroke_arrow_size", 10.0)),
             "z": int(row["stroke_z"]),
         }
         shape = {"id": str(shape_id), "geometry": geometry, "stroke": stroke}
-        if row["kind"] != "line":
+        if row["kind"] not in ("line", "text"):
             shape["fill"] = {
                 "enabled": bool(row["fill_enabled"]),
                 "color": row["fill_color"],

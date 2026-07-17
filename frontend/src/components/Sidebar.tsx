@@ -15,6 +15,64 @@ interface Props {
   onNewSession: () => void;
 }
 
+type SidebarTab = 'compute' | 'plots' | 'regions' | 'annotations' | 'subsetting';
+
+// The left-nav tabs render icon-only; the active one expands to icon + label.
+// Icons follow the app's inline-SVG convention (24×24, stroke=currentColor).
+const SIDEBAR_TABS: { id: SidebarTab; label: string; icon: React.ReactNode }[] = [
+  {
+    id: 'compute',
+    label: 'Compute',
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="4" y="4" width="16" height="16" rx="2" />
+        <rect x="9" y="9" width="6" height="6" />
+        <path d="M15 2v2M9 2v2M15 20v2M9 20v2M20 15h2M20 9h2M2 15h2M2 9h2" />
+      </svg>
+    ),
+  },
+  {
+    id: 'plots',
+    label: 'Plots',
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3 3v18h18" />
+        <path d="M18 17V9M13 17V5M8 17v-3" />
+      </svg>
+    ),
+  },
+  {
+    id: 'regions',
+    label: 'Regions',
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="m3 6 6-2 6 2 6-2v14l-6 2-6-2-6 2z" />
+        <path d="M9 4v14M15 6v14" />
+      </svg>
+    ),
+  },
+  {
+    id: 'annotations',
+    label: 'Annotations',
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M8.3 10a.7.7 0 0 1-.626-1.079L11.4 3a.7.7 0 0 1 1.198-.043L16.3 8.9a.7.7 0 0 1-.572 1.1Z" />
+        <rect x="3" y="14" width="7" height="7" rx="1" />
+        <circle cx="17.5" cy="17.5" r="3.5" />
+      </svg>
+    ),
+  },
+  {
+    id: 'subsetting',
+    label: 'Subset',
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+      </svg>
+    ),
+  },
+];
+
 interface HistoryItem {
   id: string;
   namespace: string;
@@ -88,6 +146,7 @@ export default function Sidebar({ onNewSession }: Props) {
     activeSessionId,
     setSessionState,
     pushNotification,
+    leftMenuOpen,
   } = useAppStore();
 
   const [showPicker, setShowPicker] = useState(false);
@@ -158,22 +217,30 @@ export default function Sidebar({ onNewSession }: Props) {
   const effectClass = sidebarTab === 'plots' ? 'plot' : 'compute';
 
   return (
-    <aside className="w-60 shrink-0 bg-surface border-r border-border flex flex-col overflow-hidden">
+    <aside className={`shrink-0 overflow-hidden border-r border-border bg-surface transition-[width] duration-200 ease-in-out ${leftMenuOpen ? 'w-60' : 'w-0'}`}>
+      <div className="w-60 h-full flex flex-col">
       <Tabs.Root
         value={sidebarTab}
-        onValueChange={(v) => setSidebarTab(v as 'compute' | 'plots' | 'regions' | 'annotations' | 'subsetting')}
+        onValueChange={(v) => setSidebarTab(v as SidebarTab)}
         className="flex flex-col flex-1 overflow-hidden"
       >
-        <Tabs.List data-tour={TourAnchors.SidebarTabs} className="grid grid-cols-5 border-b border-border shrink-0">
-          {(['compute', 'plots', 'regions', 'annotations', 'subsetting'] as const).map((tab) => (
-            <Tabs.Trigger
-              key={tab}
-              value={tab}
-              className="py-2 text-[10px] font-medium text-muted data-[state=active]:text-text data-[state=active]:border-b-2 data-[state=active]:border-accent transition-colors capitalize"
-            >
-              {tab === 'annotations' ? 'Annot.' : tab === 'subsetting' ? 'Subset' : tab.charAt(0).toUpperCase() + tab.slice(1)}
-            </Tabs.Trigger>
-          ))}
+        <Tabs.List data-tour={TourAnchors.SidebarTabs} className="flex items-stretch border-b border-border shrink-0">
+          {SIDEBAR_TABS.map(({ id, label, icon }) => {
+            const active = sidebarTab === id;
+            return (
+              <Tabs.Trigger
+                key={id}
+                value={id}
+                title={label}
+                className={`flex items-center justify-center gap-1.5 py-2 min-w-0 text-muted data-[state=active]:text-text data-[state=active]:border-b-2 data-[state=active]:border-accent transition-colors ${
+                  active ? 'flex-1 px-2' : 'px-1.5'
+                }`}
+              >
+                <span className="shrink-0">{icon}</span>
+                {active && <span className="text-[11px] font-medium truncate">{label}</span>}
+              </Tabs.Trigger>
+            );
+          })}
         </Tabs.List>
 
         <Tabs.Content value="compute" className="flex-1 overflow-y-auto">
@@ -257,6 +324,7 @@ export default function Sidebar({ onNewSession }: Props) {
           />
         </div>
       )}
+      </div>
 
       {showPicker && activeSessionId && (
         <FunctionPicker

@@ -386,8 +386,7 @@ class Session:
         """Region labeling: mutate obs/shapes in place under the write lock (§3.1)."""
         from . import regions
         with self.lock.writing():
-            changed = (regions.promote(self, payload["obs_column"])
-                       if payload.get("op") == "promote" else regions.assign(self, payload))
+            changed = regions.assign(self, payload)
         self.saved = False
         self._jobs[job_id]["status"] = "completed"
         diff: dict = {}

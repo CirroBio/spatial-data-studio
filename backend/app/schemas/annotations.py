@@ -19,6 +19,7 @@ class StrokeStyle(BaseModel):
     dash: Literal["solid", "dashed", "dotted"]
     arrowStart: bool
     arrowEnd: bool
+    arrowSize: float = Field(ge=0)
     z: int
 
 
@@ -52,8 +53,18 @@ class EllipseGeometry(BaseModel):
     rotation: float
 
 
+class TextGeometry(BaseModel):
+    kind: Literal["text"]
+    position: Point
+    text: str
+    fontSize: float = Field(ge=1)
+    # Radians about the anchor; defaults to 0 so labels authored before rotation
+    # existed still validate.
+    rotation: float = 0.0
+
+
 ShapeGeometry = Annotated[
-    Union[LineGeometry, BoxGeometry, TrapezoidGeometry, EllipseGeometry],
+    Union[LineGeometry, BoxGeometry, TrapezoidGeometry, EllipseGeometry, TextGeometry],
     Field(discriminator="kind"),
 ]
 
@@ -63,5 +74,5 @@ class ShapeAnnotation(BaseModel):
     label: str | None = None
     geometry: ShapeGeometry
     stroke: StrokeStyle
-    # Absent/ignored for a 'line' geometry — a line has no interior to fill.
+    # Absent/ignored for 'line' and 'text' geometries — neither has an interior to fill.
     fill: FillStyle | None = None

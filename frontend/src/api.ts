@@ -467,18 +467,6 @@ export async function annotateSession(
   return res.json() as Promise<{ job_id: string }>;
 }
 
-export async function promoteObsColumn(
-  id: string,
-  obs_column: string
-): Promise<{ job_id: string }> {
-  const res = await apiFetch(`/api/sessions/${id}/regions/promote`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ obs_column }),
-  });
-  return res.json() as Promise<{ job_id: string }>;
-}
-
 export async function listShapeAnnotations(sessionId: string): Promise<{ shapes: ShapeAnnotation[] }> {
   const res = await apiFetch(`/api/sessions/${sessionId}/shape-annotations`);
   return res.json() as Promise<{ shapes: ShapeAnnotation[] }>;

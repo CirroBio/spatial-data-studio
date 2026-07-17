@@ -11,7 +11,7 @@ const SHAPE_COLORS = [
 ];
 
 const KIND_LABEL: Record<ShapeAnnotation['geometry']['kind'], string> = {
-  line: 'Line', box: 'Box', trapezoid: 'Trapezoid', ellipse: 'Ellipse',
+  line: 'Line', box: 'Box', trapezoid: 'Trapezoid', ellipse: 'Ellipse', text: 'Text',
 };
 
 export default function AnnotationsPanel() {
@@ -55,6 +55,11 @@ export default function AnnotationsPanel() {
     persistShape({ ...selectedShape, fill: { ...fill, ...patch } });
   }
 
+  function patchText(patch: { text?: string; fontSize?: number }) {
+    if (!selectedShape || selectedShape.geometry.kind !== 'text') return;
+    persistShape({ ...selectedShape, geometry: { ...selectedShape.geometry, ...patch } });
+  }
+
   async function handleDelete(id: string) {
     if (!activeSessionId) return;
     removeShapeAnnotationLocal(id);
@@ -88,8 +93,30 @@ export default function AnnotationsPanel() {
             {KIND_LABEL[selectedShape.geometry.kind]} style
           </label>
 
+          {selectedShape.geometry.kind === 'text' && (
+            <div className="flex flex-col gap-1.5">
+              <span className="text-[10px] text-muted/70">Text</span>
+              <input
+                type="text"
+                value={selectedShape.geometry.text}
+                onChange={(e) => patchText({ text: e.target.value })}
+                placeholder="Label text"
+                className="bg-bg border border-border rounded px-1.5 py-0.5 text-xs text-text focus:outline-none focus:border-accent"
+              />
+              <label className="flex items-center gap-2 text-[11px] text-text/80">
+                Font size
+                <input
+                  type="number" min={1} step={1}
+                  value={selectedShape.geometry.fontSize}
+                  onChange={(e) => patchText({ fontSize: Number(e.target.value) })}
+                  className="w-16 bg-bg border border-border rounded px-1.5 py-0.5 text-xs text-text focus:outline-none focus:border-accent"
+                />
+              </label>
+            </div>
+          )}
+
           <div className="flex flex-col gap-1.5">
-            <span className="text-[10px] text-muted/70">Stroke</span>
+            <span className="text-[10px] text-muted/70">{selectedShape.geometry.kind === 'text' ? 'Text color' : 'Stroke'}</span>
             <div className="flex items-center gap-2">
               <input
                 type="color"
@@ -113,40 +140,57 @@ export default function AnnotationsPanel() {
                 ))}
               </div>
             </div>
-            <label className="flex items-center gap-2 text-[11px] text-text/80">
-              Width
-              <input
-                type="number" min={0} step={0.5}
-                value={selectedShape.stroke.width}
-                onChange={(e) => patchStroke({ width: Number(e.target.value) })}
-                className="w-16 bg-bg border border-border rounded px-1.5 py-0.5 text-xs text-text focus:outline-none focus:border-accent"
-              />
-            </label>
-            <label className="flex items-center gap-2 text-[11px] text-text/80">
-              Style
-              <select
-                value={selectedShape.stroke.dash}
-                onChange={(e) => patchStroke({ dash: e.target.value as StrokeStyle['dash'] })}
-                className="flex-1 bg-bg border border-border rounded px-1.5 py-0.5 text-xs text-text focus:outline-none focus:border-accent"
-              >
-                <option value="solid">Solid</option>
-                <option value="dashed">Dashed</option>
-                <option value="dotted">Dotted</option>
-              </select>
-            </label>
+            {selectedShape.geometry.kind !== 'text' && (
+              <>
+                <label className="flex items-center gap-2 text-[11px] text-text/80">
+                  Width
+                  <input
+                    type="number" min={0} step={0.5}
+                    value={selectedShape.stroke.width}
+                    onChange={(e) => patchStroke({ width: Number(e.target.value) })}
+                    className="w-16 bg-bg border border-border rounded px-1.5 py-0.5 text-xs text-text focus:outline-none focus:border-accent"
+                  />
+                </label>
+                <label className="flex items-center gap-2 text-[11px] text-text/80">
+                  Style
+                  <select
+                    value={selectedShape.stroke.dash}
+                    onChange={(e) => patchStroke({ dash: e.target.value as StrokeStyle['dash'] })}
+                    className="flex-1 bg-bg border border-border rounded px-1.5 py-0.5 text-xs text-text focus:outline-none focus:border-accent"
+                  >
+                    <option value="solid">Solid</option>
+                    <option value="dashed">Dashed</option>
+                    <option value="dotted">Dotted</option>
+                  </select>
+                </label>
+              </>
+            )}
             {selectedShape.geometry.kind === 'line' && (
-              <div className="flex gap-3 text-[11px] text-text/80">
-                <label className="flex items-center gap-1.5">
-                  <input type="checkbox" checked={selectedShape.stroke.arrowStart}
-                    onChange={(e) => patchStroke({ arrowStart: e.target.checked })} />
-                  Arrow start
-                </label>
-                <label className="flex items-center gap-1.5">
-                  <input type="checkbox" checked={selectedShape.stroke.arrowEnd}
-                    onChange={(e) => patchStroke({ arrowEnd: e.target.checked })} />
-                  Arrow end
-                </label>
-              </div>
+              <>
+                <div className="flex gap-3 text-[11px] text-text/80">
+                  <label className="flex items-center gap-1.5">
+                    <input type="checkbox" checked={selectedShape.stroke.arrowStart}
+                      onChange={(e) => patchStroke({ arrowStart: e.target.checked })} />
+                    Arrow start
+                  </label>
+                  <label className="flex items-center gap-1.5">
+                    <input type="checkbox" checked={selectedShape.stroke.arrowEnd}
+                      onChange={(e) => patchStroke({ arrowEnd: e.target.checked })} />
+                    Arrow end
+                  </label>
+                </div>
+                {(selectedShape.stroke.arrowStart || selectedShape.stroke.arrowEnd) && (
+                  <label className="flex items-center gap-2 text-[11px] text-text/80">
+                    Arrow size
+                    <input
+                      type="number" min={1} step={1}
+                      value={selectedShape.stroke.arrowSize}
+                      onChange={(e) => patchStroke({ arrowSize: Number(e.target.value) })}
+                      className="w-16 bg-bg border border-border rounded px-1.5 py-0.5 text-xs text-text focus:outline-none focus:border-accent"
+                    />
+                  </label>
+                )}
+              </>
             )}
             <label className="flex items-center gap-2 text-[11px] text-text/80">
               Z-order
@@ -159,7 +203,7 @@ export default function AnnotationsPanel() {
             </label>
           </div>
 
-          {selectedShape.geometry.kind !== 'line' && (
+          {selectedShape.geometry.kind !== 'line' && selectedShape.geometry.kind !== 'text' && (
             <div className="flex flex-col gap-1.5">
               <label className="flex items-center gap-1.5 text-[10px] text-muted/70">
                 <input type="checkbox" checked={selectedShape.fill?.enabled ?? false}
@@ -241,7 +285,9 @@ export default function AnnotationsPanel() {
                     style={{ background: shape.stroke.color }}
                   />
                   <span className="text-[11px] text-text/90 truncate flex-1">
-                    {shape.label || KIND_LABEL[shape.geometry.kind]}
+                    {shape.label
+                      || (shape.geometry.kind === 'text' ? shape.geometry.text : '')
+                      || KIND_LABEL[shape.geometry.kind]}
                   </span>
                 </button>
               </li>

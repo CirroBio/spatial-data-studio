@@ -65,6 +65,13 @@ div[data-lastpass-icon-root] {
   pointer-events: none !important;
 }
 
+/* The native datalist indicator on `<input list>` (creatable comboboxes like the
+   Region set name field) renders as a bright, unstyled dropdown arrow that clashes
+   with the app's plain text inputs. Hide it — typing still surfaces the suggestions. */
+input[list]::-webkit-calendar-picker-indicator {
+  display: none !important;
+}
+
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;

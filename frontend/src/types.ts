@@ -283,7 +283,7 @@ export interface JobStartedEvent {
 export interface JobCompletedEvent {
   session_id: string;
   job_id: string;
-  kind: 'compute' | 'plot' | 'save' | 'subset' | 'annotate' | 'promote' | 'shape_annotate' | 'set_transform';
+  kind: 'compute' | 'plot' | 'save' | 'subset' | 'annotate' | 'shape_annotate' | 'set_transform';
   structural_diff?: Record<string, string[]>;
   data_versions: Record<string, number>;
   plot_id?: string;

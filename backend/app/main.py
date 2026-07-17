@@ -266,7 +266,7 @@ async def cancel_job(sid: str, job_id: str):
 @app.get("/api/sessions/{sid}/jobs/{job_id}")
 async def job_state(sid: str, job_id: str):
     """Poll a job's status. The live frontend learns status over SSE, but "special"
-    jobs (save/subset/annotate/promote/cirro_upload/set_transform) have no
+    jobs (save/subset/annotate/cirro_upload/set_transform) have no
     app_state record, so this is the only way a non-SSE client can await them."""
     status = _session(sid).job_status(job_id)
     if status is None:
@@ -375,13 +375,6 @@ async def annotate(sid: str, body: dict):
     """Label the cells inside the drawn lasso into a region set (a categorical obs
     column), in place (spec §3.1). Body: {polygons, region_set, category, color?}."""
     job_id = _session(sid).enqueue_special("annotate", body)
-    return {"job_id": job_id}
-
-
-@app.post("/api/sessions/{sid}/regions/promote")
-async def promote_region(sid: str, body: dict):
-    """Promote an existing obs categorical to a region set (spec §3.2). Body: {obs_column}."""
-    job_id = _session(sid).enqueue_special("annotate", {"op": "promote", "obs_column": body["obs_column"]})
     return {"job_id": job_id}
 
 

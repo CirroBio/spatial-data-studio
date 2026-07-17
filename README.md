@@ -193,19 +193,24 @@ and point their documentation at a per-method section in
   adapter, and the anchor registry live in `frontend/src/tours/`, and
   `npm run check:tours` fails the build if an anchor loses its element.
 - **Region annotation** (**Regions** tab) — draw a lasso to label cells into a
-  region set (a categorical `obs` column) in place, or promote an existing
-  categorical; region sets flow through every grouping picker automatically.
+  region set (a categorical `obs` column) in place; region sets flow through
+  every grouping picker automatically.
 - **Shape annotations** (**Annotations** tab) — draw and edit lines/arrows,
-  boxes, trapezoids, and ellipses directly on the canvas, each with its own
-  stroke (color/width/dashed-or-dotted/arrowheads/z-order) and fill
+  boxes, trapezoids, ellipses, and text labels directly on the canvas, each with
+  its own stroke (color/width/dashed-or-dotted/arrowheads with adjustable size/z-order) and fill
   (color/alpha/z-order) styling. A shape is created with a drag (line/box/
-  ellipse) or four clicks (trapezoid), then reselected to drag its vertex/
-  center/radius handles, restyle it, or delete it — the toolbar and style
-  panel live in the tab; drawing and editing happen on the canvas. Shapes
-  persist as a `sdata.shapes["annotations"]` GeoDataFrame — geometry is a
+  ellipse), four clicks (trapezoid), or a single click (text label), then
+  reselected to drag its vertex/center/radius handles, spin it with the green
+  rotate handle that floats off the shape's edge, restyle it, or delete it — the
+  toolbar and style panel live in the tab; drawing and editing happen on the
+  canvas. A text label carries its own text content, font size, color, and
+  rotation, and is reselected to move it (anchor handle) or spin it (rotate
+  handle); it has no fill or outline.
+  Shapes persist as a `sdata.shapes["annotations"]` GeoDataFrame — geometry is a
   Polygon per row (a line is stored as a thin rectangle, an ellipse as a
-  64-gon approximation; the exact vertices/center/radii live in a `params`
-  JSON column so re-editing never loses precision) — validated by
+  64-gon approximation, a text label as a small anchor square; the exact
+  vertices/center/radii or text/position/rotation live in a `params` JSON column so
+  re-editing never loses precision) — validated by
   `backend/app/schemas/annotations.py`, mirrored by the frontend's zod schema
   at `frontend/src/schemas/annotations.ts`.
 - **Lasso subset** — draw a region to create a child session (via
@@ -368,7 +373,7 @@ backend/    FastAPI app
                   (Parameter Term Dictionary), introspect.py (Registry)
   app/manifest/   data manifest contributor registry + seed contributors (v3 Part 3)
   app/sessions/   manager, session (queue/worker), adapter (routes to Function.execute), regions,
-                  shape_annotations (arrows/lines/boxes/trapezoids/ellipses -> sdata.shapes["annotations"]),
+                  shape_annotations (arrows/lines/boxes/trapezoids/ellipses/text -> sdata.shapes["annotations"]),
                   appstate, transform (points->global affine)
   app/schemas/    pydantic request-body schemas (annotations.py — shape-annotation editor, hand-kept
                   in sync with frontend/src/schemas/annotations.ts's zod schema)
@@ -603,8 +608,8 @@ split for testing — the multi-sample methods (**Milo differential abundance**,
   `OK N functions M recipes`. Run this before opening a PR (see `CONTRIBUTING.md`).
 - `cd backend && python test_e2e.py` — full in-process round trip (load → compute →
   Arrow → plot → save `.zarr.zip` → reload), asserting app state + computed fields survive.
-  Also covers staged/pending recipe steps + preflight, region promote/annotate and their
-  persistence, the shape-annotation editor (create/update/delete a line/box/ellipse and
+  Also covers staged/pending recipe steps + preflight, region annotate and its
+  persistence, the shape-annotation editor (create/update/delete a line/box/text label and
   its `sdata.shapes["annotations"]` persistence across save + reload), the editable
   points-transform (affine applied to the Arrow fetch, persisted),
   content-hashed checkpoint naming, `data_versions` bumping + plot invalidation/redraw,

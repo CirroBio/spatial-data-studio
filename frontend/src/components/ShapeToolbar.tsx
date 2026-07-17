@@ -6,6 +6,7 @@ const TOOL_LABELS: Record<ShapeKind, string> = {
   box: 'Box',
   trapezoid: 'Trapezoid',
   ellipse: 'Ellipse',
+  text: 'Text',
 };
 
 interface Props {
@@ -51,6 +52,9 @@ export default function ShapeToolbar({ activeShapeTool, setActiveShapeTool, draf
       )}
       {(activeShapeTool === 'box' || activeShapeTool === 'ellipse') && (
         <p className="text-[10px] text-muted/60 leading-snug">Drag on the canvas to size it.</p>
+      )}
+      {activeShapeTool === 'text' && (
+        <p className="text-[10px] text-muted/60 leading-snug">Click on the canvas to place a label, then edit its text below.</p>
       )}
     </div>
   );

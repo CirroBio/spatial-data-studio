@@ -1,6 +1,6 @@
-"""Shape-annotation editor: arrows, lines, boxes, trapezoids, and ellipses drawn
-directly on the canvas, persisted as a `sdata.shapes["annotations"]` GeoDataFrame
-(a queued mutating job, mirroring regions.py's assign/promote).
+"""Shape-annotation editor: arrows, lines, boxes, trapezoids, ellipses, and text
+labels drawn directly on the canvas, persisted as a `sdata.shapes["annotations"]`
+GeoDataFrame (a queued mutating job, mirroring regions.py's assign).
 
 Vertices/centers are stored in the SAME world space the canvas already draws in
 (no further transform), so the element gets an identity "global" transformation.
@@ -26,6 +26,16 @@ from shapely.geometry import LineString, Polygon
 ELEMENT = "annotations"
 _ELLIPSE_SEGMENTS = 64
 _LINE_POLYGON_MIN_WIDTH = 1.0
+# Side length of the placeholder square stored in the `geometry` column for a text
+# label (its anchor point + text live losslessly in `params`); the visible label
+# is drawn by the frontend TextLayer, not from this polygon.
+_TEXT_ANCHOR_SIZE = 1.0
+
+
+def _text_anchor_polygon(position) -> Polygon:
+    x, y = position
+    h = _TEXT_ANCHOR_SIZE / 2
+    return Polygon([(x - h, y - h), (x + h, y - h), (x + h, y + h), (x - h, y + h)])
 
 
 def _ellipse_polygon(center, radius_x: float, radius_y: float, rotation: float) -> Polygon:
@@ -49,6 +59,8 @@ def _geometry_for(geometry: dict, stroke: dict) -> Polygon:
         return _line_polygon(geometry["vertices"], stroke["width"])
     if kind == "ellipse":
         return _ellipse_polygon(geometry["center"], geometry["radiusX"], geometry["radiusY"], geometry["rotation"])
+    if kind == "text":
+        return _text_anchor_polygon(geometry["position"])
     return Polygon(geometry["vertices"])  # box / trapezoid: exact quadrilateral
 
 
@@ -56,6 +68,9 @@ def _params_for(geometry: dict) -> dict:
     if geometry["kind"] == "ellipse":
         return {"center": list(geometry["center"]), "radiusX": geometry["radiusX"],
                 "radiusY": geometry["radiusY"], "rotation": geometry["rotation"]}
+    if geometry["kind"] == "text":
+        return {"position": list(geometry["position"]), "text": geometry["text"],
+                "fontSize": geometry["fontSize"], "rotation": geometry.get("rotation", 0.0)}
     return {"vertices": [list(v) for v in geometry["vertices"]]}
 
 
@@ -70,6 +85,7 @@ def _row(shape: dict) -> dict:
         "stroke_dash": stroke["dash"],
         "stroke_arrow_start": stroke["arrowStart"],
         "stroke_arrow_end": stroke["arrowEnd"],
+        "stroke_arrow_size": stroke["arrowSize"],
         "stroke_z": stroke["z"],
         "fill_enabled": fill.get("enabled", False),
         "fill_color": fill.get("color", "#000000"),

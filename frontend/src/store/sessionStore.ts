@@ -145,6 +145,9 @@ interface AppStore {
   // The collapsible right-hand settings sidebar — toggled from the header hamburger.
   menuOpen: boolean;
   setMenuOpen: (open: boolean) => void;
+  // left navigation sidebar — collapsible to reclaim canvas width
+  leftMenuOpen: boolean;
+  setLeftMenuOpen: (open: boolean) => void;
 
   // Cirro upload
   cirroEnabled: boolean;
@@ -412,6 +415,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   menuOpen: false,
   setMenuOpen: (open) => set({ menuOpen: open }),
+  leftMenuOpen: true,
+  setLeftMenuOpen: (open) => set({ leftMenuOpen: open }),
 
   cirroEnabled: false,
   setCirroEnabled: (on) => set({ cirroEnabled: on }),

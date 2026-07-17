@@ -13,7 +13,7 @@ import { reportError } from '../../lib/errors';
 import TransformEditor from '../TransformEditor';
 import { isSpatialDisplay, type SpatialDisplaySpec, type ImageInfo } from '../../types';
 import type { ShapeAnnotation, ShapeGeometry, ShapeKind } from '../../schemas/annotations';
-import { defaultStroke, defaultFill } from '../../schemas/annotations';
+import { defaultStroke, defaultFill, textGeometryAt } from '../../schemas/annotations';
 import { geometryFromDrag, trapezoidFromClicks, applyHandleDrag } from '../../lib/shapeAnnotations';
 import { useArrowPositions } from './useArrowPositions';
 import { useImageTiles } from './useImageTiles';
@@ -30,7 +30,7 @@ import { LoadingCue, ChannelLegend, CellColorLegend, DrawHint } from './CanvasOv
 
 type Point = [number, number];
 type ShapeDragTarget =
-  | { kind: 'create'; tool: Exclude<ShapeKind, 'trapezoid'>; start: Point }
+  | { kind: 'create'; tool: Exclude<ShapeKind, 'trapezoid' | 'text'>; start: Point }
   | { kind: 'handle'; shapeId: string; handleId: string };
 
 const VIEWS = [new OrthographicView({ id: 'main', flipY: false })];
@@ -82,6 +82,11 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   // local: it changes on every pointer move and only this canvas renders it.
   const [shapeDragTarget, setShapeDragTarget] = useState<ShapeDragTarget | null>(null);
   const [shapeDragPreview, setShapeDragPreview] = useState<ShapeGeometry | null>(null);
+  // Whether the cursor is over an edit handle. Tracked on hover (before any drag
+  // begins) so pan can be disabled just for handle-dragging while background
+  // drags in select mode still pan the plot — the controller reads dragPan at
+  // panstart, so it must already be false by the time the drag gesture starts.
+  const [overHandle, setOverHandle] = useState(false);
 
   // The lasso (click-to-add-vertex ring) interaction is shared by region-labeling
   // and subsetting; the shape-annotation editor (canvasMode === 'shapes') uses a
@@ -89,6 +94,11 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   const lassoMode = canvasMode === 'regions' || canvasMode === 'subset';
   const shapesMode = canvasMode === 'shapes';
   const drawMode = lassoMode || shapesMode;
+  // Pan is suppressed only while actively drawing (a tool armed) or dragging a
+  // handle (or hovering one, about to). With no tool armed and not over a handle,
+  // dragging pans the plot as usual — the Annotations tab being open no longer
+  // blocks panning on its own.
+  const shapeInteracting = shapesMode && (activeShapeTool !== null || overHandle || shapeDragTarget !== null);
 
   const positions = useArrowPositions(coordsTable);
 
@@ -143,7 +153,8 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
       id: crypto.randomUUID(),
       geometry,
       stroke: defaultStroke(),
-      fill: geometry.kind === 'line' ? undefined : defaultFill(),
+      // Line and text have no interior to fill.
+      fill: geometry.kind === 'line' || geometry.kind === 'text' ? undefined : defaultFill(),
     };
     upsertShapeAnnotation(shape); // optimistic — the job.completed refetch reconciles
     createShapeAnnotation(sessionId, shape)
@@ -171,9 +182,14 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
       return;
     }
 
+    if (activeShapeTool === 'text') {
+      commitNewShape(textGeometryAt(pt));
+      return;
+    }
+
     if (!activeShapeTool) {
-      // Select mode: click a shape's fill/stroke to select it, empty space to deselect.
-      const hit = info.layer?.id === 'shape-fill' || info.layer?.id === 'shape-stroke'
+      // Select mode: click a shape's fill/stroke/text to select it, empty space to deselect.
+      const hit = info.layer?.id === 'shape-fill' || info.layer?.id === 'shape-stroke' || info.layer?.id === 'shape-text'
         ? (info.object as ShapeAnnotation | undefined)?.id
         : undefined;
       setSelectedShapeId(hit ?? null);
@@ -184,7 +200,8 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   const handleShapeDragStart = useCallback((info: PickingInfo) => {
     if (!shapesMode || !info.coordinate) return;
     const pt: Point = [info.coordinate[0], info.coordinate[1]];
-    if (activeShapeTool && activeShapeTool !== 'trapezoid') {
+    // Trapezoid and text are click-placed (see handleClick), not drag-created.
+    if (activeShapeTool && activeShapeTool !== 'trapezoid' && activeShapeTool !== 'text') {
       setShapeDragTarget({ kind: 'create', tool: activeShapeTool, start: pt });
       setShapeDragPreview(geometryFromDrag(activeShapeTool, pt, pt));
       return;
@@ -197,6 +214,10 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
       setShapeDragPreview(shape.geometry);
     }
   }, [shapesMode, activeShapeTool, shapeAnnotations, selectedShapeId]);
+
+  const handleHover = useCallback((info: PickingInfo) => {
+    setOverHandle(info.layer?.id === 'shape-handles');
+  }, []);
 
   const handleShapeDrag = useCallback((info: PickingInfo) => {
     if (!shapeDragTarget || !info.coordinate) return;
@@ -422,13 +443,14 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   const shapeOverrides = shapeDragTarget?.kind === 'handle' && shapeDragPreview
     ? { [shapeDragTarget.shapeId]: shapeDragPreview }
     : {};
-  const shapeLayers = buildShapeAnnotationLayers(shapeAnnotations, shapeOverrides);
+  // OrthographicView scale = 2^zoom, so one screen pixel spans 2^-zoom world units.
+  const shapeLayers = buildShapeAnnotationLayers(shapeAnnotations, shapeOverrides, Math.pow(2, -zoom));
 
   if (shapesMode) {
     const selectedShape = shapeAnnotations.find((s) => s.id === selectedShapeId);
     const handleGeometry = shapeDragTarget?.kind === 'handle' ? shapeDragPreview : selectedShape?.geometry;
     if (selectedShape && handleGeometry) {
-      shapeLayers.push(buildShapeHandleLayer(handleGeometry));
+      shapeLayers.push(...buildShapeHandleLayer(handleGeometry, Math.pow(2, -zoom)));
     }
     if (shapeDragTarget?.kind === 'create' && shapeDragPreview) {
       shapeLayers.push(...buildDragPreviewLayers(shapeDragPreview));
@@ -471,12 +493,13 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
           persistDisplay({ ...currentSpec(), viewport: { target: [t[0], t[1]], zoom: v.zoom as number } });
         }}
         layers={[...layers, ...drawLayers, ...shapeLayers]}
-        controller={shapesMode ? { dragPan: false, doubleClickZoom: false } : drawMode ? { doubleClickZoom: false } : true}
+        controller={shapeInteracting ? { dragPan: false, doubleClickZoom: false } : drawMode ? { doubleClickZoom: false } : true}
         onClick={handleClick}
+        onHover={shapesMode ? handleHover : undefined}
         onDragStart={handleShapeDragStart}
         onDrag={handleShapeDrag}
         onDragEnd={handleShapeDragEnd}
-        getCursor={drawMode ? () => 'crosshair' : ({ isDragging }) => (isDragging ? 'grabbing' : 'grab')}
+        getCursor={shapeInteracting && !overHandle ? () => 'crosshair' : lassoMode ? () => 'crosshair' : ({ isDragging }) => (isDragging ? 'grabbing' : 'grab')}
       />
 
       <LoadingCue coordsLoading={coordsLoading} colorLoading={colorLoading} tilesLoading={tilesLoading || polygonsLoading} />

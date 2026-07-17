@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useAppStore } from '../store/sessionStore';
-import { promoteObsColumn, annotateSession } from '../api';
+import { annotateSession } from '../api';
 import { reportError } from '../lib/errors';
 import { resolveRegionSetColumn } from '../lib/regions';
 import { useDrawSelection } from '../hooks/useDrawSelection';
@@ -29,10 +29,7 @@ export default function RegionsPanel() {
 
   const regions: RegionSet[] = sessionState?.app_state.regions ?? [];
   const obsFields = sessionState?.fields.obs ?? [];
-  const categoricalObs = obsFields.filter((f) => f.kind === 'categorical');
 
-  const [promoteColumn, setPromoteColumn] = useState('');
-  const [promoting, setPromoting] = useState(false);
   const [applying, setApplying] = useState(false);
 
   const activeSet = regions.find((r) => r.id === activeRegionSetId) ?? regions[0] ?? null;
@@ -55,19 +52,6 @@ export default function RegionsPanel() {
       reportError('Annotate failed', err);
     } finally {
       setApplying(false);
-    }
-  }
-
-  async function handlePromote() {
-    if (!activeSessionId || !promoteColumn) return;
-    setPromoting(true);
-    try {
-      await promoteObsColumn(activeSessionId, promoteColumn);
-      setPromoteColumn('');
-    } catch (err) {
-      reportError('Promote failed', err);
-    } finally {
-      setPromoting(false);
     }
   }
 
@@ -216,38 +200,16 @@ export default function RegionsPanel() {
         </div>
       )}
 
-      {/* Promote obs categorical to region set */}
-      <div className="px-3 py-2">
-        <label className="text-[10px] text-muted font-mono uppercase tracking-wide block mb-1.5">Promote obs column</label>
-        {categoricalObs.length === 0 ? (
-          <div className="text-[11px] text-muted/60">No categorical obs fields</div>
-        ) : (
-          <div className="flex flex-col gap-1.5">
-            <ObsFieldSelect
-              fields={obsFields}
-              value={promoteColumn}
-              onChange={setPromoteColumn}
-              categoricalOnly
-              placeholder="Select column..."
-            />
-            <button
-              onClick={handlePromote}
-              disabled={promoting || !promoteColumn}
-              className="py-1 text-xs bg-accent/20 hover:bg-accent/30 text-accent rounded disabled:opacity-40 transition-colors"
-            >
-              {promoting ? 'Promoting...' : 'Promote to region set'}
-            </button>
-          </div>
-        )}
-        {isolatedCategory && (
+      {isolatedCategory && (
+        <div className="px-3 py-2">
           <button
             onClick={() => setIsolatedCategory(null)}
-            className="mt-3 w-full py-1 text-[10px] bg-bg border border-border rounded text-muted hover:text-text transition-colors"
+            className="w-full py-1 text-[10px] bg-bg border border-border rounded text-muted hover:text-text transition-colors"
           >
             Clear isolation filter
           </button>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
