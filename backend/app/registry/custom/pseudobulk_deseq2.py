@@ -11,7 +11,6 @@ use (e.g. nhood_enrichment)."""
 from __future__ import annotations
 
 from ..base import CallResult, Function, ParamSpec, capture_log, missing_obs_column, render_plot, run_compute
-from ._vendor import pb_compute, pb_plot
 
 _SAMPLE_PARAM = ParamSpec(
     "sample_key", {"type": "string"}, "obs_categorical", None, required=True,
@@ -116,6 +115,8 @@ key_added
     ]
 
     def execute(self, params: dict, session) -> CallResult:
+        from ._vendor import pb_compute
+
         sample_key = params.get("sample_key")
         condition_key = params.get("condition_key")
         celltype_key = params.get("celltype_key")
@@ -251,6 +252,8 @@ alpha
         def fn(ad):
             import matplotlib.pyplot as plt
             import pandas as pd
+
+            from ._vendor import pb_plot
 
             stored = ad.uns[key_added]["per_celltype"][cell_type]
             df = pd.DataFrame(stored["values"], index=stored["gene"])

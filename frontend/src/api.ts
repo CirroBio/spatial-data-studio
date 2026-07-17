@@ -1,4 +1,7 @@
-import * as arrow from 'apache-arrow';
+// Type-only: the apache-arrow runtime (a large dep) is dynamically imported in
+// the two functions that decode Arrow IPC below, so it stays out of the initial
+// bundle and loads with the canvas that needs it.
+import type { Table } from 'apache-arrow';
 import type {
   FunctionEntry,
   SessionSummary,
@@ -203,10 +206,11 @@ export async function searchVarNames(
   return body.names;
 }
 
-export async function getFieldData(sessionId: string, fieldPath: string): Promise<arrow.Table> {
+export async function getFieldData(sessionId: string, fieldPath: string): Promise<Table> {
   const res = await apiFetch(`/api/sessions/${sessionId}/data/${encodeURIComponent(fieldPath)}`);
   const buffer = await res.arrayBuffer();
-  return arrow.tableFromIPC(buffer);
+  const { tableFromIPC } = await import('apache-arrow');
+  return tableFromIPC(buffer);
 }
 
 // ---- cell-segmentation display ----------------------------------------------
@@ -230,13 +234,14 @@ export async function getShapesGeoArrow(
   element: string,
   bbox: [number, number, number, number],
   limit?: number,
-): Promise<arrow.Table> {
+): Promise<Table> {
   const q = limit !== undefined ? `&limit=${limit}` : '';
   const res = await apiFetch(
     `/api/sessions/${sessionId}/shapes/${encodeURIComponent(element)}/geoarrow?bbox=${bbox.join(',')}${q}`,
   );
   const buffer = await res.arrayBuffer();
-  return arrow.tableFromIPC(buffer);
+  const { tableFromIPC } = await import('apache-arrow');
+  return tableFromIPC(buffer);
 }
 
 // ---- data inspector ---------------------------------------------------------

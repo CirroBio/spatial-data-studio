@@ -8,7 +8,6 @@ from types import SimpleNamespace
 
 from ..base import CallResult, Function, ParamSpec, capture_log, missing_obs_column, render_plot, run_compute, \
     resolve_obsm_key
-from ._vendor import proximity_compute, proximity_plot
 
 _KEY_ADDED_PARAM = ParamSpec(
     "key_added", {"type": "string", "default": "proximity"}, "text", None,
@@ -95,6 +94,8 @@ key_added
             return CallResult(status="failed", error=f"obsm['{e.args[0]}'] does not exist")
 
         def mutate(ad):
+            from ._vendor import proximity_compute
+
             proximity_compute.proximity_adata(
                 ad, cell_type_key, spatial_key=coords, library_key=library_key,
                 n_perm=n_perm, stat=stat, random_state=random_state, key_added=key_added)
@@ -142,6 +143,8 @@ key_added
                 error=f"run 'Proximity / avoidance test' for this key first (uns['{key_added}'] not found)")
 
         def fn(ad):
+            from ._vendor import proximity_plot
+
             data = ad.uns[key_added]
             result = SimpleNamespace(categories=data["categories"], zscore=data["zscore"], pvalue=data["pvalue"])
             return proximity_plot.plot_proximity_heatmap(result)

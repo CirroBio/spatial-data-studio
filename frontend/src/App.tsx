@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { useAppStore } from './store/sessionStore';
 import { getSessions, getFunctions, getCirroStatus, getCirroUploads, getReadyz } from './api';
 import { isSpatialDisplay, isEmbeddingDisplay } from './types';
@@ -9,8 +9,11 @@ import Header from './components/Header';
 import Sidebar from './components/Sidebar';
 import SettingsPanel from './components/SettingsPanel';
 import ResourceStrip from './components/ResourceStrip';
-import SpatialCanvas from './components/canvas/SpatialCanvas';
-import EmbeddingCanvas from './components/canvas/EmbeddingCanvas';
+// deck.gl + geoarrow + apache-arrow ride in with the canvases; code-split them so
+// the landing shell paints without pulling that multi-MB graph (loaded on first
+// session open instead).
+const SpatialCanvas = lazy(() => import('./components/canvas/SpatialCanvas'));
+const EmbeddingCanvas = lazy(() => import('./components/canvas/EmbeddingCanvas'));
 import ComputeDetail from './components/ComputeDetail';
 import PlotDetail from './components/PlotDetail';
 import DataInspector from './components/DataInspector';
@@ -220,7 +223,13 @@ export default function App() {
               ))}
             </div>
           )}
-          {renderMain()}
+          <Suspense fallback={
+            <div className="flex items-center justify-center h-full text-muted">
+              <div className="w-6 h-6 rounded-full border-2 border-border border-t-accent animate-spin" />
+            </div>
+          }>
+            {renderMain()}
+          </Suspense>
         </main>
         <SettingsPanel onNewSession={() => setShowNewSession(true)} />
       </div>

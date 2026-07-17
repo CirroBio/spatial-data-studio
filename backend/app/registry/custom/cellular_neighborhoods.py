@@ -6,7 +6,6 @@ from __future__ import annotations
 import pandas as pd
 
 from ..base import CallResult, Function, ParamSpec, capture_log, missing_obs_column, render_plot, run_compute
-from ._vendor.cn_compute import cellular_neighborhoods_adata
 
 _CLUSTER_METHODS = ["minibatch", "kmeans"]
 
@@ -131,6 +130,8 @@ class CellularNeighborhoods(Function):
             return CallResult(status="failed", error=error)
 
         def mutate(ad):
+            from ._vendor.cn_compute import cellular_neighborhoods_adata
+
             cellular_neighborhoods_adata(
                 ad, cell_type_key,
                 spatial_key="spatial", library_key=library_key,
