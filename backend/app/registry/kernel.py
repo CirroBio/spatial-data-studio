@@ -40,6 +40,61 @@ def _table_reshaped(shape_before, adata) -> bool:
     return shape_before is not None and adata is not None and adata.shape != shape_before
 
 
+# spatialdata keeps each element's coordinate transformations in its `.attrs`, but a
+# dask-backed points DataFrame (e.g. Xenium `transcripts`) drops `.attrs` on pickle —
+# dask carries nothing through its `__reduce__`. So any element that travels back from
+# the compute pool inside a whole-SpatialData `new_object` (the read bootstrap, or a
+# table-reshaping `filter_cells`/`filter_genes`) arrives with no transform, and the next
+# `sdata.write()` raises `KeyError('transform')` in spatialdata's points writer. Snapshot
+# transforms on whichever side still holds them — the parent before the call (for an
+# object it owned and passes down) and the child (for one it created, e.g. the read
+# bootstrap) — and re-apply any that didn't survive the round-trip.
+_SPATIAL_KINDS = ("images", "labels", "points", "shapes")
+
+
+def _iter_spatial(sdata):
+    for kind in _SPATIAL_KINDS:
+        for name, elem in getattr(sdata, kind, {}).items():
+            yield name, elem
+
+
+def _has_transform(elem) -> bool:
+    # get_transformation asserts the element carries a transformation dict; a points
+    # element that lost its .attrs on pickle makes it raise AssertionError.
+    from spatialdata.transformations import get_transformation
+    try:
+        return bool(get_transformation(elem, get_all=True))
+    except (KeyError, ValueError, AssertionError):
+        return False
+
+
+def _capture_transforms(sdata) -> dict:
+    from spatialdata.transformations import get_transformation
+    out = {}
+    for name, elem in _iter_spatial(sdata):
+        if _has_transform(elem):
+            out[name] = get_transformation(elem, get_all=True)
+    return out
+
+
+def _restore_transforms(env: dict, pre: dict | None = None) -> dict:
+    """Parent side: re-apply transforms that a pickled `new_object`'s elements lost.
+    `pre` is the parent's pre-call snapshot (correct for a reshaped object that came
+    *from* the parent, where the transform is stripped on the way into the child);
+    the child's own snapshot covers a freshly-created object (the read bootstrap).
+    The parent snapshot wins where both exist."""
+    from spatialdata.transformations import set_transformation
+    sdata = env.get("new_object")
+    captured = {**(env.pop("element_transforms", None) or {}), **(pre or {})}
+    if sdata is None or not captured:
+        return env
+    for name, elem in _iter_spatial(sdata):
+        saved = captured.get(name)
+        if saved and not _has_transform(elem):
+            set_transformation(elem, dict(saved), set_all=True)
+    return env
+
+
 def _facet_values(adata, sdata, changed: dict) -> dict:
     """Only the changed column/array objects, keyed like `keyset`/`diff` — the
     payload that travels back to the parent."""
@@ -89,17 +144,20 @@ def _child_library_call(library, path, effect_class, injected_order, bound, adat
         log = buf.getvalue()
 
     if effect_class == "read":
-        return {"status": "completed", "log": log, "new_object": ret}
+        return {"status": "completed", "log": log, "new_object": ret,
+                "element_transforms": _capture_transforms(ret)}
     if effect_class == "extract":
         return {"status": "completed", "log": log, "result_value_raw": ret}
 
     # compute
     if _table_reshaped(shape_before, adata) and sdata is not None:
-        return {"status": "completed", "log": log, "new_object": sdata}
+        return {"status": "completed", "log": log, "new_object": sdata,
+                "element_transforms": _capture_transforms(sdata)}
     after = keyset(adata, sdata)
     changed, fields = diff(before, after)
     if ret is not None and not changed and ret.__class__.__name__ in ("AnnData", "SpatialData"):
-        return {"status": "completed", "log": log, "new_object": ret}
+        return {"status": "completed", "log": log, "new_object": ret,
+                "element_transforms": _capture_transforms(ret)}
     return {"status": "completed", "log": log,
             "changed_facets": _facet_values(adata, sdata, changed), "changed_fields": fields}
 
@@ -117,7 +175,8 @@ def _child_mutate(mutate, adata, sdata):
                     "error": short_error(e)}
         log = buf.getvalue()
     if _table_reshaped(shape_before, adata) and sdata is not None:
-        return {"status": "completed", "log": log, "new_object": sdata}
+        return {"status": "completed", "log": log, "new_object": sdata,
+                "element_transforms": _capture_transforms(sdata)}
     after = keyset(adata, sdata)
     changed, fields = diff(before, after)
     return {"status": "completed", "log": log,
@@ -128,14 +187,16 @@ def _child_mutate(mutate, adata, sdata):
 # event loop — concurrent.futures/loky's wait releases the GIL) -------------
 
 def run_library_call(*, library, path, effect_class, injected_order, bound, adata, sdata, image) -> dict:
+    pre = _capture_transforms(sdata) if sdata is not None else {}
     future = compute_pool.executor().submit(
         _child_library_call, library, path, effect_class, injected_order, bound, adata, sdata, image)
-    return future.result()
+    return _restore_transforms(future.result(), pre)
 
 
 def run_mutate(mutate, adata, sdata) -> dict:
+    pre = _capture_transforms(sdata) if sdata is not None else {}
     future = compute_pool.executor().submit(_child_mutate, mutate, adata, sdata)
-    return future.result()
+    return _restore_transforms(future.result(), pre)
 
 
 def run_custom_plot(fn, injected, bound, adata, sdata) -> dict:
