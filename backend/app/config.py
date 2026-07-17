@@ -37,6 +37,12 @@ class Config:
     # else all cores on the machine.
     N_THREADS = int(os.environ.get("SQUIDPY_N_THREADS", os.cpu_count() or 1))
 
+    # Worker processes that run the actual squidpy/scanpy call (registry/kernel.py),
+    # keeping the CPU-bound work off the API process's GIL so unrelated requests
+    # (recipe list, other sessions) stay responsive during a long compute. Small by
+    # design — this is a single-user local tool, not a multi-tenant service.
+    COMPUTE_POOL_WORKERS = int(os.environ.get("SQV_COMPUTE_POOL_WORKERS", "2"))
+
     RESOURCE_HZ = float(os.environ.get("SQV_RESOURCE_HZ", "2"))   # resource sample cadence
     LONG_RUNNING_S = float(os.environ.get("SQV_LONG_RUNNING_S", "120"))  # watchdog threshold
 

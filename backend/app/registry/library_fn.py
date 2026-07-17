@@ -10,17 +10,12 @@ the only path to one (invariant R1).
 """
 from __future__ import annotations
 
-import importlib
 import inspect
-import traceback
 import typing
 
-from .base import (
-    Function, ParamSpec, CallResult,
-    capture_log, keyset, compute_result, render_plot, short_error,
-)
+from .base import Function, ParamSpec, CallResult
 from .dictionary import DICTIONARY
-from . import library_meta
+from . import kernel, library_meta
 
 # Session-held types filled by injection (DESIGN §4.6 step 2), matched on the
 # annotation's string form so we never depend on import identity. Only the FIRST
@@ -57,50 +52,45 @@ class LibraryFunction(Function):
         # archive files is the custom reader, which sets its own input_kind.
         self.input_kind = "folder" if effect_class == "read" else None
 
-    def _callable(self):
-        obj = importlib.import_module(self.library)
-        for part in self.path.split("."):
-            obj = getattr(obj, part)
-        return obj
-
     def execute(self, params: dict, session) -> CallResult:
-        fn = self._callable()
         try:
-            injected = self._inject(session)
             bound = self._bind_and_validate(params, session)
         except Exception as e:
             return CallResult(status="failed", error=str(e), log=str(e))
 
-        before = keyset(session.active_table(), session.sdata) if self.effect_class == "compute" else None
+        injected_order = list(self.injected.values())
+        adata = session.active_table() if session.sdata is not None else None
+        image = session.active_image() if "image" in injected_order else None
 
-        with capture_log() as buf:
-            if self.effect_class == "plot":
-                return render_plot(fn, injected, bound, buf)
-            try:
-                ret = fn(*injected, **bound)
-            except Exception as e:
-                return CallResult(status="failed", log=buf.getvalue() + "\n" + traceback.format_exc(),
-                                  error=short_error(e))
-            log = buf.getvalue()
+        # The call itself (inject/invoke/before-after-diff) runs in a subprocess
+        # (registry/kernel.py) so a long squidpy/scanpy call never holds the API
+        # process's GIL — see kernel.py for why the diff has to travel with it.
+        envelope = kernel.run_library_call(
+            library=self.library, path=self.path, effect_class=self.effect_class,
+            injected_order=injected_order, bound=bound,
+            adata=adata, sdata=session.sdata, image=image,
+        )
+        return self._apply(session, envelope)
 
-        if self.effect_class == "read":
-            return CallResult(status="completed", log=log, new_object=ret)
-        if self.effect_class == "extract":
+    def _apply(self, session, env: dict) -> CallResult:
+        if env["status"] == "failed":
+            return CallResult(status="failed", error=env.get("error"), log=env.get("log", ""))
+        log = env.get("log", "")
+        if env.get("new_object") is not None:
+            return CallResult(status="completed", log=log, new_object=env["new_object"])
+        if "result_value_raw" in env:
             # read-only extraction (sc.get.*): returns a DataFrame, mutates nothing.
+            ret = env["result_value_raw"]
             session.stash_result(self.key, ret)
             return CallResult(status="completed", log=log, result_value=_summarize(ret))
-        return compute_result(session, before, log, ret=ret, result_key=self.key)
-
-    def _inject(self, session) -> list:
-        args = []
-        for _pname, kind in self.injected.items():
-            if kind == "adata":
-                args.append(session.active_table())
-            elif kind == "sdata":
-                args.append(session.sdata)
-            elif kind == "image":
-                args.append(session.active_image())
-        return args
+        facets = env.get("changed_facets", {})
+        kernel.apply_changed_facets(session.active_table(), session.sdata, facets)
+        if self.effect_class == "plot":
+            return CallResult(status=env["status"], log=log,
+                              figure_svg=env.get("figure_svg"), figure_pdf=env.get("figure_pdf"))
+        structural_diff = {facet: sorted(values) for facet, values in facets.items()}
+        return CallResult(status="completed", log=log, structural_diff=structural_diff,
+                          changed_fields=env.get("changed_fields", []))
 
     def _bind_and_validate(self, params: dict, session) -> dict:
         bound = dict(self.pinned)  # pinned policy params first (DESIGN §16, can't be overridden)

@@ -92,6 +92,11 @@ and point their documentation at a per-method section in
   summaries) captured before/after every call; a human-readable diff.
 - **Sessions** — one in-memory `SpatialData` per session, a FIFO worker thread,
   compute/plot jobs, structural-diff–driven refresh, live RAM/CPU resource strip.
+  The actual squidpy/scanpy/custom-function call runs in a subprocess
+  (`backend/app/registry/kernel.py`, `SQV_COMPUTE_POOL_WORKERS`, default 2) so a
+  long compute never holds the API process's GIL — unrelated requests (the
+  recipe list, other sessions) stay responsive while a job runs; only the busy
+  session's own reads wait, via its per-session read/write lock.
 - **Startup splash** — the frontend polls `GET /api/readyz` and shows a full-screen
   splash until the backend finishes importing `squidpy` and building its function
   registry, so a slow cold start doesn't look like an app with nothing to load.

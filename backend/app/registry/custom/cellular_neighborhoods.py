@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from ..base import CallResult, Function, ParamSpec, capture_log, missing_obs_column, render_plot, run_compute
+from ..base import CallResult, Function, ParamSpec, missing_obs_column, run_compute, run_plot
 
 _CLUSTER_METHODS = ["minibatch", "kmeans"]
 
@@ -188,5 +188,4 @@ class CellularNeighborhoodsPlot(Function):
             )
             return plot_summary(result, coords=ad.obsm["spatial"], figsize=(15, 5))
 
-        with capture_log() as buf:
-            return render_plot(fn, [adata], {}, buf)
+        return run_plot(session, fn)

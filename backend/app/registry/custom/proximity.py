@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from ..base import CallResult, Function, ParamSpec, capture_log, missing_obs_column, render_plot, run_compute, \
+from ..base import CallResult, Function, ParamSpec, missing_obs_column, run_compute, run_plot, \
     resolve_obsm_key
 
 _KEY_ADDED_PARAM = ParamSpec(
@@ -149,5 +149,4 @@ key_added
             result = SimpleNamespace(categories=data["categories"], zscore=data["zscore"], pvalue=data["pvalue"])
             return proximity_plot.plot_proximity_heatmap(result)
 
-        with capture_log() as buf:
-            return render_plot(fn, [adata], {}, buf)
+        return run_plot(session, fn)

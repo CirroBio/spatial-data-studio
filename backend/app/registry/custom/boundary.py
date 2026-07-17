@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 
-from ..base import CallResult, Function, ParamSpec, capture_log, missing_obs_column, render_plot, run_compute, \
+from ..base import CallResult, Function, ParamSpec, missing_obs_column, run_compute, run_plot, \
     resolve_obsm_key
 
 _NUMERIC_KWARGS = ("bin_size", "bandwidth", "threshold", "min_area", "radius", "margin_width")
@@ -213,8 +213,7 @@ color_by
             labels = ad.obs[data["cell_type_key"]].values
             return boundary_plot.plot_region_mask(result, coords, labels, color_by=color_by)
 
-        with capture_log() as buf:
-            return render_plot(fn, [adata], {}, buf)
+        return run_plot(session, fn)
 
 
 class InfiltrationProfile(Function):
@@ -355,5 +354,4 @@ profile_key
             margin_width = ad.uns[key_added]["params"].get("margin_width") if key_added in ad.uns else None
             return boundary_plot.plot_infiltration_profile(profile, margin_width=margin_width)
 
-        with capture_log() as buf:
-            return render_plot(fn, [adata], {}, buf)
+        return run_plot(session, fn)

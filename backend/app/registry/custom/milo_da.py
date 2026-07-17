@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..base import (CallResult, Function, ParamSpec, capture_log, missing_obs_column, render_plot,
-                    resolve_obsm_key, run_compute)
+from ..base import (CallResult, Function, ParamSpec, missing_obs_column,
+                    resolve_obsm_key, run_compute, run_plot)
 
 _SAMPLE_PARAM = ParamSpec(
     "sample_key", {"type": "string"}, "obs_categorical", None, required=True,
@@ -204,5 +204,4 @@ alpha
             })()
             return milo_da_plot.plot_summary(result, alpha=alpha)
 
-        with capture_log() as buf:
-            return render_plot(fn, [adata], {}, buf)
+        return run_plot(session, fn)

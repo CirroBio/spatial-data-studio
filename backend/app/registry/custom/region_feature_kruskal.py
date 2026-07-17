@@ -7,7 +7,7 @@ heatmap for one cell type — the same compute-writes/plot-reads split the other
 custom metrics use (e.g. pseudobulk_deseq2). numpy/scipy only; no new deps."""
 from __future__ import annotations
 
-from ..base import CallResult, Function, ParamSpec, capture_log, missing_obs_column, render_plot, run_compute
+from ..base import CallResult, Function, ParamSpec, missing_obs_column, run_compute, run_plot
 from ._docs import custom_doc
 
 _CELLTYPE_PARAM = ParamSpec(
@@ -267,5 +267,4 @@ n_genes
             fig.tight_layout()
             return fig
 
-        with capture_log() as buf:
-            return render_plot(fn, [adata], {}, buf)
+        return run_plot(session, fn)
