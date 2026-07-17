@@ -5,13 +5,11 @@ import type { ScatterPositions } from './useArrowPositions';
 
 const ZOOM_LIMITS = { minZoom: -8, maxZoom: 8 };
 
-// Cell-render regime switch. On an OrthographicView the on-screen size of a cell
-// of characteristic world diameter d is d * 2**zoom px, so a cell reaches
-// CELL_FIELD_SWITCH_PX when zoom = log2(px / d). Below that the field is drawn;
-// above it, polygons/points. ZOOM_HYSTERESIS keeps a ±band around the threshold so
-// the regime doesn't flip-flop while hovering near the switch.
+// Zoom at which a cell of characteristic world diameter d reaches
+// CELL_FIELD_SWITCH_PX on screen (d * 2**zoom px = px ⇒ zoom = log2(px / d)).
+// The snapshot viewer draws its nearest-cell field below this zoom and the point
+// scatter above it.
 export const CELL_FIELD_SWITCH_PX = 6;
-export const ZOOM_HYSTERESIS = 0.5;
 export function cellZoomThreshold(medianNnWorld: number): number {
   return Math.log2(CELL_FIELD_SWITCH_PX / Math.max(medianNnWorld, 1e-9));
 }

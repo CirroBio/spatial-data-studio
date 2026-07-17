@@ -111,22 +111,27 @@ and point their documentation at a per-method section in
   and, when Cirro is configured, the Cirro project list. Warm tasks are
   best-effort — a failure just means the endpoint computes on demand as before.
 - **deck.gl canvas** — binary Arrow scatter colored by any per-cell value over the
-  tissue image; world-unit point sizing. **Cell rendering is display-only in two zoom
-  regimes** (no resegmentation): zoomed out, a distance-capped nearest-cell **field** (a
-  custom deck.gl impostor-cone layer — each cell a world-space disc of radius R = the
-  median nearest-neighbor distance, its fragment shader writing depth so the nearest
-  centroid wins each pixel); zoomed in, the **exact cell-polygon outlines** filled by cell
-  color when the session has boundary polygons (fetched viewport-clipped as GeoArrow),
-  else the point scatter + size slider. The switch is a zoom threshold (`log2(6/d)`,
-  d = median NN distance, with ±0.5 hysteresis). A **Render mode** control
-  (`auto` — field/polygons — vs `points`, the classic scatter) and a **Shape set**
-  selector (which polygon element to outline) sit in the canvas controls; render mode
-  persists on the display state. **Color by** first picks a slot (`obs`, `X`
+  tissue image; world-unit point sizing. The **Cells** layer renders in one of two
+  **Render modes** (no resegmentation), chosen in the canvas controls and persisted
+  on the display state:
+  - **Points** (default) — the classic scatter, visible at every zoom, styled by a
+    **Point size** slider and a **Geometry** picker (circle / square / hexagon glyph,
+    a custom ScatterplotLayer whose fragment shader swaps the coverage test).
+  - **Shapes (zoomed in)** — the exact cell-polygon outlines filled by cell color,
+    fetched viewport-clipped as GeoArrow and offered only when the session has a
+    boundary-polygon element (a **Shape set** selector picks which one). Because a
+    full set of e.g. 1M outlines can't ship to the browser, the backend returns
+    nothing while more cells are in view than it can send, so outlines appear only
+    once zoomed in far enough that the visible set fits — hence the label.
+  (The read-only snapshot viewer additionally draws a zoomed-out nearest-cell density
+  **field** — a deck.gl impostor-cone layer, each cell a world-space disc whose
+  fragment shader writes depth so the nearest centroid wins each pixel.)
+  **Color by** first picks a slot (`obs`, `X`
   gene expression, or a `layer`) and then the column within it: obs columns from a
   dropdown, genes from a type-to-search box backed by
   `GET /api/sessions/{id}/var-names?q=&limit=` (so datasets with tens of thousands of
   genes stay responsive — matches are found server-side, prefix hits first). The chosen
-  value is saved in the session display state. **Show points** and **Show image**
+  value is saved in the session display state. **Show cells** and **Show image**
   checkboxes toggle each layer independently; these toggles and an isolated category are
   saved to the session and restored on reload. The camera (pan/zoom, and the embedding's
   3D orbit) is saved too — a snapshot uses it as its viewport — but loading a session
@@ -202,7 +207,8 @@ and point their documentation at a per-method section in
   its own stroke (color/width/dashed-or-dotted/arrowheads with adjustable size/z-order) and fill
   (color/alpha/z-order) styling. A shape is created with a drag (line/box/
   ellipse), four clicks (trapezoid), or a single click (text label), then
-  reselected to drag its vertex/center/radius handles, spin it with the green
+  reselected to drag its body to reposition the whole shape, drag its
+  vertex/center/radius handles to reshape it, spin it with the green
   rotate handle that floats off the shape's edge, restyle it, or delete it — the
   toolbar and style panel live in the tab; drawing and editing happen on the
   canvas. A text label carries its own text content, font size, color, and
@@ -617,10 +623,11 @@ split for testing — the multi-sample methods (**Milo differential abundance**,
   content-hashed checkpoint naming, `data_versions` bumping + plot invalidation/redraw,
   persisted canvas encoding, the data-inspector endpoints, cross-session isolation, the
   eight spatial/multi-sample custom methods end to end on `xenium_tma.zarr`, and the
-  cell-segmentation display endpoints on `xenium.zarr` (`/cell-field` metadata and the
-  `/shapes/{element}/geoarrow` polygons — bbox subsetting, `limit`, 404 on a
-  missing/non-polygonal element, a checkpoint round-trip, the no-polygon `visium_hne`
-  fallback, and a centroid-alignment gate that transformed polygons overlay `obsm:spatial`).
+  cell-segmentation `/shapes/{element}/geoarrow` polygons on `xenium.zarr` — bbox
+  subsetting, the over-`limit` "zoom in" gate (too many cells in view returns empty,
+  never a partial subset), 404 on a missing/non-polygonal element, a checkpoint
+  round-trip, the no-polygon `visium_hne` case, and a centroid-alignment gate that
+  transformed polygons overlay `obsm:spatial`.
 - `cd backend && python test_cli.py` — offline CLI (`cli.py`) round trip: loads
   `visium_hne.zarr` in zarr mode, runs a compute + plot recipe headlessly, and asserts the
   output `.zarr.zip` and `plots/…/figure.{svg,pdf}` are written and reload with history intact.

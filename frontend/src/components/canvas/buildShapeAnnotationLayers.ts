@@ -69,20 +69,21 @@ export function buildShapeAnnotationLayers(
     extensions: [new PathStyleExtension({ dash: true })],
   }));
 
-  const arrowheads: { id: string; points: Point[] }[] = [];
+  const arrowheads: { id: string; points: Point[]; color: [number, number, number] }[] = [];
   for (const s of resolved) {
     if (s.geometry.kind !== 'line') continue;
     const [v0, v1] = s.geometry.vertices;
     const size = s.stroke.arrowSize * unitsPerPixel;
-    if (s.stroke.arrowEnd) arrowheads.push({ id: `${s.id}-end`, points: arrowheadTriangle(v0, v1, size) });
-    if (s.stroke.arrowStart) arrowheads.push({ id: `${s.id}-start`, points: arrowheadTriangle(v1, v0, size) });
+    const color = hexToRgb(s.stroke.color);
+    if (s.stroke.arrowEnd) arrowheads.push({ id: `${s.id}-end`, points: arrowheadTriangle(v0, v1, size), color });
+    if (s.stroke.arrowStart) arrowheads.push({ id: `${s.id}-start`, points: arrowheadTriangle(v1, v0, size), color });
   }
   if (arrowheads.length) {
     layers.push(new PolygonLayer<typeof arrowheads[number]>({
       id: 'shape-arrowheads',
       data: arrowheads,
       getPolygon: (d) => d.points,
-      getFillColor: [80, 80, 80, 255],
+      getFillColor: (d) => [...d.color, 255],
       filled: true,
       stroked: false,
       pickable: false,

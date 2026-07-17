@@ -31,8 +31,21 @@ test('loads a dataset, runs a compute function, and browses the result', async (
   // -- the spatial canvas renders -------------------------------------------
   await expect(page.locator('canvas').first()).toBeVisible({ timeout: 30_000 });
 
+  // -- Cells: switch the point Geometry and confirm it persists -------------
+  // visium_hne has no boundary polygons, so the Cells layer is Points-only: the
+  // Render-mode selector is hidden and the Geometry picker is shown.
+  const showControls = page.getByRole('button', { name: 'Show controls' });
+  if (await showControls.isVisible().catch(() => false)) await showControls.click();
+  await page.locator('select:has(option[value="hexagon"])').selectOption('square');
+  await expect.poll(async () => {
+    const st = (await (await request.get(`/api/sessions/${sessionId}`)).json()) as {
+      app_state: { displays: { type: string; encoding: { point_marker?: string } }[] };
+    };
+    return st.app_state.displays.find((d) => d.type === 'spatial_canvas')?.encoding.point_marker;
+  }, { timeout: 10_000 }).toBe('square');
+
   // -- run a compute function -----------------------------------------------
-  await page.getByRole('button', { name: '+ Add compute function' }).click();
+  await page.getByRole('button', { name: '+ Run function' }).click();
   const picker = page.getByRole('dialog');
   await picker.getByPlaceholder('Search functions...').fill('spatial_neighbors');
   await picker.getByRole('button', { name: 'spatial_neighbors', exact: false }).first().click();

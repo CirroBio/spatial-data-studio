@@ -1,14 +1,10 @@
 """Cell-segmentation geometry transport (segmentation display).
 
-Two read-only views of a session's cells, both expressed in the SAME world space
-as the coords endpoint (`/data/obsm:spatial`, i.e. `obsm['spatial']` after the
-region element's points->global affine) so the field, the polygons, the point
-scatter, and the image all overlay:
-
-- `cell_field`: characteristic nearest-neighbor spacing + data bounds, for the
-  zoomed-out impostor-cone field layer.
-- `polygons_geoarrow`: viewport-clipped boundary polygons as GeoArrow IPC, for
-  the zoomed-in outline layer.
+`polygons_geoarrow` serves a session's cell-boundary polygons, expressed in the
+SAME world space as the coords endpoint (`/data/obsm:spatial`, i.e.
+`obsm['spatial']` after the region element's points->global affine) so the
+polygons, the point scatter, and the image all overlay: viewport-clipped
+boundary polygons as GeoArrow IPC, for the zoomed-in outline layer.
 
 Alignment note: a boundary shapes element carries its OWN element->global
 transform, but on Xenium that transform is inconsistent with the region element's
@@ -23,77 +19,17 @@ from __future__ import annotations
 
 import io
 import logging
-from collections import OrderedDict
 
 import numpy as np
 import pyarrow as pa
 import pyarrow.ipc as ipc
-from scipy.spatial import cKDTree
 from shapely.affinity import affine_transform
 
-from . import arrow
 from ..sessions import transform
 
 _log = logging.getLogger(__name__)
 
-_FIELD_SAMPLE = 1000
-_FIELD_SEED = 0
 _POLYGON_GEOM_TYPES = {"Polygon", "MultiPolygon"}
-
-# (session_id, coords field, data_version) -> field metadata. Cheap floats; the
-# expensive part is the cKDTree build, paid once per data version and kept.
-_field_cache: "OrderedDict[tuple, dict]" = OrderedDict()
-_FIELD_CACHE_MAX = 64
-
-
-def _world_coords(sdata, table, coords_field: str) -> np.ndarray:
-    """The (N, 2) world-space coordinates the coords endpoint serves for
-    `coords_field` — resolved and transformed exactly as `main.data` does, so the
-    field/polygon geometry lands in the identical space as the plotted points."""
-    batch = arrow.resolve_field(table, coords_field)
-    if coords_field == "obsm:spatial":
-        affine6 = transform.get_affine6(sdata, table)
-        if not transform.is_identity(affine6):
-            batch = arrow.apply_affine_xy(batch, transform.matrix3x3(affine6))
-    d0 = np.asarray(batch.column("d0"), dtype="float64")
-    d1 = np.asarray(batch.column("d1"), dtype="float64")
-    return np.column_stack([d0, d1])
-
-
-def cell_field(sdata, table, coords_field: str, cache_key: tuple) -> dict:
-    """Median nearest-neighbor spacing (the field radius R) + cell count + world
-    bounds. The tree is built over every cell so each measured distance is a true
-    nearest neighbor; a fixed-seed sample of up to `_FIELD_SAMPLE` cells is queried
-    to bound cost. Memoized on `cache_key = (session_id, coords, data_version)`."""
-    cached = _field_cache.get(cache_key)
-    if cached is not None:
-        _field_cache.move_to_end(cache_key)
-        return cached
-
-    xy = _world_coords(sdata, table, coords_field)
-    n = len(xy)
-    if n == 0:
-        raise ValueError(f"no coordinates for field {coords_field}")
-    tree = cKDTree(xy)
-    if n > _FIELD_SAMPLE:
-        rng = np.random.default_rng(_FIELD_SEED)
-        sample = xy[rng.choice(n, size=_FIELD_SAMPLE, replace=False)]
-    else:
-        sample = xy
-    # k=2 and drop the self-match (column 0, distance 0) to get each point's
-    # nearest OTHER point; a lone cell (n==1) has no neighbor.
-    dist, _ = tree.query(sample, k=min(2, n))
-    nn = dist[:, 1] if dist.ndim == 2 and dist.shape[1] > 1 else np.array([0.0])
-    result = {
-        "median_nn_world": float(np.median(nn)),
-        "n_cells": int(n),
-        "bounds": [float(xy[:, 0].min()), float(xy[:, 1].min()),
-                   float(xy[:, 0].max()), float(xy[:, 1].max())],
-    }
-    _field_cache[cache_key] = result
-    if len(_field_cache) > _FIELD_CACHE_MAX:
-        _field_cache.popitem(last=False)
-    return result
 
 
 def is_polygonal(gdf) -> bool:
@@ -159,8 +95,13 @@ def polygons_geoarrow(sdata, table, element: str, bbox, limit: int | None = None
 
     hits = sorted(gdf.sindex.intersection(intrinsic_bbox))
     if limit is not None and len(hits) > limit:
-        _log.info("polygons_geoarrow truncated %s: %d hits > limit %d", element, len(hits), limit)
-        hits = hits[:limit]
+        # Too many cells in view to ship + tessellate in the browser: return
+        # nothing rather than an arbitrary partial subset, so the "Shapes
+        # (zoomed in)" layer stays blank until the user zooms in far enough that
+        # the visible set fits under `limit`. Skips serializing the geometry too.
+        _log.info("polygons_geoarrow over limit for %s: %d hits > limit %d; returning empty",
+                  element, len(hits), limit)
+        hits = []
 
     if not hits:
         table_out = pa.table({"geometry": _empty_geoarrow(gdf),

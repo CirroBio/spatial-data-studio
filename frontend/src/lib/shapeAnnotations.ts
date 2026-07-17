@@ -83,6 +83,17 @@ function centroidOf(points: Point[]): Point {
   return [sx / points.length, sy / points.length];
 }
 
+/** Translate a whole shape by (dx, dy) in world units — moves every vertex, an
+ * ellipse's center, or a text label's anchor while leaving size/rotation intact. */
+export function translateGeometry(geometry: ShapeGeometry, dx: number, dy: number): ShapeGeometry {
+  const shift = (p: Point): Point => [p[0] + dx, p[1] + dy];
+  if (geometry.kind === 'ellipse') return { ...geometry, center: shift(geometry.center) };
+  if (geometry.kind === 'text') return { ...geometry, position: shift(geometry.position) };
+  const moved = (geometry.vertices as Point[]).map(shift);
+  if (geometry.kind === 'line') return { ...geometry, vertices: moved as [Point, Point] };
+  return { ...geometry, vertices: moved as [Point, Point, Point, Point] };
+}
+
 /** Rotation pivot: an ellipse's center, a text label's anchor, or a
  * polygon/line's vertex centroid. */
 export function shapeCentroid(geometry: ShapeGeometry): Point {

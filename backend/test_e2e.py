@@ -785,13 +785,15 @@ def run_isolation_flow(client):
 
 def run_segmentation_flow(client):
     """Cell-boundary display endpoints on xenium.zarr (has shapes/cell_boundaries):
-    the cell-field metadata, the viewport-bbox GeoArrow polygons, and the
-    centroid-alignment gate that a transformed polygon centroid matches its cell's
-    transformed obsm:spatial. Confirms boundary polygons survive the reader +
-    normalize_rasters + a checkpoint round-trip, and that field metadata still works
-    on a session with no polygons (visium_hne)."""
+    the viewport-bbox GeoArrow polygons, the over-limit "zoom in" gate (too many
+    cells in view -> empty, never a partial subset), and the centroid-alignment
+    gate that a transformed polygon centroid matches its cell's transformed
+    obsm:spatial. Confirms boundary polygons survive the reader + normalize_rasters
+    + a checkpoint round-trip, and that a session with no polygons (visium_hne)
+    serves no outlines."""
     import numpy as np
     import geoarrow.pyarrow as ga
+    from scipy.spatial import cKDTree
 
     def poly_names(inv):
         return [s["name"] for s in inv["shapes"] if set(s["geometry"]) & {"Polygon", "MultiPolygon"}]
@@ -804,15 +806,15 @@ def run_segmentation_flow(client):
     assert "cell_boundaries" in poly_names(inv), inv["shapes"]
     print(f"[ok] polygon shapes present after read + normalize_rasters: {poly_names(inv)}")
 
-    # cell-field metadata: positive spacing + sane bounds
-    cf = client.get(f"/api/sessions/{sid}/cell-field").json()
-    minx, miny, maxx, maxy = cf["bounds"]
-    assert cf["n_cells"] > 0 and cf["median_nn_world"] > 0 and minx < maxx and miny < maxy, cf
-    print(f"[ok] cell-field: n={cf['n_cells']} R={cf['median_nn_world']:.3f} bounds={cf['bounds']}")
-
-    # world coords the polygons must overlay (same space the coords endpoint serves)
+    # world coords the polygons must overlay (same space the coords endpoint serves),
+    # and their bounds / nearest-neighbor spacing R (the alignment tolerance).
     spatial = fetch_arrow(client, sid, "obsm:spatial")
     wx, wy = np.asarray(spatial.column("d0")), np.asarray(spatial.column("d1"))
+    minx, miny, maxx, maxy = float(wx.min()), float(wy.min()), float(wx.max()), float(wy.max())
+    xy = np.column_stack([wx, wy])
+    sample = xy if len(xy) <= 1000 else xy[np.random.default_rng(0).choice(len(xy), 1000, replace=False)]
+    R = float(np.median(cKDTree(xy).query(sample, k=2)[0][:, 1]))
+    assert R > 0 and minx < maxx and miny < maxy, (R, minx, maxx, miny, maxy)
 
     covering = f"{minx},{miny},{maxx},{maxy}"
     far = f"{maxx + 1e6},{maxy + 1e6},{maxx + 2e6},{maxy + 2e6}"
@@ -832,18 +834,24 @@ def run_segmentation_flow(client):
     ok = cidx >= 0
     cx, cy = np.asarray(geoms.centroid.x), np.asarray(geoms.centroid.y)
     d = np.hypot(cx[ok] - wx[cidx[ok]], cy[ok] - wy[cidx[ok]])
-    assert ok.all() and np.median(d) < cf["median_nn_world"], \
-        f"misaligned: {ok.sum()}/{len(cidx)} mapped, median offset {np.median(d):.3f} vs R {cf['median_nn_world']:.3f}"
+    assert ok.all() and np.median(d) < R, \
+        f"misaligned: {ok.sum()}/{len(cidx)} mapped, median offset {np.median(d):.3f} vs R {R:.3f}"
     print(f"[ok] centroid-alignment: {ok.sum()}/{len(cidx)} mapped, median offset "
-          f"{np.median(d):.3f} << R {cf['median_nn_world']:.3f}")
+          f"{np.median(d):.3f} << R {R:.3f}")
 
-    # limit caps features; a missing/non-polygonal element 404s
-    rl = client.get(f"/api/sessions/{sid}/shapes/cell_boundaries/geoarrow",
-                    params={"bbox": covering, "limit": 10})
-    assert ipc.open_stream(io.BytesIO(rl.content)).read_all().num_rows == 10
+    # over-limit gate: more cells in view than `limit` -> empty (never a partial
+    # subset); at-or-under the limit -> the full set. A missing element 404s.
+    n = tbl.num_rows
+    over = client.get(f"/api/sessions/{sid}/shapes/cell_boundaries/geoarrow",
+                      params={"bbox": covering, "limit": n - 1})
+    assert ipc.open_stream(io.BytesIO(over.content)).read_all().num_rows == 0, \
+        "over-limit bbox must return nothing, not a truncated subset"
+    fit = client.get(f"/api/sessions/{sid}/shapes/cell_boundaries/geoarrow",
+                     params={"bbox": covering, "limit": n})
+    assert ipc.open_stream(io.BytesIO(fit.content)).read_all().num_rows == n
     assert client.get(f"/api/sessions/{sid}/shapes/nope/geoarrow",
                       params={"bbox": covering}).status_code == 404
-    print("[ok] limit caps features; missing element 404s")
+    print(f"[ok] over-limit gate: limit {n - 1} -> 0, limit {n} -> {n}; missing element 404s")
 
     # checkpoint round-trip: cell_boundaries survives save + reload and still serves
     out = os.path.join(str(config.CHECKPOINT_DIR), "xenium_segmentation.zarr.zip")
@@ -855,14 +863,12 @@ def run_segmentation_flow(client):
     assert ipc.open_stream(io.BytesIO(r2.content)).read_all().num_rows > 0
     print("[ok] cell_boundaries survived save + reload; geoarrow still serves it")
 
-    # a session with no polygons (visium_hne): field metadata works; no polygon element
+    # a session with no polygons (visium_hne): no polygon element; geoarrow 404s
     sid_v = new_session(client)
-    cfv = client.get(f"/api/sessions/{sid_v}/cell-field").json()
-    assert cfv["n_cells"] > 0 and cfv["median_nn_world"] > 0, cfv
     assert not poly_names(client.get(f"/api/sessions/{sid_v}/elements").json())
     assert client.get(f"/api/sessions/{sid_v}/shapes/cell_boundaries/geoarrow",
                       params={"bbox": "0,0,1,1"}).status_code == 404
-    print("[ok] visium_hne: cell-field works; no polygon shapes; geoarrow 404s")
+    print("[ok] visium_hne: no polygon shapes; geoarrow 404s")
 
     print("\nSEGMENTATION E2E CHECKS PASSED")
 

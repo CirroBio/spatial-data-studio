@@ -6,21 +6,20 @@ import type { Layer, OrthographicViewState, PickingInfo } from '@deck.gl/core';
 import { useAppStore } from '../../store/sessionStore';
 import { useArrowField } from '../../hooks/useArrowField';
 import {
-  getImageInfo, putDisplay, saveSnapshot, getCellField, getElements,
-  createShapeAnnotation, updateShapeAnnotation, type CellFieldMeta,
+  getImageInfo, putDisplay, saveSnapshot, getElements,
+  createShapeAnnotation, updateShapeAnnotation,
 } from '../../api';
 import { reportError } from '../../lib/errors';
 import TransformEditor from '../TransformEditor';
 import { isSpatialDisplay, type SpatialDisplaySpec, type ImageInfo } from '../../types';
 import type { ShapeAnnotation, ShapeGeometry, ShapeKind } from '../../schemas/annotations';
 import { defaultStroke, defaultFill, textGeometryAt } from '../../schemas/annotations';
-import { geometryFromDrag, trapezoidFromClicks, applyHandleDrag } from '../../lib/shapeAnnotations';
+import { geometryFromDrag, trapezoidFromClicks, applyHandleDrag, translateGeometry } from '../../lib/shapeAnnotations';
 import { useArrowPositions } from './useArrowPositions';
 import { useImageTiles } from './useImageTiles';
-import { useCanvasViewState, cellZoomThreshold, ZOOM_HYSTERESIS } from './useCanvasViewState';
+import { useCanvasViewState } from './useCanvasViewState';
 import { useSpotColors, arrowToColorSource } from './useSpotColors';
 import { buildSpotLayer } from './buildSpotLayer';
-import { buildCellFieldLayer } from './buildCellFieldLayer';
 import { buildShapeAnnotationLayers, buildShapeHandleLayer, buildDragPreviewLayers } from './buildShapeAnnotationLayers';
 import { usePolygonBbox } from './usePolygonBbox';
 import { useImageChannels } from './useImageChannels';
@@ -31,7 +30,8 @@ import { LoadingCue, ChannelLegend, CellColorLegend, DrawHint } from './CanvasOv
 type Point = [number, number];
 type ShapeDragTarget =
   | { kind: 'create'; tool: Exclude<ShapeKind, 'trapezoid' | 'text'>; start: Point }
-  | { kind: 'handle'; shapeId: string; handleId: string };
+  | { kind: 'handle'; shapeId: string; handleId: string }
+  | { kind: 'translate'; shapeId: string; start: Point; origin: ShapeGeometry };
 
 const VIEWS = [new OrthographicView({ id: 'main', flipY: false })];
 
@@ -82,11 +82,13 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   // local: it changes on every pointer move and only this canvas renders it.
   const [shapeDragTarget, setShapeDragTarget] = useState<ShapeDragTarget | null>(null);
   const [shapeDragPreview, setShapeDragPreview] = useState<ShapeGeometry | null>(null);
-  // Whether the cursor is over an edit handle. Tracked on hover (before any drag
-  // begins) so pan can be disabled just for handle-dragging while background
-  // drags in select mode still pan the plot — the controller reads dragPan at
-  // panstart, so it must already be false by the time the drag gesture starts.
+  // Whether the cursor is over an edit handle, or over the selected shape's body
+  // (which a drag would move). Tracked on hover (before any drag begins) so pan
+  // can be disabled just for that gesture while background drags in select mode
+  // still pan the plot — the controller reads dragPan at panstart, so it must
+  // already be false by the time the drag gesture starts.
   const [overHandle, setOverHandle] = useState(false);
+  const [overBody, setOverBody] = useState(false);
 
   // The lasso (click-to-add-vertex ring) interaction is shared by region-labeling
   // and subsetting; the shape-annotation editor (canvasMode === 'shapes') uses a
@@ -98,7 +100,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   // handle (or hovering one, about to). With no tool armed and not over a handle,
   // dragging pans the plot as usual — the Annotations tab being open no longer
   // blocks panning on its own.
-  const shapeInteracting = shapesMode && (activeShapeTool !== null || overHandle || shapeDragTarget !== null);
+  const shapeInteracting = shapesMode && (activeShapeTool !== null || overHandle || overBody || shapeDragTarget !== null);
 
   const positions = useArrowPositions(coordsTable);
 
@@ -197,6 +199,15 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   }, [lassoMode, shapesMode, activeShapeTool, draftVertices, addDrawVertex, addDraftVertex,
       clearDraft, commitNewShape, setSelectedShapeId]);
 
+  // True when the pick hits the currently selected shape's body (its fill,
+  // stroke, or text glyph) — the surface a drag translates.
+  const isSelectedBody = useCallback((info: PickingInfo) => {
+    if (!selectedShapeId) return false;
+    const id = info.layer?.id;
+    if (id !== 'shape-fill' && id !== 'shape-stroke' && id !== 'shape-text') return false;
+    return (info.object as ShapeAnnotation | undefined)?.id === selectedShapeId;
+  }, [selectedShapeId]);
+
   const handleShapeDragStart = useCallback((info: PickingInfo) => {
     if (!shapesMode || !info.coordinate) return;
     const pt: Point = [info.coordinate[0], info.coordinate[1]];
@@ -206,24 +217,35 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
       setShapeDragPreview(geometryFromDrag(activeShapeTool, pt, pt));
       return;
     }
-    if (!activeShapeTool && info.layer?.id === 'shape-handles' && info.object) {
+    if (activeShapeTool) return;
+    if (info.layer?.id === 'shape-handles' && info.object) {
       const handle = info.object as { id: string };
       const shape = shapeAnnotations.find((s) => s.id === selectedShapeId);
       if (!shape) return;
       setShapeDragTarget({ kind: 'handle', shapeId: shape.id, handleId: handle.id });
       setShapeDragPreview(shape.geometry);
+      return;
     }
-  }, [shapesMode, activeShapeTool, shapeAnnotations, selectedShapeId]);
+    // Dragging the selected shape's body (fill/stroke/text) moves the whole shape.
+    if (isSelectedBody(info)) {
+      const shape = shapeAnnotations.find((s) => s.id === selectedShapeId)!;
+      setShapeDragTarget({ kind: 'translate', shapeId: shape.id, start: pt, origin: shape.geometry });
+      setShapeDragPreview(shape.geometry);
+    }
+  }, [shapesMode, activeShapeTool, shapeAnnotations, selectedShapeId, isSelectedBody]);
 
   const handleHover = useCallback((info: PickingInfo) => {
     setOverHandle(info.layer?.id === 'shape-handles');
-  }, []);
+    setOverBody(isSelectedBody(info));
+  }, [isSelectedBody]);
 
   const handleShapeDrag = useCallback((info: PickingInfo) => {
     if (!shapeDragTarget || !info.coordinate) return;
     const pt: Point = [info.coordinate[0], info.coordinate[1]];
     if (shapeDragTarget.kind === 'create') {
       setShapeDragPreview(geometryFromDrag(shapeDragTarget.tool, shapeDragTarget.start, pt));
+    } else if (shapeDragTarget.kind === 'translate') {
+      setShapeDragPreview(translateGeometry(shapeDragTarget.origin, pt[0] - shapeDragTarget.start[0], pt[1] - shapeDragTarget.start[1]));
     } else {
       setShapeDragPreview((prev) => (prev ? applyHandleDrag(prev, shapeDragTarget.handleId, pt) : prev));
     }
@@ -276,22 +298,14 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
     show: showImage,
   });
 
-  // Cell-field metadata (R = median NN distance) — fetched once per session/coords/
-  // version. R sizes the field discs and sets the field<->detail zoom threshold.
-  const renderMode = display.encoding.render_mode ?? 'auto';
-  const [cellField, setCellField] = useState<CellFieldMeta | null>(null);
-  useEffect(() => {
-    setCellField(null);
-    if (!sessionId || !coordsPath) return;
-    let stale = false;
-    getCellField(sessionId, coordsPath)
-      .then((m) => { if (!stale) setCellField(m); })
-      .catch(() => { if (!stale) setCellField(null); });  // no field metadata → fall back to points
-    return () => { stale = true; };
-  }, [sessionId, coordsPath, coordsVersion]);
+  // How the Cells layer renders. 'shapes' draws viewport-culled outlines; anything
+  // else (or a stale 'auto' from an older session) is the point scatter.
+  const renderMode: 'shapes' | 'points' =
+    display.encoding.render_mode === 'shapes' ? 'shapes' : 'points';
+  const marker = display.encoding.point_marker ?? 'circle';
 
   // Polygon shape sets available for this session (elements inventory filtered to
-  // polygonal geom types). Empty → the whole polygon path stays dormant.
+  // polygonal geom types). Empty → the whole shapes path stays dormant.
   const [polygonElements, setPolygonElements] = useState<string[]>([]);
   useEffect(() => {
     setPolygonElements([]);
@@ -320,20 +334,10 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
 
   const zoom = viewState ? (Array.isArray(viewState.zoom) ? viewState.zoom[0] : viewState.zoom) ?? 0 : 0;
 
-  // Field <-> detail regime with hysteresis, so hovering near the threshold does
-  // not flip-flop. Only meaningful in 'auto' mode; 'points' pins to the scatter.
-  const [regime, setRegime] = useState<'field' | 'detail'>('field');
-  useEffect(() => {
-    if (renderMode !== 'auto' || !cellField) return;
-    const th = cellZoomThreshold(cellField.median_nn_world);
-    setRegime((prev) => {
-      if (prev === 'field' && zoom > th + ZOOM_HYSTERESIS) return 'detail';
-      if (prev === 'detail' && zoom < th - ZOOM_HYSTERESIS) return 'field';
-      return prev;
-    });
-  }, [zoom, cellField, renderMode]);
-
-  const polygonsActive = renderMode === 'auto' && regime === 'detail' && shapesElement !== null && showPoints;
+  // Shapes mode needs a polygon element; the outlines are viewport-culled and the
+  // backend serves nothing when the viewport holds more than it can ship, so the
+  // layer is simply empty until the user zooms in far enough ("Shapes (zoomed in)").
+  const outlineMode = renderMode === 'shapes' && shapesElement !== null;
   const { layer: polygonLayer, loading: polygonsLoading } = usePolygonBbox({
     sessionId,
     element: shapesElement,
@@ -342,41 +346,27 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
     size: canvasSize,
     colors,
     opacity: display.encoding.opacity,
-    enabled: polygonsActive,
+    enabled: outlineMode && showPoints,
   });
 
   const layers = useMemo(() => {
     const result: Layer[] = [...imageLayers];
 
     if (showPoints && positions && colors) {
-      // 'points' mode, or 'auto' before the field metadata arrives, or the
-      // zoomed-in fallback when no polygon set is available: the classic scatter.
-      const haveField = renderMode === 'auto' && cellField !== null;
-      const useField = haveField && regime === 'field';
-      const usePolygons = polygonsActive && polygonLayer !== null;
-      // Just after crossing into the detail regime the polygons are still fetching
-      // (polygonsActive but no layer yet); keep the field up until they arrive so
-      // the switch is field -> polygons, never field -> points -> polygons.
-      const fieldWhilePolygonsLoad = polygonsActive && polygonLayer === null && haveField;
-
-      if (useField || fieldWhilePolygonsLoad) {
-        result.push(buildCellFieldLayer(positions, colors, {
-          radius: cellField.median_nn_world,
-          opacity: display.encoding.opacity,
-        }));
-      } else if (usePolygons) {
-        result.push(polygonLayer);
+      if (outlineMode) {
+        if (polygonLayer) result.push(polygonLayer);  // blank until zoomed in enough
       } else {
         result.push(buildSpotLayer(positions, colors, {
           pointSize: display.encoding.point_size,
           opacity: display.encoding.opacity,
+          marker,
         }));
       }
     }
 
     return result;
-  }, [imageLayers, positions, colors, showPoints, renderMode, cellField, regime,
-      polygonsActive, polygonLayer, display.encoding.point_size, display.encoding.opacity]);
+  }, [imageLayers, positions, colors, showPoints, outlineMode, polygonLayer,
+      display.encoding.point_size, display.encoding.opacity, marker]);
 
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -408,8 +398,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
     : [124, 108, 246] as [number, number, number]; // accent purple for subset
 
   // Selection graphics are UI overlays that must always be visible: 'always' depth
-  // compare so they aren't occluded by the cell-field layer, which writes a depth
-  // below the z = 0 plane to resolve nearest-cell fill.
+  // compare so they aren't occluded by any cell layer that writes depth.
   const OVERLAY_PARAMS = { depthCompare: 'always' as const, depthWriteEnabled: false };
   const drawLayers: Layer[] = [];
   if (lassoMode) {
@@ -440,7 +429,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   // Shape annotations render whenever they exist, independent of the active tab;
   // the drag-in-progress override keeps the persisted-shape layer showing the
   // live position instead of stale data while a handle is being dragged.
-  const shapeOverrides = shapeDragTarget?.kind === 'handle' && shapeDragPreview
+  const shapeOverrides = (shapeDragTarget?.kind === 'handle' || shapeDragTarget?.kind === 'translate') && shapeDragPreview
     ? { [shapeDragTarget.shapeId]: shapeDragPreview }
     : {};
   // OrthographicView scale = 2^zoom, so one screen pixel spans 2^-zoom world units.
@@ -448,7 +437,8 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
 
   if (shapesMode) {
     const selectedShape = shapeAnnotations.find((s) => s.id === selectedShapeId);
-    const handleGeometry = shapeDragTarget?.kind === 'handle' ? shapeDragPreview : selectedShape?.geometry;
+    const handleGeometry = (shapeDragTarget?.kind === 'handle' || shapeDragTarget?.kind === 'translate')
+      ? shapeDragPreview : selectedShape?.geometry;
     if (selectedShape && handleGeometry) {
       shapeLayers.push(...buildShapeHandleLayer(handleGeometry, Math.pow(2, -zoom)));
     }
@@ -499,7 +489,12 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
         onDragStart={handleShapeDragStart}
         onDrag={handleShapeDrag}
         onDragEnd={handleShapeDragEnd}
-        getCursor={shapeInteracting && !overHandle ? () => 'crosshair' : lassoMode ? () => 'crosshair' : ({ isDragging }) => (isDragging ? 'grabbing' : 'grab')}
+        getCursor={
+          overBody || shapeDragTarget?.kind === 'translate' ? () => 'move'
+          : shapeInteracting && !overHandle ? () => 'crosshair'
+          : lassoMode ? () => 'crosshair'
+          : ({ isDragging }) => (isDragging ? 'grabbing' : 'grab')
+        }
       />
 
       <LoadingCue coordsLoading={coordsLoading} colorLoading={colorLoading} tilesLoading={tilesLoading || polygonsLoading} />

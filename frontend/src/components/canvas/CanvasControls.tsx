@@ -1,7 +1,7 @@
 import ColorBySelect from './ColorBySelect';
 import CanvasSettingsShell from './CanvasSettingsShell';
 import LegendControls from './LegendControls';
-import PointStyleControls from './PointStyleControls';
+import RangeField from './RangeField';
 import type { SpatialDisplaySpec, ObsField } from '../../types';
 import { CHANNEL_COLORS } from './colorUtils';
 import type { Channel } from './useImageChannels';
@@ -20,8 +20,8 @@ interface CanvasControlsProps {
   setShowImage: (v: boolean) => void;
   showLegend: boolean;
   setShowLegend: (v: boolean) => void;
-  renderMode: 'auto' | 'points';
-  setRenderMode: (v: 'auto' | 'points') => void;
+  renderMode: 'shapes' | 'points';
+  setRenderMode: (v: 'shapes' | 'points') => void;
   shapeSets: string[];
   shapesElement: string | null;
   setShapesElement: (v: string) => void;
@@ -63,6 +63,9 @@ export default function CanvasControls({
   onFit,
   onEditTransform,
 }: CanvasControlsProps) {
+  // Shapes needs a polygon element; with none available the Cells layer can only
+  // be Points, regardless of any persisted render_mode.
+  const mode = shapeSets.length > 0 ? renderMode : 'points';
   return (
     <CanvasSettingsShell collapsed={panelCollapsed} onToggleCollapsed={setPanelCollapsed}>
       <div className="flex flex-col gap-1">
@@ -74,7 +77,7 @@ export default function CanvasControls({
             onChange={(e) => setShowPoints(e.target.checked)}
             className="accent-accent"
           />
-          Show points
+          Show cells
         </label>
         {display.encoding.image_layer && (
           <label className="flex items-center gap-2 text-xs text-text cursor-pointer">
@@ -90,35 +93,57 @@ export default function CanvasControls({
       </div>
 
       <div className="flex flex-col gap-1">
-        <label className="text-[10px] text-muted font-mono uppercase tracking-wide">Points</label>
+        <label className="text-[10px] text-muted font-mono uppercase tracking-wide">Cells</label>
 
-        <div className="flex flex-col gap-1">
-          <label className="text-[10px] text-muted font-mono uppercase tracking-wide">Render mode</label>
-          <select
-            value={renderMode}
-            onChange={(e) => setRenderMode(e.target.value as 'auto' | 'points')}
-            className="bg-bg border border-border rounded px-1 py-0.5 text-xs text-text focus:outline-none focus:border-accent"
-            title="Auto draws a nearest-cell field zoomed out and polygons/points zoomed in; Points always draws the classic scatter with the size slider."
-          >
-            <option value="auto">Auto (field / polygons)</option>
-            <option value="points">Points</option>
-          </select>
-        </div>
+        {/* Shapes is only offered when polygon element(s) exist; otherwise Points is
+            the only mode, so the selector is hidden and the points controls show. */}
+        {shapeSets.length > 0 && (
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] text-muted font-mono uppercase tracking-wide">Render mode</label>
+            <select
+              value={mode}
+              onChange={(e) => setRenderMode(e.target.value as 'shapes' | 'points')}
+              className="bg-bg border border-border rounded px-1 py-0.5 text-xs text-text focus:outline-none focus:border-accent"
+              title="Shapes draws cell-boundary outlines (visible once zoomed in far enough); Points draws the scatter at every zoom."
+            >
+              <option value="shapes">Shapes (zoomed in)</option>
+              <option value="points">Points</option>
+            </select>
+          </div>
+        )}
 
-        {renderMode === 'auto' && shapeSets.length > 0 && (
+        {mode === 'shapes' ? (
           <div className="flex flex-col gap-1">
             <label className="text-[10px] text-muted font-mono uppercase tracking-wide">Shape set</label>
             <select
               value={shapesElement ?? ''}
               onChange={(e) => setShapesElement(e.target.value)}
               className="bg-bg border border-border rounded px-1 py-0.5 text-xs text-text focus:outline-none focus:border-accent"
-              title="Which polygon element to draw when zoomed in."
+              title="Which polygon element to draw as cell outlines."
             >
               {shapeSets.map((s) => (
                 <option key={s} value={s}>{s}</option>
               ))}
             </select>
           </div>
+        ) : (
+          <>
+            <RangeField label="Point size" value={display.encoding.point_size} min={0.1} max={20} step={0.1}
+              onChange={(v) => updateEncoding({ point_size: v })} />
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] text-muted font-mono uppercase tracking-wide">Geometry</label>
+              <select
+                value={display.encoding.point_marker ?? 'circle'}
+                onChange={(e) => updateEncoding({ point_marker: e.target.value as 'circle' | 'square' | 'hexagon' })}
+                className="bg-bg border border-border rounded px-1 py-0.5 text-xs text-text focus:outline-none focus:border-accent"
+                title="Point glyph shape."
+              >
+                <option value="circle">Circle</option>
+                <option value="square">Square</option>
+                <option value="hexagon">Hexagon</option>
+              </select>
+            </div>
+          </>
         )}
 
         <div className="flex flex-col gap-1">
@@ -139,11 +164,8 @@ export default function CanvasControls({
           onChange={updateEncoding}
         />
 
-        <PointStyleControls
-          pointSize={display.encoding.point_size}
-          opacity={display.encoding.opacity}
-          onChange={updateEncoding}
-        />
+        <RangeField label="Opacity" value={display.encoding.opacity} min={0.1} max={1} step={0.05} digits={2}
+          onChange={(v) => updateEncoding({ opacity: v })} />
       </div>
 
       {display.encoding.image_layer && showImage && channels.length > 0 && (

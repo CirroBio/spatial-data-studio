@@ -106,6 +106,7 @@ class SessionManager:
             "id": str(uuid.uuid4()), "type": "spatial_canvas",
             "encoding": {"coords": coords, "color_by": color,
                          "image_layer": images[0] if images else None, "shapes_layer": None,
+                         "render_mode": "points", "point_marker": "circle",
                          "point_size": 4, "opacity": 0.85, "colormap": "viridis",
                          "legend_visible": True, "legend_title": ""},
             "viewport": None,

@@ -8,7 +8,10 @@ import type { GeoArrowSolidPolygonLayerProps } from '@geoarrow/deck.gl-layers';
 import { getShapesGeoArrow } from '../../api';
 
 // Cap features per viewport request so the main-thread earcut triangulation can't
-// stall on a pathological bbox; the backend logs when it truncates.
+// stall on a pathological bbox. The backend returns an EMPTY table when the
+// viewport holds more than this — so "Shapes (zoomed in)" stays blank until the
+// user zooms in far enough that the visible set fits, rather than showing a
+// partial subset.
 const POLYGON_LIMIT = 20000;
 // Debounce viewport moves before firing a fetch, and pad the fetched bbox past the
 // viewport so a small pan reuses the cached table instead of refetching.
@@ -39,7 +42,7 @@ function getTable(key: string, sessionId: string, element: string, bbox: Bbox, o
         if (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value as string);
         onLoad();
       })
-      .catch(() => { pending.delete(key); });  // transient/404 → the field/points fallback still renders
+      .catch(() => { pending.delete(key); });  // transient/404 → the cells layer just stays blank
   }
   return null;
 }
@@ -86,14 +89,14 @@ interface Params {
   size: { width: number; height: number } | null;
   colors: Uint8Array | null;
   opacity: number;
-  enabled: boolean;  // zoomed in past the threshold AND a polygon element is available
+  enabled: boolean;  // shapes render mode active AND a polygon element is available
 }
 
 // Fetches the cell polygons intersecting the current viewport (debounced,
 // LRU-cached, versioned by data_version) and returns a GeoArrowSolidPolygonLayer
 // filled by each cell's mapped color. Mirrors useImageTiles: a module cache + a
-// bump reducer so a settled fetch re-renders. No polygon element / not zoomed in →
-// { layer: null }, so the session-without-polygons path is a no-op.
+// bump reducer so a settled fetch re-renders. Not enabled (points mode) / no
+// polygon element → { layer: null }, so the points path is a no-op.
 export function usePolygonBbox(
   { sessionId, element, version, viewState, size, colors, opacity, enabled }: Params,
 ): { layer: Layer | null; loading: boolean } {
@@ -101,9 +104,9 @@ export function usePolygonBbox(
   const [settled, setSettled] = useState<Bbox | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // The last successfully built layer, kept on screen while the next viewport's
-  // polygons load so the canvas never flips back to the point scatter mid-pan
-  // (the flicker). Dropped when the geometry identity (session/element/version)
-  // changes, since stale geometry from a different dataset must not linger.
+  // polygons load so the outlines don't blank out mid-pan. Dropped when the
+  // geometry identity (session/element/version) changes, since stale geometry
+  // from a different dataset must not linger.
   const lastLayer = useRef<Layer | null>(null);
   const lastIdentity = useRef<string>('');
 

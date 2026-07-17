@@ -684,26 +684,6 @@ async def data(sid: str, field_path: str):
     return Response(content=payload, media_type="application/vnd.apache.arrow.stream")
 
 
-@app.get("/api/sessions/{sid}/cell-field")
-async def cell_field(sid: str, coords: str = "obsm:spatial"):
-    """Field-layer metadata for the segmentation display: the median
-    nearest-neighbor spacing (the field radius R), cell count, and world bounds of
-    `coords`, in the same world space as `/data/{coords}`. Memoized per
-    (session, coords, data_version)."""
-    sess = _session(sid)
-
-    def _build():
-        from .transport import geometry
-        dv = sess.app_state.get("data_versions", {}).get(coords, 0)
-        return geometry.cell_field(sess.sdata, sess.active_table(), coords,
-                                   cache_key=(sess.id, coords, dv))
-
-    try:
-        return await _read_locked(sess, _build)
-    except (KeyError, ValueError, RuntimeError) as e:
-        raise HTTPException(404, str(e))
-
-
 @app.get("/api/sessions/{sid}/shapes/{element}/geoarrow")
 async def shapes_geoarrow(sid: str, element: str, bbox: str, limit: int | None = None):
     """Viewport-clipped boundary polygons of a shapes element as GeoArrow IPC

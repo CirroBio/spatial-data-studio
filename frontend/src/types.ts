@@ -121,14 +121,16 @@ export interface DisplayEncoding {
   channels?: Record<string, ChannelState>;  // per-channel on/off + rename (v3 Part 10)
   legend_visible?: boolean;  // cell-color legend (colorbar / category swatches); defaults on
   legend_title?: string;     // overrides the default title (color_by column, sans "obs:")
-  show_points?: boolean;     // points-layer visibility; defaults on
+  show_points?: boolean;     // cells-layer visibility; defaults on
   show_image?: boolean;      // image-layer visibility; defaults to (image_layer != null)
   show_channel_legend?: boolean;  // image channel legend visibility; defaults on
   isolated_category?: string | null;  // isolate one category in the color-by legend (dims the rest)
-  // Cell rendering regime. 'auto' (default): a nearest-cell field when zoomed out,
-  // polygon outlines (if a shapes element is available) or the point scatter when
-  // zoomed in. 'points': always the classic point scatter with the size slider.
-  render_mode?: 'auto' | 'points';
+  // How the Cells layer renders. 'points' (default): the point scatter, styled by
+  // `point_size` + `point_marker`, visible at every zoom. 'shapes': cell-boundary
+  // outlines from `shapes_layer`, viewport-culled so they only appear once zoomed
+  // in far enough that the visible set fits (hence "Shapes (zoomed in)").
+  render_mode?: 'shapes' | 'points';
+  point_marker?: 'circle' | 'square' | 'hexagon';  // point glyph shape; defaults to circle
 }
 
 export interface Viewport {
