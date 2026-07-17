@@ -168,7 +168,7 @@ sdata.attrs["app_state"] = {
                     "opacity": 0.8, "channels": [ /* per-index visible/name/color */ ],
                     "show_points": true, "show_image": true,       // layer-visibility toggles
                     "show_channel_legend": true,
-                    "render_mode": "auto",                          // cell-render regime (§9.10): auto | points
+                    "render_mode": "points",                        // zoomed-in cell tier (§9.10): points | shapes
                     "isolated_category": "Tumor" },                 // dim all but this category
       "viewport": { "target": [x,y], "zoom": z } }   // persisted on pan/zoom (embedding adds rotationX/rotationOrbit in 3D)
   ],
@@ -607,7 +607,7 @@ library calls but with a signature **defined by the application**:
 | `point_size` | number (world units) | — |
 | `opacity` | number (0–1) | — |
 | `channels` | per-index list | image channel visibility / name / color |
-| `render_mode` | `auto` \| `points` | cell-render regime (§9.10); `auto` is default |
+| `render_mode` | `points` \| `shapes` | zoomed-in cell tier (§9.10); `points` is default |
 
 On load, default specs are generated from the object's structure. **Color by** first
 picks a slot (`obs`, `X` gene expression, or a `layer`) then the column within it:
@@ -736,34 +736,39 @@ structural diff). The view never silently shows data that no longer matches the 
 
 ### 9.10 Cell-segmentation display (display only)
 
-Cells render in two zoom regimes rather than as a single fixed-size scatter. This is a
-**display** of existing segmentation — it never resegments or recomputes boundaries.
+Cells render in zoom-dependent tiers rather than as a single fixed-size scatter. This is a
+**display** of existing segmentation — it never resegments or recomputes boundaries. A
+**Render mode** control (`points` — the classic scatter — vs `shapes` — exact outlines)
+persists on the display encoding (`render_mode`) and governs the *zoomed-in* tier; the
+zoomed-out tier is the nearest-cell field in both modes.
 
-- **Zoomed out — nearest-cell field.** A custom deck.gl impostor-cone layer
+- **Zoomed out — nearest-cell field.** A custom deck.gl impostor layer
   (`frontend/src/components/canvas/buildCellFieldLayer.ts`) draws each cell as a
-  world-space disc of radius R = the median nearest-neighbor distance. A `LayerExtension`
-  injects one line into the `ScatterplotLayer` fragment shader that writes `gl_FragDepth`
-  from the fragment's distance to its disc center, so with the depth test on the nearest
-  centroid wins each pixel — a distance-capped nearest-cell tessellation in one pass. R
-  and the data bounds come from `GET /api/sessions/{id}/cell-field`.
-- **Zoomed in — exact polygon outlines.** When the session has boundary polygons, cells
-  draw as their real outlines filled by the per-cell color, from a
-  `GeoArrowSolidPolygonLayer` fed by viewport-clipped GeoArrow fetched from `GET
+  world-space disc of radius R. A `LayerExtension` injects one line into the
+  `ScatterplotLayer` fragment shader that writes `gl_FragDepth` from the fragment's
+  distance to its disc center, so with the depth test on the nearest centroid wins each
+  pixel — a nearest-cell tessellation in one pass, in which adjacent same-color cells read
+  as one contiguous color region with no geometry shipped. R is a client-side estimate of
+  the mean inter-cell spacing (`estimateFieldRadius` = √(bbox_area / n)); there is no
+  backend endpoint for it. Positions and colors are the same binary attributes the point
+  scatter uses, so a recolor is instant.
+- **Zoomed in — exact polygon outlines (`render_mode: shapes`).** When the session has
+  boundary polygons, cells draw as their real outlines filled by the per-cell color, from
+  a `GeoArrowSolidPolygonLayer` fed by viewport-clipped GeoArrow fetched from `GET
   /api/sessions/{id}/shapes/{element}/geoarrow?bbox=…` (`usePolygonBbox.ts`, LRU-cached
-  per viewport bbox + data_version). With no boundary polygons the zoomed-in regime falls
-  back to the existing point scatter with its size slider.
-- **The switch.** The regime flips at zoom `log2(6 / d)` (d = median NN distance) with a
-  ±0.5 hysteresis band (`useCanvasViewState.ts`), so a cell crossing ~6 px on screen
-  swaps field for outlines/points without flip-flopping while hovering the threshold.
-- **Controls.** A **Render mode** control (`auto` — field/polygons/points by zoom — vs
-  `points` — always the classic scatter) persists on the display encoding
-  (`render_mode`); a **Shape set** selector picks which polygon element to outline when
-  more than one is available.
+  per viewport bbox + data_version). The backend returns nothing while more cells are in
+  view than it can send, so outlines appear only once zoomed in far enough that the
+  visible set fits.
+- **Zoomed in — point scatter (`render_mode: points`, the default).** The classic
+  instanced scatter with its size slider and circle/square/hexagon glyph picker.
+- **The switch.** The field takes over below `cellZoomThreshold(R) = log2(6 / R)`
+  (`useCanvasViewState.ts`) — i.e. once a cell shrinks under ~6 px on screen — and the
+  polygon fetch is suppressed there so it only fires zoomed in.
 
-Both endpoints serve geometry in the same world space `/data/obsm:spatial` uses (the
-region element's points→global affine), so field, outlines, points, and image overlay;
-the GeoArrow polygons carry a `cell_index` back to the active table for color gather.
-See `docs/CONTRACT.md` for the payload schemas.
+Geometry is served in the same world space `/data/obsm:spatial` uses (the region element's
+points→global affine), so field, outlines, points, and image overlay; the GeoArrow
+polygons carry a `cell_index` back to the active table for color gather. See
+`docs/CONTRACT.md` for the payload schemas.
 
 **Known follow-up:** `@geoarrow/deck.gl-layers` (0.3.2) logs a console deprecation — it
 is renamed to `@geoarrow/deck.gl-geoarrow` (0.4.x). Not migrated: 0.3.2 is the verified

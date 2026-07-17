@@ -113,19 +113,25 @@ and point their documentation at a per-method section in
 - **deck.gl canvas** — binary Arrow scatter colored by any per-cell value over the
   tissue image; world-unit point sizing. The **Cells** layer renders in one of two
   **Render modes** (no resegmentation), chosen in the canvas controls and persisted
-  on the display state:
-  - **Points** (default) — the classic scatter, visible at every zoom, styled by a
-    **Point size** slider and a **Geometry** picker (circle / square / hexagon glyph,
-    a custom ScatterplotLayer whose fragment shader swaps the coverage test).
+  on the display state. The render mode governs the *zoomed-in* view; when zoomed out
+  far enough that a cell is only a few pixels across, both modes automatically switch to
+  a merged-color **field** (below) so the section always reads as a colored cell sheet
+  rather than dots or a blank canvas:
+  - **Points** (default) — the classic scatter, styled by a **Point size** slider and a
+    **Geometry** picker (circle / square / hexagon glyph, a custom ScatterplotLayer
+    whose fragment shader swaps the coverage test).
   - **Shapes (zoomed in)** — the exact cell-polygon outlines filled by cell color,
     fetched viewport-clipped as GeoArrow and offered only when the session has a
     boundary-polygon element (a **Shape set** selector picks which one). Because a
     full set of e.g. 1M outlines can't ship to the browser, the backend returns
     nothing while more cells are in view than it can send, so outlines appear only
     once zoomed in far enough that the visible set fits — hence the label.
-  (The read-only snapshot viewer additionally draws a zoomed-out nearest-cell density
-  **field** — a deck.gl impostor-cone layer, each cell a world-space disc whose
-  fragment shader writes depth so the nearest centroid wins each pixel.)
+  The zoomed-out **field** is a deck.gl nearest-cell density layer — each cell a
+  world-space disc whose fragment shader writes depth so the nearest centroid wins each
+  pixel, making adjacent same-color cells merge into one contiguous color region with no
+  geometry shipped. Its disc radius is a client-side estimate of the mean inter-cell
+  spacing; a recolor updates it instantly. (The read-only snapshot viewer draws the same
+  field for 2D spatial snapshots.)
   **Color by** first picks a slot (`obs`, `X`
   gene expression, or a `layer`) and then the column within it: obs columns from a
   dropdown, genes from a type-to-search box backed by

@@ -17,9 +17,10 @@ import { defaultStroke, defaultFill, textGeometryAt } from '../../schemas/annota
 import { geometryFromDrag, trapezoidFromClicks, applyHandleDrag, translateGeometry } from '../../lib/shapeAnnotations';
 import { useArrowPositions } from './useArrowPositions';
 import { useImageTiles } from './useImageTiles';
-import { useCanvasViewState } from './useCanvasViewState';
+import { useCanvasViewState, cellZoomThreshold } from './useCanvasViewState';
 import { useSpotColors, arrowToColorSource } from './useSpotColors';
 import { buildSpotLayer } from './buildSpotLayer';
+import { buildCellFieldLayer, estimateFieldRadius } from './buildCellFieldLayer';
 import { buildShapeAnnotationLayers, buildShapeHandleLayer, buildDragPreviewLayers } from './buildShapeAnnotationLayers';
 import { usePolygonBbox } from './usePolygonBbox';
 import { useImageChannels } from './useImageChannels';
@@ -334,6 +335,15 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
 
   const zoom = viewState ? (Array.isArray(viewState.zoom) ? viewState.zoom[0] : viewState.zoom) ?? 0 : 0;
 
+  // Zoomed-out cell tier: a GPU nearest-site "field" (each cell a disc; the nearest
+  // centroid wins each pixel) so adjacent same-color cells read as one merged sheet
+  // without shipping any geometry. Below cellZoomThreshold — where a cell is too
+  // small on screen to warrant glyphs/outlines — it replaces both the point scatter
+  // and the (blank, over-budget) polygon layer. Radius is the cheap client-side
+  // mean-spacing estimate, same as the snapshot viewer.
+  const fieldRadius = useMemo(() => (positions ? estimateFieldRadius(positions) : 0), [positions]);
+  const useField = fieldRadius > 0 && zoom < cellZoomThreshold(fieldRadius);
+
   // Shapes mode needs a polygon element; the outlines are viewport-culled and the
   // backend serves nothing when the viewport holds more than it can ship, so the
   // layer is simply empty until the user zooms in far enough ("Shapes (zoomed in)").
@@ -346,14 +356,21 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
     size: canvasSize,
     colors,
     opacity: display.encoding.opacity,
-    enabled: outlineMode && showPoints,
+    // The field covers the zoomed-out regime, so don't fetch polygons there — this
+    // also defers the expensive viewport fetch until zoomed in past the threshold.
+    enabled: outlineMode && showPoints && !useField,
   });
 
   const layers = useMemo(() => {
     const result: Layer[] = [...imageLayers];
 
     if (showPoints && positions && colors) {
-      if (outlineMode) {
+      if (useField) {
+        result.push(buildCellFieldLayer(positions, colors, {
+          radius: fieldRadius,
+          opacity: display.encoding.opacity,
+        }));
+      } else if (outlineMode) {
         if (polygonLayer) result.push(polygonLayer);  // blank until zoomed in enough
       } else {
         result.push(buildSpotLayer(positions, colors, {
@@ -365,7 +382,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
     }
 
     return result;
-  }, [imageLayers, positions, colors, showPoints, outlineMode, polygonLayer,
+  }, [imageLayers, positions, colors, showPoints, useField, fieldRadius, outlineMode, polygonLayer,
       display.encoding.point_size, display.encoding.opacity, marker]);
 
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
