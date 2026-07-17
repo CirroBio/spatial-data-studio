@@ -12,7 +12,6 @@ import numpy as np
 from ..base import (CallResult, Function, ParamSpec, capture_log, missing_obs_column, render_plot,
                     resolve_obsm_key, run_compute)
 from ._docs import custom_doc
-from ._vendor import lisi_compute, lisi_plot
 
 _CITATION = ("Korsunsky, I. et al. Fast, sensitive and accurate integration of single-cell "
              "data with Harmony. Nat Methods 16, 1289-1296 (2019). doi:10.1038/s41592-019-0619-0 (LISI).")
@@ -88,6 +87,8 @@ key_added
             return CallResult(status="failed", error=f"obsm['{e.args[0]}'] does not exist")
 
         def mutate(ad):
+            from ._vendor import lisi_compute
+
             res = lisi_compute.lisi_adata(ad, use_rep=use_rep, batch_key=batch_key, label_key=label_key,
                                           perplexity=perplexity, key_added=key_added)
             ad.uns[key_added] = {
@@ -131,6 +132,8 @@ key_added
                               error=f"run 'LISI scores' for this key first (uns['{key_added}'] not found)")
 
         def fn(ad):
+            from ._vendor import lisi_plot
+
             stored = ad.uns[key_added]
             summary = stored["summary"]
             metrics = summary["metric"]

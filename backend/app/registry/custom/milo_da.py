@@ -11,7 +11,6 @@ import numpy as np
 
 from ..base import (CallResult, Function, ParamSpec, capture_log, missing_obs_column, render_plot,
                     resolve_obsm_key, run_compute)
-from ._vendor import milo_da_compute, milo_da_plot
 
 _SAMPLE_PARAM = ParamSpec(
     "sample_key", {"type": "string"}, "obs_categorical", None, required=True,
@@ -135,6 +134,8 @@ key_added
         random_state = int(params.get("random_state") or 0)
 
         def mutate(ad):
+            from ._vendor import milo_da_compute
+
             milo_da_compute.milo_adata(
                 ad, sample_key, condition_key, use_rep=use_rep, cell_type_key=cell_type_key,
                 k=k, prop=prop, refine=refine, prior_count=prior_count, random_state=random_state,
@@ -190,6 +191,8 @@ alpha
                                     f"(uns['{key_added}'] not found)")
 
         def fn(ad):
+            from ._vendor import milo_da_plot
+
             stored = ad.uns[key_added]["results"]
             annotation = stored.get("annotation")
             has_annotation = annotation is not None and not all(

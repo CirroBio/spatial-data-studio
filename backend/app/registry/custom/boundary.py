@@ -13,7 +13,6 @@ import pandas as pd
 
 from ..base import CallResult, Function, ParamSpec, capture_log, missing_obs_column, render_plot, run_compute, \
     resolve_obsm_key
-from ._vendor import boundary_compute, boundary_plot
 
 _NUMERIC_KWARGS = ("bin_size", "bandwidth", "threshold", "min_area", "radius", "margin_width")
 
@@ -132,6 +131,8 @@ key_added
         kwargs = {name: float(params[name]) for name in _NUMERIC_KWARGS if params.get(name) not in (None, "")}
 
         def mutate(ad):
+            from ._vendor import boundary_compute
+
             res = boundary_compute.boundary_adata(
                 ad, cell_type_key, interior_labels, spatial_key=coords, method=method,
                 key_added=key_added, **kwargs)
@@ -194,6 +195,8 @@ color_by
             return CallResult(status="failed", error=error)
 
         def fn(ad):
+            from ._vendor import boundary_plot
+
             data = ad.uns[key_added]
             insideness_col = f"{key_added}_insideness"
             result = SimpleNamespace(
@@ -290,6 +293,8 @@ profile_key
                               error=f"target_labels value(s) not found in obs['{cell_type_key}']: {bad}")
 
         def mutate(ad):
+            from ._vendor import boundary_compute
+
             profile = boundary_compute.infiltration_profile(
                 ad.obs[signed_distance_col].values, ad.obs[cell_type_key].values,
                 target_labels, bins=bins, value=value)
@@ -341,6 +346,8 @@ profile_key
                               error=f"run 'Infiltration profile' for this key first (uns['{profile_key}'] not found)")
 
         def fn(ad):
+            from ._vendor import boundary_plot
+
             data = ad.uns[profile_key]
             profile = pd.DataFrame(data["data"], columns=data["columns"],
                                     index=pd.Index(data["signed_distance"], name="signed_distance"))

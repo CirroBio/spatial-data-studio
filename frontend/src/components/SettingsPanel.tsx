@@ -1,10 +1,12 @@
-import { useState, type ReactNode } from 'react';
+import { lazy, Suspense, useState, type ReactNode } from 'react';
 import { useAppStore } from '../store/sessionStore';
 import { saveSession } from '../api';
 import { reportError } from '../lib/errors';
 import AcknowledgementsDialog from './AcknowledgementsDialog';
 import CirroUploadDialog from './CirroUploadDialog';
-import SnapshotBrowser from './SnapshotBrowser';
+// SnapshotBrowser pulls SnapshotViewer's deck.gl + zarrita/blosc/zstd codecs;
+// code-split it so those load only when the snapshot browser is actually opened.
+const SnapshotBrowser = lazy(() => import('./SnapshotBrowser'));
 import { useTour, spatialDataStudioTour } from '../tours';
 
 interface Props {
@@ -205,7 +207,11 @@ export default function SettingsPanel({ onNewSession }: Props) {
       </aside>
 
       {showAbout && <AcknowledgementsDialog onClose={() => setShowAbout(false)} />}
-      {snapshotsOpen && <SnapshotBrowser onClose={closeSnapshots} initialSelect={snapshotsInitialSelect} />}
+      {snapshotsOpen && (
+        <Suspense fallback={null}>
+          <SnapshotBrowser onClose={closeSnapshots} initialSelect={snapshotsInitialSelect} />
+        </Suspense>
+      )}
       {showCirroUpload && <CirroUploadDialog onClose={() => setShowCirroUpload(false)} />}
     </>
   );

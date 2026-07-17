@@ -17,10 +17,10 @@ from string import ascii_uppercase
 
 import numpy as np
 import pandas as pd
-from matplotlib.path import Path
-from scipy.spatial import ConvexHull, distance
-from scipy.spatial.transform import Rotation
-from sklearn.mixture import GaussianMixture
+
+# matplotlib / scipy / sklearn are imported lazily inside the functions that use
+# them: this module is imported at registry-build time (custom-function discovery)
+# but its heavy deps are only needed when a TMA-detection job actually runs.
 
 UNASSIGNED = "unassigned"
 NAMING_SCHEMES = ("Row=Letter; Column=Number", "Column=Letter; Row=Number")
@@ -34,12 +34,16 @@ def _rotate(coords: pd.DataFrame, angle: float) -> pd.DataFrame:
     """Rotate x/y about the z axis by `angle` degrees (clockwise)."""
     if angle == 0.0:
         return coords[["x", "y"]].copy()
+    from scipy.spatial.transform import Rotation
+
     r = Rotation.from_euler("z", angle, degrees=True)
     rotated = r.apply(coords[["x", "y"]].assign(z=0).values)[:, :2]
     return pd.DataFrame(rotated, columns=["x", "y"], index=coords.index)
 
 
 def _gaussian_mixture(vals: pd.Series, k: int):
+    from sklearn.mixture import GaussianMixture
+
     X = vals.values.reshape(-1, 1)
     gm = GaussianMixture(n_components=k, random_state=0).fit(X)
     pred = gm.predict(X)
@@ -70,6 +74,8 @@ def _find_grid(vals: pd.Series, n: int) -> np.ndarray:
 
 
 def _closest_core(cells: pd.DataFrame, cores: pd.DataFrame) -> pd.DataFrame:
+    from scipy.spatial import distance
+
     dists = distance.cdist(cells[["grid_x", "grid_y"]].values, cores[["grid_x", "grid_y"]].values)
     idx = np.argmin(dists, axis=1)
     cells = cells.copy()
@@ -96,6 +102,8 @@ def _hull(core_coords: pd.DataFrame) -> np.ndarray | None:
     pts = core_coords.loc[keep, ["x", "y"]].values
     if pts.shape[0] < 3:
         return None
+    from scipy.spatial import ConvexHull
+
     return pts[ConvexHull(pts).vertices]
 
 
@@ -142,6 +150,8 @@ def _find_cores(coords: pd.DataFrame, x_grid, y_grid, min_prop_cells, minor_grid
 def _rotate_hulls_back(cores: list, angle: float):
     if angle == 0.0:
         return
+    from scipy.spatial.transform import Rotation
+
     r = Rotation.from_euler("z", -angle, degrees=True)
     for core in cores:
         shape = core["shape"]
@@ -191,6 +201,8 @@ def assign_cores(coords: pd.DataFrame, *, angle: float = 0.0, nrows: int | None 
         return pd.Series(UNASSIGNED, index=coords.index, dtype=object), []
     _rotate_hulls_back(cores, angle)
     _name_cores(cores, core_naming_scheme, row_start, col_start)
+
+    from matplotlib.path import Path
 
     xy = coords[["x", "y"]].values
     labels = np.full(len(coords), UNASSIGNED, dtype=object)
