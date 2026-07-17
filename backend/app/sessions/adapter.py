@@ -1,4 +1,4 @@
-"""The single call adapter (DESIGN §4.6). Every function — squidpy or custom —
+"""The single call adapter (DESIGN §4.6). Every function — library or custom —
 executes through `CallAdapter.execute`, which resolves the descriptor to its
 `Function` in the registry and delegates to `Function.execute`. All per-function
 variation lives in the function class; this layer only routes.

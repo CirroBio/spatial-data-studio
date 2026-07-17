@@ -59,8 +59,9 @@ function:
 
 ## Orientation
 
-- Backend: FastAPI (`backend/app`). Operations are discovered by introspecting
-  `squidpy`; never hardcode a squidpy function name. Parameter knowledge lives in
+- Backend: FastAPI (`backend/app`). Operations are discovered by reflecting the
+  supported libraries (squidpy wholesale; scanpy/spatialdata-io via
+  `library_catalog.yaml`); never hardcode a library function name. Parameter knowledge lives in
   the Parameter Term Dictionary (`backend/app/registry/terms.yaml` + `dictionary.py`),
   keyed by parameter term, not by function.
 - Frontend: React + TS + Vite + Tailwind + Radix + deck.gl (`frontend/src`).

@@ -22,12 +22,12 @@ async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   return res;
 }
 
-export async function getFunctions(): Promise<{ functions: FunctionEntry[]; squidpy_version: string }> {
+export async function getFunctions(): Promise<{ functions: FunctionEntry[]; library_versions: Record<string, string> }> {
   const res = await apiFetch('/api/functions');
-  return res.json() as Promise<{ functions: FunctionEntry[]; squidpy_version: string }>;
+  return res.json() as Promise<{ functions: FunctionEntry[]; library_versions: Record<string, string> }>;
 }
 
-// 503s until the backend has finished building its squidpy function registry.
+// 503s until the backend has finished building its function registry.
 export async function getReadyz(): Promise<{ status: string; functions: number }> {
   const res = await apiFetch('/api/readyz');
   return res.json() as Promise<{ status: string; functions: number }>;

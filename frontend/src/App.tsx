@@ -90,9 +90,9 @@ export default function App() {
     (async () => {
       for (let attempt = 0; attempt < 5 && !cancelled; attempt++) {
         try {
-          const { functions, squidpy_version } = await getFunctions();
+          const { functions, library_versions } = await getFunctions();
           if (cancelled) return;
-          setFunctions(functions, squidpy_version);
+          setFunctions(functions, library_versions);
           if (functions.length) return;
         } catch { /* fall through to retry */ }
         await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));

@@ -17,14 +17,14 @@ services:
       - checkpoints:/checkpoints
 
     environment:
-      SQV_DATA_DIR: /data
-      SQV_CHECKPOINT_DIR: /checkpoints
+      SDS_DATA_DIR: /data
+      SDS_CHECKPOINT_DIR: /checkpoints
       # Memory: container gets 12 GB; worker ceiling is 9 GB, safely below cgroup limit
       # so catchable MemoryError fires before the OOM killer (DESIGN §19.5)
-      SQV_CONTAINER_MEM_MB: "12288"
-      SQV_WORKER_CEILING_MB: "9216"
-      SQV_MAX_SESSIONS: "4"
-      SQV_ADMISSION_PCT: "0.80"
+      SDS_CONTAINER_MEM_MB: "12288"
+      SDS_WORKER_CEILING_MB: "9216"
+      SDS_MAX_SESSIONS: "4"
+      SDS_ADMISSION_PCT: "0.80"
       MPLBACKEND: "Agg"
       PYTHONUNBUFFERED: "1"
       # Cirro upload. Off unless all three are set (service-account/client-credentials).
@@ -33,8 +33,8 @@ services:
       CIRRO_CLIENT_SECRET: "${CIRRO_CLIENT_SECRET:-}"
 
     # Hard OS memory limit: the container is OOM-killed if it exceeds this. Keep
-    # in sync with SQV_CONTAINER_MEM_MB above (12288 MiB == 12g) so the app's soft
-    # admission control (refuses new work at SQV_ADMISSION_PCT of it) trips first.
+    # in sync with SDS_CONTAINER_MEM_MB above (12288 MiB == 12g) so the app's soft
+    # admission control (refuses new work at SDS_ADMISSION_PCT of it) trips first.
     mem_limit: 12g              # docker compose / non-swarm
     deploy:
       resources:

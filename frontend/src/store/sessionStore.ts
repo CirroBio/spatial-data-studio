@@ -52,8 +52,8 @@ interface AppStore {
 
   // functions list
   functions: FunctionEntry[];
-  squidpyVersion: string;
-  setFunctions: (fns: FunctionEntry[], version: string) => void;
+  libraryVersions: Record<string, string>;
+  setFunctions: (fns: FunctionEntry[], versions: Record<string, string>) => void;
 
   // sidebar selection
   selectedComputeId: string | null;
@@ -274,7 +274,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       const compute_history = app.compute_history.some((h) => h.id === base.id)
         ? app.compute_history.map((h) => (h.id === base.id ? { ...h, status: 'queued' as const } : h))
         : [...app.compute_history, {
-            ...base, status: 'queued' as const, squidpy_version: s.squidpyVersion,
+            ...base, status: 'queued' as const, library_versions: s.libraryVersions,
             started_at: null, finished_at: null,
           }];
       return { sessionState: { ...s.sessionState, app_state: { ...app, compute_history } } };
@@ -293,8 +293,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }),
 
   functions: [],
-  squidpyVersion: '',
-  setFunctions: (fns, version) => set({ functions: fns, squidpyVersion: version }),
+  libraryVersions: {},
+  setFunctions: (fns, versions) => set({ functions: fns, libraryVersions: versions }),
 
   selectedComputeId: null,
   setSelectedComputeId: (id) => set({ selectedComputeId: id, selectedPlotId: null }),

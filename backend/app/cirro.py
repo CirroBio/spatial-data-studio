@@ -163,7 +163,7 @@ def _copy_viewer(tmp: Path) -> None:
     if not (viewer_dir.exists() and (viewer_dir / "viewer.html").is_file()):
         raise RuntimeError(
             f"standalone snapshot viewer not built at {viewer_dir}; "
-            "run `npm run build:viewer` in frontend/ (or set SQV_SNAPSHOT_VIEWER_DIR)")
+            "run `npm run build:viewer` in frontend/ (or set SDS_SNAPSHOT_VIEWER_DIR)")
     for item in viewer_dir.iterdir():
         if item.name == "viewer.html":
             shutil.copy2(item, tmp / "index.html")

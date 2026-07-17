@@ -643,13 +643,13 @@ of such tiles OOMs the container. So `normalize_rasters` runs once when a sessio
 adopts a `SpatialData` (read bootstrap in `Session._run_call`, and
 `create_from_load`): every image/label that isn't already a tile-chunked pyramid
 is rebuilt via `Image2DModel`/`Labels2DModel.parse` into a 2× pyramid down to a
-`SQV_RASTER_BASE_PX` (1024) base, chunked at `imaging.TILE_SIZE`, and written to a
+`SDS_RASTER_BASE_PX` (1024) base, chunked at `imaging.TILE_SIZE`, and written to a
 per-session cache store under `CHECKPOINT_DIR`; the live elements are rebound to
 lazy refs into it. An in-memory rechunk alone can't fix this — a small tile read
 still fetches the large *store* chunk from disk — so the rewrite is the point.
 After it, one tile realizes one ~2 MB chunk. Elements are rebuilt one at a time
 and freed between (writing all four Xenium rasters together peaks ~8.8 GB); with a
-small dask pool (`SQV_RASTER_REBUILD_WORKERS`) the peak is the largest single image
+small dask pool (`SDS_RASTER_REBUILD_WORKERS`) the peak is the largest single image
 (~2.1 GB for the 3.8 GB morphology). Images get a mean-downsampled pyramid; labels
 are rebuilt **single-scale, tile-chunked only** — they aren't LOD-rendered, and a
 nearest/mode downsample of integer IDs can't stream (it materializes the whole
@@ -661,8 +661,8 @@ inherits the tile chunking too. The cache dir shares the `extract_dir` lifecycle
 cleaned on close, ownership transferred to a subset child (§8.3).
 
 Two-tier memory safety for rendering: image compositing is capped by a global
-semaphore (`SQV_IMAGE_RENDER_CONCURRENCY`), and a render requested once RSS is past
-`SQV_ADMISSION_PCT` returns 503 so a burst can't push an already-loaded container
+semaphore (`SDS_IMAGE_RENDER_CONCURRENCY`), and a render requested once RSS is past
+`SDS_ADMISSION_PCT` returns 503 so a burst can't push an already-loaded container
 over the OS memory limit (§11.3). The `create_from_read` path is likewise refused
 at that boundary, since a raw reader input has no cheap size estimate.
 
@@ -1555,7 +1555,7 @@ python cli.py --parser <reader|zarr> --input <path> --recipe <file|name> --outpu
   figure.{svg,pdf}`.
 - **Boundary reconciliation** — the server's data-root allowlist and
   `within_checkpoint_dir` save guard (§16, §19) exist for the shared multi-tenant
-  server. The CLI owns its own paths, so it sets `SQV_DATA_DIR`/`SQV_CHECKPOINT_DIR`
+  server. The CLI owns its own paths, so it sets `SDS_DATA_DIR`/`SDS_CHECKPOINT_DIR`
   from its arguments *before* importing `config`, lifts the memory/session admission
   caps (single-shot, single-tenant), and saves by calling `save_spatialdata` directly
   rather than through the guarded save job. A step failure aborts the run non-zero with

@@ -77,7 +77,7 @@ terms:
     widget: number
     type: int
     default_source: threads
-    help: "Parallel jobs; defaults to the machine thread budget (SQUIDPY_N_THREADS or cpu count)."
+    help: "Parallel jobs; defaults to the machine thread budget (SDS_N_THREADS or cpu count)."
   - match: { names: [n_threads, num_threads, workers, n_workers] }
     widget: number
     type: int

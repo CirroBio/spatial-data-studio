@@ -1,13 +1,15 @@
 """The function registry — the only path to a runnable function (invariant §16.1).
 
-Builds the squidpy functions by reflection (`squidpy_fn.build_squidpy_function`)
-and registers the hand-written `custom/` functions alongside them. Every entry is
-a `Function`; the descriptor `{namespace, function, params}` resolves to one by
-key. No squidpy function is named here.
+Builds the reflected library functions (`library_fn.build_library_function`) for
+squidpy plus the catalog libraries (scanpy, spatialdata-io) and registers the
+hand-written `custom/` functions alongside them. Every entry is a `Function`; the
+descriptor `{namespace, function, params}` resolves to one by key. No library
+function is named here.
 """
 from __future__ import annotations
 
 import importlib
+import importlib.metadata
 import inspect
 import logging
 import warnings
@@ -28,15 +30,31 @@ _CATALOG_PATH = Path(__file__).with_name("library_catalog.yaml")
 _log = logging.getLogger(__name__)
 
 
+def _module_version(name: str) -> str:
+    try:
+        mod = importlib.import_module(name)
+    except ImportError:
+        return ""
+    version = getattr(mod, "__version__", None)
+    if version:
+        return str(version)
+    try:
+        return importlib.metadata.version(name)
+    except importlib.metadata.PackageNotFoundError:
+        return ""
+
+
 @dataclass
 class Registry:
     entries: dict = field(default_factory=dict)
-    squidpy_version: str = ""
+    # Version of each reflected library, keyed by import name (squidpy, scanpy,
+    # spatialdata_io). Stamped onto compute/plot history for reproducibility — a
+    # run may execute any of them, so a single squidpy version is not enough.
+    library_versions: dict = field(default_factory=dict)
     coverage: dict = field(default_factory=dict)
 
     def build(self):
         import squidpy as sq
-        self.squidpy_version = sq.__version__
         DICTIONARY.load()
         DICTIONARY.coverage = []
         self.entries = {}
@@ -56,6 +74,11 @@ class Registry:
                 if entry is not None:
                     self.entries[entry.key] = entry
         self._load_catalog()
+        self.library_versions = {
+            lib: _module_version(lib)
+            for lib in sorted({e.library for e in self.entries.values()
+                               if getattr(e, "library", None)})
+        }
         self.coverage = DICTIONARY.coverage_report()
         for fn in CUSTOM_FUNCTIONS:
             self.entries[fn.key] = fn
@@ -90,7 +113,7 @@ class Registry:
 
     def public(self) -> dict:
         return {"functions": [e.to_public() for e in self.entries.values()],
-                "squidpy_version": self.squidpy_version}
+                "library_versions": self.library_versions}
 
 
 REGISTRY = Registry()

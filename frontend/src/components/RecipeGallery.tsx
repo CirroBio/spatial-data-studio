@@ -134,7 +134,7 @@ export default function RecipeGallery({ sessionId, onClose }: Props) {
 
   return (
     <ModalOverlay onClose={onClose} widthClassName="w-[560px] max-h-[80vh]">
-      <ModalHeader title="Analysis recipes" subtitle="Curated squidpy workflows — select one to set its parameters, then run or stage it." onClose={onClose} />
+      <ModalHeader title="Analysis recipes" subtitle="Curated analysis workflows — select one to set its parameters, then run or stage it." onClose={onClose} />
 
       {recipes && recipes.length > 0 && (
         <div className="p-3 border-b border-border shrink-0">

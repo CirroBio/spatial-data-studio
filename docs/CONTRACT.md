@@ -30,7 +30,7 @@ Pinned versions: squidpy 1.8.2, spatialdata 0.7.3, anndata, pyarrow.
   "unsupported_params": []   // locked-to-default params (variadic / non-serializable)
 }
 ```
-`GET /api/functions` → `{ "functions": [ <entry>... ], "squidpy_version": "1.8.2" }`
+`GET /api/functions` → `{ "functions": [ <entry>... ], "library_versions": { "squidpy": "1.8.2", "scanpy": "1.11.5", "spatialdata_io": "0.7.0" } }`
 
 ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_categorical|var_names|layer_key|obsm_key|obsp_key|library_id`.
 
@@ -117,9 +117,9 @@ ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_cate
 ### HistEntry / PlotEntry  (mirror DESIGN §3.2)
 ```jsonc
 HistEntry = {id, namespace, function, params, status:"pending|queued|running|completed|failed|cancelled",
-             squidpy_version, started_at, finished_at, structural_diff:{obsp:[...],...}}
+             library_versions:{squidpy,scanpy,spatialdata_io}, started_at, finished_at, structural_diff:{obsp:[...],...}}
 PlotEntry = {id, namespace:"pl", function, params, status:"pending|queued|running|drawn|invalidated|failed",
-             references:["obs:leiden"], squidpy_version}
+             references:["obs:leiden"], library_versions:{squidpy,scanpy,spatialdata_io}}
 ```
 
 ### DisplaySpec  (app-defined, §9) — a `spatial_canvas | embedding_canvas` union

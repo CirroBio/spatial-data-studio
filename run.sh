@@ -33,10 +33,10 @@ if [[ -f .env ]]; then
   set +a
 fi
 
-export SQV_DATA_DIR="${SQV_DATA_DIR:-$PWD/$DATA_SUBDIR}"
-export SQV_CHECKPOINT_DIR="${SQV_CHECKPOINT_DIR:-$PWD/checkpoints}"
-export SQV_CONTAINER_MEM_MB="${SQV_CONTAINER_MEM_MB:-16384}"
-mkdir -p "$SQV_CHECKPOINT_DIR"
+export SDS_DATA_DIR="${SDS_DATA_DIR:-$PWD/$DATA_SUBDIR}"
+export SDS_CHECKPOINT_DIR="${SDS_CHECKPOINT_DIR:-$PWD/checkpoints}"
+export SDS_CONTAINER_MEM_MB="${SDS_CONTAINER_MEM_MB:-16384}"
+mkdir -p "$SDS_CHECKPOINT_DIR"
 
 # --reload is unusable here: the long-lived SSE stream (/api/events) never
 # closes, so the reloader hangs on "Waiting for connections to close" on any

@@ -5,7 +5,7 @@ import { TourAnchors } from './anchors';
 // are marked optional so the tour also works before a session is open.
 export const spatialDataStudioTour = defineTour({
   id: 'sds-intro',
-  version: 1,
+  version: 2,
   title: 'Welcome to Spatial Data Studio',
   trigger: 'first-visit',
   steps: [
@@ -33,8 +33,8 @@ export const spatialDataStudioTour = defineTour({
     {
       id: 'sidebar-tabs',
       target: { kind: 'anchor', value: TourAnchors.SidebarTabs },
-      title: 'Compute, plots, annotations, subsetting',
-      body: 'Each tab is a workflow: run analyses, build plots, draw labels on the canvas, or carve out a subset.',
+      title: 'Compute, plots, regions, annotations, subsetting',
+      body: 'Each tab is a workflow: run analyses, build plots, draw regions to label cells, mark up the canvas with shapes and text, or carve out a subset.',
       placement: 'right',
       optional: true,
     },
@@ -42,7 +42,7 @@ export const spatialDataStudioTour = defineTour({
       id: 'add-function',
       target: { kind: 'anchor', value: TourAnchors.AddFunction },
       title: 'Run an analysis',
-      body: 'Pick a squidpy, scanpy, or custom function and run it on the current session. Every run is recorded in the history above.',
+      body: 'Pick an analysis function — from squidpy, scanpy, spatialdata-io, or a custom operation — and run it on the current session. Every run is recorded in the history above.',
       placement: 'right',
       optional: true,
     },

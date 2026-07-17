@@ -149,7 +149,7 @@ class Session:
         ec = "plot" if (fn is not None and fn.effect_class == "plot") else "compute"
         rec = {"id": entry_id, "namespace": descriptor["namespace"], "function": descriptor["function"],
                "params": descriptor.get("params", {}), "status": status,
-               "squidpy_version": self.manager.registry.squidpy_version}
+               "library_versions": self.manager.registry.library_versions}
         if ec == "plot":
             rec["references"] = self._references(descriptor.get("params", {}))
         else:

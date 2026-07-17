@@ -8,7 +8,7 @@ description: Launch or relaunch the Spatial Data Studio local dev environment �
 The repo ships two shell scripts at its root that fully manage local dev:
 
 - `./run.sh` — starts backend (`uvicorn` on port 8000, no `--reload`) and frontend (`npm run dev`, Vite proxies `/api` and `/snapshots` to :8000). Blocks until both exit. Writes `.run.pids` while running.
-- `./run.sh --test` — same, but points `SQV_DATA_DIR` at `test-data/` instead of `data/`.
+- `./run.sh --test` — same, but points `SDS_DATA_DIR` at `test-data/` instead of `data/`.
 - `./stop.sh` — reads `.run.pids` and kills each process group.
 
 Never invoke `uvicorn` or `npm run dev` directly, and never pass `--reload` — the long-lived `/api/events` SSE stream never closes, so `--reload` hangs on "Waiting for connections to close" on every backend edit. Backend changes require a manual relaunch.
@@ -34,7 +34,7 @@ Never invoke `uvicorn` or `npm run dev` directly, and never pass `--reload` — 
 
    Use `--test` when the user is working against the bundled test datasets (`visium_hne.zarr`, `xenium.zarr`, `xenium_tma.zarr`) — those live under `test-data/`, not `data/`.
 
-4. **Wait for readiness before reporting success.** The backend takes a few seconds to import `squidpy` and build the function registry; the frontend takes a moment to bind its Vite port. Poll:
+4. **Wait for readiness before reporting success.** The backend takes a few seconds to import the analysis libraries and build the function registry; the frontend takes a moment to bind its Vite port. Poll:
 
    ```bash
    for i in $(seq 1 60); do
@@ -64,7 +64,7 @@ Never invoke `uvicorn` or `npm run dev` directly, and never pass `--reload` — 
 ## When to relaunch
 
 - After any backend edit (`backend/**/*.py`, `backend/app/registry/*.yaml`, `backend/app/recipes/*.json`). The frontend hot-reloads on its own; the backend does not.
-- After changing `.env` (Cirro credentials, `SQV_*` env vars) — `run.sh` sources it once at start.
+- After changing `.env` (Cirro credentials, `SDS_*` env vars) — `run.sh` sources it once at start.
 - After rebuilding the standalone snapshot viewer (`cd frontend && npm run build:viewer`) if you need the fresh bundle to be served — the backend picks up `frontend/dist-viewer/` at request time, so a soft-refresh in the browser is often enough; a full relaunch is only needed if the backend can't find the directory at all.
 
 Frontend-only edits (anything under `frontend/src/`) are picked up live by Vite — no relaunch.

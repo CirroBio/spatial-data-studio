@@ -13,8 +13,8 @@ import os
 import sys
 import tempfile
 
-os.environ.setdefault("SQV_CONTAINER_MEM_MB", "65536")
-os.environ.setdefault("SQV_MAX_SESSIONS", "64")
+os.environ.setdefault("SDS_CONTAINER_MEM_MB", "65536")
+os.environ.setdefault("SDS_MAX_SESSIONS", "64")
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 DATA = os.path.join(_REPO_ROOT, "test-data", "visium_hne.zarr")

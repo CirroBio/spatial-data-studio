@@ -165,16 +165,16 @@ def main(argv=None) -> int:
     args = _parse_args(sys.argv[1:] if argv is None else argv)
 
     # Env must be set BEFORE importing app.config (Config reads it at import time).
-    # SQV_DATA_DIR makes the input readable past the server's data-root allowlist;
-    # SQV_CHECKPOINT_DIR is where ingest raster tiling caches. Offline runs are
+    # SDS_DATA_DIR makes the input readable past the server's data-root allowlist;
+    # SDS_CHECKPOINT_DIR is where ingest raster tiling caches. Offline runs are
     # single-shot and single-tenant, so lift the memory/session admission limits
     # unless the caller pinned them.
     out_dir = Path(args.output).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
-    os.environ["SQV_DATA_DIR"] = str(Path(args.input).resolve().parent)
-    os.environ["SQV_CHECKPOINT_DIR"] = str(out_dir)
-    os.environ.setdefault("SQV_CONTAINER_MEM_MB", "65536")
-    os.environ.setdefault("SQV_MAX_SESSIONS", "64")
+    os.environ["SDS_DATA_DIR"] = str(Path(args.input).resolve().parent)
+    os.environ["SDS_CHECKPOINT_DIR"] = str(out_dir)
+    os.environ.setdefault("SDS_CONTAINER_MEM_MB", "65536")
+    os.environ.setdefault("SDS_MAX_SESSIONS", "64")
 
     from app.registry.introspect import REGISTRY
     from app.sessions.manager import SessionManager

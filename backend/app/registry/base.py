@@ -2,8 +2,8 @@
 
 `Function` is everything common to *any* runnable operation — identity, the
 form descriptor (JSON Schema + ui hints), an effect class, and the `execute`
-contract — independent of whether it is a squidpy call or a hand-written
-operation. `SquidpyFunction` (squidpy_fn.py) and the `custom/` functions both
+contract — independent of whether it is a library call or a hand-written
+operation. `LibraryFunction` (library_fn.py) and the `custom/` functions both
 subclass it, so they flow through the same picker -> form -> queue -> history
 machinery.
 
@@ -130,7 +130,7 @@ class Function(ABC):
     Subclasses set the identity/descriptor attributes (key, namespace,
     function, effect_class, summary, doc, label, params, ...) and implement
     `execute`. The JSON Schema / ui hints / public dict are derived here from
-    `params`, so every function — squidpy or custom — presents identically to
+    `params`, so every function — library or custom — presents identically to
     the frontend.
     """
 
@@ -140,8 +140,8 @@ class Function(ABC):
     effect_class: str                 # compute | plot | read | extract (see EFFECT_CLASSES)
     summary: str = ""
     doc: str = ""
-    label: str | None = None          # human title for the picker; squidpy uses namespace.function
-    source: str = "squidpy"           # squidpy | custom
+    label: str | None = None          # human title for the picker; library fns use namespace.function
+    source: str = ""                  # squidpy | scanpy | spatialdata_io | custom (subclass sets it)
     params: list                      # list[ParamSpec], in display order
     partially_supported: bool = False
     unsupported_params: list = []
@@ -184,7 +184,7 @@ class Function(ABC):
         """Run the operation against the session, returning a CallResult."""
 
 
-# ---- shared execution primitives (reused by squidpy + custom functions) -----
+# ---- shared execution primitives (reused by library + custom functions) -----
 
 def short_error(e: Exception) -> str:
     """A concise, user-facing error string for the failure toast."""

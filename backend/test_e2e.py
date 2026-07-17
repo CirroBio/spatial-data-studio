@@ -10,14 +10,14 @@ import tempfile
 import pyarrow.ipc as ipc
 from fastapi.testclient import TestClient
 
-os.environ.setdefault("SQV_CONTAINER_MEM_MB", "32768")
+os.environ.setdefault("SDS_CONTAINER_MEM_MB", "32768")
 # The feature flows below each open a few short-lived sessions (and reload
 # checkpoints into fresh ones); lift the default 8-session cap so the run isn't
 # bounded by it. Real deployments keep the low default.
-os.environ.setdefault("SQV_MAX_SESSIONS", "64")
+os.environ.setdefault("SDS_MAX_SESSIONS", "64")
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-os.environ.setdefault("SQV_DATA_DIR", os.path.join(_REPO_ROOT, "test-data"))
-os.environ.setdefault("SQV_CHECKPOINT_DIR", tempfile.mkdtemp())
+os.environ.setdefault("SDS_DATA_DIR", os.path.join(_REPO_ROOT, "test-data"))
+os.environ.setdefault("SDS_CHECKPOINT_DIR", tempfile.mkdtemp())
 from app.main import app  # noqa: E402
 from app.config import config  # noqa: E402
 
@@ -825,7 +825,8 @@ def main():
     with TestClient(app) as client:
         assert client.get("/api/readyz").json()["functions"] > 0
         nf = client.get("/api/functions").json()
-        print(f"[ok] registry: {len(nf['functions'])} functions, squidpy {nf['squidpy_version']}")
+        versions = ", ".join(f"{lib} {ver}" for lib, ver in nf['library_versions'].items())
+        print(f"[ok] registry: {len(nf['functions'])} functions ({versions})")
         # Every function must carry provenance (CLAUDE.md rule): a citation and a
         # documentation URL — library functions inherit both from library_meta.yaml,
         # custom functions declare them explicitly.

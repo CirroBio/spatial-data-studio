@@ -69,13 +69,13 @@ RUN mkdir -p /data /checkpoints
 EXPOSE 80
 
 # Runtime env defaults (overridden in docker-compose or docker run -e)
-ENV SQV_STATIC_DIR=/app/spa \
-    SQV_DATA_DIR=/data \
-    SQV_CHECKPOINT_DIR=/checkpoints \
-    SQV_CONTAINER_MEM_MB=8192 \
-    SQV_WORKER_CEILING_MB=6144 \
-    SQV_MAX_SESSIONS=8 \
-    SQV_ADMISSION_PCT=0.80 \
+ENV SDS_STATIC_DIR=/app/spa \
+    SDS_DATA_DIR=/data \
+    SDS_CHECKPOINT_DIR=/checkpoints \
+    SDS_CONTAINER_MEM_MB=8192 \
+    SDS_WORKER_CEILING_MB=6144 \
+    SDS_MAX_SESSIONS=8 \
+    SDS_ADMISSION_PCT=0.80 \
     PYTHONUNBUFFERED=1 \
     MPLBACKEND=Agg
 

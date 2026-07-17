@@ -1,5 +1,6 @@
-"""Hand-written (non-squidpy) functions. Each is a `Function` subclass registered
-alongside the introspected squidpy functions (see registry/introspect.py).
+"""Hand-written (non-library) functions. Each is a `Function` subclass registered
+alongside the introspected library functions — squidpy/scanpy/spatialdata-io (see
+registry/introspect.py).
 
 Registration is by auto-discovery, like recipes (recipes/__init__.py's
 `_load_bundled`): every concrete `Function` subclass defined in a custom/*.py

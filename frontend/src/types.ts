@@ -89,7 +89,7 @@ export interface HistEntry {
   function: string;
   params: Record<string, unknown>;
   status: 'pending' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
-  squidpy_version: string;
+  library_versions: Record<string, string>;
   started_at: string | null;
   finished_at: string | null;
   structural_diff?: Record<string, string[]>;

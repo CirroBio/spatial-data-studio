@@ -278,7 +278,7 @@ def _parse_param_docs(doc: str) -> dict:
     return out
 
 
-def _squidpy_effect(namespace: str) -> str:
+def _default_effect_for_namespace(namespace: str) -> str:
     return "plot" if namespace == "pl" else ("read" if namespace == "read" else "compute")
 
 
@@ -350,7 +350,7 @@ def build_library_function(library: str, namespace: str, name: str, fn, *,
     return LibraryFunction(
         key=key, library=library, path=resolved_path,
         namespace=namespace, function=name,
-        effect_class=effect_class or _squidpy_effect(namespace), summary=summary, doc=doc,
+        effect_class=effect_class or _default_effect_for_namespace(namespace), summary=summary, doc=doc,
         injected=injected, pinned=pinned, params=params,
         partially_supported=partially, unsupported_params=unsupported,
         citation=library_meta.citation(library),

@@ -2,8 +2,8 @@
 
 Interactive analysis and visualization for spatial omics data. A Python backend
 holds a [`SpatialData`](https://spatialdata.scverse.org/) object in memory and
-exposes [`squidpy`](https://squidpy.readthedocs.io/) as a runtime-introspected
-function registry; a React/TypeScript frontend renders cell-scale data in WebGL
+exposes [`squidpy`](https://squidpy.readthedocs.io/), scanpy, and spatialdata-io as
+a runtime-introspected function registry; a React/TypeScript frontend renders cell-scale data in WebGL
 (deck.gl) and drives all interaction. See [DESIGN.md](DESIGN.md) for the full
 design specification and [docs/CONTRACT.md](docs/CONTRACT.md) for the API.
 
@@ -17,10 +17,12 @@ design specification and [docs/CONTRACT.md](docs/CONTRACT.md) for the API.
 
 ## Foundational principle: zero hardcoded library functions
 
-No part of the app names a specific `squidpy` function. The available operations
-are discovered by introspecting the `squidpy` package at startup; forms are
-generated from function signatures; calls are stored and executed as declarative
-descriptors. Upgrading `squidpy` exposes new functions with no app code changes.
+No part of the app names a specific library function. The available operations are
+discovered by reflection at startup — `squidpy` is wholesale-introspected, while
+`scanpy` and `spatialdata-io` functions are opted in via `library_catalog.yaml`;
+forms are generated from function signatures; calls are stored and executed as
+declarative descriptors. Upgrading a reflected library exposes new functions with
+no app code changes.
 The only library-specific knowledge is the **Parameter Term Dictionary**
 (`backend/app/registry/terms.yaml` + `dictionary.py`): a startup-loaded, editable
 map keyed by *parameter term* (never by function) that supplies widgets, data
@@ -93,13 +95,13 @@ and point their documentation at a per-method section in
 - **Sessions** — one in-memory `SpatialData` per session, a FIFO worker thread,
   compute/plot jobs, structural-diff–driven refresh, live RAM/CPU resource strip.
   The actual squidpy/scanpy/custom-function call runs in a subprocess
-  (`backend/app/registry/kernel.py`, `SQV_COMPUTE_POOL_WORKERS`, default 2) so a
+  (`backend/app/registry/kernel.py`, `SDS_COMPUTE_POOL_WORKERS`, default 2) so a
   long compute never holds the API process's GIL — unrelated requests (the
   recipe list, other sessions) stay responsive while a job runs; only the busy
   session's own reads wait, via its per-session read/write lock.
 - **Startup splash** — the frontend polls `GET /api/readyz` and shows a full-screen
-  splash until the backend finishes importing `squidpy` and building its function
-  registry, so a slow cold start doesn't look like an app with nothing to load.
+  splash until the backend finishes importing the analysis libraries and building its
+  function registry, so a slow cold start doesn't look like an app with nothing to load.
   The session list and the New Session dataset picker also show a "Loading…"
   state rather than looking empty while their first fetch is in flight.
 - **Menu prewarming** (`backend/app/prewarm.py`) — a background async queue warms
@@ -283,8 +285,8 @@ and point their documentation at a per-method section in
   parameters; its container installs the pinned Python deps at runtime with `uv`, so
   no custom image is built. See "Run offline" below.
 - **Data vs checkpoint dirs (strict separation)** — raw inputs live under the data
-  mount (`SQV_DATA_DIR`); saved sessions ("checkpoints") live under the checkpoint
-  mount (`SQV_CHECKPOINT_DIR`). New Session has two modes: **Import Data** runs a
+  mount (`SDS_DATA_DIR`); saved sessions ("checkpoints") live under the checkpoint
+  mount (`SDS_CHECKPOINT_DIR`). New Session has two modes: **Import Data** runs a
   spatialdata-io reader (`io.xenium`, …) or the **SpatialData zarr** reader
   (`io.read_zarr`, for opening an existing SpatialData store — a `.zarr` directory,
   or a `.zarr.zip` / `.zarr.tar.gz` archive) against a path under the data dir;
@@ -346,7 +348,7 @@ and point their documentation at a per-method section in
   `sessions/`) so nothing is copied and the bundle stays self-contained. When
   snapshots are included the bundle also ships the built standalone snapshot viewer
   at its root (`index.html` + `assets/`, from `frontend/dist-viewer` — see
-  `SQV_SNAPSHOT_VIEWER_DIR`) plus a `snapshots/index.json` manifest, so the uploaded
+  `SDS_SNAPSHOT_VIEWER_DIR`) plus a `snapshots/index.json` manifest, so the uploaded
   dataset is a self-contained web page: a picker switches between the bundled
   snapshots (kept in the `?snapshot=` query param) and each renders read-only from
   the bundle's own zarr, exactly like the in-app viewer. Build it with
@@ -477,12 +479,12 @@ volume at `/checkpoints`. Inside the container: `tini` → `supervisord` →
 memory limit (`mem_limit: 12g`, plus `deploy.resources.limits.memory` for swarm);
 exceeding it OOM-kills only this container instead of the host. Above that sits
 the app's *soft* admission control, which refuses new work once usage reaches
-`SQV_ADMISSION_PCT` (default 0.80) of `SQV_CONTAINER_MEM_MB` — so it trips before
-the OS OOM killer fires. **These two must stay in sync**: `SQV_CONTAINER_MEM_MB`
+`SDS_ADMISSION_PCT` (default 0.80) of `SDS_CONTAINER_MEM_MB` — so it trips before
+the OS OOM killer fires. **These two must stay in sync**: `SDS_CONTAINER_MEM_MB`
 (MiB) and the OS limit (`mem_limit` / `docker run --memory`) describe the same
 budget (12288 MiB == 12g). See `docker/README.md` for the manual `docker run`
 form and the full environment contract. Image tile/thumbnail compositing is
-additionally bounded by `SQV_IMAGE_RENDER_CONCURRENCY` (default 2) so a zoom/pan
+additionally bounded by `SDS_IMAGE_RENDER_CONCURRENCY` (default 2) so a zoom/pan
 tile burst can't spike memory; renders requested past the admission boundary
 return 503 and the canvas keeps its coarse base layer until memory frees.
 
@@ -500,8 +502,8 @@ button stays hidden and the app runs normally.
 
 Launches the backend (`uvicorn`, no `--reload` — see below) and the frontend
 (`npm run dev`, Vite proxies `/api` and `/snapshots` to :8000) together. Stop with
-Ctrl-C or, from another shell, `./stop.sh`. `SQV_DATA_DIR` (raw inputs; set by
-`run.sh` to `data/` or, with `--test`, `test-data/`) and `SQV_CHECKPOINT_DIR` (saved
+Ctrl-C or, from another shell, `./stop.sh`. `SDS_DATA_DIR` (raw inputs; set by
+`run.sh` to `data/` or, with `--test`, `test-data/`) and `SDS_CHECKPOINT_DIR` (saved
 sessions + snapshots; `run.sh` uses `checkpoints/`) are strictly separate — imports
 read only from the data dir, load/save only from the checkpoint dir — and can each be
 overridden to point at any other folder. If a `.env` file exists at the repo root, `run.sh` sources it

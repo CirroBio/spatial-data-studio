@@ -1,8 +1,8 @@
 # Spatial Data Studio backend
 
 FastAPI backend for interactive spatial-omics analysis. Holds one `SpatialData`
-object per session in memory, exposes squidpy as an introspected function
-registry, runs compute/plot jobs on a per-session worker thread, and serves field
+object per session in memory, exposes squidpy/scanpy/spatialdata-io as an
+introspected function registry, runs compute/plot jobs on a per-session worker thread, and serves field
 data as Apache Arrow IPC. See `../DESIGN.md` for the full design and `../docs/CONTRACT.md`
 for the API.
 
@@ -54,7 +54,7 @@ python3.11 -m venv .venv-introspect && . .venv-introspect/bin/activate
 pip install -r backend/requirements.txt
 pip uninstall -y leidenalg igraph                    # GPL Leiden backends; use custom.leiden
 cd backend
-SQV_DATA_DIR=../data SQV_CHECKPOINT_DIR=../checkpoints SQV_CONTAINER_MEM_MB=16384 \
+SDS_DATA_DIR=../data SDS_CHECKPOINT_DIR=../checkpoints SDS_CONTAINER_MEM_MB=16384 \
   uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
@@ -89,7 +89,7 @@ validated load → compute → plot → save → reload path):
 
 ## Invariants enforced (DESIGN §16)
 
-No module names a squidpy function (the registry is the only path). `copy=False`/
+No module names a library function (the registry is the only path). `copy=False`/
 `inplace=True` are pinned so the in-place model can't be defeated. App state is
 written only to `sdata.attrs["app_state"]`. Figures are never persisted. References
 validate at dequeue, not enqueue. Child sessions deep-copy attrs and start with empty
