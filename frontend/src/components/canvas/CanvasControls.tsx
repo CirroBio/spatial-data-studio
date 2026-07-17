@@ -20,6 +20,11 @@ interface CanvasControlsProps {
   setShowImage: (v: boolean) => void;
   showLegend: boolean;
   setShowLegend: (v: boolean) => void;
+  renderMode: 'auto' | 'points';
+  setRenderMode: (v: 'auto' | 'points') => void;
+  shapeSets: string[];
+  shapesElement: string | null;
+  setShapesElement: (v: string) => void;
   channels: Channel[];
   setChannel: (index: number, patch: Partial<{ visible: boolean; name: string; color: string }>) => void;
   openColorPicker: number | null;
@@ -44,6 +49,11 @@ export default function CanvasControls({
   setShowImage,
   showLegend,
   setShowLegend,
+  renderMode,
+  setRenderMode,
+  shapeSets,
+  shapesElement,
+  setShapesElement,
   channels,
   setChannel,
   openColorPicker,
@@ -81,6 +91,36 @@ export default function CanvasControls({
 
       <div className="flex flex-col gap-1">
         <label className="text-[10px] text-muted font-mono uppercase tracking-wide">Points</label>
+
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] text-muted font-mono uppercase tracking-wide">Render mode</label>
+          <select
+            value={renderMode}
+            onChange={(e) => setRenderMode(e.target.value as 'auto' | 'points')}
+            className="bg-bg border border-border rounded px-1 py-0.5 text-xs text-text focus:outline-none focus:border-accent"
+            title="Auto draws a nearest-cell field zoomed out and polygons/points zoomed in; Points always draws the classic scatter with the size slider."
+          >
+            <option value="auto">Auto (field / polygons)</option>
+            <option value="points">Points</option>
+          </select>
+        </div>
+
+        {renderMode === 'auto' && shapeSets.length > 0 && (
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] text-muted font-mono uppercase tracking-wide">Shape set</label>
+            <select
+              value={shapesElement ?? ''}
+              onChange={(e) => setShapesElement(e.target.value)}
+              className="bg-bg border border-border rounded px-1 py-0.5 text-xs text-text focus:outline-none focus:border-accent"
+              title="Which polygon element to draw when zoomed in."
+            >
+              {shapeSets.map((s) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
         <div className="flex flex-col gap-1">
           <label className="text-[10px] text-muted font-mono uppercase tracking-wide">Color by</label>
           <ColorBySelect

@@ -209,6 +209,36 @@ export async function getFieldData(sessionId: string, fieldPath: string): Promis
   return arrow.tableFromIPC(buffer);
 }
 
+// ---- cell-segmentation display ----------------------------------------------
+export interface CellFieldMeta {
+  median_nn_world: number;
+  n_cells: number;
+  bounds: [number, number, number, number];  // [minx, miny, maxx, maxy]
+}
+
+// R (median nearest-neighbor distance, world units) + bounds for a coords field;
+// drives the field disc radius and the field<->polygon zoom threshold.
+export async function getCellField(sessionId: string, coords: string): Promise<CellFieldMeta> {
+  const res = await apiFetch(`/api/sessions/${sessionId}/cell-field?coords=${encodeURIComponent(coords)}`);
+  return res.json() as Promise<CellFieldMeta>;
+}
+
+// Viewport-bbox cell polygons as a GeoArrow Arrow-IPC table (geometry column +
+// int32 cell_index). bbox is [minx, miny, maxx, maxy] in the coords world space.
+export async function getShapesGeoArrow(
+  sessionId: string,
+  element: string,
+  bbox: [number, number, number, number],
+  limit?: number,
+): Promise<arrow.Table> {
+  const q = limit !== undefined ? `&limit=${limit}` : '';
+  const res = await apiFetch(
+    `/api/sessions/${sessionId}/shapes/${encodeURIComponent(element)}/geoarrow?bbox=${bbox.join(',')}${q}`,
+  );
+  const buffer = await res.arrayBuffer();
+  return arrow.tableFromIPC(buffer);
+}
+
 // ---- data inspector ---------------------------------------------------------
 export interface ElementInventory {
   tables: { name: string; n_obs: number; n_vars: number; active: boolean }[];

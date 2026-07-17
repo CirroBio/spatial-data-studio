@@ -104,7 +104,17 @@ and point their documentation at a per-method section in
   and, when Cirro is configured, the Cirro project list. Warm tasks are
   best-effort — a failure just means the endpoint computes on demand as before.
 - **deck.gl canvas** — binary Arrow scatter colored by any per-cell value over the
-  tissue image; world-unit point sizing. **Color by** first picks a slot (`obs`, `X`
+  tissue image; world-unit point sizing. **Cell rendering is display-only in two zoom
+  regimes** (no resegmentation): zoomed out, a distance-capped nearest-cell **field** (a
+  custom deck.gl impostor-cone layer — each cell a world-space disc of radius R = the
+  median nearest-neighbor distance, its fragment shader writing depth so the nearest
+  centroid wins each pixel); zoomed in, the **exact cell-polygon outlines** filled by cell
+  color when the session has boundary polygons (fetched viewport-clipped as GeoArrow),
+  else the point scatter + size slider. The switch is a zoom threshold (`log2(6/d)`,
+  d = median NN distance, with ±0.5 hysteresis). A **Render mode** control
+  (`auto` — field/polygons — vs `points`, the classic scatter) and a **Shape set**
+  selector (which polygon element to outline) sit in the canvas controls; render mode
+  persists on the display state. **Color by** first picks a slot (`obs`, `X`
   gene expression, or a `layer`) and then the column within it: obs columns from a
   dropdown, genes from a type-to-search box backed by
   `GET /api/sessions/{id}/var-names?q=&limit=` (so datasets with tens of thousands of
@@ -573,8 +583,12 @@ split for testing — the multi-sample methods (**Milo differential abundance**,
   Also covers staged/pending recipe steps + preflight, region promote/annotate and their
   persistence, the editable points-transform (affine applied to the Arrow fetch, persisted),
   content-hashed checkpoint naming, `data_versions` bumping + plot invalidation/redraw,
-  persisted canvas encoding, the data-inspector endpoints, cross-session isolation, and the
-  eight spatial/multi-sample custom methods end to end on `xenium_tma.zarr`.
+  persisted canvas encoding, the data-inspector endpoints, cross-session isolation, the
+  eight spatial/multi-sample custom methods end to end on `xenium_tma.zarr`, and the
+  cell-segmentation display endpoints on `xenium.zarr` (`/cell-field` metadata and the
+  `/shapes/{element}/geoarrow` polygons — bbox subsetting, `limit`, 404 on a
+  missing/non-polygonal element, a checkpoint round-trip, the no-polygon `visium_hne`
+  fallback, and a centroid-alignment gate that transformed polygons overlay `obsm:spatial`).
 - `cd backend && python test_cli.py` — offline CLI (`cli.py`) round trip: loads
   `visium_hne.zarr` in zarr mode, runs a compute + plot recipe headlessly, and asserts the
   output `.zarr.zip` and `plots/…/figure.{svg,pdf}` are written and reload with history intact.

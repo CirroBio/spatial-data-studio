@@ -77,6 +77,10 @@ export function useImageTiles(
         id: `img-base-${element}-${visibleChannels}`,
         image: baseImg,
         bounds: quad(m, 0, 0, W0, H0),
+        // The image never participates in depth: it must not occlude the cell
+        // layers drawn after it (the cell-field writes gl_FragDepth to resolve
+        // nearest-cell fill, and cells must always sit above the tissue image).
+        parameters: { depthWriteEnabled: false, depthCompare: 'always' },
       }));
     } else {
       loading = true;
@@ -128,6 +132,7 @@ export function useImageTiles(
             id: `img-tile-${element}-${level}-${col}-${row}-${visibleChannels}`,
             image: img,
             bounds: quad(m, px0, py0, px1, py1),
+            parameters: { depthWriteEnabled: false, depthCompare: 'always' },
           }));
         }
       }

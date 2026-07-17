@@ -23,6 +23,7 @@ from app.config import config  # noqa: E402
 
 DATA = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "test-data", "visium_hne.zarr"))
 XENIUM_TMA = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "test-data", "xenium_tma.zarr"))
+XENIUM = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "test-data", "xenium.zarr"))
 
 
 def poll(client, sid, predicate, timeout=180):
@@ -668,6 +669,90 @@ def run_isolation_flow(client):
     print("[ok] history delete + cancel/close negatives behave; closed session 404s")
 
 
+def run_segmentation_flow(client):
+    """Cell-boundary display endpoints on xenium.zarr (has shapes/cell_boundaries):
+    the cell-field metadata, the viewport-bbox GeoArrow polygons, and the
+    centroid-alignment gate that a transformed polygon centroid matches its cell's
+    transformed obsm:spatial. Confirms boundary polygons survive the reader +
+    normalize_rasters + a checkpoint round-trip, and that field metadata still works
+    on a session with no polygons (visium_hne)."""
+    import numpy as np
+    import geoarrow.pyarrow as ga
+
+    def poly_names(inv):
+        return [s["name"] for s in inv["shapes"] if set(s["geometry"]) & {"Polygon", "MultiPolygon"}]
+
+    sid = new_session(client, XENIUM)
+    print(f"[ok] xenium segmentation session {sid[:8]}")
+
+    # boundary shapes survived the reader + normalize_rasters (which touches only rasters)
+    inv = client.get(f"/api/sessions/{sid}/elements").json()
+    assert "cell_boundaries" in poly_names(inv), inv["shapes"]
+    print(f"[ok] polygon shapes present after read + normalize_rasters: {poly_names(inv)}")
+
+    # cell-field metadata: positive spacing + sane bounds
+    cf = client.get(f"/api/sessions/{sid}/cell-field").json()
+    minx, miny, maxx, maxy = cf["bounds"]
+    assert cf["n_cells"] > 0 and cf["median_nn_world"] > 0 and minx < maxx and miny < maxy, cf
+    print(f"[ok] cell-field: n={cf['n_cells']} R={cf['median_nn_world']:.3f} bounds={cf['bounds']}")
+
+    # world coords the polygons must overlay (same space the coords endpoint serves)
+    spatial = fetch_arrow(client, sid, "obsm:spatial")
+    wx, wy = np.asarray(spatial.column("d0")), np.asarray(spatial.column("d1"))
+
+    covering = f"{minx},{miny},{maxx},{maxy}"
+    far = f"{maxx + 1e6},{maxy + 1e6},{maxx + 2e6},{maxy + 2e6}"
+    rc = client.get(f"/api/sessions/{sid}/shapes/cell_boundaries/geoarrow", params={"bbox": covering})
+    assert rc.status_code == 200, rc.text
+    assert rc.headers["content-type"].startswith("application/vnd.apache.arrow.stream"), rc.headers
+    tbl = ipc.open_stream(io.BytesIO(rc.content)).read_all()
+    assert tbl.num_rows > 0, "covering bbox returned no polygons"
+    rf = client.get(f"/api/sessions/{sid}/shapes/cell_boundaries/geoarrow", params={"bbox": far})
+    assert ipc.open_stream(io.BytesIO(rf.content)).read_all().num_rows == 0, "far bbox not empty"
+    print(f"[ok] geoarrow: covering bbox -> {tbl.num_rows} polygons, far bbox -> 0")
+
+    # centroid-alignment gate: each transformed polygon centroid ~ its cell's
+    # transformed obsm:spatial, gathered by cell_index (the correctness anchor).
+    geoms = ga.to_geopandas(tbl.column("geometry"))
+    cidx = np.asarray(tbl.column("cell_index"))
+    ok = cidx >= 0
+    cx, cy = np.asarray(geoms.centroid.x), np.asarray(geoms.centroid.y)
+    d = np.hypot(cx[ok] - wx[cidx[ok]], cy[ok] - wy[cidx[ok]])
+    assert ok.all() and np.median(d) < cf["median_nn_world"], \
+        f"misaligned: {ok.sum()}/{len(cidx)} mapped, median offset {np.median(d):.3f} vs R {cf['median_nn_world']:.3f}"
+    print(f"[ok] centroid-alignment: {ok.sum()}/{len(cidx)} mapped, median offset "
+          f"{np.median(d):.3f} << R {cf['median_nn_world']:.3f}")
+
+    # limit caps features; a missing/non-polygonal element 404s
+    rl = client.get(f"/api/sessions/{sid}/shapes/cell_boundaries/geoarrow",
+                    params={"bbox": covering, "limit": 10})
+    assert ipc.open_stream(io.BytesIO(rl.content)).read_all().num_rows == 10
+    assert client.get(f"/api/sessions/{sid}/shapes/nope/geoarrow",
+                      params={"bbox": covering}).status_code == 404
+    print("[ok] limit caps features; missing element 404s")
+
+    # checkpoint round-trip: cell_boundaries survives save + reload and still serves
+    out = os.path.join(str(config.CHECKPOINT_DIR), "xenium_segmentation.zarr.zip")
+    sv = client.post(f"/api/sessions/{sid}/save", json={"path": out}).json()
+    assert wait_job(client, sid, sv["job_id"], timeout=300)["status"] == "completed"
+    sid2 = new_session(client, out)
+    assert "cell_boundaries" in poly_names(client.get(f"/api/sessions/{sid2}/elements").json())
+    r2 = client.get(f"/api/sessions/{sid2}/shapes/cell_boundaries/geoarrow", params={"bbox": covering})
+    assert ipc.open_stream(io.BytesIO(r2.content)).read_all().num_rows > 0
+    print("[ok] cell_boundaries survived save + reload; geoarrow still serves it")
+
+    # a session with no polygons (visium_hne): field metadata works; no polygon element
+    sid_v = new_session(client)
+    cfv = client.get(f"/api/sessions/{sid_v}/cell-field").json()
+    assert cfv["n_cells"] > 0 and cfv["median_nn_world"] > 0, cfv
+    assert not poly_names(client.get(f"/api/sessions/{sid_v}/elements").json())
+    assert client.get(f"/api/sessions/{sid_v}/shapes/cell_boundaries/geoarrow",
+                      params={"bbox": "0,0,1,1"}).status_code == 404
+    print("[ok] visium_hne: cell-field works; no polygon shapes; geoarrow 404s")
+
+    print("\nSEGMENTATION E2E CHECKS PASSED")
+
+
 def main():
     with TestClient(app) as client:
         assert client.get("/api/readyz").json()["functions"] > 0
@@ -861,6 +946,7 @@ def main():
         run_inspector_flow(client)
         run_isolation_flow(client)
         run_zarr_import_flow(client)
+        run_segmentation_flow(client)
 
         run_custom_methods_flow(client)
 

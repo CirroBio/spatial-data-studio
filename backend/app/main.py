@@ -658,6 +658,51 @@ async def data(sid: str, field_path: str):
     return Response(content=payload, media_type="application/vnd.apache.arrow.stream")
 
 
+@app.get("/api/sessions/{sid}/cell-field")
+async def cell_field(sid: str, coords: str = "obsm:spatial"):
+    """Field-layer metadata for the segmentation display: the median
+    nearest-neighbor spacing (the field radius R), cell count, and world bounds of
+    `coords`, in the same world space as `/data/{coords}`. Memoized per
+    (session, coords, data_version)."""
+    sess = _session(sid)
+
+    def _build():
+        from .transport import geometry
+        dv = sess.app_state.get("data_versions", {}).get(coords, 0)
+        return geometry.cell_field(sess.sdata, sess.active_table(), coords,
+                                   cache_key=(sess.id, coords, dv))
+
+    try:
+        return await _read_locked(sess, _build)
+    except (KeyError, ValueError, RuntimeError) as e:
+        raise HTTPException(404, str(e))
+
+
+@app.get("/api/sessions/{sid}/shapes/{element}/geoarrow")
+async def shapes_geoarrow(sid: str, element: str, bbox: str, limit: int | None = None):
+    """Viewport-clipped boundary polygons of a shapes element as GeoArrow IPC
+    (geometry + int32 cell_index), transformed into the coords world space. `bbox`
+    is `minx,miny,maxx,maxy` in that world space. 404 if the element is absent or
+    not polygonal."""
+    sess = _session(sid)
+    try:
+        parts = [float(x) for x in bbox.split(",")]
+    except ValueError:
+        raise HTTPException(400, "bbox must be four floats minx,miny,maxx,maxy")
+    if len(parts) != 4:
+        raise HTTPException(400, "bbox must be four floats minx,miny,maxx,maxy")
+
+    def _build():
+        from .transport import geometry
+        return geometry.polygons_geoarrow(sess.sdata, sess.active_table(), element, parts, limit)
+
+    try:
+        payload = await _read_locked(sess, _build)
+    except (KeyError, RuntimeError) as e:
+        raise HTTPException(404, str(e))
+    return Response(content=payload, media_type="application/vnd.apache.arrow.stream")
+
+
 @app.get("/api/sessions/{sid}/var-names")
 async def var_names(sid: str, q: str = "", limit: int = 50):
     """Search var_names (genes) for the color-by gene picker. adata can carry tens

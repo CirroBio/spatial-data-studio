@@ -22,6 +22,10 @@ allowed_licenses:
 # removed and replaced by graspologic-native (MIT); no strong-copyleft package
 # remains to adjudicate. certifi and tqdm are MPL-2.0 (weak, file-level
 # copyleft), covered by `allowed_licenses` above — the app modifies neither.
+# The cell-segmentation display's deps are permissive and need no entry here:
+# geoarrow-pyarrow / geoarrow-c / geoarrow-types are Apache-2.0 (backend);
+# @geoarrow/deck.gl-layers and its peers are MIT (frontend, recorded in
+# sbom_frontend.json — there is no frontend allowlist gate).
 adjudicated_packages: {}
 
 # The GPL clustering-license question is resolved: the copyleft backends were

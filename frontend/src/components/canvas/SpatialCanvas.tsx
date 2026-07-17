@@ -5,15 +5,17 @@ import { ScatterplotLayer, PolygonLayer, PathLayer } from '@deck.gl/layers';
 import type { Layer, OrthographicViewState, PickingInfo } from '@deck.gl/core';
 import { useAppStore } from '../../store/sessionStore';
 import { useArrowField } from '../../hooks/useArrowField';
-import { getImageInfo, putDisplay, saveSnapshot } from '../../api';
+import { getImageInfo, putDisplay, saveSnapshot, getCellField, getElements, type CellFieldMeta } from '../../api';
 import { reportError } from '../../lib/errors';
 import TransformEditor from '../TransformEditor';
 import { isSpatialDisplay, type SpatialDisplaySpec, type ImageInfo } from '../../types';
 import { useArrowPositions } from './useArrowPositions';
 import { useImageTiles } from './useImageTiles';
-import { useCanvasViewState } from './useCanvasViewState';
+import { useCanvasViewState, cellZoomThreshold, ZOOM_HYSTERESIS } from './useCanvasViewState';
 import { useSpotColors, arrowToColorSource } from './useSpotColors';
 import { buildSpotLayer } from './buildSpotLayer';
+import { buildCellFieldLayer } from './buildCellFieldLayer';
+import { usePolygonBbox } from './usePolygonBbox';
 import { useImageChannels } from './useImageChannels';
 import CanvasControls from './CanvasControls';
 import { colorByLabel } from './colorBy';
@@ -138,18 +140,107 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
     show: showImage,
   });
 
+  // Cell-field metadata (R = median NN distance) — fetched once per session/coords/
+  // version. R sizes the field discs and sets the field<->detail zoom threshold.
+  const renderMode = display.encoding.render_mode ?? 'auto';
+  const [cellField, setCellField] = useState<CellFieldMeta | null>(null);
+  useEffect(() => {
+    setCellField(null);
+    if (!sessionId || !coordsPath) return;
+    let stale = false;
+    getCellField(sessionId, coordsPath)
+      .then((m) => { if (!stale) setCellField(m); })
+      .catch(() => { if (!stale) setCellField(null); });  // no field metadata → fall back to points
+    return () => { stale = true; };
+  }, [sessionId, coordsPath, coordsVersion]);
+
+  // Polygon shape sets available for this session (elements inventory filtered to
+  // polygonal geom types). Empty → the whole polygon path stays dormant.
+  const [polygonElements, setPolygonElements] = useState<string[]>([]);
+  useEffect(() => {
+    setPolygonElements([]);
+    if (!sessionId) return;
+    let stale = false;
+    getElements(sessionId)
+      .then((inv) => {
+        if (stale) return;
+        setPolygonElements(
+          inv.shapes
+            .filter((s) => s.geometry.some((g) => g === 'Polygon' || g === 'MultiPolygon'))
+            .map((s) => s.name),
+        );
+      })
+      .catch(() => { if (!stale) setPolygonElements([]); });
+    return () => { stale = true; };
+  }, [sessionId, coordsVersion]);
+
+  // Effective shape set: the persisted choice if it still exists, else the first
+  // available polygon element (e.g. cell_boundaries). null when none exist.
+  const shapesElement = useMemo(() => {
+    const chosen = display.encoding.shapes_layer;
+    if (chosen && polygonElements.includes(chosen)) return chosen;
+    return polygonElements[0] ?? null;
+  }, [display.encoding.shapes_layer, polygonElements]);
+
+  const zoom = viewState ? (Array.isArray(viewState.zoom) ? viewState.zoom[0] : viewState.zoom) ?? 0 : 0;
+
+  // Field <-> detail regime with hysteresis, so hovering near the threshold does
+  // not flip-flop. Only meaningful in 'auto' mode; 'points' pins to the scatter.
+  const [regime, setRegime] = useState<'field' | 'detail'>('field');
+  useEffect(() => {
+    if (renderMode !== 'auto' || !cellField) return;
+    const th = cellZoomThreshold(cellField.median_nn_world);
+    setRegime((prev) => {
+      if (prev === 'field' && zoom > th + ZOOM_HYSTERESIS) return 'detail';
+      if (prev === 'detail' && zoom < th - ZOOM_HYSTERESIS) return 'field';
+      return prev;
+    });
+  }, [zoom, cellField, renderMode]);
+
+  const polygonsActive = renderMode === 'auto' && regime === 'detail' && shapesElement !== null && showPoints;
+  const { layer: polygonLayer, loading: polygonsLoading } = usePolygonBbox({
+    sessionId,
+    element: shapesElement,
+    version: coordsVersion,
+    viewState,
+    size: canvasSize,
+    colors,
+    opacity: display.encoding.opacity,
+    enabled: polygonsActive,
+  });
+
   const layers = useMemo(() => {
     const result: Layer[] = [...imageLayers];
 
     if (showPoints && positions && colors) {
-      result.push(buildSpotLayer(positions, colors, {
-        pointSize: display.encoding.point_size,
-        opacity: display.encoding.opacity,
-      }));
+      // 'points' mode, or 'auto' before the field metadata arrives, or the
+      // zoomed-in fallback when no polygon set is available: the classic scatter.
+      const haveField = renderMode === 'auto' && cellField !== null;
+      const useField = haveField && regime === 'field';
+      const usePolygons = polygonsActive && polygonLayer !== null;
+      // Just after crossing into the detail regime the polygons are still fetching
+      // (polygonsActive but no layer yet); keep the field up until they arrive so
+      // the switch is field -> polygons, never field -> points -> polygons.
+      const fieldWhilePolygonsLoad = polygonsActive && polygonLayer === null && haveField;
+
+      if (useField || fieldWhilePolygonsLoad) {
+        result.push(buildCellFieldLayer(positions, colors, {
+          radius: cellField.median_nn_world,
+          opacity: display.encoding.opacity,
+        }));
+      } else if (usePolygons) {
+        result.push(polygonLayer);
+      } else {
+        result.push(buildSpotLayer(positions, colors, {
+          pointSize: display.encoding.point_size,
+          opacity: display.encoding.opacity,
+        }));
+      }
     }
 
     return result;
-  }, [imageLayers, positions, colors, showPoints, display.encoding.point_size, display.encoding.opacity]);
+  }, [imageLayers, positions, colors, showPoints, renderMode, cellField, regime,
+      polygonsActive, polygonLayer, display.encoding.point_size, display.encoding.opacity]);
 
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -180,6 +271,10 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
     ? [72, 187, 120] as [number, number, number]  // green for annotation
     : [124, 108, 246] as [number, number, number]; // accent purple for subset
 
+  // Selection graphics are UI overlays that must always be visible: 'always' depth
+  // compare so they aren't occluded by the cell-field layer, which writes a depth
+  // below the z = 0 plane to resolve nearest-cell fill.
+  const OVERLAY_PARAMS = { depthCompare: 'always' as const, depthWriteEnabled: false };
   const drawLayers: Layer[] = [];
   if (drawMode) {
     if (polygons.length) {
@@ -187,18 +282,21 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
         id: 'sel-polygons', data: polygons, getPolygon: (d) => d,
         filled: true, getFillColor: [...SEL, 50], stroked: true,
         getLineColor: [...SEL, 220], getLineWidth: 2, lineWidthUnits: 'pixels', pickable: false,
+        parameters: OVERLAY_PARAMS,
       }));
     }
     if (currentRing.length >= 2) {
       drawLayers.push(new PathLayer<[number, number][]>({
         id: 'sel-path', data: [currentRing], getPath: (d) => d,
         getColor: [...SEL, 220], getWidth: 2, widthUnits: 'pixels',
+        parameters: OVERLAY_PARAMS,
       }));
     }
     if (currentRing.length >= 1) {
       drawLayers.push(new ScatterplotLayer<[number, number]>({
         id: 'sel-verts', data: currentRing, getPosition: (d) => d,
         getFillColor: [...SEL, 255], getRadius: 4, radiusUnits: 'pixels',
+        parameters: OVERLAY_PARAMS,
       }));
     }
   }
@@ -232,7 +330,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
         getCursor={drawMode ? () => 'crosshair' : ({ isDragging }) => (isDragging ? 'grabbing' : 'grab')}
       />
 
-      <LoadingCue coordsLoading={coordsLoading} colorLoading={colorLoading} tilesLoading={tilesLoading} />
+      <LoadingCue coordsLoading={coordsLoading} colorLoading={colorLoading} tilesLoading={tilesLoading || polygonsLoading} />
 
       <ChannelLegend show={showImage} showLegend={showLegend} channels={channels} />
 
@@ -254,6 +352,11 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
         setShowImage={(v) => updateEncoding({ show_image: v })}
         showLegend={showLegend}
         setShowLegend={(v) => updateEncoding({ show_channel_legend: v })}
+        renderMode={renderMode}
+        setRenderMode={(v) => updateEncoding({ render_mode: v })}
+        shapeSets={polygonElements}
+        shapesElement={shapesElement}
+        setShapesElement={(v) => updateEncoding({ shapes_layer: v })}
         channels={channels}
         setChannel={setChannel}
         openColorPicker={openColorPicker}

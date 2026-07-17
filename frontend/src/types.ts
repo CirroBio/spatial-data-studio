@@ -125,6 +125,10 @@ export interface DisplayEncoding {
   show_image?: boolean;      // image-layer visibility; defaults to (image_layer != null)
   show_channel_legend?: boolean;  // image channel legend visibility; defaults on
   isolated_category?: string | null;  // isolate one category in the color-by legend (dims the rest)
+  // Cell rendering regime. 'auto' (default): a nearest-cell field when zoomed out,
+  // polygon outlines (if a shapes element is available) or the point scatter when
+  // zoomed in. 'points': always the classic point scatter with the size slider.
+  render_mode?: 'auto' | 'points';
 }
 
 export interface Viewport {

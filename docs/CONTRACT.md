@@ -79,6 +79,8 @@ ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_cate
 | GET  | `/api/cirro/uploads` | — | `{uploading:int, pending:int}` (upload-queue depth; also broadcast as `cirro.upload.state` over SSE) |
 | POST | `/api/cirro/upload` | `{project_id, dataset_name, session_paths:[str], snapshot_names:[str], folder?}` | `{status:"started"}` (background; announces `cirro.upload.completed`/`failed` over SSE; always uses the generic "Files" ingest process; `folder` → `folder://<path>` dataset tag; including snapshots also bundles the standalone viewer + `snapshots/index.json` at the dataset root) |
 | GET  | `/api/sessions/{id}/data/{fieldPath}` | fieldPath e.g. `obs:leiden`, `obsm:spatial`, `X:Sox17`, `obsp:spatial_distances` | Arrow IPC stream (application/vnd.apache.arrow.stream) |
+| GET  | `/api/sessions/{id}/cell-field?coords=<field>` | `coords` defaults to `obsm:spatial` | `{median_nn_world:float, n_cells:int, bounds:[minx,miny,maxx,maxy]}` — the field radius R and the points↔polygons zoom threshold, in the same world space `/data/{coords}` serves; memoized per (session, coords, data_version); 404 on a missing field/table (segmentation display, §Cell-segmentation geometry below) |
+| GET  | `/api/sessions/{id}/shapes/{element}/geoarrow?bbox=minx,miny,maxx,maxy[&limit=N]` | `bbox` in the `obsm:spatial` world space; optional `limit` caps the returned feature count | Arrow IPC stream (`application/vnd.apache.arrow.stream`) of viewport-clipped boundary polygons — `geometry` (GeoArrow) + `cell_index:int32`; 400 on a malformed bbox; 404 if the element is absent or non-polygonal |
 | GET  | `/api/sessions/{id}/elements` | — | `{tables:[{name,n_obs,n_vars,active}], shapes, points, images, labels}` (data inspector inventory) |
 | GET  | `/api/sessions/{id}/table?path=&offset=&limit=` | path = `obs`, `var`, `shapes:<name>`, `points:<name>` | `{total_rows, offset, limit, index_name, index, columns:[{name,dtype}], rows}` (JSON page) |
 | GET  | `/api/sessions/{id}/image/{element}/info` | — | `{levels:[{level,width,height}], channels, dtype, pixel_to_world}` |
@@ -121,7 +123,8 @@ PlotEntry = {id, namespace:"pl", function, params, status:"pending|queued|runnin
 ```jsonc
 { "id":"uuid", "type":"spatial_canvas",
   "encoding": { "coords":"obsm:spatial", "color_by":"obs:leiden", "image_layer":"hne",
-                "shapes_layer":null, "point_size":3, "opacity":0.8, "colormap":"viridis" },
+                "shapes_layer":null, "point_size":3, "opacity":0.8, "colormap":"viridis",
+                "render_mode":"auto" },   // "auto" (field / polygon outlines / point fallback) | "points"
   "viewport": { "target":[x,y], "zoom":z } }
 ```
 ```jsonc
@@ -146,6 +149,32 @@ Single RecordBatch streamed as Arrow IPC.
 - `X:<gene>` → column `value: float32` (dense expression for one gene).
 - `var:<col>` → one column typed by dtype.
 - `obsp:<key>` (sparse) → CSR triplets: columns `row:int32, col:int32, data:float64`, schema metadata `shape`=`[n,n]`. Never densified.
+
+## Cell-segmentation geometry (segmentation display)
+
+Two read-only views of a session's cells, both expressed in the same world space
+`/data/obsm:spatial` serves (the region element's points→global affine applied), so
+the field, the polygon outlines, the point scatter, and the image all overlay. Backed
+by `backend/app/transport/geometry.py`.
+
+- **`/cell-field`** returns JSON: `median_nn_world` (median nearest-neighbor distance —
+  the field disc radius R, and the basis for the points↔polygons zoom threshold
+  `log2(6/median_nn_world)`), `n_cells`, and `bounds` `[minx,miny,maxx,maxy]`. Computed
+  from a fixed-seed sample of cells over a cKDTree of all cells; memoized per
+  (session, coords, data_version).
+- **`/shapes/{element}/geoarrow`** streams a single Arrow IPC table of the boundary
+  polygons that intersect `bbox` (subset via the GeoDataFrame's spatial index):
+  - `geometry` — a GeoArrow extension column, `geoarrow.polygon` or
+    `geoarrow.multipolygon`, with **separated** `struct<x: float64, y: float64>`
+    coordinates. The polygons are transformed from their intrinsic element coordinates
+    into the `obsm:spatial` world space (the region element's affine — a boundary
+    element's own transform is not used, since on Xenium it disagrees with the region's).
+  - `cell_index` — `int32`, the row of each polygon's cell in the **active table**
+    (matched by the shape's index label against the obs index or `instance_key`), or
+    `-1` if the shape maps to no table row. The frontend gathers the already-loaded
+    per-cell color by this index.
+  - An empty/non-intersecting bbox yields a 0-row table (still a valid GeoArrow schema);
+    `limit` truncates to the first N intersecting features.
 
 ## SSE events (`/api/events`, single multiplexed stream)
 Each event: `event: <type>`, `data: <json>`, every payload carries `session_id`. Monotonic `id:` for `Last-Event-ID` resume.

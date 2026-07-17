@@ -168,6 +168,7 @@ sdata.attrs["app_state"] = {
                     "opacity": 0.8, "channels": [ /* per-index visible/name/color */ ],
                     "show_points": true, "show_image": true,       // layer-visibility toggles
                     "show_channel_legend": true,
+                    "render_mode": "auto",                          // cell-render regime (§9.10): auto | points
                     "isolated_category": "Tumor" },                 // dim all but this category
       "viewport": { "target": [x,y], "zoom": z } }   // persisted on pan/zoom (embedding adds rotationX/rotationOrbit in 3D)
   ],
@@ -601,6 +602,7 @@ library calls but with a signature **defined by the application**:
 | `point_size` | number (world units) | — |
 | `opacity` | number (0–1) | — |
 | `channels` | per-index list | image channel visibility / name / color |
+| `render_mode` | `auto` \| `points` | cell-render regime (§9.10); `auto` is default |
 
 On load, default specs are generated from the object's structure. **Color by** first
 picks a slot (`obs`, `X` gene expression, or a `layer`) then the column within it:
@@ -612,7 +614,7 @@ so datasets with tens of thousands of genes stay responsive.
 
 - Cell centroids → `ScatterplotLayer` with **binary attributes** (position Float32Array
   from Arrow; color from a category-index + palette, or continuous value + colormap).
-- Cell boundaries → `PolygonLayer`/`GeoJsonLayer`, opt-in (heavy).
+- Cell boundaries / nearest-cell field → the two-regime segmentation display (§9.10).
 - Tissue image → `BitmapLayer`(s) fed from the multiscale pyramid (§9.3).
 - Selection → editable-layers overlay (Polygon/Path/Scatterplot draw modes).
 
@@ -726,6 +728,41 @@ structural diff). The view never silently shows data that no longer matches the 
   WKT), `points`, and image metadata + thumbnail. Served by `GET
   /api/sessions/{id}/elements` (inventory) and `GET
   /api/sessions/{id}/table?path=&offset=&limit=` (JSON page).
+
+### 9.10 Cell-segmentation display (display only)
+
+Cells render in two zoom regimes rather than as a single fixed-size scatter. This is a
+**display** of existing segmentation — it never resegments or recomputes boundaries.
+
+- **Zoomed out — nearest-cell field.** A custom deck.gl impostor-cone layer
+  (`frontend/src/components/canvas/buildCellFieldLayer.ts`) draws each cell as a
+  world-space disc of radius R = the median nearest-neighbor distance. A `LayerExtension`
+  injects one line into the `ScatterplotLayer` fragment shader that writes `gl_FragDepth`
+  from the fragment's distance to its disc center, so with the depth test on the nearest
+  centroid wins each pixel — a distance-capped nearest-cell tessellation in one pass. R
+  and the data bounds come from `GET /api/sessions/{id}/cell-field`.
+- **Zoomed in — exact polygon outlines.** When the session has boundary polygons, cells
+  draw as their real outlines filled by the per-cell color, from a
+  `GeoArrowSolidPolygonLayer` fed by viewport-clipped GeoArrow fetched from `GET
+  /api/sessions/{id}/shapes/{element}/geoarrow?bbox=…` (`usePolygonBbox.ts`, LRU-cached
+  per viewport bbox + data_version). With no boundary polygons the zoomed-in regime falls
+  back to the existing point scatter with its size slider.
+- **The switch.** The regime flips at zoom `log2(6 / d)` (d = median NN distance) with a
+  ±0.5 hysteresis band (`useCanvasViewState.ts`), so a cell crossing ~6 px on screen
+  swaps field for outlines/points without flip-flopping while hovering the threshold.
+- **Controls.** A **Render mode** control (`auto` — field/polygons/points by zoom — vs
+  `points` — always the classic scatter) persists on the display encoding
+  (`render_mode`); a **Shape set** selector picks which polygon element to outline when
+  more than one is available.
+
+Both endpoints serve geometry in the same world space `/data/obsm:spatial` uses (the
+region element's points→global affine), so field, outlines, points, and image overlay;
+the GeoArrow polygons carry a `cell_index` back to the active table for color gather.
+See `docs/CONTRACT.md` for the payload schemas.
+
+**Known follow-up:** `@geoarrow/deck.gl-layers` (0.3.2) logs a console deprecation — it
+is renamed to `@geoarrow/deck.gl-geoarrow` (0.4.x). Not migrated: 0.3.2 is the verified
+working version, and 0.4.x may drift the API and needs re-testing.
 
 ---
 
@@ -1356,9 +1393,14 @@ confirmed with counsel.**
 
 - **Posture:** the core stack is **permissive** — squidpy, scanpy, anndata, spatialdata,
   numpy, scipy, pandas, scikit-learn (BSD-3), matplotlib (BSD-compatible), the frontend
-  (React, deck.gl, Tailwind, Radix — MIT), Apache Arrow (Apache-2.0). The app
-  may remain proprietary and be distributed without releasing app source; the baseline
-  obligation is attribution.
+  (React, deck.gl, Tailwind, Radix — MIT), Apache Arrow (Apache-2.0). The
+  cell-segmentation display adds only permissive deps: `geoarrow-pyarrow`
+  (+ `geoarrow-c`/`geoarrow-types`, Apache-2.0) on the backend and
+  `@geoarrow/deck.gl-layers` (+ `@deck.gl/geo-layers`, `@deck.gl/aggregation-layers`,
+  `@math.gl/polygon`, `@geoarrow/geoarrow-js`, `threads` — MIT) on the frontend, all
+  covered by `allowed_licenses` in `license_allowlist.yaml` with no per-package
+  adjudication. The app may remain proprietary and be distributed without releasing app
+  source; the baseline obligation is attribution.
 - **Baseline obligations:** bundle a `THIRD_PARTY_LICENSES` (surfaced in the in-app
   **About / Acknowledgements** view via `GET /api/about/licenses` from the SBOMs);
   preserve Apache-2.0 `NOTICE` files; respect the BSD-3 non-endorsement clause.

@@ -23,5 +23,6 @@ numpy==2.4.6
 pandas==2.3.3
 matplotlib==3.11.0
 shapely==2.1.2
+geoarrow-pyarrow==0.2.0   # GeoArrow polygon encoding for the cell-boundary display endpoint (/shapes/{element}/geoarrow)
 zarr==3.1.6
 PyYAML==6.0.3
