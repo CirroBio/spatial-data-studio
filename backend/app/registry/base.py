@@ -258,33 +258,35 @@ def diff(before: dict, after: dict) -> tuple[dict, list]:
     return out, fields
 
 
-def compute_result(session, before: dict, log: str, ret=None, result_key: str | None = None) -> CallResult:
-    """Build the structural-diff CallResult for a compute op that mutated the
-    active object in place. Handles a returned data object (Edge B) or a
-    return-only function (Edge A, surfaced via uns['_results'])."""
-    adata = session.active_table()
-    after = keyset(adata, session.sdata)
-    out, fields = diff(before, after)
-    if ret is not None and not out and ret.__class__.__name__ in ("AnnData", "SpatialData"):
-        return CallResult(status="completed", log=log, new_object=ret)
-    if ret is not None and not out and result_key is not None:
-        session.stash_result(result_key, ret)
-    return CallResult(status="completed", log=log, structural_diff=out, changed_fields=fields)
-
-
 def run_compute(session, mutate) -> CallResult:
-    """Run an in-place compute mutation `mutate(adata)` with log capture and
-    structural diffing. The caller already holds the session write lock."""
+    """Run an in-place compute mutation `mutate(adata)` in the compute pool (see
+    kernel.py) so a slow custom function never holds the API process's GIL. The
+    caller already holds the session write lock."""
+    from . import kernel
     adata = session.active_table()
-    before = keyset(adata, session.sdata)
-    with capture_log() as buf:
-        try:
-            mutate(adata)
-        except Exception as e:
-            return CallResult(status="failed", log=buf.getvalue() + "\n" + traceback.format_exc(),
-                              error=short_error(e))
-        log = buf.getvalue()
-    return compute_result(session, before, log)
+    env = kernel.run_mutate(mutate, adata, session.sdata)
+    if env["status"] == "failed":
+        return CallResult(status="failed", error=env.get("error"), log=env.get("log", ""))
+    facets = env.get("changed_facets", {})
+    kernel.apply_changed_facets(adata, session.sdata, facets)
+    structural_diff = {facet: sorted(values) for facet, values in facets.items()}
+    return CallResult(status="completed", log=env.get("log", ""), structural_diff=structural_diff,
+                      changed_fields=env.get("changed_fields", []))
+
+
+def run_plot(session, fn, injected: list | None = None, bound: dict | None = None) -> CallResult:
+    """Run a custom plotting callable in the compute pool (see kernel.py) — the
+    same GIL isolation as a library plot. `injected` defaults to `[active_table]`,
+    the shape every custom plot function uses today."""
+    from . import kernel
+    adata = session.active_table()
+    env = kernel.run_custom_plot(fn, injected if injected is not None else [adata], bound or {},
+                                  adata, session.sdata)
+    if env["status"] == "failed":
+        return CallResult(status="failed", error=env.get("error"), log=env.get("log", ""))
+    kernel.apply_changed_facets(adata, session.sdata, env.get("changed_facets", {}))
+    return CallResult(status=env["status"], log=env.get("log", ""),
+                      figure_svg=env.get("figure_svg"), figure_pdf=env.get("figure_pdf"))
 
 
 def render_plot(fn, injected: list, bound: dict, buf) -> CallResult:

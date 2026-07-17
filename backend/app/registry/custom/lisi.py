@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..base import (CallResult, Function, ParamSpec, capture_log, missing_obs_column, render_plot,
-                    resolve_obsm_key, run_compute)
+from ..base import (CallResult, Function, ParamSpec, missing_obs_column,
+                    resolve_obsm_key, run_compute, run_plot)
 from ._docs import custom_doc
 from ._vendor import lisi_compute, lisi_plot
 
@@ -144,5 +144,4 @@ key_added
             embedding = np.asarray(ad.obsm[use_rep]) if use_rep and use_rep in ad.obsm else None
             return lisi_plot.plot_summary(result, embedding=embedding)
 
-        with capture_log() as buf:
-            return render_plot(fn, [adata], {}, buf)
+        return run_plot(session, fn)

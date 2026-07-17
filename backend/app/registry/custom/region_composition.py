@@ -5,7 +5,7 @@ of independence (`scipy.stats.chi2_contingency`) for the title, and renders a st
 bar — all existing deps, no new library per Part 6's constraint."""
 from __future__ import annotations
 
-from ..base import CallResult, Function, ParamSpec, capture_log, missing_obs_column, render_plot
+from ..base import CallResult, Function, ParamSpec, missing_obs_column, run_plot
 
 _REGION_PARAM = ParamSpec.obs_categorical(
     "region_key", required=True,
@@ -74,5 +74,4 @@ cell_type_key
             ax.legend(title=cell_type_key, bbox_to_anchor=(1.02, 1), loc="upper left", fontsize=7)
             return ax
 
-        with capture_log() as buf:
-            return render_plot(fn, [adata], {}, buf)
+        return run_plot(session, fn)

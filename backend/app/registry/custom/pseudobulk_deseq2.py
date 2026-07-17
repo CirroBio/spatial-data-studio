@@ -10,7 +10,7 @@ reads it back, mirroring the compute-writes/plot-reads split squidpy metrics
 use (e.g. nhood_enrichment)."""
 from __future__ import annotations
 
-from ..base import CallResult, Function, ParamSpec, capture_log, missing_obs_column, render_plot, run_compute
+from ..base import CallResult, Function, ParamSpec, missing_obs_column, run_compute, run_plot
 from ._vendor import pb_compute, pb_plot
 
 _SAMPLE_PARAM = ParamSpec(
@@ -262,5 +262,4 @@ alpha
             fig.tight_layout()
             return fig
 
-        with capture_log() as buf:
-            return render_plot(fn, [adata], {}, buf)
+        return run_plot(session, fn)
