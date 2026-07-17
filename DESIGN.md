@@ -397,8 +397,13 @@ memory ceiling), invokes the callable, and handles the effect by class:
 - **compute** → object mutated in place; compute the structural diff (after − before).
   If the call returns non-`None` with an empty diff (a return-only function), capture
   the return into `uns["_results"][descriptor.id]`. If it returns a data object
-  (always-copies despite pinned `copy=False`), adopt it as the session object. Both
-  are uniform fallbacks, not per-function branches.
+  (always-copies despite pinned `copy=False`), adopt it as the session object. If an
+  in-place call instead *reshaped* the active table (changed its row/column count —
+  e.g. `sc.pp.filter_cells` / `filter_genes`), the same whole-object adoption applies:
+  the facet-merge writeback can only carry same-length columns back, so a shortened
+  column would index-align and silently NaN-fill the dropped rows (corrupting integer
+  keys like a table's `instance_key`). Both are uniform fallbacks, not per-function
+  branches.
 - **plot / extract** → capture the matplotlib figure (returned Axes' figure, else
   `plt.gcf()`), render to SVG/PDF bytes in memory; no mutation, no diff, bytes not
   persisted. Held under a **process-global plotting lock** with the **Agg** backend

@@ -29,6 +29,17 @@ def _resolve_callable(library: str, path: str):
     return obj
 
 
+def _table_reshaped(shape_before, adata) -> bool:
+    """True when an in-place compute changed the active table's row/column count
+    (e.g. `sc.pp.filter_cells` / `filter_genes`). The facet-merge writeback
+    (`apply_changed_facets`) can only carry same-length columns back onto the live
+    object: a shorter column would index-align, silently NaN-filling the dropped
+    rows and coercing integer keys (like a table's `instance_key`) to float, which
+    then fails `sdata.write()`. Such a call must instead be adopted whole (§4.6),
+    exactly like the read bootstrap."""
+    return shape_before is not None and adata is not None and adata.shape != shape_before
+
+
 def _facet_values(adata, sdata, changed: dict) -> dict:
     """Only the changed column/array objects, keyed like `keyset`/`diff` — the
     payload that travels back to the parent."""
@@ -67,6 +78,7 @@ def _child_library_call(library, path, effect_class, injected_order, bound, adat
     if effect_class == "plot":
         return _child_plot(fn, injected, bound, adata, sdata)
 
+    shape_before = adata.shape if (effect_class == "compute" and adata is not None) else None
     with capture_log() as buf:
         try:
             before = keyset(adata, sdata) if effect_class == "compute" else None
@@ -82,6 +94,8 @@ def _child_library_call(library, path, effect_class, injected_order, bound, adat
         return {"status": "completed", "log": log, "result_value_raw": ret}
 
     # compute
+    if _table_reshaped(shape_before, adata) and sdata is not None:
+        return {"status": "completed", "log": log, "new_object": sdata}
     after = keyset(adata, sdata)
     changed, fields = diff(before, after)
     if ret is not None and not changed and ret.__class__.__name__ in ("AnnData", "SpatialData"):
@@ -93,6 +107,7 @@ def _child_library_call(library, path, effect_class, injected_order, bound, adat
 def _child_mutate(mutate, adata, sdata):
     """The custom-function shape (registry/custom/*.py via `run_compute`):
     `mutate(adata)` runs in place, no return value."""
+    shape_before = adata.shape
     before = keyset(adata, sdata)
     with capture_log() as buf:
         try:
@@ -101,6 +116,8 @@ def _child_mutate(mutate, adata, sdata):
             return {"status": "failed", "log": buf.getvalue() + "\n" + traceback.format_exc(),
                     "error": short_error(e)}
         log = buf.getvalue()
+    if _table_reshaped(shape_before, adata) and sdata is not None:
+        return {"status": "completed", "log": log, "new_object": sdata}
     after = keyset(adata, sdata)
     changed, fields = diff(before, after)
     return {"status": "completed", "log": log,

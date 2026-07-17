@@ -711,6 +711,52 @@ def run_inspector_flow(client):
     print(f"[ok] inspector: elements, table preview, var-names ({names[:2]}), obs value counts")
 
 
+def run_filter_reshape_flow(client):
+    """An in-place compute that changes the table's row count (sc.pp.filter_cells)
+    must adopt the whole filtered object, not facet-merge shortened columns back
+    onto the still-full-length live table. The old merge index-aligned the shorter
+    columns, silently NaN-filling the dropped rows and coercing the integer
+    instance_key (visium: spot_id) to float -- which then failed sdata.write() with
+    "table.obs[instance_key] must not contain null values". Guards that regression:
+    the filter completes, obs shrinks, and a save round-trips."""
+    import numpy as np
+    from app.main import MANAGER
+
+    sid = new_session(client)  # visium_hne: int64 instance_key spot_id, clean
+    before = n_obs_of(client, sid)
+    # filter_cells thresholds on per-cell .X sums (not obs['total_counts']); pick a
+    # threshold strictly inside that range so some (not all) spots are dropped.
+    x = MANAGER.get(sid).active_table().X
+    per_cell = np.asarray(x.sum(axis=1)).ravel()
+    min_counts = int(np.quantile(per_cell, 0.25)) + 1
+    client.post(f"/api/sessions/{sid}/jobs", json={
+        "namespace": "sc.pp", "function": "filter_cells", "params": {"min_counts": min_counts}})
+    poll(client, sid, lambda s: hist_status(s, "filter_cells")[0] in ("completed", "failed"))
+    st = client.get(f"/api/sessions/{sid}").json()
+    assert hist_status(st, "filter_cells")[0] == "completed", "filter_cells did not complete"
+    after = n_obs_of(client, sid)
+    assert 0 < after < before, f"expected obs to shrink, got {before} -> {after}"
+
+    ik = MANAGER.get(sid).active_table().obs["spot_id"]
+    assert ik.isnull().sum() == 0 and ik.dtype.kind in "iu", \
+        f"instance_key corrupted after filter: dtype={ik.dtype} nulls={int(ik.isnull().sum())}"
+    print(f"[ok] filter_cells reshaped obs {before} -> {after} with instance_key intact")
+
+    # a wholesale object swap has no facet diff to drive canvas refetch, so the
+    # adopt path must bump the table's field versions explicitly (else the canvas
+    # keeps stale, longer point arrays).
+    dv = st["app_state"]["data_versions"]
+    assert dv.get("obsm:spatial", 0) > 0, f"obsm:spatial version not bumped after adopt: {dv}"
+    print(f"[ok] field versions bumped on adopt (obsm:spatial v{dv['obsm:spatial']})")
+
+    out = os.path.join(str(config.CHECKPOINT_DIR), "filter_reshape_session.zarr.zip")
+    sv = client.post(f"/api/sessions/{sid}/save", json={"path": out}).json()
+    js = wait_job(client, sid, sv["job_id"])
+    assert js["status"] == "completed", f"save after filter failed: {js.get('error')}"
+    print(f"[ok] saved filtered session (write validation passed)")
+    assert client.delete(f"/api/sessions/{sid}").status_code == 200
+
+
 def run_isolation_flow(client):
     """A job on one session must not touch another session's app_state (recent
     'Isolate viewers of different sessions'). Plus history-delete + cancel 409s."""
@@ -1015,6 +1061,7 @@ def main():
         run_encoding_persistence_flow(client)
         run_inspector_flow(client)
         run_isolation_flow(client)
+        run_filter_reshape_flow(client)
         run_zarr_import_flow(client)
         run_segmentation_flow(client)
 

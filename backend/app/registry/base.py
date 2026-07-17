@@ -267,6 +267,10 @@ def run_compute(session, mutate) -> CallResult:
     env = kernel.run_mutate(mutate, adata, session.sdata)
     if env["status"] == "failed":
         return CallResult(status="failed", error=env.get("error"), log=env.get("log", ""))
+    if env.get("new_object") is not None:
+        # A mutation that changed the table's row/column count is adopted whole
+        # rather than facet-merged (see kernel._table_reshaped).
+        return CallResult(status="completed", log=env.get("log", ""), new_object=env["new_object"])
     facets = env.get("changed_facets", {})
     kernel.apply_changed_facets(adata, session.sdata, facets)
     structural_diff = {facet: sorted(values) for facet, values in facets.items()}

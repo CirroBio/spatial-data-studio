@@ -132,6 +132,13 @@ class Session:
             raise RuntimeError("session has no table yet")
         return self.sdata.tables[self.active_table_key]
 
+    def _table_field_paths(self) -> list[str]:
+        """Every versioned field path of the active table (`obs:`, `obsm:`, `obsp:`,
+        `layers:`) — the set to bump when the whole table is replaced at once."""
+        ad = self.active_table()
+        return ([f"obs:{c}" for c in ad.obs.columns] + [f"obsm:{k}" for k in ad.obsm]
+                + [f"obsp:{k}" for k in ad.obsp] + [f"layers:{k}" for k in ad.layers])
+
     def active_image(self):
         imgs = list(getattr(self.sdata, "images", {}).keys())
         return self.sdata.images[imgs[0]] if imgs else None
@@ -332,7 +339,8 @@ class Session:
             # Adopt a returned object (read bootstrap / Edge B) while still holding
             # the write lock so readers never see a new sdata with a stale table key.
             if result.status != "failed" and result.new_object is not None:
-                if self.sdata is not None and self.sdata is not result.new_object:
+                replaced = self.sdata is not None and self.sdata is not result.new_object
+                if replaced:
                     from .. import imaging
                     imaging.evict_caches(self.sdata)  # old id() is about to be freed
                 self.sdata = result.new_object
@@ -345,6 +353,13 @@ class Session:
                 if not self.app_state["displays"]:
                     self.manager.auto_displays(self)
                 self.status = "ready"  # the read bootstrap adopted the object
+                # Replacing the live object mid-session (e.g. sc.pp.filter_cells adopted
+                # whole, §4.6) changed every field: the row-count differs, so any cached
+                # canvas array is now stale. The facet diff can't express a wholesale
+                # swap, so bump every field path of the new table explicitly, letting the
+                # canvas refetch and dependent plots invalidate.
+                if replaced and not result.changed_fields:
+                    result.changed_fields = self._table_field_paths()
             result.manifest_before = manifest_before
             result.manifest_after = build_manifest(self)
 
