@@ -298,6 +298,8 @@ class Session:
                 self._run_subset(job_id, payload)
             elif kind == "annotate":
                 self._run_annotate(job_id, payload)
+            elif kind == "shape_annotate":
+                self._run_shape_annotate(job_id, payload)
             elif kind == "set_transform":
                 self._run_set_transform(job_id, payload)
         except Exception as e:  # worker must never die
@@ -400,6 +402,33 @@ class Session:
                                       "data_versions": self.app_state["data_versions"]})
         if invalidated:
             BUS.publish("plot.invalidated", {"session_id": self.id, "plot_ids": invalidated})
+
+    def _run_shape_annotate(self, job_id, payload):
+        """Shape-annotation editor: create/update/delete one shape in
+        `sdata.shapes["annotations"]` in place, under the write lock."""
+        from . import shape_annotations
+        op = payload.get("op", "create")
+        with self.lock.writing():
+            if op == "update":
+                changed = shape_annotations.update(self, payload["shape_id"], payload["shape"])
+            elif op == "delete":
+                changed = shape_annotations.delete(self, payload["shape_id"])
+            else:
+                changed = shape_annotations.create(self, payload["shape"])
+        self.saved = False
+        self._jobs[job_id]["status"] = "completed"
+        diff: dict = {}
+        for f in changed:
+            elem, key = f.split(":", 1)
+            diff.setdefault(elem, []).append(key)
+        # A shapes element can't be updated incrementally (see _mark_dirty below),
+        # so this always forces a full save — acceptable since annotation counts
+        # are small relative to a full checkpoint.
+        self._mark_dirty(diff)
+        appstate.bump_versions(self.app_state, changed)
+        BUS.publish("job.completed", {"session_id": self.id, "job_id": job_id, "kind": "shape_annotate",
+                                      "structural_diff": diff,
+                                      "data_versions": self.app_state["data_versions"]})
 
     def _mark_dirty(self, structural_diff: dict) -> None:
         """Record which elements a data mutation touched so the next save rewrites only

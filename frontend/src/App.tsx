@@ -40,9 +40,9 @@ export default function App() {
     sidebarTab,
     mainView,
     setMainView,
-    annotationNewSetName,
-    annotationCategoryName,
-    annotationColor,
+    regionNewSetName,
+    regionCategoryName,
+    regionColor,
     activeRegionSetId,
     setCirroEnabled,
     setCirroUploads,
@@ -118,23 +118,25 @@ export default function App() {
   const detail = selectedComputeId ? <ComputeDetail /> : selectedPlotId ? <PlotDetail /> : null;
 
   // Canvas mode is set by which tab is active
-  const canvasMode = sidebarTab === 'annotations'
-    ? 'annotate'
+  const canvasMode = sidebarTab === 'regions'
+    ? 'regions'
+    : sidebarTab === 'annotations'
+    ? 'shapes'
     : sidebarTab === 'subsetting'
     ? 'subset'
     : null;
 
-  // Build the annotation target from store state
+  // Build the region-labeling target from store state
   const annotationTarget =
-    canvasMode === 'annotate' && annotationCategoryName
+    canvasMode === 'regions' && regionCategoryName
       ? {
           regionSetId: resolveRegionSetColumn(
-            annotationNewSetName,
+            regionNewSetName,
             activeRegionSetId,
             sessionState?.app_state.regions ?? []
           ),
-          category: annotationCategoryName,
-          color: annotationColor,
+          category: regionCategoryName,
+          color: regionColor,
         }
       : null;
 
@@ -189,9 +191,17 @@ export default function App() {
         />
       );
     }
+    if (!sessionState) {
+      return (
+        <div className="flex flex-col items-center justify-center h-full gap-3 text-muted">
+          <div className="w-6 h-6 rounded-full border-2 border-border border-t-accent animate-spin" />
+          <span className="text-sm">Loading session...</span>
+        </div>
+      );
+    }
     return (
       <div className="flex items-center justify-center h-full text-muted text-sm">
-        {sessionState ? 'No spatial canvas display found' : 'Loading session...'}
+        No spatial canvas display found
       </div>
     );
   }

@@ -6,6 +6,7 @@ import { reportError } from '../lib/errors';
 import StatusBadge, { type Status } from './StatusBadge';
 import FunctionPicker from './FunctionPicker';
 import RecipeGallery from './RecipeGallery';
+import RegionsPanel from './RegionsPanel';
 import AnnotationsPanel from './AnnotationsPanel';
 import SubsettingPanel from './SubsettingPanel';
 import { TourAnchors } from '../tours';
@@ -160,11 +161,11 @@ export default function Sidebar({ onNewSession }: Props) {
     <aside className="w-60 shrink-0 bg-surface border-r border-border flex flex-col overflow-hidden">
       <Tabs.Root
         value={sidebarTab}
-        onValueChange={(v) => setSidebarTab(v as 'compute' | 'plots' | 'annotations' | 'subsetting')}
+        onValueChange={(v) => setSidebarTab(v as 'compute' | 'plots' | 'regions' | 'annotations' | 'subsetting')}
         className="flex flex-col flex-1 overflow-hidden"
       >
-        <Tabs.List data-tour={TourAnchors.SidebarTabs} className="grid grid-cols-4 border-b border-border shrink-0">
-          {(['compute', 'plots', 'annotations', 'subsetting'] as const).map((tab) => (
+        <Tabs.List data-tour={TourAnchors.SidebarTabs} className="grid grid-cols-5 border-b border-border shrink-0">
+          {(['compute', 'plots', 'regions', 'annotations', 'subsetting'] as const).map((tab) => (
             <Tabs.Trigger
               key={tab}
               value={tab}
@@ -193,6 +194,10 @@ export default function Sidebar({ onNewSession }: Props) {
             onDelete={handleDelete}
             emptyLabel="No plots"
           />
+        </Tabs.Content>
+
+        <Tabs.Content value="regions" className="flex-1 overflow-y-auto">
+          <RegionsPanel />
         </Tabs.Content>
 
         <Tabs.Content value="annotations" className="flex-1 overflow-y-auto">
