@@ -3,7 +3,7 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response, WebSocket
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -845,6 +845,16 @@ async def events(request: Request):
 
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+# The backend exposes no WebSocket endpoints — live updates use SSE (/api/events).
+# Dev proxies and browsers still send stray ws upgrades; without a ws route they
+# fall through to the StaticFiles mounts below, which assert http scope and raise
+# an unhandled 500 per connection. Registered before the mounts so it wins scope
+# matching; closing before accept denies the handshake with no traceback.
+@app.websocket("/{_path:path}")
+async def reject_websocket(websocket: WebSocket, _path: str):
+    await websocket.close(code=1000)
 
 
 # ---- snapshots (read-only JSON configs; the browser viewer reads the referenced
