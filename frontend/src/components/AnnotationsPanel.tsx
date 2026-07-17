@@ -1,73 +1,68 @@
-import { useState } from 'react';
+import { useRef } from 'react';
 import { useAppStore } from '../store/sessionStore';
-import { promoteObsColumn, annotateSession } from '../api';
+import { updateShapeAnnotation, deleteShapeAnnotation } from '../api';
 import { reportError } from '../lib/errors';
-import { resolveRegionSetColumn } from '../lib/regions';
-import { useDrawSelection } from '../hooks/useDrawSelection';
-import DrawControls from './DrawControls';
-import ObsFieldSelect from './ObsFieldSelect';
-import type { RegionSet } from '../types';
+import ShapeToolbar from './ShapeToolbar';
+import type { ShapeAnnotation, StrokeStyle, FillStyle } from '../schemas/annotations';
+import { defaultFill } from '../schemas/annotations';
 
-const NEW_CAT_COLORS = [
-  '#e05c5c', '#e08a3a', '#d4c84a', '#5cb85c', '#4ab8c4', '#5c7ae0', '#a05ce0', '#e05cba',
+const SHAPE_COLORS = [
+  '#3388ff', '#e05c5c', '#5cb85c', '#e0a83a', '#a05ce0', '#4ab8c4', '#e05cba', '#7a8b3a',
 ];
+
+const KIND_LABEL: Record<ShapeAnnotation['geometry']['kind'], string> = {
+  line: 'Line', box: 'Box', trapezoid: 'Trapezoid', ellipse: 'Ellipse',
+};
 
 export default function AnnotationsPanel() {
   const {
     activeSessionId,
-    sessionState,
-    activeRegionSetId,
-    setActiveRegionSetId,
-    isolatedCategory,
-    setIsolatedCategory,
-    annotationNewSetName,
-    annotationCategoryName,
-    annotationColor,
-    setAnnotationTarget,
+    shapeAnnotations,
+    activeShapeTool,
+    setActiveShapeTool,
+    selectedShapeId,
+    setSelectedShapeId,
+    draftVertices,
+    clearDraft,
+    upsertShapeAnnotation,
+    removeShapeAnnotationLocal,
   } = useAppStore();
-  const { drawPolygons, drawRing, regionCount, allPolygons, commitDrawRing, clearDraw } = useDrawSelection();
 
-  const regions: RegionSet[] = sessionState?.app_state.regions ?? [];
-  const obsFields = sessionState?.fields.obs ?? [];
-  const categoricalObs = obsFields.filter((f) => f.kind === 'categorical');
-
-  const [promoteColumn, setPromoteColumn] = useState('');
-  const [promoting, setPromoting] = useState(false);
-  const [applying, setApplying] = useState(false);
-
-  const activeSet = regions.find((r) => r.id === activeRegionSetId) ?? regions[0] ?? null;
-
-  const regionSetTarget = resolveRegionSetColumn(annotationNewSetName, activeRegionSetId, regions);
-  const canApply = regionCount > 0 && !!regionSetTarget && !!annotationCategoryName;
-
-  async function handleApplyLabel() {
-    if (!activeSessionId || !canApply) return;
-    setApplying(true);
-    try {
-      await annotateSession(activeSessionId, {
-        polygons: allPolygons,
-        region_set: regionSetTarget,
-        category: annotationCategoryName,
-        color: annotationColor,
-      });
-      clearDraw();
-    } catch (err) {
-      reportError('Annotate failed', err);
-    } finally {
-      setApplying(false);
-    }
+  // Style edits (color/width/alpha sliders) persist debounced, same 500ms
+  // coalescing pattern SpatialCanvas uses for display-encoding edits, so a
+  // slider drag doesn't fire a job per tick.
+  const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  function persistShape(shape: ShapeAnnotation) {
+    upsertShapeAnnotation(shape);
+    if (!activeSessionId) return;
+    if (persistTimer.current) clearTimeout(persistTimer.current);
+    const sid = activeSessionId;
+    persistTimer.current = setTimeout(() => {
+      updateShapeAnnotation(sid, shape.id, shape).catch((err) => reportError('Update shape failed', err));
+    }, 500);
   }
 
-  async function handlePromote() {
-    if (!activeSessionId || !promoteColumn) return;
-    setPromoting(true);
+  const selectedShape = shapeAnnotations.find((s) => s.id === selectedShapeId) ?? null;
+
+  function patchStroke(patch: Partial<StrokeStyle>) {
+    if (!selectedShape) return;
+    persistShape({ ...selectedShape, stroke: { ...selectedShape.stroke, ...patch } });
+  }
+
+  function patchFill(patch: Partial<FillStyle>) {
+    if (!selectedShape) return;
+    const fill = selectedShape.fill ?? defaultFill();
+    persistShape({ ...selectedShape, fill: { ...fill, ...patch } });
+  }
+
+  async function handleDelete(id: string) {
+    if (!activeSessionId) return;
+    removeShapeAnnotationLocal(id);
+    if (selectedShapeId === id) setSelectedShapeId(null);
     try {
-      await promoteObsColumn(activeSessionId, promoteColumn);
-      setPromoteColumn('');
+      await deleteShapeAnnotation(activeSessionId, id);
     } catch (err) {
-      reportError('Promote failed', err);
-    } finally {
-      setPromoting(false);
+      reportError('Delete shape failed', err);
     }
   }
 
@@ -77,175 +72,181 @@ export default function AnnotationsPanel() {
 
   return (
     <div className="flex flex-col gap-0">
-      {/* Active region set selector */}
       <div className="px-3 py-2 border-b border-border/50">
-        <label className="text-[10px] text-muted font-mono uppercase tracking-wide block mb-1">Active region set</label>
-        {regions.length === 0 ? (
-          <div className="text-[11px] text-muted/60">No region sets yet</div>
-        ) : (
-          <select
-            value={activeSet?.id ?? ''}
-            onChange={(e) => setActiveRegionSetId(e.target.value)}
-            className="w-full bg-bg border border-border rounded px-2 py-1 text-xs text-text focus:outline-none focus:border-accent"
-          >
-            {regions.map((r) => (
-              <option key={r.id} value={r.id}>{r.name}</option>
-            ))}
-          </select>
-        )}
+        <label className="text-[10px] text-muted font-mono uppercase tracking-wide block mb-1.5">Draw shape</label>
+        <ShapeToolbar
+          activeShapeTool={activeShapeTool}
+          setActiveShapeTool={setActiveShapeTool}
+          draftVertexCount={draftVertices.length}
+          onCancelDraft={clearDraft}
+        />
       </div>
 
-      {/* Annotation drawing target — region set name + category + color */}
-      <div className="px-3 py-2 border-b border-border/50">
-        <label className="text-[10px] text-muted font-mono uppercase tracking-wide block mb-1.5">Draw label</label>
-        <div className="flex flex-col gap-1.5">
-          <ObsFieldSelect
-            fields={obsFields}
-            value={annotationNewSetName}
-            onChange={(v) => setAnnotationTarget(v, annotationCategoryName, annotationColor)}
-            creatable
-            placeholder="Region set name (pick an obs field or type a new one)"
-          />
-          <input
-            type="text"
-            placeholder="Category label"
-            value={annotationCategoryName}
-            onChange={(e) => setAnnotationTarget(annotationNewSetName, e.target.value, annotationColor)}
-            className="w-full bg-bg border border-border rounded px-2 py-1 text-xs text-text placeholder:text-muted/40 focus:outline-none focus:border-accent"
-          />
-          <div className="flex items-center gap-2">
-            <input
-              type="color"
-              value={annotationColor}
-              onChange={(e) => setAnnotationTarget(annotationNewSetName, annotationCategoryName, e.target.value)}
-              className="w-7 h-6 rounded border border-border bg-bg cursor-pointer"
-            />
-            <div className="flex gap-1 flex-wrap">
-              {NEW_CAT_COLORS.map((c) => (
-                <button
-                  key={c}
-                  onClick={() => setAnnotationTarget(annotationNewSetName, annotationCategoryName, c)}
-                  className="w-4 h-4 rounded-sm border transition-all"
-                  style={{
-                    background: c,
-                    borderColor: annotationColor === c ? 'white' : 'transparent',
-                    outline: annotationColor === c ? `1px solid ${c}` : 'none',
-                  }}
-                  aria-label={`Color ${c}`}
-                />
-              ))}
+      {selectedShape && (
+        <div className="px-3 py-2 border-b border-border/50 flex flex-col gap-2.5">
+          <label className="text-[10px] text-muted font-mono uppercase tracking-wide block">
+            {KIND_LABEL[selectedShape.geometry.kind]} style
+          </label>
+
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[10px] text-muted/70">Stroke</span>
+            <div className="flex items-center gap-2">
+              <input
+                type="color"
+                value={selectedShape.stroke.color}
+                onChange={(e) => patchStroke({ color: e.target.value })}
+                className="w-7 h-6 rounded border border-border bg-bg cursor-pointer"
+              />
+              <div className="flex gap-1 flex-wrap">
+                {SHAPE_COLORS.map((c) => (
+                  <button
+                    key={c}
+                    onClick={() => patchStroke({ color: c })}
+                    className="w-4 h-4 rounded-sm border transition-all"
+                    style={{
+                      background: c,
+                      borderColor: selectedShape.stroke.color === c ? 'white' : 'transparent',
+                      outline: selectedShape.stroke.color === c ? `1px solid ${c}` : 'none',
+                    }}
+                    aria-label={`Color ${c}`}
+                  />
+                ))}
+              </div>
             </div>
-          </div>
-          <p className="text-[10px] text-muted/60 leading-snug">
-            Draw on the canvas, then Apply label.
-          </p>
-        </div>
-
-        {/* Draw controls — drawing happens on the canvas; actions live here. */}
-        <div className="mt-2 flex flex-col gap-1.5">
-          <DrawControls
-            regionCount={regionCount}
-            drawRingLength={drawRing.length}
-            drawPolygonsLength={drawPolygons.length}
-            onFinish={commitDrawRing}
-            onClear={clearDraw}
-          />
-          <button
-            type="button"
-            onClick={handleApplyLabel}
-            disabled={applying || !canApply}
-            className="py-1.5 text-xs text-white rounded transition-colors disabled:opacity-40"
-            style={{ background: '#3d9970' }}
-          >
-            {applying ? 'Labeling...' : `Apply label${regionCount ? ` (${regionCount})` : ''}`}
-          </button>
-          {regionCount > 0 && !canApply && (
-            <p className="text-[10px] text-warn leading-snug">Set a region set name and category above.</p>
-          )}
-        </div>
-      </div>
-
-      {/* Region sets with category legend */}
-      {regions.length > 0 && (
-        <div className="border-b border-border/50">
-          <div className="px-3 py-1.5">
-            <span className="text-[10px] text-muted font-mono uppercase tracking-wide">Legend</span>
-          </div>
-          {regions.map((rset) => (
-            <div key={rset.id} className={`border-b border-border/30 ${activeSet?.id === rset.id ? 'bg-accent-lo/20' : ''}`}>
-              <button
-                onClick={() => setActiveRegionSetId(rset.id)}
-                className="w-full text-left px-3 py-1.5 flex items-center justify-between group"
+            <label className="flex items-center gap-2 text-[11px] text-text/80">
+              Width
+              <input
+                type="number" min={0} step={0.5}
+                value={selectedShape.stroke.width}
+                onChange={(e) => patchStroke({ width: Number(e.target.value) })}
+                className="w-16 bg-bg border border-border rounded px-1.5 py-0.5 text-xs text-text focus:outline-none focus:border-accent"
+              />
+            </label>
+            <label className="flex items-center gap-2 text-[11px] text-text/80">
+              Style
+              <select
+                value={selectedShape.stroke.dash}
+                onChange={(e) => patchStroke({ dash: e.target.value as StrokeStyle['dash'] })}
+                className="flex-1 bg-bg border border-border rounded px-1.5 py-0.5 text-xs text-text focus:outline-none focus:border-accent"
               >
-                <span className="text-xs font-mono text-text truncate">{rset.name}</span>
-                <span className="text-[9px] font-mono shrink-0 text-muted/50">{rset.obs_column}</span>
-              </button>
+                <option value="solid">Solid</option>
+                <option value="dashed">Dashed</option>
+                <option value="dotted">Dotted</option>
+              </select>
+            </label>
+            {selectedShape.geometry.kind === 'line' && (
+              <div className="flex gap-3 text-[11px] text-text/80">
+                <label className="flex items-center gap-1.5">
+                  <input type="checkbox" checked={selectedShape.stroke.arrowStart}
+                    onChange={(e) => patchStroke({ arrowStart: e.target.checked })} />
+                  Arrow start
+                </label>
+                <label className="flex items-center gap-1.5">
+                  <input type="checkbox" checked={selectedShape.stroke.arrowEnd}
+                    onChange={(e) => patchStroke({ arrowEnd: e.target.checked })} />
+                  Arrow end
+                </label>
+              </div>
+            )}
+            <label className="flex items-center gap-2 text-[11px] text-text/80">
+              Z-order
+              <input
+                type="number" step={1}
+                value={selectedShape.stroke.z}
+                onChange={(e) => patchStroke({ z: Number(e.target.value) })}
+                className="w-16 bg-bg border border-border rounded px-1.5 py-0.5 text-xs text-text focus:outline-none focus:border-accent"
+              />
+            </label>
+          </div>
 
-              {rset.categories.length > 0 && (
-                <ul className="pb-1">
-                  {rset.categories.map((cat) => (
-                    <li key={cat.label}>
-                      <button
-                        onClick={() => setIsolatedCategory(isolatedCategory === cat.label ? null : cat.label)}
-                        className={`w-full text-left px-4 py-1 flex items-center gap-2 hover:bg-accent-lo/20 transition-colors ${
-                          isolatedCategory === cat.label ? 'bg-accent-lo/30' : ''
-                        }`}
-                      >
-                        <span
-                          className="w-3 h-3 rounded-sm shrink-0 border border-black/20"
-                          style={{ background: cat.color }}
-                        />
-                        <span className="text-[11px] text-text/90 truncate flex-1">{cat.label}</span>
-                        <span
-                          className="text-[10px] shrink-0"
-                          style={{ color: cat.color, fontVariantNumeric: 'tabular-nums' }}
-                        >
-                          {cat.n_cells.toLocaleString()}
-                        </span>
-                      </button>
-                    </li>
+          {selectedShape.geometry.kind !== 'line' && (
+            <div className="flex flex-col gap-1.5">
+              <label className="flex items-center gap-1.5 text-[10px] text-muted/70">
+                <input type="checkbox" checked={selectedShape.fill?.enabled ?? false}
+                  onChange={(e) => patchFill({ enabled: e.target.checked })} />
+                Fill
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  value={selectedShape.fill?.color ?? '#3388ff'}
+                  onChange={(e) => patchFill({ color: e.target.value })}
+                  className="w-7 h-6 rounded border border-border bg-bg cursor-pointer"
+                  disabled={!selectedShape.fill?.enabled}
+                />
+                <div className="flex gap-1 flex-wrap">
+                  {SHAPE_COLORS.map((c) => (
+                    <button
+                      key={c}
+                      onClick={() => patchFill({ color: c })}
+                      className="w-4 h-4 rounded-sm border transition-all"
+                      style={{
+                        background: c,
+                        borderColor: selectedShape.fill?.color === c ? 'white' : 'transparent',
+                        outline: selectedShape.fill?.color === c ? `1px solid ${c}` : 'none',
+                      }}
+                      aria-label={`Color ${c}`}
+                    />
                   ))}
-                </ul>
-              )}
-
-              {rset.categories.length === 0 && (
-                <div className="px-4 pb-1.5 text-[10px] text-muted/50">No categories yet</div>
-              )}
+                </div>
+              </div>
+              <label className="flex items-center gap-2 text-[11px] text-text/80">
+                Alpha
+                <input
+                  type="range" min={0} max={1} step={0.05}
+                  value={selectedShape.fill?.alpha ?? 0}
+                  onChange={(e) => patchFill({ alpha: Number(e.target.value) })}
+                  className="flex-1"
+                />
+              </label>
+              <label className="flex items-center gap-2 text-[11px] text-text/80">
+                Z-order
+                <input
+                  type="number" step={1}
+                  value={selectedShape.fill?.z ?? 0}
+                  onChange={(e) => patchFill({ z: Number(e.target.value) })}
+                  className="w-16 bg-bg border border-border rounded px-1.5 py-0.5 text-xs text-text focus:outline-none focus:border-accent"
+                />
+              </label>
             </div>
-          ))}
+          )}
+
+          <button
+            onClick={() => handleDelete(selectedShape.id)}
+            className="py-1 text-xs bg-danger/10 hover:bg-danger/20 text-danger rounded transition-colors"
+          >
+            Delete shape
+          </button>
         </div>
       )}
 
-      {/* Promote obs categorical to region set */}
-      <div className="px-3 py-2">
-        <label className="text-[10px] text-muted font-mono uppercase tracking-wide block mb-1.5">Promote obs column</label>
-        {categoricalObs.length === 0 ? (
-          <div className="text-[11px] text-muted/60">No categorical obs fields</div>
+      <div className="border-b border-border/50">
+        <div className="px-3 py-1.5">
+          <span className="text-[10px] text-muted font-mono uppercase tracking-wide">Shapes</span>
+        </div>
+        {shapeAnnotations.length === 0 ? (
+          <div className="px-3 pb-2 text-[11px] text-muted/60">No shapes yet</div>
         ) : (
-          <div className="flex flex-col gap-1.5">
-            <ObsFieldSelect
-              fields={obsFields}
-              value={promoteColumn}
-              onChange={setPromoteColumn}
-              categoricalOnly
-              placeholder="Select column..."
-            />
-            <button
-              onClick={handlePromote}
-              disabled={promoting || !promoteColumn}
-              className="py-1 text-xs bg-accent/20 hover:bg-accent/30 text-accent rounded disabled:opacity-40 transition-colors"
-            >
-              {promoting ? 'Promoting...' : 'Promote to region set'}
-            </button>
-          </div>
-        )}
-        {isolatedCategory && (
-          <button
-            onClick={() => setIsolatedCategory(null)}
-            className="mt-3 w-full py-1 text-[10px] bg-bg border border-border rounded text-muted hover:text-text transition-colors"
-          >
-            Clear isolation filter
-          </button>
+          <ul className="pb-1">
+            {shapeAnnotations.map((shape) => (
+              <li key={shape.id}>
+                <button
+                  onClick={() => setSelectedShapeId(selectedShapeId === shape.id ? null : shape.id)}
+                  className={`w-full text-left px-3 py-1 flex items-center gap-2 hover:bg-accent-lo/20 transition-colors ${
+                    selectedShapeId === shape.id ? 'bg-accent-lo/30' : ''
+                  }`}
+                >
+                  <span
+                    className="w-3 h-3 rounded-sm shrink-0 border border-black/20"
+                    style={{ background: shape.stroke.color }}
+                  />
+                  <span className="text-[11px] text-text/90 truncate flex-1">
+                    {shape.label || KIND_LABEL[shape.geometry.kind]}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
         )}
       </div>
     </div>

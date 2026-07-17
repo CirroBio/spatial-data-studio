@@ -453,6 +453,65 @@ def run_regions_flow(client):
     print("[ok] regions registry survives save + reload")
 
 
+def run_shape_annotations_flow(client):
+    """Shape-annotation editor round trip: create a line/box/ellipse, update one's
+    geometry + style, delete another, and confirm the `sdata.shapes["annotations"]`
+    element persists across save + reload (spec: shape annotations editor)."""
+    sid = new_session(client)
+
+    def stroke(**over):
+        base = {"color": "#3388ff", "width": 2, "dash": "solid", "arrowStart": False, "arrowEnd": False, "z": 0}
+        return {**base, **over}
+
+    def fill(**over):
+        base = {"enabled": True, "color": "#3388ff", "alpha": 0.25, "z": 0}
+        return {**base, **over}
+
+    line = {"geometry": {"kind": "line", "vertices": [[0, 0], [10, 0]]},
+            "stroke": stroke(arrowEnd=True)}
+    job = client.post(f"/api/sessions/{sid}/shape-annotations", json=line).json()
+    assert wait_job(client, sid, job["job_id"])["status"] == "completed"
+
+    box = {"geometry": {"kind": "box", "vertices": [[0, 0], [5, 0], [5, 5], [0, 5]]},
+           "stroke": stroke(color="#00ff00", dash="dashed"), "fill": fill(color="#00ff00")}
+    job = client.post(f"/api/sessions/{sid}/shape-annotations", json=box).json()
+    assert wait_job(client, sid, job["job_id"])["status"] == "completed"
+
+    shapes = client.get(f"/api/sessions/{sid}/shape-annotations").json()["shapes"]
+    assert len(shapes) == 2, shapes
+    line_id = next(s["id"] for s in shapes if s["geometry"]["kind"] == "line")
+    box_id = next(s["id"] for s in shapes if s["geometry"]["kind"] == "box")
+    assert shapes[0]["stroke"]["z"] == 0 and "fill" not in next(s for s in shapes if s["id"] == line_id)
+    print(f"[ok] created line + box shape annotations ({len(shapes)} total)")
+
+    # update: move the line's endpoint and restyle it
+    updated_line = {"geometry": {"kind": "line", "vertices": [[0, 0], [20, 0]]},
+                    "stroke": stroke(color="#ff0000", width=4, arrowEnd=True, arrowStart=True)}
+    job = client.put(f"/api/sessions/{sid}/shape-annotations/{line_id}", json=updated_line).json()
+    assert wait_job(client, sid, job["job_id"])["status"] == "completed"
+    shapes = client.get(f"/api/sessions/{sid}/shape-annotations").json()["shapes"]
+    line_shape = next(s for s in shapes if s["id"] == line_id)
+    assert line_shape["geometry"]["vertices"] == [[0.0, 0.0], [20.0, 0.0]], line_shape
+    assert line_shape["stroke"]["color"] == "#ff0000" and line_shape["stroke"]["arrowStart"], line_shape
+    print("[ok] updated line geometry + stroke style")
+
+    # delete: the box is removed, the line remains
+    job = client.delete(f"/api/sessions/{sid}/shape-annotations/{box_id}").json()
+    assert wait_job(client, sid, job["job_id"])["status"] == "completed"
+    shapes = client.get(f"/api/sessions/{sid}/shape-annotations").json()["shapes"]
+    assert [s["id"] for s in shapes] == [line_id], shapes
+    print("[ok] deleted box shape, line shape remains")
+
+    # persistence: the annotations element survives save + reload
+    out = os.path.join(str(config.CHECKPOINT_DIR), "shape_annotations_session.zarr.zip")
+    sv = client.post(f"/api/sessions/{sid}/save", json={"path": out}).json()
+    assert wait_job(client, sid, sv["job_id"])["status"] == "completed"
+    sid2 = new_session(client, out)
+    shapes2 = client.get(f"/api/sessions/{sid2}/shape-annotations").json()["shapes"]
+    assert [s["id"] for s in shapes2] == [line_id], shapes2
+    print("[ok] shape-annotations element survives save + reload")
+
+
 def run_transform_flow(client):
     """Editable points->global transform get/set + persistence, and the affine
     applied to the obsm:spatial Arrow fetch (recent 'editable points transform')."""
@@ -938,6 +997,7 @@ def main():
         run_staging_flow(client)
         run_recipe_params_flow(client)
         run_regions_flow(client)
+        run_shape_annotations_flow(client)
         run_transform_flow(client)
         run_incremental_save_flow(client, out)
         run_content_hash_flow(client)

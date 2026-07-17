@@ -5,30 +5,42 @@ import { ScatterplotLayer, PolygonLayer, PathLayer } from '@deck.gl/layers';
 import type { Layer, OrthographicViewState, PickingInfo } from '@deck.gl/core';
 import { useAppStore } from '../../store/sessionStore';
 import { useArrowField } from '../../hooks/useArrowField';
-import { getImageInfo, putDisplay, saveSnapshot, getCellField, getElements, type CellFieldMeta } from '../../api';
+import {
+  getImageInfo, putDisplay, saveSnapshot, getCellField, getElements,
+  createShapeAnnotation, updateShapeAnnotation, type CellFieldMeta,
+} from '../../api';
 import { reportError } from '../../lib/errors';
 import TransformEditor from '../TransformEditor';
 import { isSpatialDisplay, type SpatialDisplaySpec, type ImageInfo } from '../../types';
+import type { ShapeAnnotation, ShapeGeometry, ShapeKind } from '../../schemas/annotations';
+import { defaultStroke, defaultFill } from '../../schemas/annotations';
+import { geometryFromDrag, trapezoidFromClicks, applyHandleDrag } from '../../lib/shapeAnnotations';
 import { useArrowPositions } from './useArrowPositions';
 import { useImageTiles } from './useImageTiles';
 import { useCanvasViewState, cellZoomThreshold, ZOOM_HYSTERESIS } from './useCanvasViewState';
 import { useSpotColors, arrowToColorSource } from './useSpotColors';
 import { buildSpotLayer } from './buildSpotLayer';
 import { buildCellFieldLayer } from './buildCellFieldLayer';
+import { buildShapeAnnotationLayers, buildShapeHandleLayer, buildDragPreviewLayers } from './buildShapeAnnotationLayers';
 import { usePolygonBbox } from './usePolygonBbox';
 import { useImageChannels } from './useImageChannels';
 import CanvasControls from './CanvasControls';
 import { colorByLabel } from './colorBy';
 import { LoadingCue, ChannelLegend, CellColorLegend, DrawHint } from './CanvasOverlays';
 
+type Point = [number, number];
+type ShapeDragTarget =
+  | { kind: 'create'; tool: Exclude<ShapeKind, 'trapezoid'>; start: Point }
+  | { kind: 'handle'; shapeId: string; handleId: string };
+
 const VIEWS = [new OrthographicView({ id: 'main', flipY: false })];
 
 interface Props {
   display: SpatialDisplaySpec;
   sessionId: string;
-  // 'annotate' | 'subset' | null — set by active sidebar tab; when null canvas is view-only
-  canvasMode: 'annotate' | 'subset' | null;
-  // Annotation config: which region set + category + color to label into
+  // 'regions' | 'shapes' | 'subset' | null — set by active sidebar tab; when null canvas is view-only
+  canvasMode: 'regions' | 'shapes' | 'subset' | null;
+  // Region-labeling config: which region set + category + color to label into
   annotationTarget: { regionSetId: string; category: string; color: string } | null;
 }
 
@@ -59,7 +71,24 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   // commit / apply / clear actions; the canvas is purely the drawing surface.
   const { drawPolygons: polygons, drawRing: currentRing, addDrawVertex, clearDraw } = useAppStore();
 
-  const drawMode = canvasMode !== null;
+  // Shape-annotation editor state — the fetched list persists/renders regardless
+  // of the active tab; the tool/selection/draft state only matters in 'shapes' mode.
+  const {
+    shapeAnnotations, activeShapeTool, selectedShapeId, draftVertices,
+    setSelectedShapeId, addDraftVertex, clearDraft,
+    upsertShapeAnnotation, removeShapeAnnotationLocal,
+  } = useAppStore();
+  // In-progress drag (creating a shape, or dragging a selected shape's handle) is
+  // local: it changes on every pointer move and only this canvas renders it.
+  const [shapeDragTarget, setShapeDragTarget] = useState<ShapeDragTarget | null>(null);
+  const [shapeDragPreview, setShapeDragPreview] = useState<ShapeGeometry | null>(null);
+
+  // The lasso (click-to-add-vertex ring) interaction is shared by region-labeling
+  // and subsetting; the shape-annotation editor (canvasMode === 'shapes') uses a
+  // separate drag/handle interaction — see useShapeAnnotations/ShapeAnnotationLayers.
+  const lassoMode = canvasMode === 'regions' || canvasMode === 'subset';
+  const shapesMode = canvasMode === 'shapes';
+  const drawMode = lassoMode || shapesMode;
 
   const positions = useArrowPositions(coordsTable);
 
@@ -103,12 +132,98 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   // Clear any in-progress drawing when leaving/entering a draw mode.
   useEffect(() => {
     clearDraw();
-  }, [canvasMode, clearDraw]);
+    clearDraft();
+    setSelectedShapeId(null);
+    setShapeDragTarget(null);
+    setShapeDragPreview(null);
+  }, [canvasMode, clearDraw, clearDraft, setSelectedShapeId]);
+
+  const commitNewShape = useCallback((geometry: ShapeGeometry) => {
+    const shape: ShapeAnnotation = {
+      id: crypto.randomUUID(),
+      geometry,
+      stroke: defaultStroke(),
+      fill: geometry.kind === 'line' ? undefined : defaultFill(),
+    };
+    upsertShapeAnnotation(shape); // optimistic — the job.completed refetch reconciles
+    createShapeAnnotation(sessionId, shape)
+      .catch((err) => { reportError('Create shape failed', err); removeShapeAnnotationLocal(shape.id); });
+    setSelectedShapeId(shape.id); // also clears activeShapeTool (see store)
+  }, [sessionId, upsertShapeAnnotation, removeShapeAnnotationLocal, setSelectedShapeId]);
 
   const handleClick = useCallback((info: PickingInfo) => {
-    if (!drawMode || !info.coordinate) return;
-    addDrawVertex([info.coordinate[0], info.coordinate[1]]);
-  }, [drawMode, addDrawVertex]);
+    if (lassoMode && info.coordinate) {
+      addDrawVertex([info.coordinate[0], info.coordinate[1]]);
+      return;
+    }
+    if (!shapesMode || !info.coordinate) return;
+    const pt: Point = [info.coordinate[0], info.coordinate[1]];
+
+    if (activeShapeTool === 'trapezoid') {
+      const next = [...draftVertices, pt];
+      const geometry = trapezoidFromClicks(next);
+      if (geometry) {
+        commitNewShape(geometry);
+        clearDraft();
+      } else {
+        addDraftVertex(pt);
+      }
+      return;
+    }
+
+    if (!activeShapeTool) {
+      // Select mode: click a shape's fill/stroke to select it, empty space to deselect.
+      const hit = info.layer?.id === 'shape-fill' || info.layer?.id === 'shape-stroke'
+        ? (info.object as ShapeAnnotation | undefined)?.id
+        : undefined;
+      setSelectedShapeId(hit ?? null);
+    }
+  }, [lassoMode, shapesMode, activeShapeTool, draftVertices, addDrawVertex, addDraftVertex,
+      clearDraft, commitNewShape, setSelectedShapeId]);
+
+  const handleShapeDragStart = useCallback((info: PickingInfo) => {
+    if (!shapesMode || !info.coordinate) return;
+    const pt: Point = [info.coordinate[0], info.coordinate[1]];
+    if (activeShapeTool && activeShapeTool !== 'trapezoid') {
+      setShapeDragTarget({ kind: 'create', tool: activeShapeTool, start: pt });
+      setShapeDragPreview(geometryFromDrag(activeShapeTool, pt, pt));
+      return;
+    }
+    if (!activeShapeTool && info.layer?.id === 'shape-handles' && info.object) {
+      const handle = info.object as { id: string };
+      const shape = shapeAnnotations.find((s) => s.id === selectedShapeId);
+      if (!shape) return;
+      setShapeDragTarget({ kind: 'handle', shapeId: shape.id, handleId: handle.id });
+      setShapeDragPreview(shape.geometry);
+    }
+  }, [shapesMode, activeShapeTool, shapeAnnotations, selectedShapeId]);
+
+  const handleShapeDrag = useCallback((info: PickingInfo) => {
+    if (!shapeDragTarget || !info.coordinate) return;
+    const pt: Point = [info.coordinate[0], info.coordinate[1]];
+    if (shapeDragTarget.kind === 'create') {
+      setShapeDragPreview(geometryFromDrag(shapeDragTarget.tool, shapeDragTarget.start, pt));
+    } else {
+      setShapeDragPreview((prev) => (prev ? applyHandleDrag(prev, shapeDragTarget.handleId, pt) : prev));
+    }
+  }, [shapeDragTarget]);
+
+  const handleShapeDragEnd = useCallback(() => {
+    if (!shapeDragTarget || !shapeDragPreview) { setShapeDragTarget(null); setShapeDragPreview(null); return; }
+    if (shapeDragTarget.kind === 'create') {
+      commitNewShape(shapeDragPreview);
+    } else {
+      const shape = shapeAnnotations.find((s) => s.id === shapeDragTarget.shapeId);
+      if (shape) {
+        const updated: ShapeAnnotation = { ...shape, geometry: shapeDragPreview };
+        upsertShapeAnnotation(updated);
+        updateShapeAnnotation(sessionId, shape.id, updated)
+          .catch((err) => reportError('Update shape failed', err));
+      }
+    }
+    setShapeDragTarget(null);
+    setShapeDragPreview(null);
+  }, [shapeDragTarget, shapeDragPreview, shapeAnnotations, sessionId, commitNewShape, upsertShapeAnnotation]);
 
   // Load image info
   useEffect(() => {
@@ -267,8 +382,8 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
     persistDisplay({ ...base, encoding: { ...base.encoding, ...patch } });
   }
 
-  const SEL = canvasMode === 'annotate'
-    ? [72, 187, 120] as [number, number, number]  // green for annotation
+  const SEL = canvasMode === 'regions'
+    ? [72, 187, 120] as [number, number, number]  // green for region labeling
     : [124, 108, 246] as [number, number, number]; // accent purple for subset
 
   // Selection graphics are UI overlays that must always be visible: 'always' depth
@@ -276,7 +391,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   // below the z = 0 plane to resolve nearest-cell fill.
   const OVERLAY_PARAMS = { depthCompare: 'always' as const, depthWriteEnabled: false };
   const drawLayers: Layer[] = [];
-  if (drawMode) {
+  if (lassoMode) {
     if (polygons.length) {
       drawLayers.push(new PolygonLayer<[number, number][]>({
         id: 'sel-polygons', data: polygons, getPolygon: (d) => d,
@@ -297,6 +412,37 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
         id: 'sel-verts', data: currentRing, getPosition: (d) => d,
         getFillColor: [...SEL, 255], getRadius: 4, radiusUnits: 'pixels',
         parameters: OVERLAY_PARAMS,
+      }));
+    }
+  }
+
+  // Shape annotations render whenever they exist, independent of the active tab;
+  // the drag-in-progress override keeps the persisted-shape layer showing the
+  // live position instead of stale data while a handle is being dragged.
+  const shapeOverrides = shapeDragTarget?.kind === 'handle' && shapeDragPreview
+    ? { [shapeDragTarget.shapeId]: shapeDragPreview }
+    : {};
+  const shapeLayers = buildShapeAnnotationLayers(shapeAnnotations, shapeOverrides);
+
+  if (shapesMode) {
+    const selectedShape = shapeAnnotations.find((s) => s.id === selectedShapeId);
+    const handleGeometry = shapeDragTarget?.kind === 'handle' ? shapeDragPreview : selectedShape?.geometry;
+    if (selectedShape && handleGeometry) {
+      shapeLayers.push(buildShapeHandleLayer(handleGeometry));
+    }
+    if (shapeDragTarget?.kind === 'create' && shapeDragPreview) {
+      shapeLayers.push(...buildDragPreviewLayers(shapeDragPreview));
+    }
+    if (activeShapeTool === 'trapezoid' && draftVertices.length >= 1) {
+      if (draftVertices.length >= 2) {
+        shapeLayers.push(new PathLayer<Point[]>({
+          id: 'shape-draft-path', data: [draftVertices], getPath: (d) => d,
+          getColor: [51, 136, 255, 220], getWidth: 2, widthUnits: 'pixels', parameters: OVERLAY_PARAMS,
+        }));
+      }
+      shapeLayers.push(new ScatterplotLayer<Point>({
+        id: 'shape-draft-verts', data: draftVertices, getPosition: (d) => d,
+        getFillColor: [51, 136, 255, 255], getRadius: 4, radiusUnits: 'pixels', parameters: OVERLAY_PARAMS,
       }));
     }
   }
@@ -324,9 +470,12 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
           const t = v.target as number[];
           persistDisplay({ ...currentSpec(), viewport: { target: [t[0], t[1]], zoom: v.zoom as number } });
         }}
-        layers={[...layers, ...drawLayers]}
-        controller={drawMode ? { doubleClickZoom: false } : true}
+        layers={[...layers, ...drawLayers, ...shapeLayers]}
+        controller={shapesMode ? { dragPan: false, doubleClickZoom: false } : drawMode ? { doubleClickZoom: false } : true}
         onClick={handleClick}
+        onDragStart={handleShapeDragStart}
+        onDrag={handleShapeDrag}
+        onDragEnd={handleShapeDragEnd}
         getCursor={drawMode ? () => 'crosshair' : ({ isDragging }) => (isDragging ? 'grabbing' : 'grab')}
       />
 

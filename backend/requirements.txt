@@ -9,6 +9,7 @@ celltypist==1.7.1   # pre-trained cell-type annotation for custom.celltypist_ann
 pydeseq2==0.5.4      # negative-binomial DE engine for custom.pseudobulk_deseq2
 
 fastapi==0.138.1
+pydantic==2.13.4     # request-body validation for the shape-annotations schema (schemas/annotations.py)
 uvicorn[standard]==0.49.0
 pyarrow==24.0.0
 psutil==7.2.2

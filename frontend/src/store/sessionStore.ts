@@ -10,7 +10,8 @@ import type {
   PlotEntry,
 } from '../types';
 import { isSpatialDisplay } from '../types';
-import { putDisplay, getSession } from '../api';
+import { putDisplay, getSession, listShapeAnnotations } from '../api';
+import type { ShapeAnnotation, ShapeKind } from '../schemas/annotations';
 
 // A job's status lands in whichever collection holds it; these narrow the shared
 // status union so setEntryStatus can update the right record type without a cast.
@@ -59,8 +60,8 @@ interface AppStore {
   setSelectedComputeId: (id: string | null) => void;
   selectedPlotId: string | null;
   setSelectedPlotId: (id: string | null) => void;
-  sidebarTab: 'compute' | 'plots' | 'annotations' | 'subsetting';
-  setSidebarTab: (tab: 'compute' | 'plots' | 'annotations' | 'subsetting') => void;
+  sidebarTab: 'compute' | 'plots' | 'regions' | 'annotations' | 'subsetting';
+  setSidebarTab: (tab: 'compute' | 'plots' | 'regions' | 'annotations' | 'subsetting') => void;
 
   // main viewer mode — spatial canvas, embedding scatter, or the data-table inspector
   mainView: 'canvas' | 'embedding' | 'tables';
@@ -70,16 +71,16 @@ interface AppStore {
   theme: 'dark' | 'light';
   setTheme: (theme: 'dark' | 'light') => void;
 
-  // annotations tab state
+  // regions tab state
   activeRegionSetId: string | null;
   setActiveRegionSetId: (id: string | null) => void;
   isolatedCategory: string | null;
   setIsolatedCategory: (cat: string | null) => void;
-  // annotation drawing target (set name + category + color) — read by SpatialCanvas
-  annotationNewSetName: string;
-  annotationCategoryName: string;
-  annotationColor: string;
-  setAnnotationTarget: (setName: string, category: string, color: string) => void;
+  // region-labeling drawing target (set name + category + color) — read by SpatialCanvas
+  regionNewSetName: string;
+  regionCategoryName: string;
+  regionColor: string;
+  setRegionTarget: (setName: string, category: string, color: string) => void;
 
   // polygon draw state — shared between the canvas (draws) and the active tab's
   // panel (commit / apply / clear). drawPolygons holds committed rings; drawRing is
@@ -89,6 +90,26 @@ interface AppStore {
   addDrawVertex: (pt: [number, number]) => void;
   commitDrawRing: () => void;
   clearDraw: () => void;
+
+  // shape-annotation editor (arrows/lines/boxes/trapezoids/ellipses) — the fetched
+  // list, which tool is armed, which shape is selected (shows edit handles), and
+  // the vertices collected so far for an in-progress creation (a drag supplies two
+  // points at once for line/box/ellipse; trapezoid collects up to four clicks).
+  shapeAnnotations: ShapeAnnotation[];
+  setShapeAnnotations: (shapes: ShapeAnnotation[]) => void;
+  refreshShapeAnnotations: (sessionId: string) => Promise<void>;
+  upsertShapeAnnotation: (shape: ShapeAnnotation) => void;
+  removeShapeAnnotationLocal: (id: string) => void;
+
+  activeShapeTool: ShapeKind | null;
+  setActiveShapeTool: (tool: ShapeKind | null) => void;
+  selectedShapeId: string | null;
+  setSelectedShapeId: (id: string | null) => void;
+
+  draftVertices: [number, number][];
+  addDraftVertex: (pt: [number, number]) => void;
+  setDraftVertices: (pts: [number, number][]) => void;
+  clearDraft: () => void;
 
   // resource sample
   resourceSample: ResourceSample | null;
@@ -180,7 +201,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       id === s.activeSessionId
         ? { activeSessionId: id }
         : { activeSessionId: id, isolatedCategory: null, drawPolygons: [], drawRing: [],
-            activeJobIds: new Set() }
+            activeJobIds: new Set(), shapeAnnotations: [], activeShapeTool: null,
+            selectedShapeId: null, draftVertices: [] }
     ),
   sessionState: null,
   setSessionState: (state) => set({ sessionState: state }),
@@ -307,11 +329,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
       putDisplay(s.activeSessionId, updated).catch(console.error);
     }
   },
-  annotationNewSetName: '',
-  annotationCategoryName: '',
-  annotationColor: '#e05c5c',
-  setAnnotationTarget: (setName, category, color) =>
-    set({ annotationNewSetName: setName, annotationCategoryName: category, annotationColor: color }),
+  regionNewSetName: '',
+  regionCategoryName: '',
+  regionColor: '#e05c5c',
+  setRegionTarget: (setName, category, color) =>
+    set({ regionNewSetName: setName, regionCategoryName: category, regionColor: color }),
 
   drawPolygons: [],
   drawRing: [],
@@ -321,6 +343,41 @@ export const useAppStore = create<AppStore>((set, get) => ({
       ? { drawPolygons: [...s.drawPolygons, s.drawRing], drawRing: [] }
       : {})),
   clearDraw: () => set({ drawPolygons: [], drawRing: [] }),
+
+  shapeAnnotations: [],
+  setShapeAnnotations: (shapes) => set({ shapeAnnotations: shapes }),
+  refreshShapeAnnotations: async (sessionId) => {
+    try {
+      const { shapes } = await listShapeAnnotations(sessionId);
+      if (get().activeSessionId !== sessionId) return; // switched away mid-fetch
+      set({ shapeAnnotations: shapes });
+    } catch (err) {
+      get().pushNotification({
+        kind: 'error',
+        message: `Failed to refresh annotations: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+  },
+  upsertShapeAnnotation: (shape) =>
+    set((s) => {
+      const i = s.shapeAnnotations.findIndex((x) => x.id === shape.id);
+      if (i < 0) return { shapeAnnotations: [...s.shapeAnnotations, shape] };
+      const shapeAnnotations = [...s.shapeAnnotations];
+      shapeAnnotations[i] = shape;
+      return { shapeAnnotations };
+    }),
+  removeShapeAnnotationLocal: (id) =>
+    set((s) => ({ shapeAnnotations: s.shapeAnnotations.filter((x) => x.id !== id) })),
+
+  activeShapeTool: null,
+  setActiveShapeTool: (tool) => set({ activeShapeTool: tool, selectedShapeId: null, draftVertices: [] }),
+  selectedShapeId: null,
+  setSelectedShapeId: (id) => set({ selectedShapeId: id, activeShapeTool: null, draftVertices: [] }),
+
+  draftVertices: [],
+  addDraftVertex: (pt) => set((s) => ({ draftVertices: [...s.draftVertices, pt] })),
+  setDraftVertices: (pts) => set({ draftVertices: pts }),
+  clearDraft: () => set({ draftVertices: [] }),
 
   resourceSample: null,
   setResourceSample: (sample) => set({ resourceSample: sample }),

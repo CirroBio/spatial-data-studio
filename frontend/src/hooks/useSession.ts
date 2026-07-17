@@ -5,7 +5,7 @@ export function useSession(sessionId: string | null): {
   loading: boolean;
   refresh: () => void;
 } {
-  const { setSessionState, refreshSessionState, sessionState } = useAppStore();
+  const { setSessionState, refreshSessionState, refreshShapeAnnotations, sessionState } = useAppStore();
 
   const load = useCallback(() => {
     if (!sessionId) {
@@ -13,7 +13,8 @@ export function useSession(sessionId: string | null): {
       return;
     }
     void refreshSessionState(sessionId);
-  }, [sessionId, setSessionState, refreshSessionState]);
+    void refreshShapeAnnotations(sessionId);
+  }, [sessionId, setSessionState, refreshSessionState, refreshShapeAnnotations]);
 
   useEffect(() => {
     load();

@@ -31,6 +31,7 @@ export function useSSE(): void {
     activeSessionId,
     setSessionState,
     refreshSessionState,
+    refreshShapeAnnotations,
     pushNotification,
     setActiveSessionId,
     setSessions,
@@ -116,6 +117,11 @@ export function useSSE(): void {
         getSessions().then(({ sessions }) => setSessions(sessions)).catch(console.error);
         return;
       }
+      // Shape-annotation geometry lives in sdata.shapes, not app_state, so a
+      // job.completed for it needs its own refetch alongside the session-state one.
+      if (data.kind === 'shape_annotate') {
+        void refreshShapeAnnotations(data.session_id);
+      }
       void refreshSessionState(data.session_id);
     });
 
@@ -192,5 +198,5 @@ export function useSSE(): void {
     return () => {
       es.close();
     };
-  }, [activeSessionId, upsertSession, setResourceSample, updateDataVersions, updateDisplay, addActiveJob, removeActiveJob, addQueuedEntry, setEntryStatus, setSessionState, refreshSessionState, pushNotification, setActiveSessionId, setSessions, removeSession, setCirroUploads]);
+  }, [activeSessionId, upsertSession, setResourceSample, updateDataVersions, updateDisplay, addActiveJob, removeActiveJob, addQueuedEntry, setEntryStatus, setSessionState, refreshSessionState, refreshShapeAnnotations, pushNotification, setActiveSessionId, setSessions, removeSession, setCirroUploads]);
 }

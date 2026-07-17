@@ -8,6 +8,7 @@ import type {
   UiFieldInfo,
 } from './types';
 import type { Snapshot } from './lib/snapshots';
+import type { ShapeAnnotation } from './schemas/annotations';
 
 async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   const res = await fetch(path, init);
@@ -470,5 +471,40 @@ export async function promoteObsColumn(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ obs_column }),
   });
+  return res.json() as Promise<{ job_id: string }>;
+}
+
+export async function listShapeAnnotations(sessionId: string): Promise<{ shapes: ShapeAnnotation[] }> {
+  const res = await apiFetch(`/api/sessions/${sessionId}/shape-annotations`);
+  return res.json() as Promise<{ shapes: ShapeAnnotation[] }>;
+}
+
+export async function createShapeAnnotation(
+  sessionId: string,
+  shape: Omit<ShapeAnnotation, 'id'> & { id?: string }
+): Promise<{ job_id: string }> {
+  const res = await apiFetch(`/api/sessions/${sessionId}/shape-annotations`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(shape),
+  });
+  return res.json() as Promise<{ job_id: string }>;
+}
+
+export async function updateShapeAnnotation(
+  sessionId: string,
+  shapeId: string,
+  shape: Omit<ShapeAnnotation, 'id'>
+): Promise<{ job_id: string }> {
+  const res = await apiFetch(`/api/sessions/${sessionId}/shape-annotations/${shapeId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(shape),
+  });
+  return res.json() as Promise<{ job_id: string }>;
+}
+
+export async function deleteShapeAnnotation(sessionId: string, shapeId: string): Promise<{ job_id: string }> {
+  const res = await apiFetch(`/api/sessions/${sessionId}/shape-annotations/${shapeId}`, { method: 'DELETE' });
   return res.json() as Promise<{ job_id: string }>;
 }

@@ -385,6 +385,39 @@ async def promote_region(sid: str, body: dict):
     return {"job_id": job_id}
 
 
+# ---- shape annotations (arrows/lines/boxes/trapezoids/ellipses) -----------
+@app.get("/api/sessions/{sid}/shape-annotations")
+async def list_shape_annotations(sid: str):
+    sess = _session(sid)
+
+    def _list():
+        from .transport import annotations
+        return annotations.list_shape_annotations(sess)
+
+    return {"shapes": await _read_locked(sess, _list)}
+
+
+@app.post("/api/sessions/{sid}/shape-annotations")
+async def create_shape_annotation(sid: str, body: dict):
+    """Create one shape (spec: shape annotations editor). Body: a ShapeAnnotation
+    (geometry/stroke/fill?/label?), persisted into `sdata.shapes["annotations"]`."""
+    job_id = _session(sid).enqueue_special("shape_annotate", {"op": "create", "shape": body})
+    return {"job_id": job_id}
+
+
+@app.put("/api/sessions/{sid}/shape-annotations/{shape_id}")
+async def update_shape_annotation(sid: str, shape_id: str, body: dict):
+    job_id = _session(sid).enqueue_special(
+        "shape_annotate", {"op": "update", "shape_id": shape_id, "shape": body})
+    return {"job_id": job_id}
+
+
+@app.delete("/api/sessions/{sid}/shape-annotations/{shape_id}")
+async def delete_shape_annotation(sid: str, shape_id: str):
+    job_id = _session(sid).enqueue_special("shape_annotate", {"op": "delete", "shape_id": shape_id})
+    return {"job_id": job_id}
+
+
 @app.post("/api/sessions/{sid}/snapshot")
 async def save_snapshot_endpoint(sid: str, body: dict | None = None):
     """Save a display as a JSON snapshot config pointing at an (auto-saved,
