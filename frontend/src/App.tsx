@@ -186,9 +186,17 @@ export default function App() {
         />
       );
     }
+    if (!sessionState) {
+      return (
+        <div className="flex flex-col items-center justify-center h-full gap-3 text-muted">
+          <div className="w-6 h-6 rounded-full border-2 border-border border-t-accent animate-spin" />
+          <span className="text-sm">Loading session...</span>
+        </div>
+      );
+    }
     return (
       <div className="flex items-center justify-center h-full text-muted text-sm">
-        {sessionState ? 'No spatial canvas display found' : 'Loading session...'}
+        No spatial canvas display found
       </div>
     );
   }
