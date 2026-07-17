@@ -5,11 +5,7 @@ import { reportError } from '../lib/errors';
 import { useDrawSelection } from '../hooks/useDrawSelection';
 import DrawControls from './DrawControls';
 
-interface Props {
-  onNewSession: () => void;
-}
-
-export default function SubsettingPanel({ onNewSession }: Props) {
+export default function SubsettingPanel() {
   const { activeSessionId } = useAppStore();
   const { drawPolygons, drawRing, regionCount, allPolygons, commitDrawRing, clearDraw } = useDrawSelection();
 
@@ -49,16 +45,6 @@ export default function SubsettingPanel({ onNewSession }: Props) {
           {working ? 'Subsetting...' : `Subset to selection${regionCount ? ` (${regionCount})` : ''}`}
         </button>
         <p className="text-[10px] text-muted/60 leading-snug">Creates a child session; the parent is evicted.</p>
-      </div>
-
-      {/* New session shortcut */}
-      <div className="px-3 py-2">
-        <button
-          onClick={onNewSession}
-          className="w-full py-1.5 text-xs bg-bg border border-border rounded text-muted hover:text-text hover:border-accent/50 transition-colors"
-        >
-          New session...
-        </button>
       </div>
     </div>
   );

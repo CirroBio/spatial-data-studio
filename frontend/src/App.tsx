@@ -163,6 +163,18 @@ export default function App() {
       );
     }
 
+    // Until the active session's state has loaded, show one shared spinner
+    // across every tab (spatial, embeddings, tables) rather than letting each
+    // tab paint its own empty state while the fetch is in flight.
+    if (!sessionState) {
+      return (
+        <div className="flex flex-col items-center justify-center h-full gap-3 text-muted">
+          <div className="w-6 h-6 rounded-full border-2 border-border border-t-accent animate-spin" />
+          <span className="text-sm">Loading session...</span>
+        </div>
+      );
+    }
+
     // The viewer mode switch toggles between the canvas, embeddings, and the table inspector.
     if (mainView === 'tables') return <DataInspector />;
 
@@ -172,9 +184,9 @@ export default function App() {
           key={activeSessionId}
           display={embeddingDisplay}
           sessionId={activeSessionId}
-          obsmFields={sessionState?.fields.obsm ?? []}
-          obsFields={sessionState?.fields.obs ?? []}
-          layerNames={sessionState?.fields.layers ?? []}
+          obsmFields={sessionState.fields.obsm}
+          obsFields={sessionState.fields.obs}
+          layerNames={sessionState.fields.layers}
         />
       );
     }
@@ -191,14 +203,6 @@ export default function App() {
         />
       );
     }
-    if (!sessionState) {
-      return (
-        <div className="flex flex-col items-center justify-center h-full gap-3 text-muted">
-          <div className="w-6 h-6 rounded-full border-2 border-border border-t-accent animate-spin" />
-          <span className="text-sm">Loading session...</span>
-        </div>
-      );
-    }
     return (
       <div className="flex items-center justify-center h-full text-muted text-sm">
         No spatial canvas display found
@@ -212,7 +216,7 @@ export default function App() {
     <div className="flex flex-col h-full bg-bg text-text">
       <Header />
       <div className="flex flex-1 overflow-hidden">
-        <Sidebar onNewSession={() => setShowNewSession(true)} />
+        <Sidebar />
         <main className="flex-1 overflow-hidden relative">
           {showViewSwitcher && (
             <div data-tour={TourAnchors.ViewSwitcher} className="absolute top-2 left-2 z-20 flex rounded-md border border-border bg-surface/90 backdrop-blur overflow-hidden text-xs shadow">

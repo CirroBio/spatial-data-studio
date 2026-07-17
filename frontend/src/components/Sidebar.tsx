@@ -11,10 +11,6 @@ import AnnotationsPanel from './AnnotationsPanel';
 import SubsettingPanel from './SubsettingPanel';
 import { TourAnchors } from '../tours';
 
-interface Props {
-  onNewSession: () => void;
-}
-
 type SidebarTab = 'compute' | 'plots' | 'regions' | 'annotations' | 'subsetting';
 
 // The left-nav tabs render icon-only; the active one expands to icon + label.
@@ -134,7 +130,7 @@ function HistoryList({
   );
 }
 
-export default function Sidebar({ onNewSession }: Props) {
+export default function Sidebar() {
   const {
     sessionState,
     sidebarTab,
@@ -272,7 +268,7 @@ export default function Sidebar({ onNewSession }: Props) {
         </Tabs.Content>
 
         <Tabs.Content value="subsetting" className="flex-1 overflow-y-auto">
-          <SubsettingPanel onNewSession={onNewSession} />
+          <SubsettingPanel />
         </Tabs.Content>
       </Tabs.Root>
 
@@ -292,14 +288,14 @@ export default function Sidebar({ onNewSession }: Props) {
             data-tour={TourAnchors.AddFunction}
             className="w-full py-1.5 text-xs bg-accent hover:bg-accent/90 text-white rounded transition-colors"
           >
-            + Add {sidebarTab === 'plots' ? 'plot' : 'compute'} function
+            {sidebarTab === 'plots' ? '+ Add plot function' : '+ Run function'}
           </button>
           <button
             onClick={() => setShowRecipes(true)}
             data-tour={TourAnchors.BrowseRecipes}
             className="w-full py-1.5 text-xs bg-accent hover:bg-accent/90 text-white rounded transition-colors"
           >
-            + Add recipe
+            + Run recipe
           </button>
           <div className="flex gap-1">
             <button
