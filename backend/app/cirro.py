@@ -16,7 +16,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from .config import config
+from .config import config, within_snapshots_dir
 
 # The generic "Files" ingest process (accepts any file) — every upload from this
 # app uses it, since a saved session/snapshot isn't a bioinformatics file type any
@@ -120,11 +120,21 @@ def _referenced_checkpoint(config_path: Path) -> str | None:
     return (cfg.get("checkpoint") or {}).get("name")
 
 
+def _snapshot_src(name: str) -> Path:
+    """Resolve a client-supplied snapshot name under SNAPSHOTS_DIR, rejecting any that
+    escapes it (a `../`/absolute name) so an upload can't symlink or read an arbitrary
+    host file into the bundle sent off-box to Cirro."""
+    src = (config.SNAPSHOTS_DIR / name).resolve()
+    if not within_snapshots_dir(src):
+        raise ValueError(f"invalid snapshot name: {name}")
+    return src
+
+
 def _symlink_snapshot(snap_dir: Path, session_dir: Path, name: str) -> None:
     """Symlink a snapshot's JSON config under `snapshots/`, and the checkpoint it
     references under `sessions/` (deduped) so the uploaded bundle is self-contained
     — the viewer needs the config and its checkpoint together."""
-    src = (config.SNAPSHOTS_DIR / name).resolve()
+    src = _snapshot_src(name)
     if not src.is_file():
         raise ValueError(f"snapshot '{name}' not found")
     (snap_dir / name).symlink_to(src)
@@ -143,7 +153,7 @@ def _write_snapshot_manifest(snap_dir: Path, snapshot_names: list[str]) -> None:
     entries = []
     for name in sorted(snapshot_names, reverse=True):
         try:
-            cfg = json.loads((config.SNAPSHOTS_DIR / name).read_text())
+            cfg = json.loads(_snapshot_src(name).read_text())
         except (OSError, ValueError):
             continue
         entries.append({

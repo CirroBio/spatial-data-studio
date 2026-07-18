@@ -108,6 +108,12 @@ def within_data_dir(target: Path) -> bool:
     return _within_dir(target, config.DATA_DIR)
 
 
+def within_snapshots_dir(target: Path) -> bool:
+    """True if `target` is SNAPSHOTS_DIR or beneath it (Cirro-upload snapshot
+    symlinks/reads must not escape it via a crafted `../` name)."""
+    return _within_dir(target, config.SNAPSHOTS_DIR)
+
+
 def within_checkpoint_dir(target: Path) -> bool:
     """True if `target` is CHECKPOINT_DIR or somewhere beneath it (save / load /
     set-transform paths must land there)."""
