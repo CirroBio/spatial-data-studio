@@ -33,10 +33,11 @@ if [[ -f .env ]]; then
   set +a
 fi
 
+# Single data directory: inputs to import/load AND saved checkpoints/snapshots all
+# live here (read-write). Defaults to data/ (or test-data/ with --test).
 export SDS_DATA_DIR="${SDS_DATA_DIR:-$PWD/$DATA_SUBDIR}"
-export SDS_CHECKPOINT_DIR="${SDS_CHECKPOINT_DIR:-$PWD/checkpoints}"
 export SDS_CONTAINER_MEM_MB="${SDS_CONTAINER_MEM_MB:-16384}"
-mkdir -p "$SDS_CHECKPOINT_DIR"
+mkdir -p "$SDS_DATA_DIR"
 
 # --reload is unusable here: the long-lived SSE stream (/api/events) never
 # closes, so the reloader hangs on "Waiting for connections to close" on any

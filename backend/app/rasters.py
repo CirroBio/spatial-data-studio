@@ -75,7 +75,7 @@ def _rebuild(el, is_label: bool):
 
 def normalize_rasters(sdata) -> str | None:
     """Rebuild every non-canonical image/label of `sdata` into a tile-chunked 2x
-    pyramid, persist them to a fresh cache store under CHECKPOINT_DIR, and rebind
+    pyramid, persist them to a fresh cache store under DATA_DIR, and rebind
     `sdata`'s elements to lazy refs into it. Returns the cache dir (the caller must
     rmtree it when the session closes), or None if nothing needed rebuilding."""
     todo = [("images", n) for n, el in getattr(sdata, "images", {}).items() if not _is_canonical(el, False)]
@@ -83,7 +83,7 @@ def normalize_rasters(sdata) -> str | None:
     if not todo:
         return None
 
-    cache_dir = tempfile.mkdtemp(suffix=".rasters", dir=str(config.CHECKPOINT_DIR))
+    cache_dir = tempfile.mkdtemp(suffix=".rasters", dir=str(config.DATA_DIR))
     # Rebuild one element at a time, freeing between: each is a full read, so writing
     # them together sums their footprints (all four Xenium rasters at once peak
     # ~8.8 GB). Per-element with a small dask pool, peak is the largest single

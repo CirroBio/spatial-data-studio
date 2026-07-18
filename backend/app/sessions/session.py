@@ -13,7 +13,7 @@ from pathlib import Path
 
 from . import appstate
 from .adapter import ADAPTER
-from ..config import within_checkpoint_dir
+from ..config import within_data_dir
 from ..transport.sse import BUS
 
 
@@ -497,8 +497,8 @@ class Session:
         if region:
             self.dirty_transforms.add(region)
         target = Path(payload["path"]).resolve()
-        if not within_checkpoint_dir(target):
-            raise ValueError("save path is outside the checkpoint directory")
+        if not within_data_dir(target):
+            raise ValueError("save path is outside the data directory")
         with self.lock.reading():
             self.store_path = self._write_checkpoint(payload["path"], payload.get("hash_name", False))
         self.saved = True
@@ -511,8 +511,8 @@ class Session:
 
     def _run_save(self, job_id, payload):
         target = Path(payload["path"]).resolve()
-        if not within_checkpoint_dir(target):
-            raise ValueError("save path is outside the checkpoint directory")
+        if not within_data_dir(target):
+            raise ValueError("save path is outside the data directory")
         with self.lock.reading():
             path = self._write_checkpoint(payload["path"], payload.get("hash_name", False))
         self.store_path = path

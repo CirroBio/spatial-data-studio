@@ -10,7 +10,7 @@ import psutil
 
 from . import appstate
 from .session import Session
-from ..config import config, within_data_dir, within_checkpoint_dir
+from ..config import config, within_data_dir
 from ..persistence.store import load_spatialdata, estimate_resident_mb, save_spatialdata
 from ..transport.sse import BUS
 
@@ -20,17 +20,16 @@ from ..transport.sse import BUS
 _READ_PATH_PARAMS = ("path", "input", "image_path", "alignment_file", "store")
 
 
-def _resolve_or_raise(path: str, scope: str) -> Path:
-    """Resolve `path` and ensure it falls within the allowed root for `scope`
-    ("data" for raw reader inputs, "checkpoint" for saved sessions); raises
-    RuntimeError otherwise (the error class both callers below surface as-is)."""
+def _resolve_or_raise(path: str) -> Path:
+    """Resolve `path` and ensure it falls within DATA_DIR — the single on-disk root
+    for reader inputs, loads, and saves; raises RuntimeError otherwise (both callers
+    below surface it as-is)."""
     try:
         target = Path(path).resolve()
     except OSError:
         raise RuntimeError(f"bad path: {path}")
-    ok = within_data_dir(target) if scope == "data" else within_checkpoint_dir(target)
-    if not ok:
-        raise RuntimeError(f"path is outside the allowed {scope} directory: {path}")
+    if not within_data_dir(target):
+        raise RuntimeError(f"path is outside the data directory: {path}")
     return target
 
 
@@ -43,7 +42,7 @@ class SessionManager:
     # ---- creation ---------------------------------------------------------
     def create_from_load(self, path: str, name: str | None = None) -> Session:
         self._check_capacity()
-        resolved = str(_resolve_or_raise(path, "checkpoint"))  # validated, resolved path for every fs op below
+        resolved = str(_resolve_or_raise(path))  # validated, resolved path for every fs op below
         self._check_admission(estimate_resident_mb(resolved))
         sdata, app_state, newer, extract_dir = load_spatialdata(resolved)
         sid = str(uuid.uuid4())
@@ -76,7 +75,7 @@ class SessionManager:
         for k, v in descriptor.get("params", {}).items():
             if k not in _READ_PATH_PARAMS or not isinstance(v, str):
                 continue
-            _resolve_or_raise(v, "data")
+            _resolve_or_raise(v)
         sid = str(uuid.uuid4())
         sess = Session(sid, name or descriptor.get("function", "session"), None, appstate.fresh(), self)
         self.sessions[sid] = sess
@@ -313,6 +312,6 @@ class SessionManager:
 
 def _basename(path: str) -> str:
     import os
-    from ..persistence.store import strip_content_hash
-    stem = os.path.basename(path.rstrip("/")).replace(".zarr.zip", "").replace(".zarr", "")
+    from ..persistence.store import strip_content_hash, strip_checkpoint_ext
+    stem = strip_checkpoint_ext(os.path.basename(path.rstrip("/")))
     return strip_content_hash(stem)

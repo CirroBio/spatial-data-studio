@@ -165,14 +165,13 @@ def main(argv=None) -> int:
     args = _parse_args(sys.argv[1:] if argv is None else argv)
 
     # Env must be set BEFORE importing app.config (Config reads it at import time).
-    # SDS_DATA_DIR makes the input readable past the server's data-root allowlist;
-    # SDS_CHECKPOINT_DIR is where ingest raster tiling caches. Offline runs are
-    # single-shot and single-tenant, so lift the memory/session admission limits
-    # unless the caller pinned them.
+    # SDS_DATA_DIR makes the input readable past the server's data-root allowlist and
+    # is where ingest raster tiling caches; the output checkpoint is saved directly to
+    # --output (staged next to it). Offline runs are single-shot and single-tenant, so
+    # lift the memory/session admission limits unless the caller pinned them.
     out_dir = Path(args.output).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     os.environ["SDS_DATA_DIR"] = str(Path(args.input).resolve().parent)
-    os.environ["SDS_CHECKPOINT_DIR"] = str(out_dir)
     os.environ.setdefault("SDS_CONTAINER_MEM_MB", "65536")
     os.environ.setdefault("SDS_MAX_SESSIONS", "64")
 
@@ -198,7 +197,7 @@ def main(argv=None) -> int:
         plots_written = _run_steps(sess, steps, out_dir)
         out_zip = out_dir / f"{_output_name(args)}.zarr.zip"
         # Save directly rather than through the queued save job, whose write-path guard
-        # (within_checkpoint_dir) is a multi-tenant server concern; offline output goes
+        # (within_data_dir) is a multi-tenant server concern; offline output goes
         # wherever the caller asked.
         with sess.lock.reading():
             saved = save_spatialdata(sess.sdata, str(out_zip), sess.app_state, hash_name=False)

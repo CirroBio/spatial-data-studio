@@ -70,8 +70,7 @@ admission control refuses new work at `SDS_ADMISSION_PCT` of it, so it trips
 
 | Variable                 | Default   | Purpose |
 |--------------------------|-----------|---------|
-| `SDS_DATA_DIR`           | `/data`   | Read-only bind mount for input datasets |
-| `SDS_CHECKPOINT_DIR`     | `/checkpoints` | Read-write volume for auto-checkpoints and saves |
+| `SDS_DATA_DIR`           | `/data`   | Single read-write data folder: input datasets, saved checkpoints (`*.sdata.zarr.zip`), and snapshots (`*.sview.json`) all live here. |
 | `SDS_CONTAINER_MEM_MB`   | `8192`    | Container cgroup memory limit in MiB. Set to match `--memory` / `mem_limit`. |
 | `SDS_WORKER_CEILING_MB`  | `6144`    | Per-worker memory ceiling (must be < `SDS_CONTAINER_MEM_MB`). Triggers a catchable `MemoryError` before the OOM killer fires. |
 | `SDS_ADMISSION_PCT`      | `0.80`    | Fraction of container RAM at which new jobs, reads, and image renders are refused. |
@@ -80,7 +79,6 @@ admission control refuses new work at `SDS_ADMISSION_PCT` of it, so it trips
 | `SDS_RASTER_BASE_PX`     | `1024`    | Coarsest image-pyramid level target (longest side) when re-tiling images at ingest. |
 | `SDS_RASTER_REBUILD_WORKERS` | `2`   | dask worker count for the one-time ingest re-tiling; bounds its peak memory. |
 | `SDS_STATIC_DIR`         | `/app/spa`| Path to the compiled SPA (baked into the image). |
-| `SDS_SNAPSHOTS_DIR`      | `<SDS_CHECKPOINT_DIR>/snapshots` | Where snapshot JSON configs are written; defaults under the checkpoint mount, override only if needed. |
 | `SDS_SNAPSHOT_VIEWER_DIR`| `frontend/dist-viewer` | Built standalone snapshot viewer copied into a Cirro upload bundle when snapshots are included (`npm run build:viewer`). |
 | `SDS_N_THREADS`      | all cores | Default for thread-count form params (`n_jobs`, etc.). |
 | `SDS_RESOURCE_HZ`        | `2`       | Resource-sample broadcast cadence (Hz) for the RAM/CPU strip. |

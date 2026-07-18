@@ -54,7 +54,7 @@ python3.11 -m venv .venv-introspect && . .venv-introspect/bin/activate
 pip install -r backend/requirements.txt
 pip uninstall -y leidenalg igraph                    # GPL Leiden backends; use custom.leiden
 cd backend
-SDS_DATA_DIR=../data SDS_CHECKPOINT_DIR=../checkpoints SDS_CONTAINER_MEM_MB=16384 \
+SDS_DATA_DIR=../data SDS_CONTAINER_MEM_MB=16384 \
   uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 

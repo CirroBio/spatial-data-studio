@@ -7,12 +7,12 @@ def _mb(env: str, default_mb: int) -> int:
 
 
 class Config:
-    # Data mounts (DESIGN §19.9)
-    DATA_DIR = Path(os.environ.get("SDS_DATA_DIR", "/data"))            # read mount (inputs)
-    CHECKPOINT_DIR = Path(os.environ.get("SDS_CHECKPOINT_DIR", "/checkpoints"))  # rw mount
-    # Snapshots live under the checkpoint mount by default, so setting
-    # SDS_CHECKPOINT_DIR alone is enough; override independently only if needed.
-    SNAPSHOTS_DIR = Path(os.environ.get("SDS_SNAPSHOTS_DIR", str(CHECKPOINT_DIR / "snapshots")))  # v3 Part 9
+    # Single data directory (DESIGN §19.9). Everything on disk lives here, read-write:
+    # raw inputs the user imports, saved checkpoints (<name>-<hash>.sdata.zarr.zip),
+    # and snapshot configs (<name>-<hash>.sview.json). Internal working stores
+    # (per-session raster caches, save-staging tempdirs) are dot-/suffix-prefixed here
+    # and are skipped by the dataset scanner and never served by name.
+    DATA_DIR = Path(os.environ.get("SDS_DATA_DIR", "/data"))
 
     # Memory accounting (DESIGN §11, §19.5) — evaluated against the container limit.
     CONTAINER_MEM_MB = _mb("SDS_CONTAINER_MEM_MB", 8192)
@@ -69,15 +69,14 @@ class Config:
 
 config = Config()
 try:
-    config.CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+    config.DATA_DIR.mkdir(parents=True, exist_ok=True)
 except OSError:
     pass  # read-only or unavailable mount; save endpoints surface the error per-call
 
 
-# ---- data-root allowlists. Raw inputs and saved sessions live in strictly
-# separate mounts: spatialdata-io readers may only read from DATA_DIR, and
-# session load/save may only touch CHECKPOINT_DIR. A client can never point
-# either flow at an arbitrary path, nor cross the two. ----
+# ---- data-root allowlist. Everything the app touches on disk — imports, loads,
+# saves, snapshots, Cirro upload source — must resolve under the single DATA_DIR;
+# a client can never point a path at an arbitrary location. ----
 def _existing_root(p: Path) -> Path | None:
     try:
         rp = p.resolve()
@@ -87,14 +86,9 @@ def _existing_root(p: Path) -> Path | None:
 
 
 def data_roots() -> list[Path]:
-    """Read mount for raw inputs (spatialdata-io readers / import browsing)."""
+    """The single data directory (import browsing, the load picker, Cirro upload
+    source). Empty when the dir does not exist."""
     rp = _existing_root(config.DATA_DIR)
-    return [rp] if rp else []
-
-
-def checkpoint_roots() -> list[Path]:
-    """RW mount for saved sessions (load, the dataset picker, Cirro upload source)."""
-    rp = _existing_root(config.CHECKPOINT_DIR)
     return [rp] if rp else []
 
 
@@ -104,17 +98,6 @@ def _within_dir(target: Path, root: Path) -> bool:
 
 
 def within_data_dir(target: Path) -> bool:
-    """True if `target` is DATA_DIR or somewhere beneath it (raw-input reads)."""
+    """True if `target` is DATA_DIR or somewhere beneath it — the only on-disk
+    location the app may read (imports/loads) or write (saves/snapshots)."""
     return _within_dir(target, config.DATA_DIR)
-
-
-def within_snapshots_dir(target: Path) -> bool:
-    """True if `target` is SNAPSHOTS_DIR or beneath it (Cirro-upload snapshot
-    symlinks/reads must not escape it via a crafted `../` name)."""
-    return _within_dir(target, config.SNAPSHOTS_DIR)
-
-
-def within_checkpoint_dir(target: Path) -> bool:
-    """True if `target` is CHECKPOINT_DIR or somewhere beneath it (save / load /
-    set-transform paths must land there)."""
-    return _within_dir(target, config.CHECKPOINT_DIR)

@@ -62,16 +62,16 @@ COPY --from=spa-builder /build/frontend/dist /app/spa
 COPY docker/nginx.conf     /etc/nginx/nginx.conf
 COPY docker/supervisord.conf /etc/supervisor/conf.d/spatial-data-studio.conf
 
-# Create volume mountpoints so Docker can bind-mount without root issues
-RUN mkdir -p /data /checkpoints
+# Create the volume mountpoint so Docker can bind-mount without root issues
+RUN mkdir -p /data
 
 # Expose the edge port
 EXPOSE 80
 
-# Runtime env defaults (overridden in docker-compose or docker run -e)
+# Runtime env defaults (overridden in docker-compose or docker run -e).
+# SDS_DATA_DIR is the single read-write data dir (inputs + checkpoints + snapshots).
 ENV SDS_STATIC_DIR=/app/spa \
     SDS_DATA_DIR=/data \
-    SDS_CHECKPOINT_DIR=/checkpoints \
     SDS_CONTAINER_MEM_MB=8192 \
     SDS_WORKER_CEILING_MB=6144 \
     SDS_MAX_SESSIONS=8 \

@@ -31,7 +31,6 @@ from pathlib import Path
 import spatialdata as sd
 import zarr
 
-from ..config import config
 from ..sessions import appstate
 
 # Sharding parameters for raster (image/label) arrays. Small inner chunks keep a
@@ -52,11 +51,27 @@ if not _log.handlers:
     _log.addHandler(_handler)
     _log.propagate = False
 
-# Content-hash suffix appended to auto-named `.zarr.zip` checkpoints (see
-# `_save_zip`), e.g. "myfile-3fa21c9b8e4d.zarr.zip". Fixed length so it can be
-# recognized and stripped again on the next save instead of piling up.
+# Content-hash suffix appended to auto-named checkpoints (see `_save_zip`),
+# e.g. "myfile-3fa21c9b8e4d.sdata.zarr.zip". Fixed length so it can be recognized
+# and stripped again on the next save instead of piling up.
 HASH_LEN = 12
 _HASH_SUFFIX_RE = re.compile(rf"-[0-9a-f]{{{HASH_LEN}}}$")
+
+# Extension for saved checkpoints: `<name>-<hash>.sdata.zarr.zip` (SpatialData zarr
+# zip). Reading also accepts the plain `.zarr.zip`/`.zarr.tar.gz`/`.zarr` forms
+# (legacy saves and imported stores), so only the save name carries the `.sdata`
+# infix. Longest-first so `.sdata.zarr.zip` wins over `.zarr.zip`/`.zarr`.
+CHECKPOINT_EXT = ".sdata.zarr.zip"
+_READ_EXTS = (".sdata.zarr.zip", ".zarr.zip", ".zarr.tar.gz", ".zarr.tgz", ".zarr")
+
+
+def strip_checkpoint_ext(name: str) -> str:
+    """Strip a checkpoint/zarr extension (longest match) from a filename, leaving
+    the stem the content-hash suffix is measured against."""
+    for ext in _READ_EXTS:
+        if name.endswith(ext):
+            return name[: -len(ext)]
+    return name
 
 
 def _invalidate_dataset_scan() -> None:
@@ -155,7 +170,9 @@ def _save_dir(sdata, path: str, logs: dict[str, str]) -> str:
         tmp = p.with_name(p.name + ".tmp")
         if tmp.exists():
             shutil.rmtree(tmp)
-        sdata.write(str(tmp), overwrite=True)
+        # Don't adopt `tmp` as the backing path — it's renamed to `p` below, which would
+        # leave sdata.path dangling; point the object at the final `p` after the swap.
+        sdata.write(str(tmp), overwrite=True, update_sdata_path=False)
         _shard_rasters(str(tmp))
         _write_logs(str(tmp), logs)
         # Keep the original until the new store is fully written, then swap via two
@@ -166,6 +183,7 @@ def _save_dir(sdata, path: str, logs: dict[str, str]) -> str:
         os.replace(p, bak)
         os.replace(tmp, p)
         shutil.rmtree(bak, ignore_errors=True)
+        sdata.path = p
     else:
         sdata.write(path, overwrite=True)
         _shard_rasters(path)
@@ -174,10 +192,14 @@ def _save_dir(sdata, path: str, logs: dict[str, str]) -> str:
 
 
 def _save_zip(sdata, path: str, hash_name: bool, logs: dict[str, str]) -> str:
-    tmpdir = tempfile.mkdtemp(dir=str(config.CHECKPOINT_DIR), prefix=".save-")
+    tmpdir = tempfile.mkdtemp(dir=str(Path(path).parent), prefix=".save-")
     zarr_dir = os.path.join(tmpdir, "store.zarr")
     try:
-        sdata.write(zarr_dir, overwrite=True)
+        # This temp store is zipped then deleted; don't let the live object adopt it
+        # as its backing path (spatialdata's write() does so by default), or every
+        # later str(sdata) — e.g. the SpatialData manifest contributor — fails once
+        # the temp dir is gone.
+        sdata.write(zarr_dir, overwrite=True, update_sdata_path=False)
         _shard_rasters(zarr_dir)
         _write_logs(zarr_dir, logs)
         return _zip_from_dir(zarr_dir, path, hash_name)
@@ -260,21 +282,22 @@ def update_checkpoint(sdata, path: str, app_state: dict, *, tables: set[str],
 
 def _zip_from_dir(src_dir: str, path: str, hash_name: bool) -> str:
     """Package the on-disk zarr store at `src_dir` into the checkpoint `.zarr.zip` at
-    `path`. Stages the archive inside CHECKPOINT_DIR (dot-prefixed so the dataset
+    `path`. Stages the archive next to the destination (dot-prefixed so the dataset
     scanner ignores it) so the final commit is a same-filesystem rename rather than a
-    cross-device copy of the whole (multi-GB) archive."""
-    tmpdir = tempfile.mkdtemp(dir=str(config.CHECKPOINT_DIR), prefix=".save-")
+    cross-device copy of the whole (multi-GB) archive — correct whether the
+    destination is in DATA_DIR or an arbitrary CLI output dir."""
+    tmpdir = tempfile.mkdtemp(dir=str(Path(path).parent), prefix=".save-")
     staging = os.path.join(tmpdir, "staged.zarr.zip")
     try:
         digest = _zip_dir(src_dir, staging)
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
         if hash_name:
-            stem = strip_content_hash(p.name[: -len(".zarr.zip")])
-            final = p.with_name(f"{stem}-{digest}.zarr.zip")
+            stem = strip_content_hash(strip_checkpoint_ext(p.name))
+            final = p.with_name(f"{stem}-{digest}{CHECKPOINT_EXT}")
         else:
             final = p
-        os.replace(staging, final)  # same filesystem (staged under CHECKPOINT_DIR): atomic
+        os.replace(staging, final)  # same filesystem (staged under DATA_DIR): atomic
         return str(final)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
@@ -436,7 +459,7 @@ def _check_content_hash(path: str) -> None:
     name = os.path.basename(path)
     if not name.endswith(".zarr.zip"):
         return
-    stem = name[: -len(".zarr.zip")]
+    stem = strip_checkpoint_ext(name)
     m = _HASH_SUFFIX_RE.search(stem)
     if not m:
         return  # not an auto-named checkpoint; nothing to verify

@@ -130,9 +130,10 @@ and point their documentation at a per-method section in
   The zoomed-out **field** is a deck.gl nearest-cell density layer — each cell a
   world-space disc whose fragment shader writes depth so the nearest centroid wins each
   pixel, making adjacent same-color cells merge into one contiguous color region with no
-  geometry shipped. Its disc radius is a client-side estimate of the mean inter-cell
-  spacing; a recolor updates it instantly. (The read-only snapshot viewer draws the same
-  field for 2D spatial snapshots.)
+  geometry shipped. Each disc uses the same world radius as the point marker (the Point
+  Size setting), so crossing the zoom threshold doesn't jump the cell size; a recolor
+  updates it instantly. (The read-only snapshot viewer draws the same field for 2D
+  spatial snapshots.)
   **Color by** first picks a slot (`obs`, `X`
   gene expression, or a `layer`) and then the column within it: obs columns from a
   dropdown, genes from a type-to-search box backed by
@@ -297,25 +298,27 @@ and point their documentation at a per-method section in
   A Nextflow workflow (`nextflow/main.nf`) wraps the CLI and exposes the same
   parameters; its container installs the pinned Python deps at runtime with `uv`, so
   no custom image is built. See "Run offline" below.
-- **Data vs checkpoint dirs (strict separation)** — raw inputs live under the data
-  mount (`SDS_DATA_DIR`); saved sessions ("checkpoints") live under the checkpoint
-  mount (`SDS_CHECKPOINT_DIR`). New Session has two modes: **Import Data** runs a
+- **Single data directory** — one read-write folder (`SDS_DATA_DIR`) holds everything:
+  the raw inputs the user imports, the saved checkpoints
+  (`<name>-<hash>.sdata.zarr.zip`), and the snapshot configs
+  (`<name>-<hash>.sview.json`). New Session has two modes: **Import Data** runs a
   spatialdata-io reader (`io.xenium`, …) or the **SpatialData zarr** reader
   (`io.read_zarr`, for opening an existing SpatialData store — a `.zarr` directory,
-  or a `.zarr.zip` / `.zarr.tar.gz` archive) against a path under the data dir;
-  **Open Checkpoint** opens a saved `.zarr`/`.zarr.zip` from the checkpoint dir. The
+  or a `.zarr.zip` / `.zarr.tar.gz` archive) against a path in the data folder;
+  **Open Checkpoint** opens a saved `.zarr`/`.sdata.zarr.zip` from the same folder. The
   dialog is a two-pane picker — source options (mode, reader, session name) on the
-  left, a persistent file browser on the right: Open Checkpoint lists saved
-  checkpoints (searchable), Import Data navigates the data dir (breadcrumb + up).
+  left, a persistent file browser on the right: Open Checkpoint lists the loadable
+  stores (searchable), Import Data navigates the folder (breadcrumb + up).
   Selection is restricted to a folder or a file per the chosen reader
   (spatialdata-io readers take a raw acquisition folder — opening it selects it; the
   zarr reader takes either), and an empty session name is auto-filled from the
-  selected file/folder. The
-  backend enforces the split (reads validated to the data dir, load/save to the
-  checkpoint dir); the "Open Checkpoint" picker and the Cirro session picker both list
-  only checkpoint-dir sessions.
-- **Persistence** — save/load `.zarr` and `.zarr.zip` (data + app state in
-  `attrs`), with full UI/region/history round-trip. A `.zarr.zip` checkpoint is a
+  selected file/folder. The backend validates every read and write path to within the
+  data folder; internal working stores (`.rasters` caches, `.save-` staging) are
+  dot/suffix-prefixed there and skipped by the picker.
+- **Persistence** — checkpoints save as `<name>-<hash>.sdata.zarr.zip` and load back
+  from the data folder (loading also accepts a plain `.zarr`/`.zarr.zip`/`.zarr.tar.gz`
+  store); data + app state travel in `attrs`, with full UI/region/history round-trip.
+  A `.sdata.zarr.zip` checkpoint is a
   single-file, browser-readable store: Zarr v3 with consolidated metadata, zipped
   uncompressed (STORED) so each entry is a contiguous byte span, and the large
   image/label arrays are written with the **Zarr v3 sharding codec** (small inner
@@ -331,7 +334,7 @@ and point their documentation at a per-method section in
   gzipped files under `logs/`, fetched lazily by the log endpoint. The `.zarr.zip`
   is served for direct browser reads (HTTP Range) at `GET /api/checkpoints/<name>`.
   Auto-managed checkpoint filenames (Save button, no explicit path) embed a hash of
-  the `.zarr.zip` contents, e.g. `myfile-3fa21c9b8e4d.zarr.zip`; each save computes
+  the archive contents, e.g. `myfile-3fa21c9b8e4d.sdata.zarr.zip`; each save computes
   the hash fresh from the current base name, so the suffix reflects that save's
   contents instead of stacking onto the previous one. Prior checkpoint files are
   left on disk. Loading a `.zarr.zip` with a hash suffix recomputes and logs whether
@@ -515,11 +518,10 @@ button stays hidden and the app runs normally.
 
 Launches the backend (`uvicorn`, no `--reload` — see below) and the frontend
 (`npm run dev`, Vite proxies `/api` and `/snapshots` to :8000) together. Stop with
-Ctrl-C or, from another shell, `./stop.sh`. `SDS_DATA_DIR` (raw inputs; set by
-`run.sh` to `data/` or, with `--test`, `test-data/`) and `SDS_CHECKPOINT_DIR` (saved
-sessions + snapshots; `run.sh` uses `checkpoints/`) are strictly separate — imports
-read only from the data dir, load/save only from the checkpoint dir — and can each be
-overridden to point at any other folder. If a `.env` file exists at the repo root, `run.sh` sources it
+Ctrl-C or, from another shell, `./stop.sh`. `SDS_DATA_DIR` is the single read-write
+data folder — inputs, saved checkpoints, and snapshots all live there; `run.sh` sets
+it to `data/` (or `test-data/` with `--test`) and it can be overridden to point at any
+other folder. If a `.env` file exists at the repo root, `run.sh` sources it
 before launching uvicorn, so `CIRRO_*` config set there (see above)
 reaches the backend the same way docker compose's auto-loaded `.env` does. It
 expects a `.venv-introspect/` virtualenv at the repo root (Python 3.11;

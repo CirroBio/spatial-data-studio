@@ -12,8 +12,8 @@ export type Snapshot = {
 };
 
 // Fetch a snapshot's JSON config. Plain fetch (not the /api client) so the same
-// SnapshotViewer works both in the app (served /snapshots/*.json) and in the
-// standalone bundle (relative snapshots/*.json).
+// SnapshotViewer works both in the app (served /snapshots/*.sview.json) and in the
+// standalone bundle (relative snapshots/*.sview.json).
 export async function fetchSnapshotConfig(url: string): Promise<SnapshotConfig> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`snapshot config ${url}: ${res.status}`);

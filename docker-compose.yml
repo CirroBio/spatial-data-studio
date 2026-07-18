@@ -8,17 +8,17 @@ services:
     ports:
       - "8080:80"
 
-    # Read-only data mount (DESIGN §19.9) — test-data ships with the repo
+    # Single read-write data mount (DESIGN §19.9): inputs + saved checkpoints +
+    # snapshots share it. Bound to ./test-data (ships with the repo) so demo saves
+    # land alongside the sample datasets; point it at a dedicated folder in a real
+    # deployment.
     volumes:
       - type: bind
         source: ./test-data
         target: /data
-        read_only: true
-      - checkpoints:/checkpoints
 
     environment:
       SDS_DATA_DIR: /data
-      SDS_CHECKPOINT_DIR: /checkpoints
       # Memory: container gets 12 GB; worker ceiling is 9 GB, safely below cgroup limit
       # so catchable MemoryError fires before the OOM killer (DESIGN §19.5)
       SDS_CONTAINER_MEM_MB: "12288"
@@ -52,6 +52,3 @@ services:
       timeout: 10s
       start_period: 60s
       retries: 3
-
-volumes:
-  checkpoints:

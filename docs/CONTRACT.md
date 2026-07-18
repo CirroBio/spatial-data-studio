@@ -72,9 +72,10 @@ ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_cate
 | POST | `/api/sessions/{id}/save` | `{path?}` | `{job_id, path}` (queued save) |
 | GET  | `/api/sessions/{id}/points-transform` | — | `{affine:[a,b,c,d,e,f], element}` (points→global affine of the active table's region element) |
 | POST | `/api/sessions/{id}/points-transform` | `{affine:[a,b,c,d,e,f], path?}` | `{job_id, path}` (sets the affine and persists to disk) |
-| POST | `/api/sessions/{id}/snapshot` | `{label?, viewport?:{target,zoom}, display_id?}` | `{name,url}` — writes a JSON snapshot config pointing at an (auto-saved, content-hashed) checkpoint |
+| POST | `/api/sessions/{id}/snapshot` | `{label?, viewport?:{target,zoom}, display_id?}` | `{name,url}` — writes a `<name>-<hash>.sview.json` snapshot config pointing at an (auto-saved, content-hashed) checkpoint |
 | GET  | `/api/snapshots` | — | `{snapshots:[{name,url,label,created,kind,checkpoint_url}]}` |
-| GET/HEAD | `/api/checkpoints/{name}` | — | the checkpoint `.zarr.zip` bytes for direct browser reads (HTTP Range → 206); `name` must be `*.zarr.zip` in CHECKPOINT_DIR |
+| GET  | `/snapshots/{name}` | — | a snapshot config's JSON bytes; `name` must be `*.sview.json` in DATA_DIR |
+| GET/HEAD | `/api/checkpoints/{name}` | — | the checkpoint `.zarr.zip` bytes for direct browser reads (HTTP Range → 206); `name` must be `*.zarr.zip` in DATA_DIR |
 | GET  | `/api/about/licenses` | — | `{python:[...], npm:[...]}` (third-party licenses, in-app Acknowledgements) |
 | GET  | `/api/cirro/status` | — | `{enabled:bool}` |
 | GET  | `/api/cirro/projects` | — | `{projects:[...]}` (503 if Cirro is not configured) |
@@ -95,8 +96,8 @@ ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_cate
 | GET  | `/api/healthz` / `/api/readyz` | — | `{status}` |
 
 ### Session source on create
-- read:  `{kind:"read", namespace:"read", function:"visium", params:{path:"..."}}` — any `path`/`input`/`image_path`/`alignment_file` param must resolve under `DATA_DIR`/`CHECKPOINT_DIR`/CWD, else 400.
-- load:  `{kind:"load", path:"/data/visium_hne.zarr"}` — `path` must resolve under `DATA_DIR`/`CHECKPOINT_DIR`/CWD (the same allowlist as `/api/fs/browse`), else 400. `POST /api/sessions/{id}/save`'s `path` must resolve under `CHECKPOINT_DIR`, else 400.
+- read:  `{kind:"read", namespace:"read", function:"visium", params:{path:"..."}}` — any `path`/`input`/`image_path`/`alignment_file` param must resolve under `DATA_DIR`, else 400.
+- load:  `{kind:"load", path:"/data/visium_hne.zarr"}` — `path` must resolve under `DATA_DIR` (the same allowlist as `/api/fs/browse`), else 400. `POST /api/sessions/{id}/save`'s `path` must also resolve under `DATA_DIR`, else 400.
 
 ### SessionSummary
 ```jsonc

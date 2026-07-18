@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Request, Response, WebSocket
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from .config import config, data_roots, checkpoint_roots, within_data_dir, within_checkpoint_dir
+from .config import config, data_roots, within_data_dir
 from .registry.introspect import REGISTRY
 from .sessions.manager import SessionManager
 from .transport.sse import BUS
@@ -42,7 +42,7 @@ def _submit_prewarm_tasks():
     """Warm the menu lists that are otherwise paid on first open (readers are
     already built by REGISTRY.build above). Best-effort and off the event loop —
     see prewarm.py."""
-    PREWARM.submit("datasets", lambda: datasets.list_datasets(checkpoint_roots()))
+    PREWARM.submit("datasets", lambda: datasets.list_datasets(data_roots()))
     if config.cirro_enabled():
         from . import cirro
         PREWARM.submit("cirro.projects", cirro.list_projects)
@@ -200,11 +200,11 @@ async def fs_browse(path: str | None = None, include_files: bool = False):
 
 @app.get("/api/fs/datasets")
 async def fs_datasets():
-    """Every saved session found by scanning the checkpoint mount (CHECKPOINT_DIR
-    only) — the New Session load picker and the Cirro upload session picker show
-    these on click, no typing needed. Served from the prewarmed cache
+    """Every loadable SpatialData store (checkpoints and raw `.zarr`) found by
+    scanning DATA_DIR — the New Session load picker and the Cirro upload session
+    picker show these on click, no typing needed. Served from the prewarmed cache
     (datasets.py); rescanned only after a save invalidates it."""
-    found = await _in_executor(datasets.list_datasets, checkpoint_roots())
+    found = await _in_executor(datasets.list_datasets, data_roots())
     return {"datasets": found}
 
 
@@ -436,15 +436,29 @@ async def list_snapshots_endpoint():
 async def get_checkpoint(name: str):
     """Serve a saved checkpoint `.zarr.zip` for direct browser reads (zarrita.js
     over HTTP range). FileResponse honors Range (206) and HEAD (zarrita probes the
-    size before range-reading). Scoped to `*.zarr.zip` inside CHECKPOINT_DIR so the
-    transient `.rasters` caches and the snapshots dir that also live under that
-    mount are never exposed."""
+    size before range-reading). Scoped to a single `*.zarr.zip` file name inside
+    DATA_DIR — the transient `.rasters`/`.save-` caches (directories) and the
+    `.sview.json` snapshot configs are never matched by name here."""
     if not name.endswith(".zarr.zip") or "/" in name or "\\" in name:
         raise HTTPException(404, "not found")
-    target = (config.CHECKPOINT_DIR / name).resolve()
-    if not within_checkpoint_dir(target) or not target.is_file():
+    target = (config.DATA_DIR / name).resolve()
+    if not within_data_dir(target) or not target.is_file():
         raise HTTPException(404, "not found")
     return FileResponse(str(target), media_type="application/zip")
+
+
+@app.get("/snapshots/{name}")
+async def get_snapshot(name: str):
+    """Serve a single snapshot config (`*.sview.json`) by name from DATA_DIR. A
+    name-validated route rather than a static mount of the whole folder, so the
+    checkpoints, raw datasets, and `.rasters`/`.save-` caches sharing DATA_DIR are
+    never exposed. The in-app viewer fetches this URL directly."""
+    if not name.endswith(".sview.json") or "/" in name or "\\" in name:
+        raise HTTPException(404, "not found")
+    target = (config.DATA_DIR / name).resolve()
+    if not within_data_dir(target) or not target.is_file():
+        raise HTTPException(404, "not found")
+    return FileResponse(str(target), media_type="application/json")
 
 
 @app.get("/api/about/licenses")
@@ -513,7 +527,7 @@ async def cirro_upload(body: dict):
     resolved: list[str] = []
     for p in session_paths:
         target = Path(p).resolve()
-        if not within_checkpoint_dir(target) or not target.exists():
+        if not within_data_dir(target) or not target.exists():
             raise HTTPException(400, f"not a saved checkpoint session: {p}")
         resolved.append(str(target))
     asyncio.create_task(_run_cirro_upload(
@@ -553,8 +567,8 @@ def _default_save_path(sess) -> str:
     every save (see `_save_zip`), so this only needs the checkpoint's clean base
     name - stripping any hash a previous save already appended keeps it from
     stacking a new one on top."""
-    from .persistence.store import strip_content_hash
-    return str(config.CHECKPOINT_DIR / f"{strip_content_hash(sess.name)}.zarr.zip")
+    from .persistence.store import strip_content_hash, CHECKPOINT_EXT
+    return str(config.DATA_DIR / f"{strip_content_hash(sess.name)}{CHECKPOINT_EXT}")
 
 
 @app.post("/api/sessions/{sid}/save")
@@ -830,13 +844,9 @@ async def reject_websocket(websocket: WebSocket, _path: str):
     await websocket.close(code=1000)
 
 
-# ---- snapshots (read-only JSON configs; the browser viewer reads the referenced
-# checkpoint directly via /api/checkpoints) ----------------------------------
-try:
-    config.SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
-    app.mount("/snapshots", StaticFiles(directory=str(config.SNAPSHOTS_DIR)), name="snapshots")
-except OSError:
-    pass  # read-only mount; the save endpoint surfaces the error per-call
+# Snapshot configs (`*.sview.json`) are served by the name-validated
+# GET /snapshots/{name} route above, not a static mount — DATA_DIR also holds
+# checkpoints and raw datasets that must not be wholesale-exposed.
 
 # ---- static SPA (optional; served by edge in prod) -------------------------
 if config.STATIC_DIR and config.STATIC_DIR.exists():

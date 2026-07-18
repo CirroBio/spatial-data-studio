@@ -95,7 +95,7 @@ function zoomOf(vs: ViewState): number {
 }
 
 interface Props {
-  url: string;  // snapshot config URL (/snapshots/<name>.json)
+  url: string;  // snapshot config URL (/snapshots/<name>.sview.json)
   // Maps the app-relative URLs baked into a snapshot (its config URL and the
   // config's /api/checkpoints/<name> checkpoint URL) to wherever they actually
   // live. Identity in the app; the standalone bundle rewrites them to relative paths.
@@ -267,8 +267,8 @@ export default function SnapshotViewer({ url, resolveUrl }: Props) {
     if (config && positions && colors) {
       const useField = isSpatial2d && fieldRadius > 0 && zoom < cellZoomThreshold(fieldRadius);
       if (useField) {
-        result.push(buildCellFieldLayer(positions, colors, {
-          radius: fieldRadius,
+        result.push(...buildCellFieldLayer(positions, colors, {
+          pointSize: config.render.point_size,
           opacity: config.render.opacity,
         }));
       } else {

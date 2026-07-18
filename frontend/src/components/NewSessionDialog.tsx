@@ -22,6 +22,7 @@ function readerLabel(r: FunctionEntry): string {
 function deriveSessionName(path: string): string {
   const base = path.replace(/\/+$/, '').split('/').pop() ?? '';
   const stem = base
+    .replace(/\.sdata\.zarr\.zip$/, '')
     .replace(/\.zarr\.tar\.gz$/, '')
     .replace(/\.zarr\.tgz$/, '')
     .replace(/\.zarr\.zip$/, '')
@@ -55,7 +56,7 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
   const inputKind = selectedReader?.input_kind ?? 'folder';
   const browserTitle = mode === 'load' ? 'Checkpoints'
     : inputKind === 'folder' ? 'Data folder' : inputKind === 'file' ? 'Data file' : 'Data path';
-  const browserHint = mode === 'load' ? 'saved .zarr / .zarr.zip'
+  const browserHint = mode === 'load' ? 'saved checkpoints & .zarr stores in the data folder'
     : inputKind === 'folder' ? 'open the raw data folder for the chosen reader'
     : inputKind === 'file' ? 'pick a data file for the chosen reader'
     : 'pick a .zarr folder, or a .zarr.zip / .zarr.tar.gz archive';

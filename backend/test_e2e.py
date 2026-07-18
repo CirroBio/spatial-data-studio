@@ -3,9 +3,10 @@ Exercises: load -> compute -> compute -> Arrow fetch -> plot -> save -> reload.
 """
 import io
 import os
+import shutil
 import sys
-import time
 import tempfile
+import time
 
 import pyarrow.ipc as ipc
 from fastapi.testclient import TestClient
@@ -16,8 +17,10 @@ os.environ.setdefault("SDS_CONTAINER_MEM_MB", "32768")
 # bounded by it. Real deployments keep the low default.
 os.environ.setdefault("SDS_MAX_SESSIONS", "64")
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+# Single data dir: the input datasets and the saved checkpoints/snapshots share
+# test-data/. `_cleanup_new_artifacts` (called from main) removes whatever the run
+# writes there so the datasets stay pristine.
 os.environ.setdefault("SDS_DATA_DIR", os.path.join(_REPO_ROOT, "test-data"))
-os.environ.setdefault("SDS_CHECKPOINT_DIR", tempfile.mkdtemp())
 from app.main import app  # noqa: E402
 from app.config import config  # noqa: E402
 
@@ -142,7 +145,7 @@ def run_custom_methods_flow(client):
 
     # persistence round-trip: confirm the new .uns payloads (mask arrays,
     # per-celltype tables) actually survive the zarr checkpoint, not just json.dumps.
-    out = os.path.join(str(config.CHECKPOINT_DIR), "custom_methods_session.zarr.zip")
+    out = os.path.join(str(config.DATA_DIR), "custom_methods_session.zarr.zip")
     sv = client.post(f"/api/sessions/{sid}/save", json={"path": out}).json()
     t0 = time.time()
     while time.time() - t0 < 180:
@@ -226,11 +229,11 @@ def run_zarr_import_flow(client):
 
 
 def new_session(client, path=DATA):
-    """Open a checkpoint (a .zarr/.zarr.zip under the checkpoint dir) via `load`, or
-    bootstrap a raw dataset under the data dir via the `read_zarr` reader — the strict
-    data/checkpoint split means `load` only accepts checkpoint-dir paths. The read
+    """Open a saved checkpoint (`.zarr.zip`/`.sdata.zarr.zip`) via `load`, or bootstrap
+    a raw `.zarr` dataset via the `read_zarr` reader. Both live under the single
+    DATA_DIR now; the file kind (zipped checkpoint vs raw dir) picks the path. The read
     bootstrap runs on the worker, so wait for the session to become ready."""
-    if str(path).startswith(str(config.CHECKPOINT_DIR)):
+    if str(path).endswith(".zarr.zip"):
         r = client.post("/api/sessions", json={"source": {"kind": "load", "path": path}})
         assert r.status_code == 200, r.text
         return r.json()["id"]
@@ -396,7 +399,7 @@ def run_snapshot_flow(client, sid):
                           "display_id": spatial["id"]})
     assert r.status_code == 200, r.text
     snap = r.json()
-    assert snap["name"].endswith(".json"), snap
+    assert snap["name"].endswith(".sview.json"), snap
 
     listing = client.get("/api/snapshots").json()["snapshots"]
     entry = next((s for s in listing if s["name"] == snap["name"]), None)
@@ -435,7 +438,7 @@ def run_regions_flow(client):
     print(f"[ok] annotate labeled all {n_obs} cells 'tumor' in a new region set")
 
     # persistence: the regions registry survives save + reload
-    out = os.path.join(str(config.CHECKPOINT_DIR), "regions_session.zarr.zip")
+    out = os.path.join(str(config.DATA_DIR), "regions_session.zarr.zip")
     sv = client.post(f"/api/sessions/{sid}/save", json={"path": out}).json()
     assert wait_job(client, sid, sv["job_id"])["status"] == "completed"
     st2 = client.get(f"/api/sessions/{new_session(client, out)}").json()
@@ -510,7 +513,7 @@ def run_shape_annotations_flow(client):
     print("[ok] deleted box shape, line + text shapes remain")
 
     # persistence: the annotations element survives save + reload
-    out = os.path.join(str(config.CHECKPOINT_DIR), "shape_annotations_session.zarr.zip")
+    out = os.path.join(str(config.DATA_DIR), "shape_annotations_session.zarr.zip")
     sv = client.post(f"/api/sessions/{sid}/save", json={"path": out}).json()
     assert wait_job(client, sid, sv["job_id"])["status"] == "completed"
     sid2 = new_session(client, out)
@@ -579,7 +582,7 @@ def run_incremental_save_flow(client, checkpoint_path):
                 for r, _, fs in os.walk(base) for f in fs}
 
     before = raster_mtimes()
-    out = os.path.join(str(config.CHECKPOINT_DIR), "incremental_session.zarr.zip")
+    out = os.path.join(str(config.DATA_DIR), "incremental_session.zarr.zip")
     sv = client.post(f"/api/sessions/{sid}/save", json={"path": out}).json()
     assert wait_job(client, sid, sv["job_id"])["status"] == "completed"
     assert raster_mtimes() == before, "images were rewritten during an incremental save"
@@ -605,7 +608,7 @@ def run_content_hash_flow(client):
     assert wait_job(client, sid, sv["job_id"])["status"] == "completed"
     p1 = MANAGER.get(sid).store_path
     base = os.path.basename(p1)
-    assert re.fullmatch(rf"{re.escape(clean)}-[0-9a-f]+\.zarr\.zip", base), base
+    assert re.fullmatch(rf"{re.escape(clean)}-[0-9a-f]+\.sdata\.zarr\.zip", base), base
     assert os.path.exists(p1)
     print(f"[ok] default save wrote content-hashed {base}")
 
@@ -615,7 +618,7 @@ def run_content_hash_flow(client):
     sv2 = client.post(f"/api/sessions/{sid}/save", json={}).json()
     assert wait_job(client, sid, sv2["job_id"])["status"] == "completed"
     base2 = os.path.basename(MANAGER.get(sid).store_path)
-    assert re.fullmatch(rf"{re.escape(clean)}-[0-9a-f]+\.zarr\.zip", base2), f"hash stacked: {base2}"
+    assert re.fullmatch(rf"{re.escape(clean)}-[0-9a-f]+\.sdata\.zarr\.zip", base2), f"hash stacked: {base2}"
     print("[ok] hashed checkpoint reloads; re-save doesn't stack a second hash")
 
 
@@ -661,7 +664,7 @@ def run_invalidation_flow(client):
     print(f"[ok] mutating {ref} bumped its data_version and invalidated the dependent plot")
 
     # a drawn plot reloads as invalidated (its figure isn't persisted)
-    out = os.path.join(str(config.CHECKPOINT_DIR), "invalidation_session.zarr.zip")
+    out = os.path.join(str(config.DATA_DIR), "invalidation_session.zarr.zip")
     sv = client.post(f"/api/sessions/{sid}/save", json={"path": out}).json()
     assert wait_job(client, sid, sv["job_id"])["status"] == "completed"
     pl2 = client.get(f"/api/sessions/{new_session(client, out)}").json()["app_state"]["plots"]
@@ -681,7 +684,7 @@ def run_encoding_persistence_flow(client):
     spec["viewport"] = {"target": [100, 200], "zoom": 3}
     assert client.put(f"/api/sessions/{sid}/displays/{disp['id']}", json=spec).status_code == 200
 
-    out = os.path.join(str(config.CHECKPOINT_DIR), "encoding_session.zarr.zip")
+    out = os.path.join(str(config.DATA_DIR), "encoding_session.zarr.zip")
     sv = client.post(f"/api/sessions/{sid}/save", json={"path": out}).json()
     assert wait_job(client, sid, sv["job_id"])["status"] == "completed"
     rl = next(d for d in client.get(f"/api/sessions/{new_session(client, out)}").json()["app_state"]["displays"]
@@ -749,7 +752,7 @@ def run_filter_reshape_flow(client):
     assert dv.get("obsm:spatial", 0) > 0, f"obsm:spatial version not bumped after adopt: {dv}"
     print(f"[ok] field versions bumped on adopt (obsm:spatial v{dv['obsm:spatial']})")
 
-    out = os.path.join(str(config.CHECKPOINT_DIR), "filter_reshape_session.zarr.zip")
+    out = os.path.join(str(config.DATA_DIR), "filter_reshape_session.zarr.zip")
     sv = client.post(f"/api/sessions/{sid}/save", json={"path": out}).json()
     js = wait_job(client, sid, sv["job_id"])
     assert js["status"] == "completed", f"save after filter failed: {js.get('error')}"
@@ -854,7 +857,7 @@ def run_segmentation_flow(client):
     print(f"[ok] over-limit gate: limit {n - 1} -> 0, limit {n} -> {n}; missing element 404s")
 
     # checkpoint round-trip: cell_boundaries survives save + reload and still serves
-    out = os.path.join(str(config.CHECKPOINT_DIR), "xenium_segmentation.zarr.zip")
+    out = os.path.join(str(config.DATA_DIR), "xenium_segmentation.zarr.zip")
     sv = client.post(f"/api/sessions/{sid}/save", json={"path": out}).json()
     assert wait_job(client, sid, sv["job_id"], timeout=300)["status"] == "completed"
     sid2 = new_session(client, out)
@@ -985,8 +988,8 @@ def main():
         assert fig.status_code == 200 and fig.content[:5] in (b"<?xml", b"<svg "), fig.content[:50]
         print(f"[ok] figure svg bytes={len(fig.content)}")
 
-        # save (must land under CHECKPOINT_DIR — the save endpoint validates the target path)
-        out = os.path.join(str(config.CHECKPOINT_DIR), "session.zarr.zip")
+        # save (must land under DATA_DIR — the save endpoint validates the target path)
+        out = os.path.join(str(config.DATA_DIR), "session.zarr.zip")
         sv = client.post(f"/api/sessions/{sid}/save", json={"path": out}).json()
         t0 = time.time()
         while time.time() - t0 < 180:
@@ -1076,5 +1079,25 @@ def main():
         print("\nALL BACKEND E2E CHECKS PASSED")
 
 
+def _run_with_cleanup():
+    """Run main(), then remove whatever the run wrote into the shared DATA_DIR
+    (checkpoints, snapshots, leftover `.rasters`/`.save-` caches) so the input
+    datasets stay pristine and a re-run starts clean."""
+    data_dir = str(config.DATA_DIR)
+    pre = set(os.listdir(data_dir)) if os.path.isdir(data_dir) else set()
+    try:
+        return main()
+    finally:
+        for entry in set(os.listdir(data_dir)) - pre:
+            p = os.path.join(data_dir, entry)
+            if os.path.isdir(p) and not os.path.islink(p):
+                shutil.rmtree(p, ignore_errors=True)
+            else:
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(_run_with_cleanup())

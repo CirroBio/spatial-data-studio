@@ -13,19 +13,23 @@ between the save and the bake.
 from __future__ import annotations
 
 import datetime
+import hashlib
 import json
 import os
 from pathlib import Path
 
-from .config import config, within_checkpoint_dir
+from .config import config, within_data_dir
 from . import imaging
 from .persistence import store
 
 SCHEMA = 1
+# Snapshot config extension (Spatial View). Saved as `<name>-<hash>.sview.json`
+# alongside checkpoints in DATA_DIR.
+SNAPSHOT_EXT = ".sview.json"
 
 
 def _dir() -> str:
-    d = str(config.SNAPSHOTS_DIR)
+    d = str(config.DATA_DIR)
     os.makedirs(d, exist_ok=True)
     return d
 
@@ -46,7 +50,7 @@ def _display(session, display_id: str | None):
 
 def _checkpoint_path(session) -> str:
     """Base checkpoint path for this session (matches main._default_save_path)."""
-    return str(config.CHECKPOINT_DIR / f"{store.strip_content_hash(session.name)}.zarr.zip")
+    return str(config.DATA_DIR / f"{store.strip_content_hash(session.name)}{store.CHECKPOINT_EXT}")
 
 
 def _channels_manifest(enc: dict, channel_names: list[str], limits: list[float]) -> dict:
@@ -79,7 +83,7 @@ def save_snapshot(session, label: str | None = None, viewport: dict | None = Non
         # Ensure the referenced checkpoint is an up-to-date, immutable .zarr.zip.
         sp = session.store_path
         if not (session.saved and sp and sp.endswith(".zarr.zip")
-                and within_checkpoint_dir(Path(sp).resolve())):
+                and within_data_dir(Path(sp).resolve())):
             session.store_path = session._write_checkpoint(_checkpoint_path(session), hash_name=True)
             session.saved = True
             session._clear_dirty()
@@ -123,22 +127,26 @@ def save_snapshot(session, label: str | None = None, viewport: dict | None = Non
         "render": render,
     }
 
-    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
-    slug = "".join(c if c.isalnum() or c in "-_" else "-" for c in (label or session.name))[:48]
-    name = f"{stamp}_{slug}.json"
+    # <session-name-slug>-<content-hash>.sview.json — the config JSON (which carries
+    # a microsecond `created` stamp) hashed so each save gets a stable, unique name.
+    slug = "".join(c if c.isalnum() or c in "-_" else "-"
+                   for c in store.strip_content_hash(session.name))[:48].strip("-") or "snapshot"
+    digest = hashlib.sha256(json.dumps(config_obj).encode()).hexdigest()[:store.HASH_LEN]
+    name = f"{slug}-{digest}{SNAPSHOT_EXT}"
     with open(os.path.join(_dir(), name), "w") as f:
         json.dump(config_obj, f)
     return {"status": "completed", "name": name, "url": f"/snapshots/{name}"}
 
 
 def list_snapshots() -> list[dict]:
-    d = str(config.SNAPSHOTS_DIR)
+    d = str(config.DATA_DIR)
     if not os.path.isdir(d):
         return []
+    # Newest first by mtime — the names no longer carry a sortable timestamp prefix.
+    files = [f for f in os.listdir(d) if f.endswith(SNAPSHOT_EXT)]
+    files.sort(key=lambda f: os.path.getmtime(os.path.join(d, f)), reverse=True)
     out = []
-    for f in sorted(os.listdir(d), reverse=True):
-        if not f.endswith(".json"):
-            continue
+    for f in files:
         try:
             with open(os.path.join(d, f)) as fh:
                 cfg = json.load(fh)

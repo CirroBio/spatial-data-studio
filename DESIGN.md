@@ -649,7 +649,7 @@ adopts a `SpatialData` (read bootstrap in `Session._run_call`, and
 `create_from_load`): every image/label that isn't already a tile-chunked pyramid
 is rebuilt via `Image2DModel`/`Labels2DModel.parse` into a 2× pyramid down to a
 `SDS_RASTER_BASE_PX` (1024) base, chunked at `imaging.TILE_SIZE`, and written to a
-per-session cache store under `CHECKPOINT_DIR`; the live elements are rebound to
+per-session cache store under `DATA_DIR`; the live elements are rebound to
 lazy refs into it. An in-memory rechunk alone can't fix this — a small tile read
 still fetches the large *store* chunk from disk — so the rewrite is the point.
 After it, one tile realizes one ~2 MB chunk. Elements are rebuilt one at a time
@@ -986,9 +986,10 @@ range requests) and renders the image + cells from it, reusing the live canvas r
   `.zarr.zip` (so the config points at bytes that won't change under it), then bakes the
   manifest — both under one continuous read lock so no compute can interleave. The
   checkpoint is served for direct browser reads (HTTP Range) at
-  `GET /api/checkpoints/<name>`; the config is served at `/snapshots/<name>.json`.
-- **Files:** `snapshots/<stamp>_<slug>.json`. `SNAPSHOTS_DIR` is configurable (default
-  `<checkpoint dir>/snapshots`). Both spatial and embedding displays can be snapshotted
+  `GET /api/checkpoints/<name>`; the config is served by the name-validated route
+  `GET /snapshots/<name>.sview.json`.
+- **Files:** `<name>-<hash>.sview.json` in `DATA_DIR` (the config JSON content-hashed),
+  alongside the checkpoints. Both spatial and embedding displays can be snapshotted
   (`POST /api/sessions/{id}/snapshot` with an optional `display_id`).
 - **Invocation:** a **Save snapshot** action (canvas controls).
 
@@ -1121,7 +1122,7 @@ structures). Therefore: **monitor closely, expose live, guard at boundaries.**
   a compute that changes a raster or other non-table element, or a fresh import whose store
   isn't sharded yet, falls back to the full write (`save_spatialdata`, which reshards). The
   session tracks which elements are dirty (`dirty_tables`, `dirty_transforms`, `force_full`)
-  from each mutation's `structural_diff`. Save staging happens inside the checkpoint mount
+  from each mutation's `structural_diff`. Save staging happens next to the destination
   so the final commit is a same-filesystem rename, and the auto-named content hash is
   accumulated during the zip write rather than by re-reading the finished archive.
 - **Load:** open a `.zarr.zip` (or `.zarr`); hydrate the object and restore UI from
@@ -1567,8 +1568,8 @@ python cli.py --parser <reader|zarr> --input <path> --recipe <file|name> --outpu
   `Session.plot_figures`) is written to `<output>/plots/<NN>_<namespace>.<function>/
   figure.{svg,pdf}`.
 - **Boundary reconciliation** — the server's data-root allowlist and
-  `within_checkpoint_dir` save guard (§16, §19) exist for the shared multi-tenant
-  server. The CLI owns its own paths, so it sets `SDS_DATA_DIR`/`SDS_CHECKPOINT_DIR`
+  `within_data_dir` save guard (§16, §19) exist for the shared multi-tenant
+  server. The CLI owns its own paths, so it sets `SDS_DATA_DIR` (the input's parent)
   from its arguments *before* importing `config`, lifts the memory/session admission
   caps (single-shot, single-tenant), and saves by calling `save_spatialdata` directly
   rather than through the guarded save job. A step failure aborts the run non-zero with

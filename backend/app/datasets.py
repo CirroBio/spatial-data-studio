@@ -1,5 +1,7 @@
-"""Enumerate the saved SpatialData checkpoints under the checkpoint mount for the
-New Session load picker and the Cirro upload source picker (`GET /api/fs/datasets`).
+"""Enumerate the loadable SpatialData stores (saved checkpoints and raw `.zarr`)
+under DATA_DIR for the New Session load picker and the Cirro upload source picker
+(`GET /api/fs/datasets`). Snapshot configs (`.sview.json`) and internal working
+stores (`.rasters` caches, `.save-` staging) sharing DATA_DIR are skipped.
 
 The full recursive scan is cached and prewarmed at startup (see `prewarm.py`) so
 the picker is instant on first open even on a large/slow mount. The cache is

@@ -16,7 +16,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from .config import config, within_snapshots_dir
+from .config import config, within_data_dir
 
 # The generic "Files" ingest process (accepts any file) — every upload from this
 # app uses it, since a saved session/snapshot isn't a bioinformatics file type any
@@ -121,11 +121,11 @@ def _referenced_checkpoint(config_path: Path) -> str | None:
 
 
 def _snapshot_src(name: str) -> Path:
-    """Resolve a client-supplied snapshot name under SNAPSHOTS_DIR, rejecting any that
+    """Resolve a client-supplied snapshot name under DATA_DIR, rejecting any that
     escapes it (a `../`/absolute name) so an upload can't symlink or read an arbitrary
     host file into the bundle sent off-box to Cirro."""
-    src = (config.SNAPSHOTS_DIR / name).resolve()
-    if not within_snapshots_dir(src):
+    src = (config.DATA_DIR / name).resolve()
+    if not within_data_dir(src):
         raise ValueError(f"invalid snapshot name: {name}")
     return src
 
@@ -140,7 +140,7 @@ def _symlink_snapshot(snap_dir: Path, session_dir: Path, name: str) -> None:
     (snap_dir / name).symlink_to(src)
     ckpt = _referenced_checkpoint(src)
     if ckpt:
-        ckpt_src = (config.CHECKPOINT_DIR / ckpt).resolve()
+        ckpt_src = (config.DATA_DIR / ckpt).resolve()
         dest = session_dir / ckpt
         if ckpt_src.is_file() and not dest.exists():
             dest.symlink_to(ckpt_src)
