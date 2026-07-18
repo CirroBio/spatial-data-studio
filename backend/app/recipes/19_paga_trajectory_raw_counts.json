@@ -5,7 +5,7 @@
     "description": "Cluster raw counts, then abstract the cluster connectivity graph with PAGA (partition-based graph abstraction) to reveal candidate trajectories between clusters. Connectivities land in uns['paga']. For unprocessed data such as Xenium.",
     "provenance": "scanpy PAGA workflow (sc.tl.paga; Wolf et al. 2019, scanpy trajectory-inference tutorial). Targets unprocessed raw-count data such as Xenium."
   },
-  "readme": "Scanpy path from raw counts to PAGA: normalize -> log1p -> PCA -> neighbors -> Leiden -> PAGA -> UMAP. PAGA scores how strongly each pair of clusters is connected (uns['paga']['connectivities']); `cluster_key` names the obs column the clustering writes and PAGA groups by. UMAP uses its default (spectral) initialization — the PAGA-initialized layout needs sc.pl.paga, which this app does not expose.",
+  "readme": "Scanpy path from raw counts to PAGA: normalize -> log1p -> PCA -> neighbors -> Leiden -> PAGA -> UMAP (plus a 3-component UMAP in `obsm['X_umap_3d']` for the 3D scatter view). PAGA scores how strongly each pair of clusters is connected (uns['paga']['connectivities']); `cluster_key` names the obs column the clustering writes and PAGA groups by. UMAP uses its default (spectral) initialization — the PAGA-initialized layout needs sc.pl.paga, which this app does not expose.",
   "params": [
     { "name": "cluster_key", "schema": { "type": "string", "default": "leiden" }, "widget": "text", "bound_to": null, "required": true, "tooltip": "obs column the Leiden clustering writes and PAGA groups by" },
     { "name": "resolution", "schema": { "type": "number", "default": 1.0 }, "widget": "number", "bound_to": null, "required": false, "tooltip": "Leiden resolution: higher = more, smaller clusters" }
@@ -17,6 +17,7 @@
     { "namespace": "sc.pp", "function": "neighbors", "params": {} },
     { "namespace": "custom", "function": "leiden", "params": { "key_added": { "$param": "cluster_key" }, "resolution": { "$param": "resolution" }, "n_iterations": 2 } },
     { "namespace": "sc.tl", "function": "paga", "params": { "groups": { "$param": "cluster_key" } } },
-    { "namespace": "sc.tl", "function": "umap", "params": {} }
+    { "namespace": "sc.tl", "function": "umap", "params": {} },
+    { "namespace": "sc.tl", "function": "umap", "params": { "n_components": 3, "key_added": "X_umap_3d" } }
   ]
 }

@@ -2,10 +2,10 @@
   "schema_version": 1,
   "meta": {
     "name": "Visium analysis & visualization (scanpy)",
-    "description": "The canonical scanpy Visium walkthrough: QC → count/gene filtering → normalize → log1p → highly variable genes (Seurat, 2000) → PCA → neighbors → UMAP → Leiden (obs['clusters']) → per-cluster marker genes (t-test). For full-transcriptome Visium H&E sections; the fixed count thresholds are Visium-scale and will over-filter targeted panels.",
+    "description": "The canonical scanpy Visium walkthrough: QC → count/gene filtering → normalize → log1p → highly variable genes (Seurat, 2000) → PCA → neighbors → UMAP (2D, plus a 3-component UMAP in obsm['X_umap_3d']) → Leiden (obs['clusters']) → per-cluster marker genes (t-test). For full-transcriptome Visium H&E sections; the fixed count thresholds are Visium-scale and will over-filter targeted panels.",
     "provenance": "Adapted from the scanpy 'Analysis and visualization of spatial transcriptomics data' tutorial (Visium mouse-brain section)."
   },
-  "readme": "End-to-end reproduction of scanpy's Visium basic-analysis tutorial. Drops spots outside `min_counts`–`max_counts` total counts and genes seen in fewer than `min_cells` spots, selects `n_top_genes` highly variable genes (Seurat flavor, on log data), then runs the standard PCA → neighbors → UMAP → Leiden path and ranks marker genes per cluster. Clusters land in `obs[cluster_key]`; markers in `uns['rank_genes_groups']`. The tutorial's mitochondrial QC (`qc_vars=['mt']` and the `pct_counts_mt` cutoff) needs a pre-set `var['mt']` mask and a manual boolean subset, so it is omitted here. Count thresholds assume full-transcriptome Visium data — not for targeted panels such as Xenium.",
+  "readme": "End-to-end reproduction of scanpy's Visium basic-analysis tutorial. Drops spots outside `min_counts`–`max_counts` total counts and genes seen in fewer than `min_cells` spots, selects `n_top_genes` highly variable genes (Seurat flavor, on log data), then runs the standard PCA → neighbors → UMAP → Leiden path (also computing a 3-component UMAP in `obsm['X_umap_3d']` for the 3D scatter view) and ranks marker genes per cluster. Clusters land in `obs[cluster_key]`; markers in `uns['rank_genes_groups']`. The tutorial's mitochondrial QC (`qc_vars=['mt']` and the `pct_counts_mt` cutoff) needs a pre-set `var['mt']` mask and a manual boolean subset, so it is omitted here. Count thresholds assume full-transcriptome Visium data — not for targeted panels such as Xenium.",
   "params": [
     { "name": "min_counts", "schema": { "type": "integer", "default": 5000 }, "widget": "number", "bound_to": null, "required": false, "tooltip": "drop spots with fewer than this many total counts" },
     { "name": "max_counts", "schema": { "type": "integer", "default": 35000 }, "widget": "number", "bound_to": null, "required": false, "tooltip": "drop spots with more than this many total counts" },
@@ -24,6 +24,7 @@
     { "namespace": "sc.pp", "function": "pca", "params": {} },
     { "namespace": "sc.pp", "function": "neighbors", "params": {} },
     { "namespace": "sc.tl", "function": "umap", "params": {} },
+    { "namespace": "sc.tl", "function": "umap", "params": { "n_components": 3, "key_added": "X_umap_3d" } },
     { "namespace": "custom", "function": "leiden", "params": { "key_added": { "$param": "cluster_key" }, "n_iterations": 2 } },
     { "namespace": "sc.tl", "function": "rank_genes_groups", "params": { "groupby": { "$param": "cluster_key" }, "method": { "$param": "method" } } }
   ]
