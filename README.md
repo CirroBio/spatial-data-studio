@@ -123,9 +123,10 @@ and point their documentation at a per-method section in
   - **Shapes (zoomed in)** — the exact cell-polygon outlines filled by cell color,
     fetched viewport-clipped as GeoArrow and offered only when the session has a
     boundary-polygon element (a **Shape set** selector picks which one). Because a
-    full set of e.g. 1M outlines can't ship to the browser, the backend returns
-    nothing while more cells are in view than it can send, so outlines appear only
-    once zoomed in far enough that the visible set fits — hence the label.
+    full set of e.g. 1M outlines can't ship to the browser, the backend sends nothing
+    while more cells are in view than it can handle; the Cells layer shows the merged
+    field (below) in the meantime and swaps to real outlines once zoomed in far enough
+    that the visible set fits — hence the label. It never blanks.
   The zoomed-out **field** is a deck.gl nearest-cell density layer — each cell a
   world-space disc whose fragment shader writes depth so the nearest centroid wins each
   pixel, making adjacent same-color cells merge into one contiguous color region with no

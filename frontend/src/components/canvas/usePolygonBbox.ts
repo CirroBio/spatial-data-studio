@@ -135,6 +135,11 @@ export function usePolygonBbox(
     const key = `${sessionId}:${element}:${version}:${b.join(',')}`;
     const table = getTable(key, sessionId, element, b, bump);
     if (!table) return { layer: lastLayer.current, loading: true };
+    // Over budget (viewport holds > POLYGON_LIMIT cells) → the backend returns a
+    // 0-row table. Report no layer (not an empty one) so the caller can fall back
+    // to the zoomed-out field instead of blanking. Clear lastLayer so stale
+    // outlines from a denser-but-fitting neighbour bbox don't linger.
+    if (table.numRows === 0) { lastLayer.current = null; return { layer: null, loading: false }; }
 
     const layer = new GeoArrowSolidPolygonLayer({
       id: `cell-polygons-${element}`,

@@ -756,14 +756,17 @@ zoomed-out tier is the nearest-cell field in both modes.
   boundary polygons, cells draw as their real outlines filled by the per-cell color, from
   a `GeoArrowSolidPolygonLayer` fed by viewport-clipped GeoArrow fetched from `GET
   /api/sessions/{id}/shapes/{element}/geoarrow?bbox=…` (`usePolygonBbox.ts`, LRU-cached
-  per viewport bbox + data_version). The backend returns nothing while more cells are in
-  view than it can send, so outlines appear only once zoomed in far enough that the
-  visible set fits.
+  per viewport bbox + data_version). The backend returns a 0-row table while more cells
+  are in view than it can send; `usePolygonBbox` reports that as *no layer*, and the Cells
+  layer falls back to the field (below) rather than blanking. So Shapes mode reads as the
+  merged field until you zoom in far enough that the visible set fits, then swaps to real
+  outlines — no dead "blank band" in between.
 - **Zoomed in — point scatter (`render_mode: points`, the default).** The classic
   instanced scatter with its size slider and circle/square/hexagon glyph picker.
 - **The switch.** The field takes over below `cellZoomThreshold(R) = log2(6 / R)`
-  (`useCanvasViewState.ts`) — i.e. once a cell shrinks under ~6 px on screen — and the
-  polygon fetch is suppressed there so it only fires zoomed in.
+  (`useCanvasViewState.ts`) — i.e. once a cell shrinks under ~6 px on screen — where the
+  polygon fetch is suppressed. Above it, Shapes mode draws outlines when the viewport's
+  cells fit under the ship cap and otherwise keeps showing the field.
 
 Geometry is served in the same world space `/data/obsm:spatial` uses (the region element's
 points→global affine), so field, outlines, points, and image overlay; the GeoArrow
