@@ -61,8 +61,10 @@ export function useCanvasViewState(
       d1min = Math.min(d1min, iy0, iy1);
       d1max = Math.max(d1max, iy0, iy1);
     }
-    const centerX = (d0min + d0max) / 2;
-    const centerY = (d1min + d1max) / 2;
+    // An empty table (0 rows) leaves bounds at ±Infinity; guard the center so the
+    // viewport target never becomes NaN (which silently blanks the canvas).
+    const centerX = Number.isFinite(d0min + d0max) ? (d0min + d0max) / 2 : 0;
+    const centerY = Number.isFinite(d1min + d1max) ? (d1min + d1max) / 2 : 0;
     const extentX = Math.max(1, d0max - d0min);
     const extentY = Math.max(1, d1max - d1min);
     const el = containerRef.current;

@@ -33,7 +33,7 @@ into multi-panel figures, and return the Axes/Figure they drew on.
 
 from __future__ import annotations
 
-from typing import Optional, Sequence, Union
+from typing import Optional, Sequence
 
 import numpy as np
 import pandas as pd

@@ -200,12 +200,14 @@ export function compositeChannels(
   const src = img.data;
   const out = new Uint8ClampedArray(px * 4);
 
-  const overrides = channels ? Object.entries(channels).filter(([, ch]) => ch.visible) : [];
-
   // [channelIndex, rgb, contrast_limit] for each channel to blend.
   const active: [number, [number, number, number], number][] = [];
-  if (overrides.length) {
-    for (const [key, ch] of overrides) {
+  if (channels) {
+    // A channel spec exists: blend exactly the visible ones. If the user hid every
+    // channel the result is black — matching the live canvas (empty channels ->
+    // backend _composite with {}), rather than falling back to all-visible.
+    for (const [key, ch] of Object.entries(channels)) {
+      if (!ch.visible) continue;
       const idx = Number(key);
       if (!Number.isInteger(idx) || idx < 0 || idx >= C) continue;
       active.push([idx, hexToRgb(ch.color) ?? [255, 255, 255], ch.contrast_limit || 1]);

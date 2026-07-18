@@ -139,7 +139,11 @@ class SessionManager:
         from ..transport.arrow import describe_fields
         fields = {}
         try:
-            fields = describe_fields(sess.active_table(), sess.sdata)
+            # Read the live AnnData under the read lock: the worker mutates obs/obsm
+            # under the write lock, so an unguarded describe_fields can hit a torn read
+            # or "dict changed size during iteration" mid-compute.
+            with sess.lock.reading():
+                fields = describe_fields(sess.active_table(), sess.sdata)
         except RuntimeError:
             pass
         # Snapshot the mutable collections: the worker thread appends to / rewrites
@@ -186,7 +190,10 @@ class SessionManager:
         # isn't reentrant: holding either lock across the close() call would
         # self-deadlock.
         with parent.lock.reading():
-            cs = payload.get("coordinate_system") or (parent.sdata.coordinate_systems[0])
+            systems = parent.sdata.coordinate_systems
+            if not (payload.get("coordinate_system") or systems):
+                raise ValueError("object has no coordinate system to subset in")
+            cs = payload.get("coordinate_system") or systems[0]
             try:
                 result = sd.polygon_query(parent.sdata, geom, target_coordinate_system=cs, filter_table=True)
             except Exception:

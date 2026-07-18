@@ -14,14 +14,21 @@ import uuid
 import numpy as np
 import pandas as pd
 
+from . import transform
+
 UNASSIGNED = "unassigned"
 # distinct, color-blind-ish palette for new categories
 PALETTE = ["#c1432b", "#2b6cc1", "#3a9e54", "#d4972b", "#8e5bc4", "#39a6a6",
            "#c44e9b", "#7a8b3a", "#b5b5b5"]
 
 
-def _membership(adata, payload: dict) -> np.ndarray:
-    """Boolean mask of cells whose spatial coords fall inside any drawn ring."""
+def _membership(adata, payload: dict, affine6: list[float]) -> np.ndarray:
+    """Boolean mask of cells whose spatial coords fall inside any drawn ring. The
+    lasso rings arrive in *world* space (the canvas draws obsm['spatial'] after the
+    region element's points->global affine), so the coords must be pushed through the
+    same affine before the point-in-polygon test — otherwise a nudged alignment
+    (set_affine6) would label the wrong cells. Mirrors the transform geometry.py and
+    the subset polygon_query apply."""
     from matplotlib.path import Path as MplPath
 
     rings = [r for r in payload["polygons"] if len(r) >= 3]
@@ -29,7 +36,10 @@ def _membership(adata, payload: dict) -> np.ndarray:
         raise ValueError("no valid polygon in selection")
     if "spatial" not in adata.obsm:
         raise ValueError("table has no obsm['spatial']; cannot compute membership")
-    coords = np.asarray(adata.obsm["spatial"])[:, :2]
+    xy = np.asarray(adata.obsm["spatial"])[:, :2]
+    a, b, c, d, e, f = affine6
+    coords = np.column_stack([a * xy[:, 0] + b * xy[:, 1] + c,
+                              d * xy[:, 0] + e * xy[:, 1] + f])
     inside = np.zeros(len(coords), dtype=bool)
     for ring in rings:
         inside |= MplPath(np.asarray(ring)).contains_points(coords)
@@ -47,7 +57,7 @@ def assign(session, payload: dict) -> list:
     set_name = payload["region_set"]
     category = payload["category"]
     color = payload.get("color")
-    inside = _membership(adata, payload)
+    inside = _membership(adata, payload, transform.get_affine6(session.sdata, adata))
 
     # obs categorical column, "unassigned" by default (single-label partition, §2)
     col = adata.obs.get(set_name)

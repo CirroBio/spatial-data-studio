@@ -116,9 +116,13 @@ def describe_fields(adata, sdata) -> dict:
     shapes = list(getattr(sdata, "shapes", {}).keys()) if sdata is not None else []
     image_dims = [{"name": n, "width": w, "height": h}
                   for n in images for (w, h) in [imaging.image_dims(sdata, n)]]
+    obsm = []
+    for k, v in adata.obsm.items():
+        a = np.asarray(v)
+        obsm.append({"name": k, "n_components": int(a.shape[1]) if a.ndim > 1 else 1})
     return {
         "obs": obs,
-        "obsm": [{"name": k, "n_components": int(np.asarray(v).shape[1])} for k, v in adata.obsm.items()],
+        "obsm": obsm,
         "obsp": list(adata.obsp.keys()),
         "layers": list(adata.layers.keys()),
         "n_obs": int(adata.n_obs),

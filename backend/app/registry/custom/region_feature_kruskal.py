@@ -153,8 +153,6 @@ key_added
             return CallResult(status="failed", error=f"layer '{layer}' does not exist")
 
         def mutate(ad):
-            import numpy as np
-
             genes = list(map(str, ad.var_names))
             matrix = ad.layers[layer] if layer else ad.X
             celltypes = ad.obs[celltype_key].astype(str).to_numpy()

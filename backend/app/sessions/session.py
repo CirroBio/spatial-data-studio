@@ -4,6 +4,7 @@ serial (§6.2). A read/write lock keeps async data serving off a half-mutated
 object (§20.2).
 """
 import queue
+import shutil
 import threading
 import time
 import uuid
@@ -348,7 +349,13 @@ class Session:
                 # A reader's images/labels can be single-scale or huge-chunked; tile
                 # them now so the canvas never realizes a multi-GB chunk per tile.
                 from .. import rasters
+                # Adopting a fresh object (e.g. filter_cells on a checkpoint-loaded
+                # session) leaves the prior per-session raster store orphaned; drop it
+                # before reassigning so a reshape doesn't leak a tempdir each time.
+                prev_cache = self.raster_cache_dir
                 self.raster_cache_dir = rasters.normalize_rasters(self.sdata)
+                if prev_cache and prev_cache != self.raster_cache_dir:
+                    shutil.rmtree(prev_cache, ignore_errors=True)
                 self.active_table_key = self._default_table_key()
                 if not self.app_state["displays"]:
                     self.manager.auto_displays(self)
