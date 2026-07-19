@@ -1,0 +1,76 @@
+import { useState, useEffect, useCallback, useRef, type RefObject } from 'react';
+import type { OrthographicViewState, OrbitViewState } from '@deck.gl/core';
+import type { ScatterPositions } from './useArrowPositions';
+import { ZOOM_LIMITS, fitZoom, useCanvasSize } from './viewFit';
+
+const DEFAULT_ROTATION_X = 25;
+// Let the orbit camera tilt through the full pitch circle (deck defaults to +/-90,
+// which walls the drag at straight-down/up); +/-180 lets a rotate-drag reach every
+// angle, including inverted.
+const ROTATION_LIMITS = { minRotationX: -180, maxRotationX: 180 };
+
+export type EmbeddingViewState = OrthographicViewState | OrbitViewState;
+
+interface Params {
+  positions: ScatterPositions | null;
+  is3d: boolean;
+}
+
+// 2D-or-3D view state for the embeddings scatter: an OrthographicView (pan/zoom)
+// or an OrbitView (rotate/zoom) depending on the 3D toggle. Kept separate from
+// useCanvasViewState — the view-state shape and view class genuinely differ, and
+// there's no image layer/bounds to union in here.
+export function useEmbeddingViewState(
+  { positions, is3d }: Params,
+): {
+  containerRef: RefObject<HTMLDivElement>;
+  canvasSize: { width: number; height: number } | null;
+  viewState: EmbeddingViewState | null;
+  setViewState: (vs: EmbeddingViewState) => void;
+  fitToData: () => EmbeddingViewState | null;
+} {
+  const [viewState, setViewState] = useState<EmbeddingViewState | null>(null);
+  const { containerRef, canvasSize } = useCanvasSize();
+
+  // Same fit-to-data math as useCanvasViewState (see viewFit.fitZoom); adds a
+  // centered Z target in 3D so the orbit camera starts looking at the point cloud.
+  const fitToData = useCallback((): EmbeddingViewState | null => {
+    if (!positions) return null;
+    const { d0min, d0max, d1min, d1max, d2min, d2max } = positions.bounds;
+    const centerX = (d0min + d0max) / 2;
+    const centerY = (d1min + d1max) / 2;
+    const extentX = Math.max(1, d0max - d0min);
+    const extentY = Math.max(1, d1max - d1min);
+    const el = containerRef.current;
+    const zoom = fitZoom(extentX, extentY, el?.clientWidth || window.innerWidth, el?.clientHeight || window.innerHeight);
+    if (is3d) {
+      const centerZ = d2min !== undefined && d2max !== undefined ? (d2min + d2max) / 2 : 0;
+      return { target: [centerX, centerY, centerZ], zoom, rotationX: DEFAULT_ROTATION_X, rotationOrbit: 0, ...ROTATION_LIMITS, ...ZOOM_LIMITS };
+    }
+    return { target: [centerX, centerY, 0], zoom, ...ZOOM_LIMITS };
+  }, [positions, is3d, containerRef]);
+
+  // A freshly loaded session always frames its data; the persisted display viewport
+  // is not restored here (the canvas is remounted per session — key on the session id
+  // in App — so this runs once per session load).
+  useEffect(() => {
+    if (viewState) return;
+    if (!positions) return;
+    const fit = fitToData();
+    if (fit) setViewState(fit);
+  }, [fitToData, positions, viewState]);
+
+  // The 2D and 3D view-state shapes aren't interchangeable — re-fit on toggle
+  // rather than trying to carry an orthographic pan/zoom into an orbit camera.
+  // (DeckGL is also remounted on toggle — see the key in EmbeddingCanvas — so its
+  // controller is rebuilt for the new view class instead of reusing the stale one.)
+  const is3dRef = useRef(is3d);
+  useEffect(() => {
+    if (is3dRef.current === is3d) return;
+    is3dRef.current = is3d;
+    const fit = fitToData();
+    if (fit) setViewState(fit);
+  }, [is3d, fitToData]);
+
+  return { containerRef, canvasSize, viewState, setViewState, fitToData };
+}

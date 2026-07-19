@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "name": "Spatially variable genes (sepal)",
+    "description": "Score genes by how far their expression pattern is from a diffused (spatially random) steady state — the sepal score. Higher = more spatially structured. Ranking lands in uns['sepal_score'].",
+    "provenance": "squidpy 'Compute Sepal score' example (squidpy.readthedocs.io/en/stable/notebooks/examples/graph/compute_sepal.html). Targets the visium_hne example."
+  },
+  "readme": "Builds a hexagonal-grid spatial graph, then scores spatial structure with the sepal diffusion method. `max_neighs=6` matches the Visium hexagonal grid (sepal only accepts grid-like graphs). Runs single-process (`n_jobs=1`) per the squidpy example; scores every gene, so it is slower than Moran's I / Geary's C.",
+  "params": [
+    { "name": "coord_type", "schema": { "type": "string", "enum": ["grid", "generic"], "default": "grid" }, "widget": "select", "bound_to": null, "required": false, "tooltip": "spatial-graph geometry: sepal needs a grid-like graph" },
+    { "name": "n_neighs", "schema": { "type": "integer", "default": 6 }, "widget": "number", "bound_to": null, "required": false, "tooltip": "neighbors per node in the spatial graph (6 = Visium hexagonal grid)" },
+    { "name": "max_neighs", "schema": { "type": "integer", "enum": [4, 6], "default": 6 }, "widget": "select", "bound_to": null, "required": false, "tooltip": "grid connectivity sepal assumes: 6 for hexagonal (Visium), 4 for square" }
+  ],
+  "steps": [
+    { "namespace": "gr", "function": "spatial_neighbors", "params": { "coord_type": { "$param": "coord_type" }, "n_neighs": { "$param": "n_neighs" } } },
+    { "namespace": "gr", "function": "sepal", "params": { "max_neighs": { "$param": "max_neighs" }, "n_jobs": 1, "show_progress_bar": false } }
+  ]
+}

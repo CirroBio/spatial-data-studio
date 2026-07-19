@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "name": "QC, filter & cluster (raw counts)",
+    "description": "Compute QC metrics, drop low-quality cells and rare genes, then normalize and cluster. For unprocessed data.",
+    "provenance": "Standard scanpy QC-to-clustering path; targets unprocessed raw-count data such as Xenium."
+  },
+  "readme": "Computes QC metrics, filters low-quality cells (fewer than `min_genes` genes) and rare genes (seen in fewer than `min_cells` cells), then runs the same normalize → log1p → PCA → neighbors → Leiden path as 'Preprocess & cluster (raw counts)'.",
+  "params": [
+    { "name": "min_genes", "schema": { "type": "integer", "default": 10 }, "widget": "number", "bound_to": null, "required": false, "tooltip": "drop cells expressing fewer than this many genes" },
+    { "name": "min_cells", "schema": { "type": "integer", "default": 3 }, "widget": "number", "bound_to": null, "required": false, "tooltip": "drop genes detected in fewer than this many cells" },
+    { "name": "resolution", "schema": { "type": "number", "default": 1.0 }, "widget": "number", "bound_to": null, "required": false, "tooltip": "Leiden resolution: higher = more, smaller clusters" }
+  ],
+  "steps": [
+    { "namespace": "sc.pp", "function": "calculate_qc_metrics", "params": { "inplace": true, "percent_top": [50, 100, 200] } },
+    { "namespace": "sc.pp", "function": "filter_cells", "params": { "min_genes": { "$param": "min_genes" } } },
+    { "namespace": "sc.pp", "function": "filter_genes", "params": { "min_cells": { "$param": "min_cells" } } },
+    { "namespace": "sc.pp", "function": "normalize_total", "params": {} },
+    { "namespace": "sc.pp", "function": "log1p", "params": {} },
+    { "namespace": "sc.pp", "function": "pca", "params": {} },
+    { "namespace": "sc.pp", "function": "neighbors", "params": {} },
+    { "namespace": "custom", "function": "leiden", "params": { "resolution": { "$param": "resolution" }, "n_iterations": 2 } }
+  ]
+}

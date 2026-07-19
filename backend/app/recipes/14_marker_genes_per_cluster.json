@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "name": "Marker genes per cluster",
+    "description": "Rank differentially expressed marker genes per Leiden cluster (Wilcoxon), keep the significant ones (uns['rank_genes_groups'] + uns['rank_genes_groups_filtered']), then draw a dotplot of the top markers. Needs an obs['leiden'] column (present on visium_hne, or run a preprocessing recipe first).",
+    "provenance": "Standard scanpy rank_genes_groups workflow."
+  },
+  "readme": "Ranks differentially expressed marker genes per cluster with the chosen test, filters to the significant ones, then draws a dotplot of the top marker genes per cluster. Requires the `groupby` obs column — `leiden` is present on visium_hne, or run 'Preprocess & cluster (raw counts)' / 'QC, filter & cluster (raw counts)' first.",
+  "params": [
+    { "name": "groupby", "schema": { "type": "string", "default": "leiden" }, "widget": "obs_categorical", "bound_to": null, "required": true, "tooltip": "obs column of cluster labels to rank markers within" },
+    { "name": "method", "schema": { "type": "string", "enum": ["wilcoxon", "t-test", "t-test_overestim_var", "logreg"], "default": "wilcoxon" }, "widget": "select", "bound_to": null, "required": false, "tooltip": "differential-expression test used to rank genes" },
+    { "name": "n_genes", "schema": { "type": "integer", "default": 5 }, "widget": "number", "bound_to": null, "required": false, "tooltip": "top marker genes per cluster shown in the dotplot" }
+  ],
+  "steps": [
+    { "namespace": "sc.tl", "function": "rank_genes_groups", "params": { "groupby": { "$param": "groupby" }, "method": { "$param": "method" } } },
+    { "namespace": "sc.tl", "function": "filter_rank_genes_groups", "params": {} },
+    { "namespace": "sc.pl", "function": "rank_genes_groups_dotplot", "params": { "groupby": { "$param": "groupby" }, "n_genes": { "$param": "n_genes" } } }
+  ]
+}

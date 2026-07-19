@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "name": "Cluster (Leiden) & top marker genes",
+    "description": "Leiden-cluster the preprocessed cells, then rank the genes that most differentiate each cluster and draw a dotplot of the top markers per cluster.",
+    "provenance": "scanpy clustering + rank_genes_groups workflow; graspologic (MIT) Leiden. Step 2 of the Xenium region-analysis workflow."
+  },
+  "readme": "Step 2 of the workflow (run 'Preprocess & QC (Xenium)' first). Leiden-clusters on the neighbours graph into `obs[cluster_key]`, ranks differentially expressed genes per cluster with the chosen test, filters to the significant ones, and draws a dotplot of the top `n_genes` markers per cluster. Follow with 'Assign cell-type labels (CellTypist)'.",
+  "params": [
+    { "name": "cluster_key", "schema": { "type": "string", "default": "leiden" }, "widget": "text", "bound_to": null, "required": true, "tooltip": "obs column to write the Leiden cluster labels into" },
+    { "name": "resolution", "schema": { "type": "number", "default": 1.0 }, "widget": "number", "bound_to": null, "required": false, "tooltip": "Leiden resolution: higher = more, smaller clusters" },
+    { "name": "method", "schema": { "type": "string", "enum": ["wilcoxon", "t-test", "t-test_overestim_var", "logreg"], "default": "wilcoxon" }, "widget": "select", "bound_to": null, "required": false, "tooltip": "differential-expression test used to rank marker genes" },
+    { "name": "n_genes", "schema": { "type": "integer", "default": 5 }, "widget": "number", "bound_to": null, "required": false, "tooltip": "top marker genes per cluster shown in the dotplot" }
+  ],
+  "steps": [
+    { "namespace": "custom", "function": "leiden", "params": { "key_added": { "$param": "cluster_key" }, "resolution": { "$param": "resolution" }, "n_iterations": 2 } },
+    { "namespace": "sc.tl", "function": "rank_genes_groups", "params": { "groupby": { "$param": "cluster_key" }, "method": { "$param": "method" } } },
+    { "namespace": "sc.tl", "function": "filter_rank_genes_groups", "params": {} },
+    { "namespace": "sc.pl", "function": "rank_genes_groups_dotplot", "params": { "groupby": { "$param": "cluster_key" }, "n_genes": { "$param": "n_genes" } } }
+  ]
+}

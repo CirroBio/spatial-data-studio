@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "name": "Ligand-receptor interactions",
+    "description": "Permutation test (CellPhoneDB-style) for ligand-receptor pairs that are co-expressed across region pairs, grouped by obs['cluster']; results land in uns['cluster_ligrec'] and are shown as a dotplot.",
+    "provenance": "squidpy 'Receptor-ligand analysis' example (squidpy.readthedocs.io/en/stable/notebooks/examples/graph/compute_ligrec.html). Targets the visium_hne example with an explicit set of known mouse-brain ligand-receptor pairs."
+  },
+  "readme": "Runs squidpy's re-implementation of the CellPhoneDB permutation test on an explicit list of ligand-receptor pairs, grouped by `obs['cluster']`, then plots the significant pairs. Interactions are passed in (not fetched from omnipath) so the step runs offline; the default pairs are specific to the mouse-brain panel — edit them for other datasets. `use_raw` is false because the app's extracted table has no `.raw`.",
+  "params": [
+    { "name": "cluster_key", "schema": { "type": "string", "default": "cluster" }, "widget": "obs_categorical", "bound_to": null, "required": true, "tooltip": "obs column holding the region/cluster labels" },
+    { "name": "interactions", "schema": { "type": "array", "default": [["Camk2a", "Grin1"], ["Slc17a7", "Grin2b"], ["Bdnf", "Ntrk2"]] }, "widget": "json", "bound_to": null, "required": false, "tooltip": "ligand-receptor pairs to test, as a JSON list of [ligand, receptor] pairs" },
+    { "name": "n_perms", "schema": { "type": "integer", "default": 100 }, "widget": "number", "bound_to": null, "required": false, "tooltip": "permutations for the significance test (higher = slower, more precise p-values)" }
+  ],
+  "steps": [
+    { "namespace": "gr", "function": "ligrec", "params": {
+        "cluster_key": { "$param": "cluster_key" },
+        "interactions": { "$param": "interactions" },
+        "n_perms": { "$param": "n_perms" }, "use_raw": false, "seed": 0, "show_progress_bar": false } },
+    { "namespace": "pl", "function": "ligrec", "params": { "cluster_key": { "$param": "cluster_key" } } }
+  ]
+}

@@ -1,0 +1,198 @@
+# Parameter Term Dictionary (post-build spec Part 1).
+# Centralizes parameter knowledge keyed by *parameter term* — never by function
+# (invariant core §16.1). One entry enriches every function using that param.
+# Loaded at startup; editable without code changes. Regenerate the coverage
+# report after a squidpy/scanpy upgrade to surface new params (spec §1.9).
+#
+# Entry fields (all but `match` optional):
+#   match: { names: [...], patterns: ["*suffix"], type: <canonical>, scope: "ns.fn" }
+#   binding: data slot values resolve against (§1.4); null = no binding
+#   role:    input | managed | output
+#   widget:  picker | multiselect | enum | number | toggle | text   (used when no binding)
+#   value_source / type / required / label / help
+#   policy:  { pin: <value>, hidden: <bool> }
+#   values:  enum members (used only when the annotation is not already a Literal)
+#   default_source: threads   (n_jobs-style: default to the machine thread budget)
+
+terms:
+  # ---- grouping / annotation keys (the core reuse win; region sets surface here) ----
+  - match: { names: [cluster_key, groupby], patterns: ["*cluster_key"] }
+    binding: obs_categorical
+    value_source: obs.categorical
+    label: "Grouping key"
+    help: "Categorical obs column used to group cells (cell types, clusters, or region sets)."
+  - match: { names: [library_key] }
+    binding: obs_categorical
+    value_source: obs.categorical
+    label: "Library / partition key"
+    help: "Categorical obs column partitioning the data (e.g. sample / library)."
+  - match: { names: [library_id] }
+    binding: library_id
+    widget: multiselect
+    help: "Values of the partition column to include."
+  - match: { names: [groups] }
+    binding: categories_of(groupby)
+    widget: multiselect
+    help: "Subset of the grouping key's categories."
+  - match: { names: [reference] }
+    binding: categories_of(groupby)
+    widget: enum
+    help: "One category to compare against, or 'rest'."
+
+  # ---- colour (plotting) ----
+  - match: { names: [color, color_key], patterns: ["color"] }
+    binding: obs_column
+    value_source: obs.any
+    help: "obs column or X:gene to colour by."
+
+  # ---- features ----
+  - match: { names: [genes, var_names] }
+    binding: var_names
+    widget: multiselect
+    help: "Gene / feature names."
+  - match: { names: [gene] }
+    binding: var_names
+    widget: picker
+
+  # ---- data slots ----
+  - match: { names: [layer], patterns: ["*_layer", "layers"] }
+    binding: layer_key
+    help: "Key in layers."
+  - match: { names: [spatial_key] }
+    binding: obsm_key
+    type: str
+    help: "Key in obsm holding spatial coordinates."
+  - match: { names: [connectivity_key, distances_key], patterns: ["*connectivity_key", "*distances_key", "*graph_key"] }
+    binding: obsp_key
+    help: "Key in obsp holding a graph."
+
+  # ---- mutation / execution policy (managed) ----
+  - match: { names: [copy] }
+    role: managed
+    policy: { pin: false, hidden: true }
+  - match: { names: [inplace] }
+    role: managed
+    policy: { pin: true, hidden: true }
+  - match: { names: [n_jobs] }
+    widget: number
+    type: int
+    default_source: threads
+    help: "Parallel jobs; defaults to the machine thread budget (SDS_N_THREADS or cpu count)."
+  - match: { names: [n_threads, num_threads, workers, n_workers] }
+    widget: number
+    type: int
+    default_source: threads
+  - match: { names: [seed, random_state] }
+    widget: number
+    type: int
+    help: "Set for reproducibility; captured in the recipe."
+
+  # ---- output naming (feeds recipe contract §1.6/§5.8) ----
+  - match: { names: [key_added], patterns: ["*_added"] }
+    role: output
+    binding: new_key
+    widget: text
+    help: "Name of the slot this step creates."
+
+  # ---- plotting render params (managed; the app owns figure capture) ----
+  - match: { names: [show] }
+    role: managed
+    policy: { pin: false, hidden: true }
+  - match: { names: [save] }
+    role: managed
+    policy: { pin: null, hidden: true }
+  - match: { names: [return_fig] }
+    role: managed
+    policy: { pin: true, hidden: true }
+  - match: { names: [ax, fig] }
+    role: managed
+    policy: { hidden: true }
+
+  # ---- generic numerics (type-refinement where annotations are bare) ----
+  - match: { names: [n_neighs, n_rings, n_perms, n_genes, n_points] }
+    widget: number
+    type: int
+  - match: { names: [radius] }
+    widget: number
+    type: float
+
+  # ---- ambiguous name: scope-qualified (only applied when not Literal-annotated) ----
+  - match: { names: [mode], scope: "gr.ripley" }
+    widget: enum
+    values: [F, G, L]
+  - match: { names: [mode], scope: "gr.spatial_autocorr" }
+    widget: enum
+    values: [moran, geary]
+
+  # ==== scanpy coverage (v3 Part 4) ========================================
+  # QC / filtering thresholds (filter_cells, filter_genes, calculate_qc_metrics)
+  - match: { patterns: ["min_*", "max_*"], type: int }
+    widget: number
+    type: int
+    help: "Lower/upper threshold for filtering; leave unset to skip this bound."
+  # normalization / float knobs
+  - match: { names: [target_sum] }
+    widget: number
+    type: float
+    help: "Total count to normalize each cell to (unset = median of pre-norm totals)."
+  - match: { names: [max_fraction, max_value, min_dist, spread, resolution] }
+    widget: number
+    type: float
+  # the n_* count family scanpy exposes
+  - match: { names: [n_pcs, n_comps, n_components, n_neighbors, n_top_genes, n_bins,
+                     n_dcs, n_branchings, n_iterations, n_prin_comps, ctrl_size,
+                     negative_sample_rate, maxiter] }
+    widget: number
+    type: int
+    help: "Component / neighbor count; leave unset for the library default."
+  # representation / neighbor-graph selection
+  - match: { names: [use_rep] }
+    widget: text
+    help: "obsm key (e.g. X_pca) to use as the representation; unset = auto."
+  - match: { names: [neighbors_key] }
+    binding: obsp_key
+    help: "Key identifying a precomputed neighbor graph."
+  - match: { names: [basis] }
+    binding: obsm_key
+    help: "obsm embedding key to operate on (e.g. X_umap)."
+  # gene-set inputs
+  - match: { names: [gene_list, s_genes, g2m_genes, gene_pool] }
+    binding: var_names
+    widget: multiselect
+    help: "Gene names from var_names."
+  # grouping inputs reused by regress_out / aggregate
+  - match: { names: [keys, by] }
+    binding: obs_column
+    widget: multiselect
+    help: "obs column(s) to regress out / aggregate by."
+  # recurring boolean toggles
+  - match: { names: [use_raw, subset, zero_center, knn, directed, use_weights, pts,
+                     exclude_highly_expressed, check_values, log1p, tie_correct, compare_abs] }
+    widget: toggle
+    type: bool
+  # opaque scanpy type-alias enums (annotation hides the Literal)
+  - match: { names: [flavor], scope: "sc.pp.highly_variable_genes" }
+    widget: enum
+    values: [seurat, cell_ranger, seurat_v3, seurat_v3_paper]
+  - match: { names: [method], scope: "sc.tl.rank_genes_groups" }
+    widget: enum
+    values: [logreg, t-test, wilcoxon, t-test_overestim_var]
+  - match: { names: [svd_solver], scope: "sc.pp.pca" }
+    widget: enum
+    values: [arpack, randomized, auto, lobpcg, tsqr]
+  - match: { names: [corr_method, cor_method] }
+    widget: enum
+    values: [benjamini-hochberg, bonferroni]
+  # output-name params (extend the key_added family)
+  - match: { names: [score_name, key_added_ext] }
+    role: output
+    binding: new_key
+    widget: text
+  # sc.get extraction params
+  - match: { names: [pval_cutoff, log2fc_min, log2fc_max] }
+    widget: number
+    type: float
+  # reader path inputs
+  - match: { names: [path, input, image_path, alignment_file, store] }
+    widget: text
+    help: "Filesystem path to the dataset directory/file to read."

@@ -1,0 +1,54 @@
+services:
+  spatial-data-studio:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: spatial-data-studio:latest
+
+    ports:
+      - "8080:80"
+
+    # Single read-write data mount (DESIGN §19.9): inputs + saved checkpoints +
+    # snapshots share it. Defaults to ./test-data (ships with the repo) so demo
+    # saves land alongside the sample datasets; override with SDS_DATA_HOST_DIR to
+    # point at a dedicated folder in a real deployment.
+    volumes:
+      - type: bind
+        source: ${SDS_DATA_HOST_DIR:-./test-data}
+        target: /data
+
+    environment:
+      SDS_DATA_DIR: /data
+      # Memory: container gets 12 GB; worker ceiling is 9 GB, safely below cgroup limit
+      # so catchable MemoryError fires before the OOM killer (DESIGN §19.5)
+      SDS_CONTAINER_MEM_MB: "12288"
+      SDS_WORKER_CEILING_MB: "9216"
+      SDS_MAX_SESSIONS: "4"
+      SDS_ADMISSION_PCT: "0.80"
+      MPLBACKEND: "Agg"
+      PYTHONUNBUFFERED: "1"
+      # Cirro upload. Off unless all three are set (service-account/client-credentials).
+      CIRRO_BASE_URL: "${CIRRO_BASE_URL:-}"
+      CIRRO_CLIENT_ID: "${CIRRO_CLIENT_ID:-}"
+      CIRRO_CLIENT_SECRET: "${CIRRO_CLIENT_SECRET:-}"
+
+    # Hard OS memory limit: the container is OOM-killed if it exceeds this. Keep
+    # in sync with SDS_CONTAINER_MEM_MB above (12288 MiB == 12g) so the app's soft
+    # admission control (refuses new work at SDS_ADMISSION_PCT of it) trips first.
+    mem_limit: 12g              # docker compose / non-swarm
+    deploy:
+      resources:
+        limits:
+          memory: 12g          # docker stack deploy / swarm
+
+    # Generous stop timeout so in-flight saves can flush (DESIGN §19.7)
+    stop_grace_period: 120s
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1/api/healthz"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3

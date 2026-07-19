@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "name": "Pseudobulk differential expression (DESeq2)",
+    "description": "Replicate-aware differential expression between two conditions, one test per cell type: sum raw counts per (sample × cell type) into bulk-like profiles, run DESeq2, then draw an MA + volcano plot for one cell type.",
+    "provenance": "PyDESeq2 (Love et al., Genome Biol 2014) with pseudobulk aggregation (Squair et al., Nat Commun 2021); the replicate-aware alternative to per-cell rank_genes_groups for condition comparisons."
+  },
+  "readme": "Compares two conditions per cell type the statistically valid way — cells are aggregated to one pseudobulk profile per biological sample, and the samples are the replicates. Needs three obs columns already present: `sample_key` (replicate id), `condition_key` (the two-level contrast), and `celltype_key` (e.g. from 'Assign cell-type labels (CellTypist)'), plus at least 2 samples per condition per cell type (others are skipped). Requires RAW integer counts: leave `layer` blank to use `.X` on a freshly imported store, or point it at a raw-counts layer — do not run after normalizing `.X`. Results land in `uns[key_added]`; the plot shows the MA + volcano for one cell type (blank `cell_type` = the first available).",
+  "params": [
+    { "name": "sample_key", "schema": { "type": "string" }, "widget": "obs_categorical", "bound_to": null, "required": true, "tooltip": "per-cell sample/replicate id (categorical obs column)" },
+    { "name": "condition_key", "schema": { "type": "string" }, "widget": "obs_categorical", "bound_to": null, "required": true, "tooltip": "per-cell condition forming the two-level contrast" },
+    { "name": "celltype_key", "schema": { "type": "string", "default": "cell_type" }, "widget": "obs_categorical", "bound_to": null, "required": true, "tooltip": "per-cell type/cluster; one DESeq2 fit per level" },
+    { "name": "layer", "schema": { "type": "string" }, "widget": "text", "bound_to": null, "required": false, "tooltip": "raw-counts layer to aggregate (blank = .X); must be raw integer counts" },
+    { "name": "cell_type", "schema": { "type": "string" }, "widget": "text", "bound_to": null, "required": false, "tooltip": "which cell type's MA/volcano to plot (blank = the first available)" },
+    { "name": "key_added", "schema": { "type": "string", "default": "pseudobulk_de" }, "widget": "text", "bound_to": null, "required": true, "tooltip": "uns key to store the differential-expression results under" }
+  ],
+  "steps": [
+    { "namespace": "custom", "function": "pseudobulk_deseq2", "params": { "sample_key": { "$param": "sample_key" }, "condition_key": { "$param": "condition_key" }, "celltype_key": { "$param": "celltype_key" }, "layer": { "$param": "layer" }, "key_added": { "$param": "key_added" } } },
+    { "namespace": "custom", "function": "pseudobulk_deseq2_plot", "params": { "key_added": { "$param": "key_added" }, "cell_type": { "$param": "cell_type" } } }
+  ]
+}

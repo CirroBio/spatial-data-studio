@@ -1,0 +1,36 @@
+# Python
+.venv*/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Node / frontend
+node_modules/
+frontend/dist/
+frontend/dist-viewer/
+frontend/playwright-report/
+frontend/test-results/
+frontend/blob-report/
+
+# Data (large; fetched via scripts/prepare_test_data.py)
+test-data/
+data/
+checkpoints/
+*.zarr/
+*.zarr.zip
+
+# Local
+.DS_Store
+*.log
+.run.pids
+
+.env
+
+sds-governance/sbom.json
+__pycache__/
+.pytest_cache/
+
+# Nextflow run artifacts (nextflow/)
+.nextflow/
+.nextflow.log*
+work/

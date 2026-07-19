@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "name": "Spatially variable genes (Moran's I)",
+    "description": "Rank genes by spatial autocorrelation (Moran's I) over the spatial graph; the ranking lands in uns['moranI'] (top genes can then color the canvas).",
+    "provenance": "Adapted from the squidpy 'Moran's I' spatially-variable-genes vignette; targets the visium_hne example."
+  },
+  "readme": "Ranks genes by spatial autocorrelation (Moran's I) over a hexagonal-grid spatial graph. No `n_perms`: Moran's I is scored analytically here — the permutation path uses joblib's process pool, which can't spawn inside this app's worker thread.",
+  "params": [
+    { "name": "coord_type", "schema": { "type": "string", "enum": ["grid", "generic"], "default": "grid" }, "widget": "select", "bound_to": null, "required": false, "tooltip": "spatial-graph geometry: grid for Visium hexagons, generic otherwise" },
+    { "name": "n_neighs", "schema": { "type": "integer", "default": 6 }, "widget": "number", "bound_to": null, "required": false, "tooltip": "neighbors per node in the spatial graph (6 = Visium hexagonal grid)" }
+  ],
+  "steps": [
+    { "namespace": "gr", "function": "spatial_neighbors", "params": { "coord_type": { "$param": "coord_type" }, "n_neighs": { "$param": "n_neighs" } } },
+    { "namespace": "gr", "function": "spatial_autocorr", "params": { "mode": "moran" } }
+  ]
+}

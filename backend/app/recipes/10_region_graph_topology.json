@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "name": "Region graph topology",
+    "description": "Each region's connectivity role (centrality scores) and the matrix of inter-region edges over the spatial graph.",
+    "provenance": "Adapted from the squidpy centrality/interaction-matrix vignettes; targets the visium_hne example."
+  },
+  "readme": "Builds a hexagonal-grid spatial graph, then computes per-region centrality scores and the normalized inter-region interaction matrix, grouped by `obs['cluster']`.",
+  "params": [
+    { "name": "cluster_key", "schema": { "type": "string", "default": "cluster" }, "widget": "obs_categorical", "bound_to": null, "required": true, "tooltip": "obs column holding the region/cluster labels" },
+    { "name": "coord_type", "schema": { "type": "string", "enum": ["grid", "generic"], "default": "grid" }, "widget": "select", "bound_to": null, "required": false, "tooltip": "spatial-graph geometry: grid for Visium hexagons, generic otherwise" },
+    { "name": "n_neighs", "schema": { "type": "integer", "default": 6 }, "widget": "number", "bound_to": null, "required": false, "tooltip": "neighbors per node in the spatial graph (6 = Visium hexagonal grid)" }
+  ],
+  "steps": [
+    { "namespace": "gr", "function": "spatial_neighbors", "params": { "coord_type": { "$param": "coord_type" }, "n_neighs": { "$param": "n_neighs" } } },
+    { "namespace": "gr", "function": "centrality_scores", "params": { "cluster_key": { "$param": "cluster_key" } } },
+    { "namespace": "pl", "function": "centrality_scores", "params": { "cluster_key": { "$param": "cluster_key" } } },
+    { "namespace": "gr", "function": "interaction_matrix", "params": { "cluster_key": { "$param": "cluster_key" }, "normalized": true } },
+    { "namespace": "pl", "function": "interaction_matrix", "params": { "cluster_key": { "$param": "cluster_key" } } }
+  ]
+}

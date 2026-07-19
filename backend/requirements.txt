@@ -1,0 +1,29 @@
+# Pinned to the versions the app was built and validated against.
+squidpy==1.8.2
+spatialdata==0.7.3
+spatialdata-io==0.7.0
+anndata==0.12.18
+scanpy==1.11.5
+graspologic-native==1.3.1   # MIT Leiden core (Rust) backing custom.leiden / custom.identify_regions_leiden; replaces the GPL igraph/leidenalg chain
+celltypist==1.7.1   # pre-trained cell-type annotation for custom.celltypist_annotate. NB: hard-depends on GPL leidenalg->igraph, which are stripped post-install (see docker/Dockerfile); the annotate path uses graspologic-native over-clustering instead.
+pydeseq2==0.5.4      # negative-binomial DE engine for custom.pseudobulk_deseq2
+
+fastapi==0.138.1
+pydantic==2.13.4     # request-body validation for the shape-annotations schema (schemas/annotations.py)
+uvicorn[standard]==0.49.0
+pyarrow==24.0.0
+psutil==7.2.2
+pillow==12.2.0
+python-multipart==0.0.32
+cirro==1.12.0    # dataset upload (MIT); only used when CIRRO_* env vars are set
+
+# transitive pins that matter for the data path / persistence
+scipy==1.17.1
+scikit-learn==1.9.0   # GaussianMixture for custom.identify_tmas
+numpy==2.4.6
+pandas==2.3.3
+matplotlib==3.11.0
+shapely==2.1.2
+geoarrow-pyarrow==0.2.0   # GeoArrow polygon encoding for the cell-boundary display endpoint (/shapes/{element}/geoarrow)
+zarr==3.1.6
+PyYAML==6.0.3

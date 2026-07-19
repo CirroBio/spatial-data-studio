@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "name": "t-SNE & diffusion-map embeddings (raw counts)",
+    "description": "Cluster raw counts, then compute two non-UMAP embeddings for comparison: t-SNE (obsm['X_tsne']) and a diffusion map (obsm['X_diffmap']). For unprocessed data such as Xenium.",
+    "provenance": "scanpy dimensionality-reduction / visualization tutorials (sc.tl.tsne, sc.tl.diffmap). Targets unprocessed raw-count data such as Xenium."
+  },
+  "readme": "Preprocess and Leiden-cluster raw counts, then add a t-SNE embedding and a diffusion-map embedding alongside the clustering. Diffusion maps emphasise continuous transitions (useful before trajectory analysis); t-SNE emphasises local cluster separation.",
+  "params": [
+    { "name": "cluster_key", "schema": { "type": "string", "default": "leiden" }, "widget": "text", "bound_to": null, "required": true, "tooltip": "obs column to write the Leiden cluster labels into" },
+    { "name": "resolution", "schema": { "type": "number", "default": 1.0 }, "widget": "number", "bound_to": null, "required": false, "tooltip": "Leiden resolution: higher = more, smaller clusters" }
+  ],
+  "steps": [
+    { "namespace": "sc.pp", "function": "normalize_total", "params": {} },
+    { "namespace": "sc.pp", "function": "log1p", "params": {} },
+    { "namespace": "sc.pp", "function": "pca", "params": {} },
+    { "namespace": "sc.pp", "function": "neighbors", "params": {} },
+    { "namespace": "custom", "function": "leiden", "params": { "key_added": { "$param": "cluster_key" }, "resolution": { "$param": "resolution" }, "n_iterations": 2 } },
+    { "namespace": "sc.tl", "function": "tsne", "params": {} },
+    { "namespace": "sc.tl", "function": "diffmap", "params": {} }
+  ]
+}

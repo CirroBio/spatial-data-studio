@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "name": "Spatially variable genes (Geary's C)",
+    "description": "Rank genes by local spatial autocorrelation (Geary's C) over the spatial graph; the ranking lands in uns['gearyC']. Geary's C is more sensitive to local (short-range) structure than Moran's I.",
+    "provenance": "squidpy sq.gr.spatial_autocorr API (mode='geary'); companion to the squidpy 'Moran's I' spatially-variable-genes vignette. Targets the visium_hne example."
+  },
+  "readme": "Ranks genes by Geary's C spatial autocorrelation over a hexagonal-grid spatial graph, complementary to the Moran's I recipe. No `n_perms`: scored analytically (the permutation path uses joblib's process pool, which can't spawn inside this app's worker thread).",
+  "params": [
+    { "name": "coord_type", "schema": { "type": "string", "enum": ["grid", "generic"], "default": "grid" }, "widget": "select", "bound_to": null, "required": false, "tooltip": "spatial-graph geometry: grid for Visium hexagons, generic otherwise" },
+    { "name": "n_neighs", "schema": { "type": "integer", "default": 6 }, "widget": "number", "bound_to": null, "required": false, "tooltip": "neighbors per node in the spatial graph (6 = Visium hexagonal grid)" }
+  ],
+  "steps": [
+    { "namespace": "gr", "function": "spatial_neighbors", "params": { "coord_type": { "$param": "coord_type" }, "n_neighs": { "$param": "n_neighs" } } },
+    { "namespace": "gr", "function": "spatial_autocorr", "params": { "mode": "geary" } }
+  ]
+}
