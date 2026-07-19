@@ -9,12 +9,12 @@ services:
       - "8080:80"
 
     # Single read-write data mount (DESIGN §19.9): inputs + saved checkpoints +
-    # snapshots share it. Bound to ./test-data (ships with the repo) so demo saves
-    # land alongside the sample datasets; point it at a dedicated folder in a real
-    # deployment.
+    # snapshots share it. Defaults to ./test-data (ships with the repo) so demo
+    # saves land alongside the sample datasets; override with SDS_DATA_HOST_DIR to
+    # point at a dedicated folder in a real deployment.
     volumes:
       - type: bind
-        source: ./test-data
+        source: ${SDS_DATA_HOST_DIR:-./test-data}
         target: /data
 
     environment:

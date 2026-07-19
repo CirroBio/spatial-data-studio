@@ -7,16 +7,17 @@ import { useAppStore } from '../../store/sessionStore';
 import { useArrowField } from '../../hooks/useArrowField';
 import {
   getImageInfo, putDisplay, saveSnapshot, getElements,
-  createShapeAnnotation, updateShapeAnnotation,
+  updateShapeAnnotation,
 } from '../../api';
 import { reportError } from '../../lib/errors';
 import TransformEditor from '../TransformEditor';
 import { isSpatialDisplay, type SpatialDisplaySpec, type ImageInfo } from '../../types';
 import type { ShapeAnnotation, ShapeGeometry, ShapeKind } from '../../schemas/annotations';
-import { defaultStroke, defaultFill, textGeometryAt } from '../../schemas/annotations';
-import { geometryFromDrag, trapezoidFromClicks, applyHandleDrag, translateGeometry } from '../../lib/shapeAnnotations';
+import { textGeometryAt } from '../../schemas/annotations';
+import { geometryFromDrag, applyHandleDrag, translateGeometry } from '../../lib/shapeAnnotations';
 import { useArrowPositions } from './useArrowPositions';
 import { useImageTiles } from './useImageTiles';
+import { useVivImageLayer } from './useVivImageLayer';
 import { useCanvasViewState, shapesFetchZoomThreshold } from './useCanvasViewState';
 import { useSpotColors, arrowToColorSource } from './useSpotColors';
 import { buildSpotLayer, estimateMeanSpacing } from './buildSpotLayer';
@@ -29,7 +30,7 @@ import { LoadingCue, ChannelLegend, CellColorLegend, DrawHint } from './CanvasOv
 
 type Point = [number, number];
 type ShapeDragTarget =
-  | { kind: 'create'; tool: Exclude<ShapeKind, 'trapezoid' | 'text'>; start: Point }
+  | { kind: 'create'; tool: Exclude<ShapeKind, 'polygon' | 'text'>; start: Point }
   | { kind: 'handle'; shapeId: string; handleId: string }
   | { kind: 'translate'; shapeId: string; start: Point; origin: ShapeGeometry };
 
@@ -76,7 +77,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   const {
     shapeAnnotations, activeShapeTool, selectedShapeId, draftVertices,
     setSelectedShapeId, addDraftVertex, clearDraft,
-    upsertShapeAnnotation, removeShapeAnnotationLocal,
+    upsertShapeAnnotation, commitNewShape,
   } = useAppStore();
   // In-progress drag (creating a shape, or dragging a selected shape's handle) is
   // local: it changes on every pointer move and only this canvas renders it.
@@ -150,20 +151,6 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
     setShapeDragPreview(null);
   }, [canvasMode, clearDraw, clearDraft, setSelectedShapeId]);
 
-  const commitNewShape = useCallback((geometry: ShapeGeometry) => {
-    const shape: ShapeAnnotation = {
-      id: crypto.randomUUID(),
-      geometry,
-      stroke: defaultStroke(),
-      // Line and text have no interior to fill.
-      fill: geometry.kind === 'line' || geometry.kind === 'text' ? undefined : defaultFill(),
-    };
-    upsertShapeAnnotation(shape); // optimistic — the job.completed refetch reconciles
-    createShapeAnnotation(sessionId, shape)
-      .catch((err) => { reportError('Create shape failed', err); removeShapeAnnotationLocal(shape.id); });
-    setSelectedShapeId(shape.id); // also clears activeShapeTool (see store)
-  }, [sessionId, upsertShapeAnnotation, removeShapeAnnotationLocal, setSelectedShapeId]);
-
   const handleClick = useCallback((info: PickingInfo) => {
     if (lassoMode && info.coordinate) {
       addDrawVertex([info.coordinate[0], info.coordinate[1]]);
@@ -172,20 +159,17 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
     if (!shapesMode || !info.coordinate) return;
     const pt: Point = [info.coordinate[0], info.coordinate[1]];
 
-    if (activeShapeTool === 'trapezoid') {
-      const next = [...draftVertices, pt];
-      const geometry = trapezoidFromClicks(next);
-      if (geometry) {
-        commitNewShape(geometry);
-        clearDraft();
-      } else {
-        addDraftVertex(pt);
-      }
+    if (activeShapeTool === 'polygon') {
+      // Each click drops a vertex; the shape is committed by the panel's Close
+      // Shape button (see AnnotationsPanel / commitNewShape).
+      addDraftVertex(pt);
       return;
     }
 
     if (activeShapeTool === 'text') {
-      commitNewShape(textGeometryAt(pt));
+      const vs = viewStateRef.current;
+      const z = vs ? (Array.isArray(vs.zoom) ? vs.zoom[0] : vs.zoom) ?? 0 : 0;
+      commitNewShape(textGeometryAt(pt, Math.pow(2, -z)));
       return;
     }
 
@@ -196,8 +180,8 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
         : undefined;
       setSelectedShapeId(hit ?? null);
     }
-  }, [lassoMode, shapesMode, activeShapeTool, draftVertices, addDrawVertex, addDraftVertex,
-      clearDraft, commitNewShape, setSelectedShapeId]);
+  }, [lassoMode, shapesMode, activeShapeTool, addDrawVertex, addDraftVertex,
+      commitNewShape, setSelectedShapeId]);
 
   // True when the pick hits the currently selected shape's body (its fill,
   // stroke, or text glyph) — the surface a drag translates.
@@ -211,8 +195,8 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   const handleShapeDragStart = useCallback((info: PickingInfo) => {
     if (!shapesMode || !info.coordinate) return;
     const pt: Point = [info.coordinate[0], info.coordinate[1]];
-    // Trapezoid and text are click-placed (see handleClick), not drag-created.
-    if (activeShapeTool && activeShapeTool !== 'trapezoid' && activeShapeTool !== 'text') {
+    // Polygon and text are click-placed (see handleClick), not drag-created.
+    if (activeShapeTool && activeShapeTool !== 'polygon' && activeShapeTool !== 'text') {
       setShapeDragTarget({ kind: 'create', tool: activeShapeTool, start: pt });
       setShapeDragPreview(geometryFromDrag(activeShapeTool, pt, pt));
       return;
@@ -288,6 +272,16 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   const legendVisible = display.encoding.legend_visible !== false;
   const legendTitle = display.encoding.legend_title || colorByLabel(colorByPath);
 
+  // GPU-composited image via Viv, when the backend manifest allows it. While the
+  // pyramid loads (or after a Viv error) `vivActive` is false and the PNG tile path
+  // below covers, so the image never blanks and failures fall back safely.
+  const { layer: vivLayer, active: vivActive } = useVivImageLayer({
+    imageInfo,
+    element: display.encoding.image_layer,
+    channels,
+    show: showImage,
+  });
+
   const { layers: imageLayers, loading: tilesLoading } = useImageTiles({
     imageInfo,
     sessionId,
@@ -295,7 +289,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
     viewState,
     size: canvasSize,
     visibleChannels,
-    show: showImage,
+    show: showImage && !vivActive,
   });
 
   // How the Cells layer renders. Points always draw; 'points+shapes' additionally
@@ -356,7 +350,9 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   });
 
   const layers = useMemo(() => {
-    const result: Layer[] = [...imageLayers];
+    // Viv (GPU-composited) replaces the PNG BitmapLayers when active; both keep the
+    // same no-depth params so points always draw over the image.
+    const result: Layer[] = vivActive && vivLayer ? [vivLayer] : [...imageLayers];
 
     if (showPoints && positions && colors) {
       // In 'points+shapes', the cell-boundary fills replace the points once loaded;
@@ -374,7 +370,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
     }
 
     return result;
-  }, [imageLayers, positions, colors, showPoints, shapesOverlay, polygonLayer,
+  }, [imageLayers, vivActive, vivLayer, positions, colors, showPoints, shapesOverlay, polygonLayer,
       display.encoding.point_size, display.encoding.opacity, marker]);
 
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -449,12 +445,12 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
     const handleGeometry = (shapeDragTarget?.kind === 'handle' || shapeDragTarget?.kind === 'translate')
       ? shapeDragPreview : selectedShape?.geometry;
     if (selectedShape && handleGeometry) {
-      shapeLayers.push(...buildShapeHandleLayer(handleGeometry, Math.pow(2, -zoom)));
+      shapeLayers.push(...buildShapeHandleLayer(handleGeometry));
     }
     if (shapeDragTarget?.kind === 'create' && shapeDragPreview) {
       shapeLayers.push(...buildDragPreviewLayers(shapeDragPreview));
     }
-    if (activeShapeTool === 'trapezoid' && draftVertices.length >= 1) {
+    if (activeShapeTool === 'polygon' && draftVertices.length >= 1) {
       if (draftVertices.length >= 2) {
         shapeLayers.push(new PathLayer<Point[]>({
           id: 'shape-draft-path', data: [draftVertices], getPath: (d) => d,

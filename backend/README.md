@@ -50,9 +50,9 @@ squidpy does not support 3.13+), created as in the root README:
 
 ```bash
 cd ..                                                # repo root
-python3.11 -m venv .venv-introspect && . .venv-introspect/bin/activate
-pip install -r backend/requirements.txt
-pip uninstall -y leidenalg igraph                    # GPL Leiden backends; use custom.leiden
+uv venv --python 3.11 .venv-introspect && . .venv-introspect/bin/activate
+uv pip install -r backend/requirements.txt
+uv pip uninstall leidenalg igraph                    # GPL Leiden backends; use custom.leiden
 cd backend
 SDS_DATA_DIR=../data SDS_CONTAINER_MEM_MB=16384 \
   uvicorn app.main:app --host 127.0.0.1 --port 8000

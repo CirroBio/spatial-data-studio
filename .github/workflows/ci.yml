@@ -1,0 +1,72 @@
+# Build + test gate for PRs and pushes to main.
+#
+# Backend job runs the full in-process round trip (backend/test_e2e.py), which is
+# where the snapshot schema/version gate lives (SNAPSHOT_CONTRACT.md §8, assertion
+# updated at backend/test_e2e.py). Frontend job typechecks and builds both the app
+# and the version-pinned viewer bundle.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11" # matches .venv-introspect (README "Run locally")
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.5.16" # matches docker/Dockerfile and the local dev venv
+          enable-cache: true
+          cache-dependency-glob: backend/requirements.txt
+
+      - name: Install backend deps
+        # Exactly the README/run.sh setup: install pinned deps, then strip the GPL
+        # Leiden backends (custom.leiden uses graspologic-native instead).
+        run: |
+          uv pip install --system -r backend/requirements.txt
+          uv pip uninstall --system leidenalg igraph
+
+      - name: Prepare test dataset
+        # test_e2e.py runs against test-data/visium_hne.zarr, which is gitignored
+        # and generated on demand (downloads squidpy's visium_hne example, ~375 MB).
+        run: python scripts/prepare_test_data.py
+
+      - name: Backend round-trip + schema gate
+        # Script-style test (no pytest collection): the repo's canonical backend
+        # check, and where the snapshot schema-version gate is asserted. A follow-up
+        # may narrow this to a lighter schema-gate-only run once one exists.
+        run: |
+          cd backend
+          PYTHONPATH=. python test_e2e.py
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install, typecheck, build
+        run: |
+          cd frontend
+          npm ci
+          npx tsc --noEmit -p tsconfig.app.json
+          npm run build
+          npm run build:app

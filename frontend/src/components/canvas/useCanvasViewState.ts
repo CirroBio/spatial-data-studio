@@ -1,9 +1,8 @@
-import { useState, useEffect, useCallback, useRef, type RefObject } from 'react';
+import { useState, useEffect, useCallback, type RefObject } from 'react';
 import type { OrthographicViewState } from '@deck.gl/core';
 import type { SpatialDisplaySpec, ImageInfo } from '../../types';
 import type { ScatterPositions } from './useArrowPositions';
-
-const ZOOM_LIMITS = { minZoom: -8, maxZoom: 8 };
+import { ZOOM_LIMITS, fitZoom, useCanvasSize } from './viewFit';
 
 // Zoom at which a cell of characteristic world diameter d reaches SHAPES_MIN_CELL_PX
 // on screen (d * 2**zoom px = px ⇒ zoom = log2(px / d)). Below this the cells are too
@@ -31,24 +30,9 @@ export function useCanvasViewState(
   fitToData: () => OrthographicViewState | null;
 } {
   const [viewState, setViewState] = useState<OrthographicViewState | null>(null);
-  const [canvasSize, setCanvasSize] = useState<{ width: number; height: number } | null>(null);
-  const containerRef = useRef<HTMLDivElement | null>(null);
+  const { containerRef, canvasSize } = useCanvasSize();
 
-  // Track the canvas pixel size so the tile layer can pick a level of detail and
-  // enumerate which tiles fall in the viewport.
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const update = () => setCanvasSize({ width: el.clientWidth, height: el.clientHeight });
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
-  // Compute a view state that fits the data bounds within the current canvas size.
-  // OrthographicView: world units per pixel = 1 / 2**zoom, so to fit an extent E
-  // into P pixels we need zoom = log2(P / E). A margin keeps the data off the edges.
+  // Compute a view state that frames the data bounds within the current canvas size.
   const fitToData = useCallback((): OrthographicViewState | null => {
     if (!positions) return null;
     let { d0min, d0max, d1min, d1max } = positions.bounds;
@@ -68,12 +52,9 @@ export function useCanvasViewState(
     const extentX = Math.max(1, d0max - d0min);
     const extentY = Math.max(1, d1max - d1min);
     const el = containerRef.current;
-    const pxW = el?.clientWidth || window.innerWidth;
-    const pxH = el?.clientHeight || window.innerHeight;
-    const MARGIN = 0.9; // leave ~10% padding around the data
-    const zoom = Math.log2(Math.min((pxW * MARGIN) / extentX, (pxH * MARGIN) / extentY));
+    const zoom = fitZoom(extentX, extentY, el?.clientWidth || window.innerWidth, el?.clientHeight || window.innerHeight);
     return { target: [centerX, centerY, 0], zoom, ...ZOOM_LIMITS };
-  }, [positions, showImage, imageInfo]);
+  }, [positions, showImage, imageInfo, containerRef]);
 
   // A freshly loaded session always frames its data (the persisted display viewport
   // is not restored here — it only seeds a snapshot's viewport server-side). The

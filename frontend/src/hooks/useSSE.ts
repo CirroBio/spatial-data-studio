@@ -12,6 +12,7 @@ import type {
   SessionCreatedEvent,
   SessionRemovedEvent,
   ResourceSample,
+  MemoryWarningEvent,
 } from '../types';
 
 function parseEvent<T>(e: MessageEvent): T {
@@ -135,11 +136,17 @@ export function useSSE(): void {
       // the user isn't left with a silently-closed form and no feedback — but only to
       // the viewer of that session, so another user's failure doesn't toast here.
       if (data.session_id !== activeSessionId) return;
-      // Frontend jobs keep failures in history (keep_failures=True); flip the row
-      // from the event so it doesn't linger as "running" behind a blocked refetch.
+      // Failed jobs stay in history (audit-log model); flip the row from the event
+      // so it doesn't linger as "running" behind a blocked refetch.
       setEntryStatus(data.job_id, 'failed');
       const prefix = data.source ? `[${data.source} @ ${data.timestamp}] ` : '';
       pushNotification({ kind: 'error', message: `${prefix}${data.error ?? 'unknown error'}` });
+      // Shape edits/deletes apply optimistically to local state before the job runs;
+      // if it failed, re-read the authoritative geometry so the canvas doesn't keep a
+      // change (or deletion) that never persisted.
+      if (data.kind === 'shape_annotate') {
+        void refreshShapeAnnotations(data.session_id);
+      }
       void refreshSessionState(data.session_id);
     });
 
@@ -189,6 +196,17 @@ export function useSSE(): void {
     es.addEventListener('resource.sample', (e: MessageEvent) => {
       const data = parseEvent<ResourceSample>(e);
       setResourceSample(data);
+    });
+
+    // Backend memory pressure: a job held at the admission boundary, or a store opened
+    // read-only because its app_state schema is newer. Throttled, since a held job
+    // re-publishes every retry until the pressure clears.
+    let lastMemoryWarnAt = 0;
+    es.addEventListener('memory.warning', (e: MessageEvent) => {
+      const data = parseEvent<MemoryWarningEvent>(e);
+      if (Date.now() - lastMemoryWarnAt < 10000) return;
+      lastMemoryWarnAt = Date.now();
+      pushNotification({ kind: 'info', message: data.message });
     });
 
     es.onerror = () => {

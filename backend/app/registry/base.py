@@ -109,8 +109,8 @@ class ParamSpec:
 
 @dataclass
 class CallResult:
-    """The function contract envelope (v3 Part 2). Every function — library or
-    custom, frontend- or AI-invoked — returns this shape."""
+    """The result envelope every function — library or custom — returns to the
+    session worker: status plus any produced object, figure, diff, or error."""
     status: str                       # completed | drawn | failed
     log: str = ""
     structural_diff: dict = field(default_factory=dict)
@@ -119,8 +119,6 @@ class CallResult:
     figure_pdf: bytes | None = None
     new_object: object | None = None
     result_value: object | None = None  # extract-class return (e.g. a DataFrame), JSON-safe summary
-    manifest_before: str | None = None  # data manifest text captured before the call (v3 Part 3)
-    manifest_after: str | None = None   # ... and after
     error: str | None = None
 
 

@@ -103,7 +103,10 @@ export function buildShapeAnnotationLayers(
       // TextLayer getAngle is degrees CCW, hence the negation.
       getAngle: (d) => (d.geometry.kind === 'text' ? -(d.geometry.rotation * 180) / Math.PI : 0),
       getColor: (d) => [...hexToRgb(d.stroke.color), 255],
-      sizeUnits: 'pixels',
+      // World-space size (fontSize is stored in world units): the label keeps a
+      // constant span relative to the image and scales with zoom, unlike the
+      // pixel-constant stroke/arrowheads above.
+      sizeUnits: 'common',
       getTextAnchor: 'middle',
       getAlignmentBaseline: 'center',
       characterSet: 'auto', // render whatever characters the user typed
@@ -118,8 +121,8 @@ export function buildShapeAnnotationLayers(
 /** Edit-handle overlay for the selected shape, shown only while the shape
  * annotation editor is active: a connector arm from the centroid out to the
  * green rotate handle, then the round vertex/radius/rotate handles on top. */
-export function buildShapeHandleLayer(geometry: ShapeGeometry, unitsPerPixel = 1): Layer[] {
-  const handles = shapeHandles(geometry, unitsPerPixel);
+export function buildShapeHandleLayer(geometry: ShapeGeometry): Layer[] {
+  const handles = shapeHandles(geometry);
   if (!handles.length) return [];
   const layers: Layer[] = [];
 

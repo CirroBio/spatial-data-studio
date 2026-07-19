@@ -1,14 +1,14 @@
 import type { SnapshotConfig } from '../types';
 
 // A saved snapshot as returned by GET /api/snapshots. `url` serves the JSON
-// SnapshotConfig; `checkpoint_url` is the immutable .zarr.zip it reads from.
+// SnapshotConfig; `checkpoint_name` is the immutable .zarr.zip it reads from.
 export type Snapshot = {
   name: string;
   url: string;
   label: string;
   created: string;  // ISO timestamp
   kind: 'spatial' | 'embedding';
-  checkpoint_url: string;
+  checkpoint_name: string;
 };
 
 // Fetch a snapshot's JSON config. Plain fetch (not the /api client) so the same

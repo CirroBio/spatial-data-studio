@@ -17,7 +17,7 @@ import importlib
 import traceback
 
 from .base import (
-    _TABLE_FACETS, _SDATA_FACETS, capture_log, keyset, diff, render_plot, short_error,
+    _TABLE_FACETS, capture_log, keyset, diff, render_plot, short_error,
 )
 from ..sessions import compute_pool
 

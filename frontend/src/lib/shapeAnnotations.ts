@@ -15,17 +15,17 @@ export const ROTATE_HANDLE_ID = 'rotate';
 // How far past the shape's edge the rotate handle floats, as a fraction of the
 // shape's radius — proportional so it stays a consistent visual distance at any zoom.
 const ROTATE_HANDLE_GAP = 0.3;
-// A text label has no world-space size (its glyphs are pixel-sized), so its rotate
-// handle floats this many font-heights above the anchor, converted to world units
-// via unitsPerPixel so it tracks the glyph at any zoom.
+// A text label's rotate handle floats this many font-heights above the anchor.
+// fontSize is in world units, so this offset is world-space too and tracks the
+// glyph at any zoom.
 const TEXT_ROTATE_HANDLE_GAP = 1.2;
 
 // ---- creation --------------------------------------------------------------
 
 /** Build a shape's geometry from a drag's down-point and current point. Not used
- * for 'trapezoid' (built one click at a time, see trapezoidFromClicks) or 'text'
+ * for 'polygon' (built one click at a time, see polygonFromClicks) or 'text'
  * (placed by a single click, see textGeometryAt). */
-export function geometryFromDrag(tool: Exclude<ShapeKind, 'trapezoid' | 'text'>, p0: Point, p1: Point): ShapeGeometry {
+export function geometryFromDrag(tool: Exclude<ShapeKind, 'polygon' | 'text'>, p0: Point, p1: Point): ShapeGeometry {
   if (tool === 'line') {
     return { kind: 'line', vertices: [p0, p1] };
   }
@@ -44,8 +44,10 @@ export function geometryFromDrag(tool: Exclude<ShapeKind, 'trapezoid' | 'text'>,
   return { kind: 'box', vertices: [[x0, y0], [x1, y0], [x1, y1], [x0, y1]] };
 }
 
-export function trapezoidFromClicks(vertices: Point[]): ShapeGeometry | null {
-  return vertices.length === 4 ? { kind: 'trapezoid', vertices: vertices as [Point, Point, Point, Point] } : null;
+/** Close the click-collected draft into a polygon. Needs at least 3 vertices; the
+ * ring is closed implicitly (last vertex connects back to the first). */
+export function polygonFromClicks(vertices: Point[]): ShapeGeometry | null {
+  return vertices.length >= 3 ? { kind: 'polygon', vertices } : null;
 }
 
 // ---- rendering outline ------------------------------------------------------
@@ -64,7 +66,7 @@ export function ellipseToPolygon(
 }
 
 /** Flat point list for rendering: 2 points (open path) for a line, a closed ring
- * for box/trapezoid, or a polygon approximation for an ellipse. */
+ * for box/polygon, or a polygon approximation for an ellipse. */
 export function shapeOutline(geometry: ShapeGeometry): Point[] {
   if (geometry.kind === 'ellipse') {
     return ellipseToPolygon(geometry.center, geometry.radiusX, geometry.radiusY, geometry.rotation);
@@ -91,7 +93,8 @@ export function translateGeometry(geometry: ShapeGeometry, dx: number, dy: numbe
   if (geometry.kind === 'text') return { ...geometry, position: shift(geometry.position) };
   const moved = (geometry.vertices as Point[]).map(shift);
   if (geometry.kind === 'line') return { ...geometry, vertices: moved as [Point, Point] };
-  return { ...geometry, vertices: moved as [Point, Point, Point, Point] };
+  if (geometry.kind === 'box') return { ...geometry, vertices: moved as [Point, Point, Point, Point] };
+  return { ...geometry, vertices: moved }; // polygon: free-form ring
 }
 
 /** Rotation pivot: an ellipse's center, a text label's anchor, or a
@@ -110,15 +113,12 @@ function rotatePoint(p: Point, pivot: Point, angle: number): Point {
 
 /** World position of the rotate handle. It floats off the shape along an axis
  * that co-rotates with the geometry (an ellipse's own +Y axis; a polygon's edge
- * normal; a text label's own +Y, offset by font-height * unitsPerPixel) so
- * dragging it maps cleanly to an angle about the centroid. `unitsPerPixel` is
- * only consulted for text (whose size is in screen pixels); for the angle math
- * in applyHandleDrag its magnitude is irrelevant — only the direction matters —
- * so the default of 1 is safe there. */
-function rotateHandlePosition(geometry: ShapeGeometry, unitsPerPixel = 1): Point {
+ * normal; a text label's own +Y, offset by font-height) so dragging it maps
+ * cleanly to an angle about the centroid. All offsets are world-space. */
+function rotateHandlePosition(geometry: ShapeGeometry): Point {
   if (geometry.kind === 'text') {
     const { position, fontSize, rotation } = geometry;
-    const offset = fontSize * TEXT_ROTATE_HANDLE_GAP * unitsPerPixel;
+    const offset = fontSize * TEXT_ROTATE_HANDLE_GAP;
     return rotatePoint([position[0], position[1] + offset], position, rotation);
   }
   if (geometry.kind === 'ellipse') {
@@ -149,25 +149,24 @@ export interface ShapeHandle {
 }
 
 /** Handle positions for the selected shape's edit overlay. Vertex handles for
- * line/box/trapezoid (one per vertex, id = vertex index); center + two
- * axis-radius handles for an ellipse. Line/box/trapezoid/ellipse also get a
+ * line/box/polygon (one per vertex, id = vertex index); center + two
+ * axis-radius handles for an ellipse. Line/box/polygon/ellipse also get a
  * rotate handle (id = ROTATE_HANDLE_ID) floating off the edge — dragging it
  * spins the whole shape about its centroid (ellipse via its `rotation` field,
  * polygons/lines by rotating their vertices). A text label gets a move handle at
- * its anchor (id 'center') plus a rotate handle. `unitsPerPixel` places the text
- * rotate handle a consistent screen distance above the glyph at any zoom. */
-export function shapeHandles(geometry: ShapeGeometry, unitsPerPixel = 1): ShapeHandle[] {
+ * its anchor (id 'center') plus a rotate handle. */
+export function shapeHandles(geometry: ShapeGeometry): ShapeHandle[] {
   if (geometry.kind === 'text') {
     return [
       { id: 'center', position: geometry.position },
-      { id: ROTATE_HANDLE_ID, position: rotateHandlePosition(geometry, unitsPerPixel) },
+      { id: ROTATE_HANDLE_ID, position: rotateHandlePosition(geometry) },
     ];
   }
   const base: ShapeHandle[] = geometry.kind === 'ellipse'
     ? [
         { id: 'center', position: geometry.center },
-        { id: 'radiusX', position: [geometry.center[0] + geometry.radiusX, geometry.center[1]] },
-        { id: 'radiusY', position: [geometry.center[0], geometry.center[1] + geometry.radiusY] },
+        { id: 'radiusX', position: rotatePoint([geometry.center[0] + geometry.radiusX, geometry.center[1]], geometry.center, geometry.rotation) },
+        { id: 'radiusY', position: rotatePoint([geometry.center[0], geometry.center[1] + geometry.radiusY], geometry.center, geometry.rotation) },
       ]
     : geometry.vertices.map((v, i) => ({ id: String(i), position: v as Point }));
   return [...base, { id: ROTATE_HANDLE_ID, position: rotateHandlePosition(geometry) }];
@@ -196,25 +195,27 @@ export function applyHandleDrag(geometry: ShapeGeometry, handleId: string, newPo
     }
     const rotated = (geometry.vertices as Point[]).map((v) => rotatePoint(v, pivot, delta));
     if (geometry.kind === 'line') return { ...geometry, vertices: rotated as [Point, Point] };
-    return { ...geometry, vertices: rotated as [Point, Point, Point, Point] };
+    if (geometry.kind === 'box') return { ...geometry, vertices: rotated as [Point, Point, Point, Point] };
+    return { ...geometry, vertices: rotated }; // polygon
   }
   if (geometry.kind === 'ellipse') {
     if (handleId === 'center') {
       const [dx, dy] = [newPos[0] - geometry.center[0], newPos[1] - geometry.center[1]];
       return { ...geometry, center: [geometry.center[0] + dx, geometry.center[1] + dy] };
     }
+    // Project the drag into the ellipse's own (unrotated) frame so a radius
+    // handle tracks along its rotated axis rather than the world X/Y axis.
+    const local = rotatePoint(newPos, geometry.center, -geometry.rotation);
     if (handleId === 'radiusX') {
-      return { ...geometry, radiusX: Math.abs(newPos[0] - geometry.center[0]) };
+      return { ...geometry, radiusX: Math.abs(local[0] - geometry.center[0]) };
     }
-    return { ...geometry, radiusY: Math.abs(newPos[1] - geometry.center[1]) };
+    return { ...geometry, radiusY: Math.abs(local[1] - geometry.center[1]) };
   }
   const i = Number(handleId);
-  if (geometry.kind === 'line') {
-    const vertices = geometry.vertices.map((v, idx) => (idx === i ? newPos : v)) as [Point, Point];
-    return { ...geometry, vertices };
-  }
-  const vertices = geometry.vertices.map((v, idx) => (idx === i ? newPos : v)) as [Point, Point, Point, Point];
-  return { ...geometry, vertices };
+  const moved = (geometry.vertices as Point[]).map((v, idx) => (idx === i ? newPos : v));
+  if (geometry.kind === 'line') return { ...geometry, vertices: moved as [Point, Point] };
+  if (geometry.kind === 'box') return { ...geometry, vertices: moved as [Point, Point, Point, Point] };
+  return { ...geometry, vertices: moved }; // polygon
 }
 
 // ---- arrowheads --------------------------------------------------------------

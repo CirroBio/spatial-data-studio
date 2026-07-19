@@ -40,6 +40,7 @@ function formatTimestamp(mtime: number): string {
 
 export default function NewSessionDialog({ onClose, onCreated }: Props) {
   const functions = useAppStore((s) => s.functions);
+  const pushNotification = useAppStore((s) => s.pushNotification);
   const readers = functions.filter((f) => f.effect_class === 'read');
 
   const [mode, setMode] = useState<'load' | 'import'>('load');
@@ -56,7 +57,7 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
   const inputKind = selectedReader?.input_kind ?? 'folder';
   const browserTitle = mode === 'load' ? 'Checkpoints'
     : inputKind === 'folder' ? 'Data folder' : inputKind === 'file' ? 'Data file' : 'Data path';
-  const browserHint = mode === 'load' ? 'saved checkpoints & .zarr stores in the data folder'
+  const browserHint = mode === 'load' ? 'saved .sdata.zarr.zip checkpoints in the data folder'
     : inputKind === 'folder' ? 'open the raw data folder for the chosen reader'
     : inputKind === 'file' ? 'pick a data file for the chosen reader'
     : 'pick a .zarr folder, or a .zarr.zip / .zarr.tar.gz archive';
@@ -148,6 +149,12 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
     try {
       const finalName = name.trim() || deriveSessionName(chosen);
       const session = await createSession({ name: finalName || undefined, source });
+      if (session.hash_check) {
+        pushNotification({
+          kind: session.hash_check.ok ? 'info' : 'error',
+          message: session.hash_check.message,
+        });
+      }
       onCreated(session);
     } catch (err) {
       setError(formatError(err));

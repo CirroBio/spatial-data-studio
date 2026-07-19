@@ -1,4 +1,4 @@
-// Shape-annotation editor schema (arrows, lines, boxes, trapezoids, ellipses drawn
+// Shape-annotation editor schema (arrows, lines, boxes, polygons, ellipses drawn
 // directly on the canvas). Vertices/centers are in the same data/world coordinate
 // space SpatialCanvas already hands to draw interactions (PickingInfo.coordinate).
 // backend/app/schemas/annotations.py is the hand-kept pydantic counterpart —
@@ -31,7 +31,8 @@ export type FillStyle = z.infer<typeof FillStyle>;
 
 const LineGeometry = z.object({ kind: z.literal('line'), vertices: z.tuple([Point, Point]) });
 const BoxGeometry = z.object({ kind: z.literal('box'), vertices: z.tuple([Point, Point, Point, Point]) });
-const TrapezoidGeometry = z.object({ kind: z.literal('trapezoid'), vertices: z.tuple([Point, Point, Point, Point]) });
+// A free-form closed polygon; its ring connects the last vertex back to the first.
+const PolygonGeometry = z.object({ kind: z.literal('polygon'), vertices: z.array(Point).min(3) });
 const EllipseGeometry = z.object({
   kind: z.literal('ellipse'),
   center: Point,
@@ -48,14 +49,16 @@ const TextGeometry = z.object({
   kind: z.literal('text'),
   position: Point,
   text: z.string(),
-  fontSize: z.number().min(1),
+  // World-space glyph height, so the label keeps a constant span relative to the
+  // image and scales with zoom (see the TextLayer's sizeUnits: 'common').
+  fontSize: z.number().positive(),
   rotation: z.number().default(0),
 });
 
 export const ShapeGeometry = z.discriminatedUnion('kind', [
   LineGeometry,
   BoxGeometry,
-  TrapezoidGeometry,
+  PolygonGeometry,
   EllipseGeometry,
   TextGeometry,
 ]);
@@ -72,13 +75,18 @@ export const ShapeAnnotation = z.object({
 });
 export type ShapeAnnotation = z.infer<typeof ShapeAnnotation>;
 
-export const SHAPE_KINDS: ShapeKind[] = ['line', 'box', 'trapezoid', 'ellipse', 'text'];
+export const SHAPE_KINDS: ShapeKind[] = ['line', 'box', 'polygon', 'ellipse', 'text'];
 
+// Nominal on-screen height (px) a new label gets at the zoom it is placed. It is
+// converted to the stored world-space fontSize via unitsPerPixel so the label
+// looks the same at creation regardless of the dataset's coordinate scale.
 export const DEFAULT_TEXT_FONT_SIZE = 16;
 
-/** Geometry for a new text label placed by a single click at `position`. */
-export function textGeometryAt(position: [number, number]): ShapeGeometry {
-  return { kind: 'text', position, text: 'Text', fontSize: DEFAULT_TEXT_FONT_SIZE, rotation: 0 };
+/** Geometry for a new text label placed by a single click at `position`.
+ * `unitsPerPixel` (world units per screen pixel at the current zoom) converts the
+ * nominal pixel default into the stored world-space fontSize. */
+export function textGeometryAt(position: [number, number], unitsPerPixel: number): ShapeGeometry {
+  return { kind: 'text', position, text: 'Text', fontSize: DEFAULT_TEXT_FONT_SIZE * unitsPerPixel, rotation: 0 };
 }
 
 export function defaultStroke(): StrokeStyle {

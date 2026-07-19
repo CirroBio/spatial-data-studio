@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -16,6 +17,8 @@ from .transport import tables
 from .prewarm import PREWARM
 from . import datasets
 from . import imaging
+
+_log = logging.getLogger(__name__)
 
 MANAGER: SessionManager | None = None
 _READY = False
@@ -50,11 +53,17 @@ def _submit_prewarm_tasks():
 
 async def _resource_loop():
     interval = 1.0 / config.RESOURCE_HZ
+    warned = False
     while True:
         try:
             BUS._publish_inloop("resource.sample", MANAGER.resource_sample())
-        except Exception:
-            pass
+            warned = False
+        except Exception as e:
+            # Sampling runs every tick; log once when it starts failing (and again
+            # after a recovery) rather than spamming a warning per second.
+            if not warned:
+                _log.warning("resource sampling failed (%s); retrying each tick", e)
+                warned = True
         await asyncio.sleep(interval)
 
 
@@ -153,7 +162,9 @@ async def create_session(body: dict):
             raise HTTPException(400, "source.kind must be 'load' or 'read'")
     except (RuntimeError, FileNotFoundError, KeyError) as e:
         raise HTTPException(400, str(e))
-    return _mgr().summary(sess)
+    # `hash_check` is present only when loading a hash-named checkpoint; the client
+    # surfaces it as a toast (match or mismatch). None for imports / unhashed loads.
+    return {**_mgr().summary(sess), "hash_check": sess.hash_check}
 
 
 # ---- filesystem browse (for the New Session path typeahead) ----------------
@@ -200,10 +211,10 @@ async def fs_browse(path: str | None = None, include_files: bool = False):
 
 @app.get("/api/fs/datasets")
 async def fs_datasets():
-    """Every loadable SpatialData store (checkpoints and raw `.zarr`) found by
-    scanning DATA_DIR — the New Session load picker and the Cirro upload session
-    picker show these on click, no typing needed. Served from the prewarmed cache
-    (datasets.py); rescanned only after a save invalidates it."""
+    """Every saved checkpoint (`.sdata.zarr.zip`) found by scanning DATA_DIR — the
+    New Session load picker and the Cirro upload session picker show these on click,
+    no typing needed. Served from the prewarmed cache (datasets.py); rescanned only
+    after a save invalidates it."""
     found = await _in_executor(datasets.list_datasets, data_roots())
     return {"datasets": found}
 
@@ -378,7 +389,7 @@ async def annotate(sid: str, body: dict):
     return {"job_id": job_id}
 
 
-# ---- shape annotations (arrows/lines/boxes/trapezoids/ellipses) -----------
+# ---- shape annotations (arrows/lines/boxes/polygons/ellipses) -----------
 @app.get("/api/sessions/{sid}/shape-annotations")
 async def list_shape_annotations(sid: str):
     sess = _session(sid)
@@ -447,18 +458,29 @@ async def get_checkpoint(name: str):
     return FileResponse(str(target), media_type="application/zip")
 
 
-@app.get("/snapshots/{name}")
+_SNAPSHOT_MEDIA = {
+    ".sview.json": "application/json",   # the view config
+    ".html": "text/html",                # the standalone entry page
+    ".zarr.zip": "application/zip",       # the checkpoint the config's relative `data` points at
+}
+
+
+@app.api_route("/snapshots/{name}", methods=["GET", "HEAD"])
 async def get_snapshot(name: str):
-    """Serve a single snapshot config (`*.sview.json`) by name from DATA_DIR. A
-    name-validated route rather than a static mount of the whole folder, so the
-    checkpoints, raw datasets, and `.rasters`/`.save-` caches sharing DATA_DIR are
-    never exposed. The in-app viewer fetches this URL directly."""
-    if not name.endswith(".sview.json") or "/" in name or "\\" in name:
+    """Serve a snapshot's three colocated file kinds by name from DATA_DIR: the
+    `.sview.json` config, its `.html` entry page, and the `.zarr.zip` checkpoint its
+    relative `data` path resolves to (a sibling under /snapshots/, so the same path
+    resolves live and in a published bundle). A name-validated route rather than a
+    static mount of the whole folder, so the raw datasets and `.rasters`/`.save-`
+    caches sharing DATA_DIR stay unexposed. FileResponse honors Range (206) and HEAD
+    so the browser (zarrita.js) can size- and range-read the checkpoint."""
+    media_type = next((m for ext, m in _SNAPSHOT_MEDIA.items() if name.endswith(ext)), None)
+    if media_type is None or "/" in name or "\\" in name:
         raise HTTPException(404, "not found")
     target = (config.DATA_DIR / name).resolve()
     if not within_data_dir(target) or not target.is_file():
         raise HTTPException(404, "not found")
-    return FileResponse(str(target), media_type="application/json")
+    return FileResponse(str(target), media_type=media_type)
 
 
 @app.get("/api/about/licenses")
@@ -777,7 +799,30 @@ async def image_info(sid: str, element: str):
 
     def _info():
         table = sess.active_table() if sess.active_table_key else None
-        return imaging.image_info(sess.sdata, element, table)
+        # Base manifest (dims/levels/pixel_to_world/channels). Kept exactly as-is —
+        # snapshots.py embeds this dict verbatim as render.image, whose shape is frozen
+        # by the snapshot schema gate, so the client-compositing fields below are added
+        # only on this live endpoint, never inside imaging.image_info.
+        info = imaging.image_info(sess.sdata, element, table)
+        is_rgb = imaging._is_rgb(sess.sdata, element)
+        num_channels = info["channels"]
+        # Client (Viv) compositing is possible only when the feature is on, the channel
+        # count fits a shader pass (RGB is always <=3), AND we actually have an on-disk
+        # normalized zarr store to serve for this element (only non-canonical rasters are
+        # rebuilt into raster_cache_dir; canonical ones have no served store, so they stay
+        # on the PNG tile path). Without the store the raster_base_url would 404, so gate
+        # on it here — the frontend treats client_compositing=false as "use PNG tiles".
+        has_store = element in sess.raster_stores
+        client_compositing = bool(
+            config.CLIENT_IMAGE_COMPOSITING and has_store
+            and (num_channels <= config.CLIENT_IMAGE_MAX_CHANNELS or is_rgb))
+        info["client_compositing"] = client_compositing
+        info["raster_base_url"] = f"/api/sessions/{sid}/raster/{element}"
+        info["zarr_group_path"] = f"images/{element}"
+        info["contrast_limits"] = [[0.0, hi] for hi in
+                                   imaging.channel_contrast_limits(sess.sdata, element)]
+        info["is_rgb"] = is_rgb
+        return info
 
     try:
         return await _read_locked(sess, _info)
@@ -818,6 +863,81 @@ async def image_tile(sid: str, element: str, level: int, col: int, row: int,
                     headers={"Cache-Control": "public, max-age=3600"})
 
 
+# ---- raw raster zarr (client-side Viv compositing) -------------------------
+# Serves the session's on-disk normalized raster zarr store so the browser (zarrita
+# FetchStore rooted at .../raster/{element}) can read raw per-channel chunks and
+# composite on the GPU, instead of fetching server-composited PNG tiles. The PNG
+# tile path above stays the fallback. See image_info's client_compositing field.
+def _raster_file(store_dir: str, rel: str) -> Path | None:
+    """Resolve zarr key `rel` under `store_dir`, or None if it escapes the store
+    (absolute, backslash, or `..`) — mirrors config._within_dir path safety. The
+    store dir is under DATA_DIR but this bounds reads to the one element's store."""
+    if rel.startswith("/") or "\\" in rel or ".." in rel.split("/"):
+        return None
+    root = Path(store_dir).resolve()
+    target = (root / rel).resolve()
+    if target != root and root not in target.parents:
+        return None
+    return target
+
+
+def _byte_range_response(data: bytes, media: str, range_header: str | None, is_head: bool) -> Response:
+    """Serve in-memory `data` with HTTP Range/HEAD support. The bytes are read under
+    the session read lock (see raster_store) and handed here already in memory, so a
+    concurrent rmtree of the live store can't race a lazily-streamed file read."""
+    total = len(data)
+    headers = {"Accept-Ranges": "bytes", "Cache-Control": "no-cache"}  # live store can be swapped
+    if range_header and range_header.startswith("bytes="):
+        spec = range_header[len("bytes="):].split(",")[0].strip()
+        start_s, _, end_s = spec.partition("-")
+        if start_s == "":  # suffix range: last N bytes
+            start, end = max(0, total - int(end_s)), total - 1
+        else:
+            start = int(start_s)
+            end = int(end_s) if end_s else total - 1
+        if start > end or start >= total:
+            return Response(status_code=416, headers={**headers, "Content-Range": f"bytes */{total}"})
+        end = min(end, total - 1)
+        headers["Content-Range"] = f"bytes {start}-{end}/{total}"
+        headers["Content-Length"] = str(end - start + 1)
+        return Response(content=b"" if is_head else data[start:end + 1], status_code=206,
+                        media_type=media, headers=headers)
+    headers["Content-Length"] = str(total)
+    return Response(content=b"" if is_head else data, media_type=media, headers=headers)
+
+
+@app.api_route("/api/sessions/{sid}/raster/{element}/{path:path}", methods=["GET", "HEAD"])
+async def raster_store(sid: str, element: str, path: str, request: Request):
+    sess = _session(sid)
+    is_head = request.method == "HEAD"
+    range_header = request.headers.get("range")
+
+    def _read():
+        # Resolve AND read while holding the read lock: object-adoption
+        # (session.py::_run_call), perform_subset, and close() all rmtree/replace the
+        # raster cache dir under the write lock, so reading the bytes into memory here
+        # (rather than streaming a FileResponse lazily after the handler returns) is
+        # what guarantees the store can't be deleted mid-read. Files are one 512-chunk
+        # each (<= a few MB), so a single in-memory read never stalls a writer.
+        with sess.lock.reading():
+            store_dir = sess.raster_stores.get(element)
+            if store_dir is None or not Path(store_dir).is_dir():
+                return None
+            target = _raster_file(store_dir, path)
+            # A missing chunk file is a zarr empty/fill chunk: 404 is correct (zarrita
+            # reads it as the array's fill value). Same for a bad key or a gone store.
+            if target is None or not target.is_file():
+                return None
+            media = "application/json" if target.name.endswith(".json") else "application/octet-stream"
+            return target.read_bytes(), media
+
+    result = await _in_executor(_read)
+    if result is None:
+        raise HTTPException(404, "not found")
+    data, media = result
+    return _byte_range_response(data, media, range_header, is_head)
+
+
 # ---- SSE -------------------------------------------------------------------
 @app.get("/api/events")
 async def events(request: Request):
@@ -844,9 +964,10 @@ async def reject_websocket(websocket: WebSocket, _path: str):
     await websocket.close(code=1000)
 
 
-# Snapshot configs (`*.sview.json`) are served by the name-validated
-# GET /snapshots/{name} route above, not a static mount — DATA_DIR also holds
-# checkpoints and raw datasets that must not be wholesale-exposed.
+# Snapshot files (`*.sview.json` configs, `*.html` pages, and the `*.zarr.zip`
+# checkpoints they reference) are served by the name-validated GET /snapshots/{name}
+# route above, not a static mount — DATA_DIR also holds raw datasets that must not be
+# wholesale-exposed.
 
 # ---- static SPA (optional; served by edge in prod) -------------------------
 if config.STATIC_DIR and config.STATIC_DIR.exists():

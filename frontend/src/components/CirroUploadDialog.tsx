@@ -24,10 +24,10 @@ function savedAt(mtime: number): string {
 }
 
 // A saved session's `path` ends in its content-hashed checkpoint filename, and a
-// snapshot's `checkpoint_url` ends in the same filename — so a snapshot belongs to
+// snapshot's `checkpoint_name` is that same filename — so a snapshot belongs to
 // the session whose checkpoint it reads from.
-function checkpointName(pathOrUrl: string): string {
-  return pathOrUrl.split('/').pop() ?? '';
+function checkpointName(pathOrName: string): string {
+  return pathOrName.split('/').pop() ?? '';
 }
 
 export default function CirroUploadDialog({ onClose }: Props) {
@@ -66,7 +66,7 @@ export default function CirroUploadDialog({ onClose }: Props) {
   // whose checkpoint belongs to a selected session are offered.
   const selectedCheckpoints = new Set([...selectedSessions].map(checkpointName));
   const availableSnapshots = (snapshots ?? []).filter(
-    (s) => s.checkpoint_url && selectedCheckpoints.has(checkpointName(s.checkpoint_url)),
+    (s) => s.checkpoint_name && selectedCheckpoints.has(checkpointName(s.checkpoint_name)),
   );
 
   function toggleSession(path: string) {
@@ -77,7 +77,7 @@ export default function CirroUploadDialog({ onClose }: Props) {
     setSelectedSnapshots((prev) => new Set(
       [...prev].filter((name) => {
         const snap = snapshots?.find((s) => s.name === name);
-        return !!snap?.checkpoint_url && checkpoints.has(checkpointName(snap.checkpoint_url));
+        return !!snap?.checkpoint_name && checkpoints.has(checkpointName(snap.checkpoint_name));
       }),
     ));
   }

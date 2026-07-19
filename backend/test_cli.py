@@ -75,7 +75,7 @@ def main() -> int:
 
         # the saved store reloads with the recipe's compute history + plot record
         from app.persistence.store import load_spatialdata
-        sdata, app_state, _newer, _extract = load_spatialdata(out_zip)
+        sdata, app_state, _newer, _extract, _hash = load_spatialdata(out_zip)
         fns = [c["function"] for c in app_state["compute_history"]]
         assert fns == ["spatial_neighbors", "nhood_enrichment"], fns
         assert any(p["function"] == "nhood_enrichment" for p in app_state["plots"]), app_state["plots"]

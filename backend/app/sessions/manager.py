@@ -44,15 +44,16 @@ class SessionManager:
         self._check_capacity()
         resolved = str(_resolve_or_raise(path))  # validated, resolved path for every fs op below
         self._check_admission(estimate_resident_mb(resolved))
-        sdata, app_state, newer, extract_dir = load_spatialdata(resolved)
+        sdata, app_state, newer, extract_dir, hash_check = load_spatialdata(resolved)
         sid = str(uuid.uuid4())
         name = name or _basename(resolved)
         sess = Session(sid, name, sdata, app_state, self, store_path=resolved)
         sess.extract_dir = extract_dir
+        sess.hash_check = hash_check
         # Older stores hold huge-chunked rasters; re-tile them so canvas tiles stay
         # cheap (a no-op for stores already written in canonical form). See rasters.py.
         from .. import rasters
-        sess.raster_cache_dir = rasters.normalize_rasters(sdata)
+        sess.raster_cache_dir, sess.raster_stores = rasters.normalize_rasters(sdata)
         if not app_state["displays"]:
             self.auto_displays(sess)
         self.sessions[sid] = sess
@@ -228,7 +229,9 @@ class SessionManager:
         # rmtree a directory the child still depends on.
         child.extract_dir = parent.extract_dir
         child.raster_cache_dir = parent.raster_cache_dir
+        child.raster_stores = parent.raster_stores
         parent.extract_dir = parent.raster_cache_dir = None
+        parent.raster_stores = {}
 
         self.close(parent.id, save=False, reason="subset")
         return child

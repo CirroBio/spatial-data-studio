@@ -13,9 +13,10 @@ From the repository root:
 docker build -f docker/Dockerfile -t spatial-data-studio .
 ```
 
-The scientific wheels (squidpy, spatialdata, anndata, pyarrow …) take several
-minutes on the first build; subsequent builds are cached unless
-`requirements.txt` changes.
+The scientific wheels (squidpy, spatialdata, anndata, pyarrow …) are installed
+with [uv](https://docs.astral.sh/uv/) (pinned in the Dockerfile) — much faster
+than pip, but still a few minutes on the first build; subsequent builds are
+cached unless `requirements.txt` changes.
 
 ## Run (via compose)
 
@@ -49,8 +50,7 @@ docker compose down
 docker run -d \
   --name spatial-data-studio \
   -p 8080:80 \
-  -v "$(pwd)/test-data":/data:ro \
-  -v sqv-checkpoints:/checkpoints \
+  -v "$(pwd)/test-data":/data \
   -e SDS_CONTAINER_MEM_MB=12288 \
   -e SDS_WORKER_CEILING_MB=9216 \
   -e SDS_MAX_SESSIONS=4 \
@@ -76,10 +76,11 @@ admission control refuses new work at `SDS_ADMISSION_PCT` of it, so it trips
 | `SDS_ADMISSION_PCT`      | `0.80`    | Fraction of container RAM at which new jobs, reads, and image renders are refused. |
 | `SDS_MAX_SESSIONS`       | `8`       | Maximum concurrent in-memory sessions. |
 | `SDS_IMAGE_RENDER_CONCURRENCY` | `2` | Max image tiles/thumbnails composited at once. Caps the transient memory of a zoom/pan tile burst; renders past `SDS_ADMISSION_PCT` return 503 and the canvas keeps its coarse base layer. |
+| `SDS_CLIENT_IMAGE_COMPOSITING` | `0` | Advertise the client-side (Viv) compositing path in `/image/{element}/info` so the browser reads the raw raster zarr and composites channels on the GPU (instant contrast/color, no server round-trip). Off by default: it renders a single GPU-texture pyramid level, so deep zoom into very large images is coarser than the server PNG tile path (used otherwise). Set `1` to opt in. |
+| `SDS_CLIENT_IMAGE_MAX_CHANNELS` | `6` | Max channels the browser will composite in one shader pass; an element with more channels falls back to PNG tiles. |
 | `SDS_RASTER_BASE_PX`     | `1024`    | Coarsest image-pyramid level target (longest side) when re-tiling images at ingest. |
 | `SDS_RASTER_REBUILD_WORKERS` | `2`   | dask worker count for the one-time ingest re-tiling; bounds its peak memory. |
 | `SDS_STATIC_DIR`         | `/app/spa`| Path to the compiled SPA (baked into the image). |
-| `SDS_SNAPSHOT_VIEWER_DIR`| `frontend/dist-viewer` | Built standalone snapshot viewer copied into a Cirro upload bundle when snapshots are included (`npm run build:viewer`). |
 | `SDS_N_THREADS`      | all cores | Default for thread-count form params (`n_jobs`, etc.). |
 | `SDS_RESOURCE_HZ`        | `2`       | Resource-sample broadcast cadence (Hz) for the RAM/CPU strip. |
 | `SDS_LONG_RUNNING_S`     | `120`     | Long-running-job watchdog threshold (seconds). |
@@ -91,8 +92,7 @@ admission control refuses new work at `SDS_ADMISSION_PCT` of it, so it trips
 
 | Mount     | Mode      | Purpose |
 |-----------|-----------|---------|
-| `/data`   | read-only | Source datasets (`.zarr`, `.zarr.zip`, Visium/Xenium raw folders). |
-| `/checkpoints` | read-write | Checkpoint `.zarr` directories and explicit `.zarr.zip` saves. **Must be a persistent volume** — container-local storage does not survive a restart. |
+| `/data`   | read-write | Single data folder: source datasets (`.zarr`, `.zarr.zip`, Visium/Xenium raw folders), saved checkpoints (`*.sdata.zarr.zip`), and snapshots (`*.sview.json`). **Must be a persistent bind/volume** — container-local storage does not survive a restart. The compose file's host path defaults to `./test-data`; override it with `SDS_DATA_HOST_DIR`. |
 
 ## Internal process tree
 

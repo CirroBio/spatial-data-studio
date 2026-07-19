@@ -11,7 +11,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 VENV_PY="../.venv-introspect/bin/python"
 if [[ ! -x "$VENV_PY" ]]; then
   echo "error: .venv-introspect not found at repo root. Create it:" >&2
-  echo "  python3.11 -m venv .venv-introspect && . .venv-introspect/bin/activate && pip install -r backend/requirements.txt && pip uninstall -y leidenalg igraph" >&2
+  echo "  uv venv --python 3.11 .venv-introspect && . .venv-introspect/bin/activate && uv pip install -r backend/requirements.txt && uv pip uninstall leidenalg igraph" >&2
   exit 1
 fi
 

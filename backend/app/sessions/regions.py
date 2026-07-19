@@ -57,6 +57,17 @@ def assign(session, payload: dict) -> list:
     set_name = payload["region_set"]
     category = payload["category"]
     color = payload.get("color")
+
+    # Annotating into a non-categorical column replaces it wholesale with a fresh
+    # categorical (see below), destroying its data. Refuse that unless the column is
+    # already a tracked region set. Relabeling an existing categorical (e.g. leiden)
+    # is fine — it adds the category and keeps the other labels.
+    region_cols = {r.get("obs_column") for r in st.get("regions", [])}
+    existing = adata.obs.get(set_name)
+    if (existing is not None and not isinstance(existing.dtype, pd.CategoricalDtype)
+            and set_name not in region_cols):
+        raise ValueError(f"'{set_name}' is an existing non-categorical column; choose a different region set name")
+
     inside = _membership(adata, payload, transform.get_affine6(session.sdata, adata))
 
     # obs categorical column, "unassigned" by default (single-label partition, §2)

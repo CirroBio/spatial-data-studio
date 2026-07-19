@@ -90,46 +90,93 @@ def strip_content_hash(stem: str) -> str:
     return _HASH_SUFFIX_RE.sub("", stem)
 
 
-def _hash_zip_contents(path: str) -> str:
-    """Recompute the content hash `_zip_dir` embeds in an auto-named checkpoint, by
-    reading the archive's entries (same sorted-arcname + bytes scheme). Hashing the
-    logical contents rather than the container makes the digest independent of zip
-    ordering/headers, so re-saving unchanged data yields the same name."""
-    h = hashlib.sha256()
-    with zipfile.ZipFile(path) as zf:
-        for arcname in sorted(zf.namelist()):
-            h.update(arcname.encode())
-            with zf.open(arcname) as f:
-                for chunk in iter(lambda g=f: g.read(1 << 20), b""):
-                    h.update(chunk)
-    return h.hexdigest()[:HASH_LEN]
+def _expected_content_hash(path: str) -> str | None:
+    """The content-hash suffix embedded in an auto-named `.zarr.zip` checkpoint's
+    filename (see `_save_zip`), or None if the name carries none (a plain import, or
+    a legacy/hand-named store). Only auto-named checkpoints can be verified on load."""
+    name = os.path.basename(path)
+    if not name.endswith(".zarr.zip"):
+        return None
+    m = _HASH_SUFFIX_RE.search(strip_checkpoint_ext(name))
+    return m.group(0)[1:] if m else None
+
+
+def _hash_result(name: str, expected: str, actual: str) -> dict:
+    """Report whether a checkpoint's embedded content hash still matches its bytes,
+    and return the result so the load path can surface it to the user. Informational
+    only — a mismatch (e.g. the file was hand-edited or copied incorrectly) is
+    reported, never raised."""
+    ok = actual == expected
+    if ok:
+        _log.info("checkpoint hash OK: %s", name)
+        message = f"Content hash verified: {name}"
+    else:
+        _log.warning("checkpoint hash mismatch: %s (filename says %s, contents hash to %s)",
+                     name, expected, actual)
+        message = (f"Content hash mismatch: {name} may have been modified "
+                   f"(filename says {expected}, contents hash to {actual})")
+    return {"ok": ok, "message": message}
 
 
 def read_spatialdata_archive(path: str):
     """Read a SpatialData zarr store from a bare `.zarr` directory, a `.zarr.zip`,
-    or a `.zarr.tar.gz` archive. Returns (sdata, extract_dir); `extract_dir` is the
-    temp directory an archive was unpacked into (None for a bare directory) — zarr
-    maps chunks from it lazily, so the caller owns cleanup for the object's lifetime.
-    Shared by the checkpoint load path and the SpatialData-zarr import reader."""
+    or a `.zarr.tar.gz` archive. Returns (sdata, extract_dir, hash_check);
+    `extract_dir` is the temp directory an archive was unpacked into (None for a bare
+    directory) — zarr maps chunks from it lazily, so the caller owns cleanup for the
+    object's lifetime. `hash_check` is the embedded-content-hash verification result
+    (`_hash_result`), or None when the name carries no hash to verify. Shared by the
+    checkpoint load path and the SpatialData-zarr import reader."""
     if path.endswith((".zarr.tar.gz", ".zarr.tgz")):
         extract_dir = tempfile.mkdtemp(suffix=".zarr")
         with tarfile.open(path, "r:gz") as tf:
             tf.extractall(extract_dir, filter="data")
-        return sd.read_zarr(_zarr_root(extract_dir)), extract_dir
+        return sd.read_zarr(_zarr_root(extract_dir)), extract_dir, None
     if path.endswith(".zarr.zip") or (os.path.isfile(path) and zipfile.is_zipfile(path)):
         extract_dir = tempfile.mkdtemp(suffix=".zarr")
-        with zipfile.ZipFile(path) as zf:
-            zf.extractall(extract_dir)
-        return sd.read_zarr(_zarr_root(extract_dir)), extract_dir
-    return sd.read_zarr(path), None
+        expected = _expected_content_hash(path)
+        if expected is None:
+            with zipfile.ZipFile(path) as zf:
+                zf.extractall(extract_dir)
+            hash_check = None
+        else:
+            # Auto-named checkpoint: recompute the embedded content hash while
+            # unzipping (same sorted-arcname + bytes scheme as `_zip_dir`), so the
+            # verification costs no extra read pass over the archive.
+            hash_check = _extract_zip_verifying(path, extract_dir, expected)
+        return sd.read_zarr(_zarr_root(extract_dir)), extract_dir, hash_check
+    return sd.read_zarr(path), None, None
+
+
+def _extract_zip_verifying(path: str, extract_dir: str, expected: str) -> dict:
+    """Unzip an auto-named checkpoint into `extract_dir` while recomputing the
+    content hash `_zip_dir` embedded in its name, in a single read pass, then report
+    whether they still match. These archives are ones we wrote — file entries only,
+    relative arcnames — so a plain per-entry extract is safe (untrusted imports go
+    through `extractall` in `read_spatialdata_archive` instead)."""
+    h = hashlib.sha256()
+    with zipfile.ZipFile(path) as zf:
+        for arcname in sorted(zf.namelist()):
+            h.update(arcname.encode())
+            target = os.path.join(extract_dir, arcname)
+            if arcname.endswith("/"):
+                os.makedirs(target, exist_ok=True)
+                continue
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with zf.open(arcname) as src, open(target, "wb") as dst:
+                for chunk in iter(lambda s=src: s.read(1 << 20), b""):
+                    h.update(chunk)
+                    dst.write(chunk)
+    return _hash_result(os.path.basename(path), expected, h.hexdigest()[:HASH_LEN])
 
 
 def load_spatialdata(path: str):
-    """Returns (sdata, app_state, newer, extract_dir). `extract_dir` is the temp
-    directory an archive checkpoint was unpacked into — zarr maps chunks from it
-    lazily for the object's lifetime, so the caller owns cleanup on session close."""
-    _check_content_hash(path)  # no-op unless it's an auto-named .zarr.zip
-    sdata, extract_dir = read_spatialdata_archive(path)
+    """Returns (sdata, app_state, newer, extract_dir, hash_check). `extract_dir` is
+    the temp directory an archive checkpoint was unpacked into — zarr maps chunks
+    from it lazily for the object's lifetime, so the caller owns cleanup on session
+    close. `hash_check` is the embedded-content-hash verification result, verified
+    during extraction (see `read_spatialdata_archive`), or None when the name carries
+    no hash."""
+    sdata, extract_dir, hash_check = read_spatialdata_archive(path)
     st = appstate.ensure(sdata.attrs)
     # Rendered figures are never persisted (§13); plots load undrawn and render
     # lazily on open (§7.2). A persisted `drawn`/`failed` is meaningless without bytes.
@@ -137,7 +184,7 @@ def load_spatialdata(path: str):
         if p.get("status") in ("drawn", "failed", "running", "queued"):
             p["status"] = "invalidated"
     newer = st.get("schema_version", 1) > appstate.SCHEMA_VERSION
-    return sdata, st, newer, extract_dir
+    return sdata, st, newer, extract_dir, hash_check
 
 
 def save_spatialdata(sdata, path: str, app_state: dict, hash_name: bool = False) -> str:
@@ -450,26 +497,6 @@ def read_log(store_root: str | None, entry_id: str) -> str | None:
         return None
     with gzip.open(p, "rt", encoding="utf-8") as f:
         return f.read()
-
-
-def _check_content_hash(path: str) -> None:
-    """Log whether a `.zarr.zip` checkpoint's embedded hash (see `_save_zip`)
-    still matches its actual bytes. Informational only — a mismatch (e.g. the
-    file was hand-edited or copied incorrectly) is reported, never raised."""
-    name = os.path.basename(path)
-    if not name.endswith(".zarr.zip"):
-        return
-    stem = strip_checkpoint_ext(name)
-    m = _HASH_SUFFIX_RE.search(stem)
-    if not m:
-        return  # not an auto-named checkpoint; nothing to verify
-    expected = m.group(0)[1:]
-    actual = _hash_zip_contents(path)
-    if actual == expected:
-        _log.info("checkpoint hash OK: %s", name)
-    else:
-        _log.warning("checkpoint hash mismatch: %s (filename says %s, contents hash to %s)",
-                      name, expected, actual)
 
 
 def _zarr_root(extracted_dir: str) -> str:

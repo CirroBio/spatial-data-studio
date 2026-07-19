@@ -48,7 +48,9 @@ def _is_multiscale(el) -> bool:
 def _scale_names(el) -> list[str]:
     """Multiscale level names, finest (scale0) first."""
     keys = el.children.keys() if hasattr(el, "children") else el.keys()
-    return sorted(keys)  # 'scale0' < 'scale1' < ... lexically == finest first
+    # Numeric order, not lexical: plain sorted() puts 'scale10' before 'scale2',
+    # which would hand back the wrong resolution for a >=10-level pyramid.
+    return sorted(keys, key=lambda k: int(str(k).removeprefix("scale")))
 
 
 def _level_array(el, level: int):
@@ -73,8 +75,7 @@ def _image_array(sdata, element):
 
 def image_dims(sdata, element) -> tuple[int, int]:
     """Level-0 (width, height) of an image element, from shape metadata only."""
-    el = sdata.images[element]
-    arr = _level_array(el, 0) if _is_multiscale(el) else el
+    arr = _level_array(sdata.images[element], 0)  # returns the element itself if single-scale
     return int(arr.shape[-1]), int(arr.shape[-2])
 
 
@@ -83,7 +84,7 @@ def channel_names(elem) -> list[str]:
     Falls back through the `c` coord, the `c` dim size, and finally a shape
     guess, since not every reader attaches explicit channel names/coords.
     """
-    arr = _level_array(elem, 0) if _is_multiscale(elem) else elem
+    arr = _level_array(elem, 0)
     try:
         return [str(c) for c in arr.coords["c"].values]
     except (KeyError, AttributeError):
@@ -131,7 +132,9 @@ def parse_channel_colors(spec: str | None) -> dict[int, tuple[int, int, int]] | 
         if not idx_str.isdigit() or rgb is None:
             continue
         colors[int(idx_str)] = rgb
-    return colors
+    # An empty or all-malformed spec is indistinguishable from "use defaults":
+    # return None (default palette) rather than {} (which _composite renders black).
+    return colors or None
 
 
 # ---- channel normalization (consistent across tiles) -----------------------
@@ -166,12 +169,29 @@ def channel_contrast_limits(sdata, element) -> list[float]:
     return [float(x) for x in _channel_norm(sdata, element)]
 
 
+def _is_rgb(sdata, element) -> bool:
+    """True for a true-color RGB image that must be shown as-is, not tinted like a
+    fluorescence stack. Heuristic: 3 uint8 channels whose labels are the RGB triple
+    (spatialdata-io's Visium/H&E reader) or bare indices (an H&E imported as a plain
+    (c, y, x) uint8 array with no channel coords)."""
+    arr = _level_array(sdata.images[element], 0)
+    if getattr(arr, "ndim", 0) != 3 or arr.shape[0] != 3 or getattr(arr, "dtype", None) != np.uint8:
+        return False
+    names = [n.lower() for n in channel_names(sdata.images[element])]
+    return names == ["r", "g", "b"] or names == ["0", "1", "2"]
+
+
 def _composite(data_cyx: np.ndarray, norm: np.ndarray,
-               channel_colors: dict[int, tuple[int, int, int]] | None) -> np.ndarray:
-    """Additively blend each visible channel's normalized intensity, tinted with its
-    assigned color, into an RGB uint8 HWC image."""
+               channel_colors: dict[int, tuple[int, int, int]] | None,
+               rgb: bool = False) -> np.ndarray:
+    """Blend channels into an RGB uint8 HWC image. Fluorescence channels are
+    normalized and additively tinted with their assigned color; a true-color RGB
+    image (`rgb=True`, see _is_rgb) is passed straight through so an H&E/brightfield
+    image isn't false-colored."""
     if data_cyx.ndim == 2:
         data_cyx = data_cyx[None, :, :]
+    if rgb:
+        return np.moveaxis(data_cyx[:3], 0, -1).astype(np.uint8)
     nch, h, w = data_cyx.shape
     if channel_colors is None:
         channel_colors = {i: DEFAULT_CHANNEL_COLORS[i % len(DEFAULT_CHANNEL_COLORS)] for i in range(nch)}
@@ -215,8 +235,14 @@ def _global_extent(sdata, element) -> list[float]:
         ext = get_extent(sdata.images[element])
         return [float(ext["x"][0]), float(ext["y"][0]), float(ext["x"][1]), float(ext["y"][1])]
     except Exception:
-        arr = _image_array(sdata, element)
-        return [0.0, 0.0, float(arr.shape[-1]), float(arr.shape[-2])]
+        # get_extent failed: map the level-0 pixel box through the image's own
+        # 'global' transform so the fallback stays in global (spot) coordinates.
+        # Returning coarse-level pixels here scores IOU ~0 against micron spots.
+        w, h = image_dims(sdata, element)
+        a = _affine_xy(sdata.images[element], sdata)
+        if a is None:
+            a = np.eye(3)
+        return _apply_bbox(a, [0.0, 0.0, float(w), float(h)])
 
 
 def pixel_to_world(sdata, element, table=None) -> np.ndarray:
@@ -287,8 +313,7 @@ def _levels_meta(sdata, element) -> list[dict]:
 
 
 def image_info(sdata, element, table=None) -> dict:
-    arr = _level_array(sdata.images[element], 0) if _is_multiscale(sdata.images[element]) \
-        else sdata.images[element]
+    arr = _level_array(sdata.images[element], 0)
     w, h = int(arr.shape[-1]), int(arr.shape[-2])
     m = pixel_to_world(sdata, element, table)
     # 6-float affine [a,b,c,d,e,f]: world_x = a*px + b*py + c, world_y = d*px + e*py + f,
@@ -325,7 +350,7 @@ def tile_png(sdata, element, level: int, col: int, row: int,
 
     region = arr[..., y0:y1, x0:x1]
     data = np.asarray(region.data if hasattr(region, "data") else region)
-    hwc = _composite(data, _channel_norm(sdata, element), channel_colors)
+    hwc = _composite(data, _channel_norm(sdata, element), channel_colors, rgb=_is_rgb(sdata, element))
     buf = io.BytesIO()
     Image.fromarray(hwc).save(buf, format="PNG")
     png = buf.getvalue()
@@ -343,7 +368,7 @@ def thumbnail_png(
     from PIL import Image
     arr = _image_array(sdata, element)
     data = np.asarray(arr.data if hasattr(arr, "data") else arr)
-    hwc = _composite(data, _channel_norm(sdata, element), channel_colors)
+    hwc = _composite(data, _channel_norm(sdata, element), channel_colors, rgb=_is_rgb(sdata, element))
     img = Image.fromarray(hwc)
     img.thumbnail((max_px, max_px))
     buf = io.BytesIO()
@@ -393,7 +418,7 @@ def region_png(sdata, element, world_bbox, table=None, out_px: int = 2048,
     arr = _level_array(sdata.images[element], chosen)
     region = arr[..., ly0:ly1, lx0:lx1]
     data = np.asarray(region.data if hasattr(region, "data") else region)
-    hwc = _composite(data, _channel_norm(sdata, element), channel_colors)
+    hwc = _composite(data, _channel_norm(sdata, element), channel_colors, rgb=_is_rgb(sdata, element))
     img = Image.fromarray(hwc)
     if max(img.size) > out_px:
         img.thumbnail((out_px, out_px))

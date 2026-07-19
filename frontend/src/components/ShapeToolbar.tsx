@@ -4,7 +4,7 @@ import { SHAPE_KINDS } from '../schemas/annotations';
 const TOOL_LABELS: Record<ShapeKind, string> = {
   line: 'Line / Arrow',
   box: 'Box',
-  trapezoid: 'Trapezoid',
+  polygon: 'Polygon',
   ellipse: 'Ellipse',
   text: 'Text',
 };
@@ -13,15 +13,16 @@ interface Props {
   activeShapeTool: ShapeKind | null;
   setActiveShapeTool: (tool: ShapeKind | null) => void;
   draftVertexCount: number;
+  onClosePolygon: () => void;
   onCancelDraft: () => void;
 }
 
 // Tool-selection toolbar for the shape-annotation editor — the drag/click drawing
 // interactions themselves live on the canvas (SpatialCanvas); this just arms a
-// tool. Shares DrawControls' "in-progress" affordance for the click-built
-// trapezoid, since line/box/ellipse are single drag gestures with nothing to
-// cancel mid-shape.
-export default function ShapeToolbar({ activeShapeTool, setActiveShapeTool, draftVertexCount, onCancelDraft }: Props) {
+// tool. The click-built polygon collects a vertex per click and is committed by
+// the Close Shape button here, since line/box/ellipse are single drag gestures
+// with nothing to close or cancel mid-shape.
+export default function ShapeToolbar({ activeShapeTool, setActiveShapeTool, draftVertexCount, onClosePolygon, onCancelDraft }: Props) {
   return (
     <div className="flex flex-col gap-1.5">
       <div className="grid grid-cols-2 gap-1">
@@ -39,13 +40,29 @@ export default function ShapeToolbar({ activeShapeTool, setActiveShapeTool, draf
           </button>
         ))}
       </div>
-      {activeShapeTool === 'trapezoid' && (
-        <p className="text-[10px] text-muted/60 leading-snug">
-          Click 4 points on the canvas ({draftVertexCount}/4) to place the trapezoid.
-          {draftVertexCount > 0 && (
-            <button onClick={onCancelDraft} className="ml-1 underline hover:text-text">Cancel</button>
-          )}
-        </p>
+      {activeShapeTool === 'polygon' && (
+        <div className="flex flex-col gap-1.5">
+          <p className="text-[10px] text-muted/60 leading-snug">
+            Click points on the canvas ({draftVertexCount} placed) to outline a polygon, then close it.
+          </p>
+          <div className="flex gap-1">
+            <button
+              onClick={onClosePolygon}
+              disabled={draftVertexCount < 3}
+              className="flex-1 py-1.5 text-xs rounded border border-accent bg-accent text-white enabled:hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
+            >
+              Close Shape
+            </button>
+            {draftVertexCount > 0 && (
+              <button
+                onClick={onCancelDraft}
+                className="px-2 py-1.5 text-xs rounded border border-border text-muted hover:text-text hover:border-accent transition-colors"
+              >
+                Cancel
+              </button>
+            )}
+          </div>
+        </div>
       )}
       {activeShapeTool === 'line' && (
         <p className="text-[10px] text-muted/60 leading-snug">Drag on the canvas from start to end.</p>

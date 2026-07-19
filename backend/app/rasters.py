@@ -67,23 +67,36 @@ def _rebuild(el, is_label: bool):
         # Xenium label). A single tile-chunked scale is a pure lazy rechunk.
         return Labels2DModel.parse(arr.data, dims=dims, scale_factors=None,
                                    chunks=(TILE, TILE), transformations=transforms)
-    c_coords = [str(c) for c in arr.coords["c"].values] if "c" in arr.coords else None
-    return Image2DModel.parse(arr.data, dims=dims, c_coords=c_coords,
+    data = arr.data
+    if arr.ndim == 2:
+        # Image2DModel is (c, y, x); promote a bare (y, x) grayscale raster so parse
+        # doesn't get a 3-tuple chunks against 2-D data (which raises, aborting load).
+        data = data[None, ...]
+        dims = ("c", "y", "x")
+        c_coords = ["0"]
+    else:
+        c_coords = [str(c) for c in arr.coords["c"].values] if "c" in arr.coords else None
+    return Image2DModel.parse(data, dims=dims, c_coords=c_coords,
                               scale_factors=_scale_factors(max(arr.shape[-1], arr.shape[-2])),
-                              chunks=(arr.shape[0], TILE, TILE), transformations=transforms)
+                              chunks=(data.shape[0], TILE, TILE), transformations=transforms)
 
 
-def normalize_rasters(sdata) -> str | None:
+def normalize_rasters(sdata) -> tuple[str | None, dict[str, str]]:
     """Rebuild every non-canonical image/label of `sdata` into a tile-chunked 2x
     pyramid, persist them to a fresh cache store under DATA_DIR, and rebind
-    `sdata`'s elements to lazy refs into it. Returns the cache dir (the caller must
-    rmtree it when the session closes), or None if nothing needed rebuilding."""
+    `sdata`'s elements to lazy refs into it. Returns (cache_dir, element_stores):
+    the cache dir (the caller must rmtree it when the session closes, or None if
+    nothing needed rebuilding) and a map from each rebuilt element's name to the
+    absolute `{i}.zarr` store dir written for it. The raster HTTP route resolves an
+    element to its store via that map (spatialdata element names are globally unique
+    across images/labels, so a single name-keyed map is unambiguous)."""
     todo = [("images", n) for n, el in getattr(sdata, "images", {}).items() if not _is_canonical(el, False)]
     todo += [("labels", n) for n, el in getattr(sdata, "labels", {}).items() if not _is_canonical(el, True)]
     if not todo:
-        return None
+        return None, {}
 
     cache_dir = tempfile.mkdtemp(suffix=".rasters", dir=str(config.DATA_DIR))
+    stores: dict[str, str] = {}
     # Rebuild one element at a time, freeing between: each is a full read, so writing
     # them together sums their footprints (all four Xenium rasters at once peak
     # ~8.8 GB). Per-element with a small dask pool, peak is the largest single
@@ -94,6 +107,7 @@ def normalize_rasters(sdata) -> str | None:
             store = os.path.join(cache_dir, f"{i}.zarr")  # write() needs a non-existing path
             sd.SpatialData(**{kind: {name: rebuilt}}).write(store)
             getattr(sdata, kind)[name] = getattr(sd.read_zarr(store), kind)[name]
+            stores[name] = store
             del rebuilt
             gc.collect()
-    return cache_dir
+    return cache_dir, stores

@@ -29,12 +29,23 @@ function fieldPath(sel: Selection): string | null {
   return null;
 }
 
+function selectionPresent(sel: Selection, inv: ElementInventory): boolean {
+  const group =
+    sel.kind === 'table' ? inv.tables
+      : sel.kind === 'shapes' ? inv.shapes
+        : sel.kind === 'points' ? inv.points
+          : sel.kind === 'image' ? inv.images
+            : inv.labels;
+  return group.some((g) => g.name === sel.name);
+}
+
 function isNumericDtype(dtype: string): boolean {
   return /int|float|uint/.test(dtype);
 }
 
 export default function DataInspector() {
   const { activeSessionId } = useAppStore();
+  const dataVersions = useAppStore((s) => s.sessionState?.data_versions);
   const [inv, setInv] = useState<ElementInventory | null>(null);
   const [sel, setSel] = useState<Selection | null>(null);
   const [invError, setInvError] = useState<string | null>(null);
@@ -58,6 +69,26 @@ export default function DataInspector() {
       cancelled = true;
     };
   }, [activeSessionId]);
+
+  // A compute can add/remove obs columns or whole elements. When data_versions bumps,
+  // refresh the loaded inventory in place — keeping the current selection unless the
+  // compute removed the element it points at — so the navigator doesn't go stale.
+  useEffect(() => {
+    if (!activeSessionId) return;
+    let cancelled = false;
+    getElements(activeSessionId)
+      .then((data) => {
+        if (cancelled) return;
+        setInv(data);
+        setSel((cur) => (cur && !selectionPresent(cur, data) ? null : cur));
+      })
+      .catch(() => { /* keep the current view if the refresh fails */ });
+    return () => {
+      cancelled = true;
+    };
+    // Session changes are handled by the effect above; only re-run on a data change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataVersions]);
 
   if (!activeSessionId) return null;
 
@@ -218,6 +249,7 @@ function TableView({
   const [preview, setPreview] = useState<TablePreview | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const dataVersions = useAppStore((s) => s.sessionState?.data_versions);
 
   const path = fieldPath(sel);
 
@@ -238,7 +270,8 @@ function TableView({
     return () => {
       cancelled = true;
     };
-  }, [sessionId, path, offset]);
+    // dataVersions bump re-reads the preview so new obs columns from a compute appear.
+  }, [sessionId, path, offset, dataVersions]);
 
   const total = preview?.total_rows ?? 0;
   const shown = preview?.rows.length ?? 0;

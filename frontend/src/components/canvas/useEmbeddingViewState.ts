@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useRef, type RefObject } from 'react';
 import type { OrthographicViewState, OrbitViewState } from '@deck.gl/core';
 import type { ScatterPositions } from './useArrowPositions';
+import { ZOOM_LIMITS, fitZoom, useCanvasSize } from './viewFit';
 
-const ZOOM_LIMITS = { minZoom: -8, maxZoom: 8 };
 const DEFAULT_ROTATION_X = 25;
 // Let the orbit camera tilt through the full pitch circle (deck defaults to +/-90,
 // which walls the drag at straight-down/up); +/-180 lets a rotate-drag reach every
@@ -30,20 +30,9 @@ export function useEmbeddingViewState(
   fitToData: () => EmbeddingViewState | null;
 } {
   const [viewState, setViewState] = useState<EmbeddingViewState | null>(null);
-  const [canvasSize, setCanvasSize] = useState<{ width: number; height: number } | null>(null);
-  const containerRef = useRef<HTMLDivElement | null>(null);
+  const { containerRef, canvasSize } = useCanvasSize();
 
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const update = () => setCanvasSize({ width: el.clientWidth, height: el.clientHeight });
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
-  // Same log2(pixels / extent) fit-to-data math as useCanvasViewState; adds a
+  // Same fit-to-data math as useCanvasViewState (see viewFit.fitZoom); adds a
   // centered Z target in 3D so the orbit camera starts looking at the point cloud.
   const fitToData = useCallback((): EmbeddingViewState | null => {
     if (!positions) return null;
@@ -53,16 +42,13 @@ export function useEmbeddingViewState(
     const extentX = Math.max(1, d0max - d0min);
     const extentY = Math.max(1, d1max - d1min);
     const el = containerRef.current;
-    const pxW = el?.clientWidth || window.innerWidth;
-    const pxH = el?.clientHeight || window.innerHeight;
-    const MARGIN = 0.9;
-    const zoom = Math.log2(Math.min((pxW * MARGIN) / extentX, (pxH * MARGIN) / extentY));
+    const zoom = fitZoom(extentX, extentY, el?.clientWidth || window.innerWidth, el?.clientHeight || window.innerHeight);
     if (is3d) {
       const centerZ = d2min !== undefined && d2max !== undefined ? (d2min + d2max) / 2 : 0;
       return { target: [centerX, centerY, centerZ], zoom, rotationX: DEFAULT_ROTATION_X, rotationOrbit: 0, ...ROTATION_LIMITS, ...ZOOM_LIMITS };
     }
     return { target: [centerX, centerY, 0], zoom, ...ZOOM_LIMITS };
-  }, [positions, is3d]);
+  }, [positions, is3d, containerRef]);
 
   // A freshly loaded session always frames its data; the persisted display viewport
   // is not restored here (the canvas is remounted per session — key on the session id

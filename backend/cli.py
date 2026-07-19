@@ -147,7 +147,7 @@ def _run_steps(sess, steps: list, out_dir: Path) -> int:
     plots_written = 0
     for i, step in enumerate(steps, start=1):
         label = f"{step['namespace']}.{step['function']}"
-        job_id = sess.enqueue_descriptor(step, keep_failures=True)
+        job_id = sess.enqueue_descriptor(step)
         status = _wait(sess, job_id)
         if status in ("failed", "cancelled"):
             log, _ = sess.get_log(job_id)

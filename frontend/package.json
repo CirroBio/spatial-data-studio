@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "build:viewer": "vite build --config vite.viewer.config.ts",
+    "build:app": "vite build --config vite.app.config.ts",
     "preview": "vite preview",
     "check:tours": "node scripts/check-tour-anchors.mjs",
     "test:e2e": "playwright test"
@@ -14,9 +14,13 @@
   "dependencies": {
     "@deck.gl/core": "^9.0.0",
     "@deck.gl/extensions": "^9.0.0",
+    "@deck.gl/geo-layers": "~9.3.3",
     "@deck.gl/layers": "^9.0.0",
     "@deck.gl/react": "^9.0.0",
     "@geoarrow/deck.gl-layers": "^0.3.2",
+    "@math.gl/core": "^4.1.0",
+    "@vivjs/layers": "0.22.0",
+    "@vivjs/loaders": "0.22.0",
     "@radix-ui/react-dialog": "^1.1.0",
     "@radix-ui/react-dropdown-menu": "^2.1.0",
     "@radix-ui/react-tabs": "^1.1.0",

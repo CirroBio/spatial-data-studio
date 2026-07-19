@@ -79,8 +79,11 @@ docker compose up --build -d            # builds the SPA + backend into one imag
 open http://localhost:8080              # New Session -> /data/visium_hne.zarr
 ```
 
-The compose file mounts `test-data/` read-only at `/data` and a checkpoints volume at
-`/checkpoints`. Enable the optional Cirro upload by setting `CIRRO_BASE_URL`,
+The compose file bind-mounts a single read-write data directory at `/data`, holding
+inputs, saved checkpoints, and snapshots together. It defaults to `test-data/`;
+point it at your own folder with `SDS_DATA_HOST_DIR` (env var or `.env` entry), e.g.
+`SDS_DATA_HOST_DIR=/path/to/data docker compose up`. Enable the optional Cirro upload
+by setting `CIRRO_BASE_URL`,
 `CIRRO_CLIENT_ID`, and `CIRRO_CLIENT_SECRET` from an OAuth token in a `.env` file
 (with any unset, the upload button stays hidden and the app runs normally).
 Memory limits, the manual `docker run` form, and the full environment contract are in

@@ -34,7 +34,10 @@ export default function RegionsPanel() {
 
   const activeSet = regions.find((r) => r.id === activeRegionSetId) ?? regions[0] ?? null;
 
-  const regionSetTarget = resolveRegionSetColumn(regionNewSetName, activeRegionSetId, regions);
+  // Resolve against the set the dropdown actually shows (activeSet, which falls back
+  // to regions[0]); activeRegionSetId stays null until the user changes the select,
+  // so using it directly would leave Apply disabled on a freshly opened session.
+  const regionSetTarget = resolveRegionSetColumn(regionNewSetName, activeSet?.id ?? null, regions);
   const canApply = regionCount > 0 && !!regionSetTarget && !!regionCategoryName;
 
   async function handleApplyLabel() {
@@ -88,7 +91,7 @@ export default function RegionsPanel() {
             value={regionNewSetName}
             onChange={(v) => setRegionTarget(v, regionCategoryName, regionColor)}
             creatable
-            placeholder="Region set name (pick an obs field or type a new one)"
+            placeholder="Region set name (pick/create)"
           />
           <input
             type="text"

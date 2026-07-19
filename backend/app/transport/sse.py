@@ -6,6 +6,10 @@ import asyncio
 import json
 from collections import deque
 
+# Sentinel enqueued to a subscriber that has fallen too far behind: it ends that
+# subscriber's stream so the browser's EventSource reconnects with Last-Event-ID.
+_CLOSE = object()
+
 
 class EventBus:
     def __init__(self, ring_size: int = 2048):
@@ -31,7 +35,15 @@ class EventBus:
             try:
                 q.put_nowait(item)
             except asyncio.QueueFull:
-                pass
+                # A subscriber that can't keep up: drop it and end its stream rather
+                # than silently discarding events (which would leave its UI diverged
+                # with no recovery signal). It reconnects and replays from the ring.
+                self._subscribers.discard(q)
+                try:
+                    q.get_nowait()  # free a slot for the sentinel
+                except asyncio.QueueEmpty:
+                    pass
+                q.put_nowait(_CLOSE)
 
     async def subscribe(self, last_event_id: int | None = None):
         q: asyncio.Queue = asyncio.Queue(maxsize=1024)
@@ -43,6 +55,8 @@ class EventBus:
                         yield self._format(*item)
             while True:
                 item = await q.get()
+                if item is _CLOSE:
+                    return
                 yield self._format(*item)
         finally:
             self._subscribers.discard(q)

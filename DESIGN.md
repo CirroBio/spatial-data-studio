@@ -7,7 +7,7 @@
 This is the single design-of-record. It began as the pre-build specification and
 now incorporates everything added since: the Parameter Term Dictionary, region
 annotation and comparison, recipes with staged (PENDING) execution, the expanded
-scanpy / spatialdata-io catalog, the data manifest, snapshots, Cirro
+scanpy / spatialdata-io catalog, snapshots, Cirro
 upload, and the governance layer. `README.md` remains the source of truth for how to
 run the app and the exact current feature set; `docs/CONTRACT.md` is the API contract.
 Where a subsystem was built differently from the original plan, this document
@@ -88,7 +88,7 @@ parameter.
                               │ read / write
                               ▼
                    Local folders + SpatialData .zarr / .zarr.zip
-                   + snapshots/ (JSON configs) + Cirro (optional)
+                   + snapshots (JSON config + HTML page) + Cirro (optional)
 ```
 
 **Runtime model:** one OS process. Each session owns one in-memory `SpatialData`
@@ -168,7 +168,7 @@ sdata.attrs["app_state"] = {
                     "opacity": 0.8, "channels": [ /* per-index visible/name/color */ ],
                     "show_points": true, "show_image": true,       // layer-visibility toggles
                     "show_channel_legend": true,
-                    "render_mode": "points",                        // zoomed-in cell tier (§9.10): points | shapes
+                    "render_mode": "points",                        // cell render (§9.10): points | points+shapes
                     "isolated_category": "Tumor" },                 // dim all but this category
       "viewport": { "target": [x,y], "zoom": z } }   // persisted on pan/zoom (embedding adds rotationX/rotationOrbit in 3D)
   ],
@@ -411,25 +411,18 @@ memory ceiling), invokes the callable, and handles the effect by class:
   return a value captured like a return-only compute.
 - **read** → the return value *is* the new session object; adopt it as `session.sdata`.
 
-### 4.7 The contract envelope and `keep_failures`
+### 4.7 The result envelope
 
 Every function returns one uniform envelope:
 
 ```
 CallResult { status, logs, structural_diff?, figure_bytes?, new_object?,
-             result_value?, manifest_before, manifest_after, error? }
+             result_value?, error? }
 ```
 
-The worker applies it (update history/plots/`attrs`, emit SSE). The before/after
-**data manifests** (Section 13) are captured around every call so deltas are
-computable and legible in the manifest text.
-
-The envelope carries a **`keep_failures`** flag. Every call today is a frontend
-invocation, so `keep_failures` is always `True`: a failed call stays in the audit
-log so the user can inspect and delete it. The flag remains part of the envelope
-because it is a caller-supplied setting, not a hardcoded constant — a future caller
-could set it differently — but there is currently only one caller, and it always
-keeps failures.
+The worker applies it (update history/plots/`attrs`, emit SSE). A failed
+compute/plot call stays in the audit log so the user can inspect and delete it
+(§6.1).
 
 ---
 
@@ -607,7 +600,7 @@ library calls but with a signature **defined by the application**:
 | `point_size` | number (world units) | — |
 | `opacity` | number (0–1) | — |
 | `channels` | per-index list | image channel visibility / name / color |
-| `render_mode` | `points` \| `shapes` | zoomed-in cell tier (§9.10); `points` is default |
+| `render_mode` | `points` \| `points+shapes` | cell render (§9.10); `points` is default (legacy `shapes` == `points+shapes`) |
 
 On load, default specs are generated from the object's structure. **Color by** first
 picks a slot (`obs`, `X` gene expression, or a `layer`) then the column within it:
@@ -619,7 +612,7 @@ so datasets with tens of thousands of genes stay responsive.
 
 - Cell centroids → `ScatterplotLayer` with **binary attributes** (position Float32Array
   from Arrow; color from a category-index + palette, or continuous value + colormap).
-- Cell boundaries / nearest-cell field → the two-regime segmentation display (§9.10).
+- Cell boundaries → the points + boundary-fill overlay segmentation display (§9.10).
 - Tissue image → `BitmapLayer`(s) fed from the multiscale pyramid (§9.3).
 - Selection → editable-layers overlay (Polygon/Path/Scatterplot draw modes).
 
@@ -674,11 +667,39 @@ at that boundary, since a raw reader input has no cheap size estimate.
 ### 9.4 Image channel controls
 
 Per image channel: **toggle visibility**, **rename** (display-only name overriding raw
-channel labels), and assign one of 8 canonical spectrum colors. The server composites
-channels by additively blending each channel's percentile-normalized intensity tinted
-with its color. State lives in the display spec, so it persists to `.zarr.zip`, is
-restored on load, is captured in snapshots (§14), and appears in the data manifest
-(§13). A togglable legend overlays a swatch + label for every visible channel.
+channel labels), and assign one of 8 canonical spectrum colors. Channels are composited
+by additively blending each channel's percentile-normalized intensity tinted with its
+color. State lives in the display spec, so it persists to `.zarr.zip`, is restored on
+load, and is captured in snapshots (§14). A togglable legend overlays a swatch + label
+for every visible channel.
+
+**Two compositing paths.** The controls above drive one of two compositing back-ends,
+chosen per image and transparent to the user. When the image qualifies, the browser
+composites on the **GPU**: it reads the session's normalized raster **Zarr v3** store
+directly — zarrita over a byte-range route `GET /api/sessions/{id}/raster/{element}/{key}`
+(Range/HEAD) — and **Viv**'s `MultiscaleImageLayer` blends channels additively on black,
+with per-channel color and contrast as shader uniforms, so contrast/color/visibility
+edits are instant with no server round-trip. RGB/H&E images pass through as true color.
+The server advertises this per image in `/image/{element}/info` (`client_compositing`),
+gated by `SDS_CLIENT_IMAGE_COMPOSITING` (**default off**, opt-in with `=1`) and a channel
+cap `SDS_CLIENT_IMAGE_MAX_CHANNELS` (default 6). Above the cap, or for a canonical image
+with no rebuilt raster store (§9.3), `client_compositing` is false and the client falls
+back to the **server-composited PNG tiles** (§9.3) — the same additive percentile-normalized
+blend. A dev-only escape hatch `localStorage['sds:disableClientCompositing']='1'` also forces
+the PNG path.
+
+The client path uses Viv's **single-scale** `ImageLayer` (one `XRLayer` GPU quad), not the
+tiled `MultiscaleImageLayer`: the tiled layer silently fetches no tiles when the image's
+`pixel_to_world` affine carries a non-unit scale (Xenium is ~0.2125 um/px), because its
+deck.gl `TileLayer` derives the pyramid level from `round(log2(modelMatrix.scale))` and the
+scaled matrix breaks tile-index selection. A single `XRLayer` has no tile-index math, so the
+scaled modelMatrix simply positions the quad and it renders correctly (verified against
+`xenium.zarr`). The frontend picks the finest pyramid level that fits one GPU texture
+(<= 4096 px) and adjusts the modelMatrix for that level's downscale. The tradeoff, and why
+this ships **off by default**: one level in one texture means deep zoom into a very large
+image (multi-GB Xenium) shows a coarser level than the PNG path, which tiles full detail.
+Reconciling full-detail tiling with the scaled affine is the remaining enhancement. See `docs/CONTRACT.md` for the info/route schemas. The snapshot viewer and
+its schema are unchanged by this dual path.
 
 ### 9.5 Editable points transform
 
@@ -736,42 +757,37 @@ structural diff). The view never silently shows data that no longer matches the 
 
 ### 9.10 Cell-segmentation display (display only)
 
-Cells render in zoom-dependent tiers rather than as a single fixed-size scatter. This is a
-**display** of existing segmentation — it never resegments or recomputes boundaries. A
-**Render mode** control (`points` — the classic scatter — vs `shapes` — exact outlines)
-persists on the display encoding (`render_mode`) and governs the *zoomed-in* tier; the
-zoomed-out tier is the nearest-cell field in both modes.
+The point scatter always draws; cell-boundary fills optionally overlay on top of it. This
+is a **display** of existing segmentation — it never resegments or recomputes boundaries. A
+**Render mode** control persists on the display encoding (`render_mode`): `points` (scatter
+alone) vs `points+shapes` (scatter plus the boundary-fill overlay). The legacy value
+`shapes` maps to `points+shapes`.
 
-- **Zoomed out — nearest-cell field.** A custom deck.gl impostor layer
-  (`frontend/src/components/canvas/buildCellFieldLayer.ts`) draws each cell as a
-  world-space disc of radius R. A `LayerExtension` injects one line into the
-  `ScatterplotLayer` fragment shader that writes `gl_FragDepth` from the fragment's
-  distance to its disc center, so with the depth test on the nearest centroid wins each
-  pixel — a nearest-cell tessellation in one pass, in which adjacent same-color cells read
-  as one contiguous color region with no geometry shipped. R is a client-side estimate of
-  the mean inter-cell spacing (`estimateFieldRadius` = √(bbox_area / n)); there is no
-  backend endpoint for it. Positions and colors are the same binary attributes the point
-  scatter uses, so a recolor is instant.
-- **Zoomed in — exact polygon outlines (`render_mode: shapes`).** When the session has
-  boundary polygons, cells draw as their real outlines filled by the per-cell color, from
-  a `GeoArrowSolidPolygonLayer` fed by viewport-clipped GeoArrow fetched from `GET
-  /api/sessions/{id}/shapes/{element}/geoarrow?bbox=…` (`usePolygonBbox.ts`, LRU-cached
-  per viewport bbox + data_version). The backend returns a 0-row table while more cells
-  are in view than it can send; `usePolygonBbox` reports that as *no layer*, and the Cells
-  layer falls back to the field (below) rather than blanking. So Shapes mode reads as the
-  merged field until you zoom in far enough that the visible set fits, then swaps to real
-  outlines — no dead "blank band" in between.
-- **Zoomed in — point scatter (`render_mode: points`, the default).** The classic
-  instanced scatter with its size slider and circle/square/hexagon glyph picker.
-- **The switch.** The field takes over below `cellZoomThreshold(R) = log2(6 / R)`
-  (`useCanvasViewState.ts`) — i.e. once a cell shrinks under ~6 px on screen — where the
-  polygon fetch is suppressed. Above it, Shapes mode draws outlines when the viewport's
-  cells fit under the ship cap and otherwise keeps showing the field.
+- **Point scatter (always on).** The instanced `MarkerScatterplotLayer` (size slider +
+  circle/square/hexagon glyph) covers every zoom, including the zoomed-out and
+  shapes-loading regimes, so the canvas never blanks. Overlapping glyphs **merge**, not
+  blend: a two-pass fragment-depth trick writes `gl_FragDepth` so the nearest centroid
+  wins each pixel — touching same-color cells read as one contiguous region and overlaps
+  don't darken at opacity < 1 (this replaced the separate nearest-cell "field" layer).
+- **Cell-boundary overlay (`render_mode: points+shapes`).** When the session has boundary
+  polygons, their real outlines filled by the per-cell color stack on top of the points,
+  from a `GeoArrowSolidPolygonLayer` fed by viewport-clipped GeoArrow fetched from `GET
+  /api/sessions/{id}/shapes/{element}/geoarrow?bbox=…` (`usePolygonBbox.ts`, LRU-cached per
+  viewport bbox + data_version). The fills use the same per-cell colors as the points, so
+  the overlap is seamless and the points fill the gaps between cells.
+- **The fetch gate.** The overlay fetch fires only once a cell is a few pixels across —
+  `zoom ≥ shapesFetchZoomThreshold(meanSpacing) = log2(6 / meanSpacing)`
+  (`useCanvasViewState.ts`; `meanSpacing = estimateMeanSpacing(positions) ≈ √(bbox_area/n)`).
+  Below that the viewport would hold more cells than the backend ships anyway, so the
+  fetch is deferred and the points are the whole view. When a bbox is over the ship cap the
+  backend returns a 0-row table, which `usePolygonBbox` reports as *no layer* — the points
+  simply keep covering the view (no dead "blank band").
 
 Geometry is served in the same world space `/data/obsm:spatial` uses (the region element's
-points→global affine), so field, outlines, points, and image overlay; the GeoArrow
-polygons carry a `cell_index` back to the active table for color gather. See
-`docs/CONTRACT.md` for the payload schemas.
+points→global affine), so outlines, points, and image overlay; the GeoArrow polygons carry
+a `cell_index` back to the active table for color gather. The read-only snapshot viewer,
+which has no backend to fetch polygons, draws the same merged point scatter (no shapes
+overlay) for 2D spatial snapshots. See `docs/CONTRACT.md` for the payload schemas.
 
 **Known follow-up:** `@geoarrow/deck.gl-layers` (0.3.2) logs a console deprecation — it
 is renamed to `@geoarrow/deck.gl-geoarrow` (0.4.x). Not migrated: 0.3.2 is the verified
@@ -943,54 +959,59 @@ hard-coded category references; the preflight makes the difference visible.
 
 ---
 
-## 13. Data manifest
+## 13. Data manifest (removed)
 
-A **text** representation of session state, and a human-readable diff source
-(`backend/app/manifest/`). Assembled from an **extensible registry of
-contributors** (`registry.py` + `contributors.py`), each a small function appending a
-labeled text block; new contributors are added the way Term Dictionary entries are,
-without touching the manifest core.
-
-Seed contributors:
-- **SpatialData repr** — the native `str(sdata)` (elements, coordinate systems, shapes).
-- **Tables** — per table: shape, `obs`/`var` columns with dtypes, `obsm`/`obsp`/`layers`
-  keys.
-- **Categoricals** — each categorical `obs` column with its categories and per-category
-  counts.
-- **Region sets** — registered sets (§10.1) with categories + counts.
-- **Images** — image elements with channel names (and current on/off + rename state).
-- **Summaries** — total cells, QC totals if present, per-region counts when a set is
-  active. Kept minimal by design; grow via the registry.
-
-Manifests are captured **before and after** every function call (§4.7) so deltas are
-computable.
+Earlier versions captured a text "data manifest" of session state before and after
+every call — assembled from a registry of contributors under
+`backend/app/manifest/` — to feed a planned AI-agent loop. That loop was never
+built, so the manifest (its only consumer) was removed along with the envelope's
+`manifest_*` fields and `keep_failures` flag (§4.7). Session state is inspected
+directly through the data inspector and the element/table APIs.
 
 ---
 
 ## 14. Snapshots
 
-A snapshot is a small **JSON config** describing a **read-only** view over an immutable
-checkpoint (`backend/app/snapshots.py`). It ships no pixels or data of its own — the
-browser viewer opens the referenced checkpoint `.zarr.zip` directly (zarrita.js over HTTP
-range requests) and renders the image + cells from it, reusing the live canvas rendering.
+A snapshot is a small **JSON config** plus a tiny **HTML page**, describing a
+**read-only** view over an immutable checkpoint (`backend/app/snapshots.py`). It ships no
+pixels, data, or viewer code of its own — the HTML loads a shared, version-pinned viewer
+bundle from GitHub Pages, and that bundle opens the referenced checkpoint `.zarr.zip`
+directly (zarrita.js over HTTP range requests) and renders the image + cells from it,
+reusing the live canvas rendering.
 
-- **Config:** `{schema, kind, label, created, checkpoint:{name,url}, table, viewport,
-  encoding, render}` where `render` bakes what the browser can't derive from the raw
-  arrays: the image geometry (`image_info` — bounds, `pixel_to_world`, pyramid levels,
+- **Config envelope:** `{schema_version, kind, label, created, data, checkpoint:{name},
+  table, viewport, encoding, render}`. `schema_version` is a semver string equal to the
+  version in `snapshot-viewer.json`. `data` is a **relative** path to the checkpoint
+  (`./<checkpoint>.zarr.zip`) that the viewer resolves against the config file's own URL
+  (`new URL(cfg.data, configUrl)`) — "paths in the JSON are relative to the JSON" — so the
+  config and its `.zarr.zip` must stay siblings both live and in a bundle. `checkpoint`
+  carries only `name` (used by `list_snapshots` and the Cirro symlink); the old absolute
+  `checkpoint.url` coupling is gone. `render` bakes what the browser can't derive from the
+  raw arrays: the image geometry (`image_info` — bounds, `pixel_to_world`, pyramid levels,
   channel names) and per-channel `{visible, color, contrast_limit}` (the contrast limit
   is `imaging._channel_norm`, coarsest-level-derived like the tile server, so the browser
   compositor `sum(clip(value/limit, 0, 1) * color)` reproduces the live look). The
   categorical palette / numeric range are **not** baked — the viewer derives them with
-  the same `colorUtils` from the same immutable arrays.
+  the same `colorUtils` from the same immutable arrays. `render`/`encoding`/`viewport`
+  internals are unchanged from the pre-refactor schema; only the envelope changed.
+- **HTML page:** a five-line standalone entry point —
+  `<div id="app" data-config="./<name>.sview.json"></div>` plus a classic (non-module)
+  `<script src="${pagesBaseUrl}/viewer/${version}/app.js">`. The classic script tag loads
+  cross-origin from GitHub Pages without CORS headers; `data-config` is relative so the
+  browser resolves it against the HTML's own URL (colocated). See §14.2 for the shared
+  viewer's hosting and versioning.
 - **Immutable target:** saving a snapshot first writes the session to a content-hashed
   `.zarr.zip` (so the config points at bytes that won't change under it), then bakes the
   manifest — both under one continuous read lock so no compute can interleave. The
-  checkpoint is served for direct browser reads (HTTP Range) at
-  `GET /api/checkpoints/<name>`; the config is served by the name-validated route
-  `GET /snapshots/<name>.sview.json`.
-- **Files:** `<name>-<hash>.sview.json` in `DATA_DIR` (the config JSON content-hashed),
-  alongside the checkpoints. Both spatial and embedding displays can be snapshotted
-  (`POST /api/sessions/{id}/snapshot` with an optional `display_id`).
+  checkpoint is served for direct browser reads (HTTP Range) at `GET /api/checkpoints/<name>`
+  (checkpoint picker) and, so the config's relative `data` path resolves live, also as a
+  sibling of the config under the name-validated route `GET /snapshots/<name>`, which
+  serves the `.sview.json` config, the `.html` page, and the `.zarr.zip` checkpoint alike
+  (Range + HEAD).
+- **Files:** `<name>-<hash>.sview.json` + `<name>-<hash>.html` in `DATA_DIR` (same prefix,
+  the config JSON content-hashed), alongside the checkpoints. Both spatial and embedding
+  displays can be snapshotted (`POST /api/sessions/{id}/snapshot` with an optional
+  `display_id`, returning `{status, name, url, html}`).
 - **Invocation:** a **Save snapshot** action (canvas controls).
 
 ### 14.1 Checkpoint on-disk format (browser-readable)
@@ -1011,6 +1032,40 @@ reads. To make a browser read cheap over one HTTP-served file:
   `zarr.json`, downloaded in full on open) into gzipped `logs/<record_id>.log.gz`, read
   back lazily by `session.get_log` (the existing `/jobs/{id}/log` endpoint).
 
+### 14.2 Shared viewer hosting and versioning
+
+The viewer bundle is published **once per version** to GitHub Pages, decoupled from any
+individual snapshot; snapshots only point at it. This is what lets a saved snapshot keep
+rendering forever even after the schema evolves.
+
+- **Single source of truth:** `snapshot-viewer.json` at the repo root
+  (`{version, pagesBaseUrl}`). The backend reads it (`config.py`), the viewer's Vite build
+  imports it (`vite.app.config.ts`), and CI reads it — the published URL
+  `${pagesBaseUrl}/viewer/${version}/app.js` is always computed, never hardcoded in pieces.
+- **The bundle:** `npm run build:app` (`vite.app.config.ts`) builds `src/app-entry.tsx`
+  into a **single-file classic IIFE** at `frontend/dist-app/viewer/<version>/app.js` —
+  Tailwind CSS inlined and injected as a `<style>` at runtime, all assets inlined, no
+  `type="module"`. `app-entry.tsx` finds `#app[data-config]`, fetches the config, resolves
+  `data` against the config URL, and renders one snapshot by reusing `SnapshotViewer` (no
+  picker). The bundle bakes in its own schema major and shows a friendly message if a
+  config's `schema_version` major differs.
+- **Immutable per version:** `.github/workflows/deploy-viewer.yml` publishes
+  `viewer/<version>/` to GitHub Pages **accumulatively** (prior version dirs are never
+  deleted; `.nojekyll` at the site root). Because each snapshot HTML pins its exact
+  `app.js` version, older snapshots keep loading the viewer they were built against.
+- **Version governance (test-gated):** the emitted schema is frozen per version as a
+  structural golden in `backend/snapshot_schema/<version>.json`; a test asserts a freshly
+  saved config matches the golden and that its `schema_version` equals the version file.
+  A schema change therefore forces bumping `version` in `snapshot-viewer.json`, adding a
+  new golden, and republishing — an already-published version dir/golden is never mutated
+  (mirroring immutable GitHub Pages). `ci.yml` runs this gate plus the frontend
+  typecheck/build on PRs.
+- **In-app preview vs. published viewer:** the in-app `SnapshotViewer` (used by the
+  snapshot browser) and the published `app.js` share the same rendering and the same
+  `new URL(cfg.data, configUrl)` resolution rule; the removed standalone-picker path
+  (`StandaloneViewer.tsx`, `viewer-main.tsx`, `viewer.html`, `vite.viewer.config.ts`,
+  the `build:viewer` script, `snapshots/index.json`) is gone.
+
 ---
 
 ## 15. Cirro upload
@@ -1022,10 +1077,15 @@ dark unless `CIRRO_BASE_URL`, `CIRRO_CLIENT_ID`, and `CIRRO_CLIENT_SECRET` are a
 - **Auth:** a service-account (OAuth client-credentials) identity — **no interactive
   login**, gated by `config.cirro_enabled()`.
 - **Flow:** the session must be **saved first**. `build_upload_folder()` builds a temp
-  folder from **symlinks** (each selected `.zarr.zip` under `sessions/`, and each selected
-  snapshot's JSON config under `snapshots/` with the checkpoint it references added to
-  `sessions/`), so nothing is copied and the bundle is self-contained. `upload()` calls
-  the Cirro SDK's `project.upload_dataset`. Driven by a `cirro_upload` worker job.
+  folder from **symlinks**: each selected `.zarr.zip` under `sessions/`, and each selected
+  snapshot's three files — its `.sview.json` config, its `.html` page, and the `.zarr.zip`
+  it references — colocated as siblings at the bundle root, so nothing is copied and each
+  config's relative `data` path resolves. **No viewer code is bundled** (the removed
+  `_copy_viewer` / `dist-viewer` path): each HTML loads the shared version-pinned viewer
+  from GitHub Pages (§14.2), so every uploaded `.html` is a standalone read-only entry
+  point. There is no multi-snapshot picker or `snapshots/index.json` manifest anymore.
+  `upload()` calls the Cirro SDK's `project.upload_dataset`. Driven by a `cirro_upload`
+  worker job.
 - **UI:** a dialog listing Cirro projects, a dataset name, an optional folder (free-text
   with typeahead, see below), and saved snapshots (multi-select). Uploads always use the
   generic "Files" ingest process (`custom_dataset`), so there is no process picker.
@@ -1175,7 +1235,10 @@ Arrow IPC (binary). See `docs/CONTRACT.md` for the full contract.
 | `GET` | `/api/sessions/{id}/table?path=&offset=&limit=` | Data-inspector dataframe page |
 | `GET` | `/api/sessions/{id}/image/{element}/tile/{level}/{col}/{row}?channels=` | Image pyramid tile (PNG) |
 | `GET` | `/api/sessions/{id}/image/{element}/info` | Pyramid levels, tile size, `pixel_to_world` |
-| `POST` | `/api/sessions/{id}/snapshot` | Save an HTML snapshot |
+| `POST` | `/api/sessions/{id}/snapshot` | Save a snapshot (writes `.sview.json` + `.html`); returns `{status,name,url,html}` |
+| `GET` | `/api/snapshots` | List saved snapshots (`checkpoint_name`, `schema_version`, `html`, …) |
+| `GET`/`HEAD` | `/snapshots/{name}` | Serve a snapshot's `.sview.json`, `.html`, or sibling `.zarr.zip` (Range) |
+| `GET`/`HEAD` | `/api/checkpoints/{name}` | Serve a saved checkpoint `.zarr.zip` for direct browser reads (Range) |
 | `POST` | `/api/cirro/upload` | Upload selected checkpoints + snapshots to Cirro (session-independent) |
 | `GET` | `/api/about/licenses` | Third-party licenses (from SBOMs) |
 
@@ -1189,7 +1252,7 @@ each tagged by `session_id`, with a monotonic id so a reconnecting client resume
 |---|---|---|
 | `job.queued` / `job.started` | jobId (+ descriptor) | Update queue list / mark RUNNING |
 | `job.completed` | jobId, structural_diff | Refetch changed fields; invalidate dependents |
-| `job.failed` | jobId | Show / remove per keep_failures; offer log |
+| `job.failed` | jobId | Surface the error; keep the row for inspect/remove; offer log |
 | `plot.drawn` / `plot.invalidated` | plotId(s) | Enable figure / flag for redraw |
 | `display.updated` | displayId, spec | Re-derive canvas |
 | `region.updated` | regions | Refresh annotations panel + coloring |
@@ -1250,7 +1313,7 @@ each tagged by `session_id`, with a monotonic id so a reconnecting client resume
    the only path to a function.
 2. The Term Dictionary defines parameter *terms*, never functions.
 3. One schema-of-record drives the form + Pydantic validation.
-4. Every function returns the contract envelope and respects `keep_failures`.
+4. Every function returns the result envelope (§4.7).
 5. Redraw exists only on plotting items; a compute item can never go COMPLETED→QUEUED;
    rerun appends a new (PENDING) step.
 6. Rendered figures are never written to `attrs` or Zarr.
@@ -1424,7 +1487,7 @@ confirmed with counsel.**
   exposed as `custom.leiden` and used by the region-from-clustering path; `sc.tl.leiden`
   and `sc.tl.louvain` are no longer offered (Louvain is dropped — Leiden supersedes it).
   `celltypist` hard-depends on `leidenalg`, so the Docker/dev install strips
-  `leidenalg`+`igraph` after `pip install` and the annotate path over-clusters with
+  `leidenalg`+`igraph` after `uv pip install` and the annotate path over-clusters with
   graspologic instead; the license gate fails if the GPL packages reappear.
   `clustering_decision_todo` is now `false`. Do **not** bundle napari/Qt
   (GPL/commercial, unneeded). **scvi-tools is excluded**, so there is no torch/CUDA

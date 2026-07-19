@@ -5,13 +5,14 @@ import { reportError } from '../lib/errors';
 import ShapeToolbar from './ShapeToolbar';
 import type { ShapeAnnotation, StrokeStyle, FillStyle } from '../schemas/annotations';
 import { defaultFill } from '../schemas/annotations';
+import { polygonFromClicks } from '../lib/shapeAnnotations';
 
 const SHAPE_COLORS = [
   '#3388ff', '#e05c5c', '#5cb85c', '#e0a83a', '#a05ce0', '#4ab8c4', '#e05cba', '#7a8b3a',
 ];
 
 const KIND_LABEL: Record<ShapeAnnotation['geometry']['kind'], string> = {
-  line: 'Line', box: 'Box', trapezoid: 'Trapezoid', ellipse: 'Ellipse', text: 'Text',
+  line: 'Line', box: 'Box', polygon: 'Polygon', ellipse: 'Ellipse', text: 'Text',
 };
 
 export default function AnnotationsPanel() {
@@ -26,7 +27,13 @@ export default function AnnotationsPanel() {
     clearDraft,
     upsertShapeAnnotation,
     removeShapeAnnotationLocal,
+    commitNewShape,
   } = useAppStore();
+
+  function handleClosePolygon() {
+    const geometry = polygonFromClicks(draftVertices);
+    if (geometry) commitNewShape(geometry); // commitNewShape clears the draft + selects the new shape
+  }
 
   // Style edits (color/width/alpha sliders) persist debounced, same 500ms
   // coalescing pattern SpatialCanvas uses for display-encoding edits, so a
@@ -83,6 +90,7 @@ export default function AnnotationsPanel() {
           activeShapeTool={activeShapeTool}
           setActiveShapeTool={setActiveShapeTool}
           draftVertexCount={draftVertices.length}
+          onClosePolygon={handleClosePolygon}
           onCancelDraft={clearDraft}
         />
       </div>

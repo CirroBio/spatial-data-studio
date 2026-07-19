@@ -186,19 +186,40 @@ function hexToRgb(hex: string): [number, number, number] | null {
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 
+// True-color RGB image, shown as-is rather than tinted (mirrors backend
+// imaging._is_rgb): 3 uint8 channels labeled r/g/b or with bare indices.
+function isRgbImage(
+  C: number, data: Uint8Array | Uint16Array | Float32Array, channelNames?: string[],
+): boolean {
+  if (C !== 3 || !(data instanceof Uint8Array) || channelNames?.length !== 3) return false;
+  const n = channelNames.map((s) => s.toLowerCase());
+  return (n[0] === 'r' && n[1] === 'g' && n[2] === 'b') || (n[0] === '0' && n[1] === '1' && n[2] === '2');
+}
+
 // Additively blend visible channels into an RGB ImageData, matching backend
 // imaging._composite exactly: out_rgb = sum over visible channels of
-// clip(value / contrast_limit, 0, 1) * color_rgb, then clip to [0,255]. Every
-// channel (including a 3-channel uint8 H&E) is tinted by its assigned color; there
-// is no native-RGB passthrough. contrast_limit is the upper bound (0 floor implicit).
+// clip(value / contrast_limit, 0, 1) * color_rgb, then clip to [0,255].
+// contrast_limit is the upper bound (0 floor implicit). A true-color RGB image
+// (see isRgbImage) is passed straight through so an H&E isn't false-colored.
 export function compositeChannels(
   img: { data: Uint8Array | Uint16Array | Float32Array; shape: [number, number, number] },
   channels: Record<string, CompositeChannel> | null,
+  channelNames?: string[],
 ): ImageData {
   const [C, h, w] = img.shape;
   const px = h * w;
   const src = img.data;
   const out = new Uint8ClampedArray(px * 4);
+
+  if (isRgbImage(C, src, channelNames)) {
+    for (let i = 0; i < px; i++) {
+      out[i * 4] = src[i];
+      out[i * 4 + 1] = src[px + i];
+      out[i * 4 + 2] = src[2 * px + i];
+      out[i * 4 + 3] = 255;
+    }
+    return new ImageData(out, w, h);
+  }
 
   // [channelIndex, rgb, contrast_limit] for each channel to blend.
   const active: [number, [number, number, number], number][] = [];

@@ -1,5 +1,14 @@
+import json
 import os
 from pathlib import Path
+
+# Single source of truth for the shared snapshot viewer: /snapshot-viewer.json at
+# the repo root (parents[2] from backend/app/). `version` pins the published viewer
+# bundle; `pagesBaseUrl` is its GitHub Pages origin. Every saved snapshot's HTML
+# points at `${pagesBaseUrl}/viewer/${version}/app.js`, so old snapshots keep
+# loading their exact viewer version even after the schema evolves.
+_SNAPSHOT_VIEWER_JSON = Path(__file__).resolve().parents[2] / "snapshot-viewer.json"
+_viewer_meta = json.loads(_SNAPSHOT_VIEWER_JSON.read_text())
 
 
 def _mb(env: str, default_mb: int) -> int:
@@ -26,6 +35,25 @@ class Config:
     # pyramid chunk; this caps the concurrent transient so the burst can't OOM.
     IMAGE_RENDER_CONCURRENCY = int(os.environ.get("SDS_IMAGE_RENDER_CONCURRENCY", "2"))
 
+    # Client-side (Viv) image compositing. When on, the /image/{element}/info manifest
+    # advertises that the browser may read the session's on-disk normalized raster zarr
+    # directly (via /api/sessions/{sid}/raster/...) and composite channels on the GPU,
+    # instead of fetching server-composited PNG tiles. The PNG tile path stays intact as
+    # the fallback (used whenever this is off, the element has no served store, or its
+    # channel count exceeds the cap). Viv composites up to 6 channels per shader pass;
+    # above that the frontend falls back to PNG.
+    #
+    # DEFAULT OFF (opt in with SDS_CLIENT_IMAGE_COMPOSITING=1). The client path renders
+    # correctly (Viv's single-scale ImageLayer / XRLayer, positioned by the pixel->world
+    # affine), but it loads one pyramid level into a single GPU texture rather than
+    # streaming tiles, so for very large images (e.g. multi-GB Xenium) it shows a coarser
+    # level on deep zoom than the server PNG path, which tiles full resolution. It stays
+    # off by default until full-detail tiling is reconciled with the scaled affine (the
+    # tiled MultiscaleImageLayer silently fetches no tiles under a non-unit modelMatrix
+    # scale). See DESIGN.md 9.4 and frontend useVivImageLayer.ts.
+    CLIENT_IMAGE_COMPOSITING = os.environ.get("SDS_CLIENT_IMAGE_COMPOSITING", "0") not in ("0", "false", "False")
+    CLIENT_IMAGE_MAX_CHANNELS = int(os.environ.get("SDS_CLIENT_IMAGE_MAX_CHANNELS", "6"))
+
     # Raster (image/label) tiling normalized at ingest (see rasters.py). Every
     # element is rebuilt into a 2x multiscale pyramid down to a <= RASTER_BASE_PX
     # base, chunked at imaging.TILE_SIZE so one tile realizes one small chunk.
@@ -48,13 +76,12 @@ class Config:
 
     STATIC_DIR = Path(os.environ.get("SDS_STATIC_DIR", "")) or None  # built SPA, optional
 
-    # Built standalone snapshot viewer (frontend `npm run build:viewer` -> dist-viewer/).
-    # Copied into a Cirro upload bundle when snapshots are included, so the dataset
-    # ships a self-contained web page that renders its snapshots. Defaults to the
-    # repo's frontend/dist-viewer relative to this file.
-    SNAPSHOT_VIEWER_DIR = Path(os.environ.get(
-        "SDS_SNAPSHOT_VIEWER_DIR",
-        str(Path(__file__).resolve().parents[2] / "frontend" / "dist-viewer")))
+    # Shared snapshot viewer, read from /snapshot-viewer.json (see above). Snapshots
+    # embed SNAPSHOT_VIEWER_VERSION in their `schema_version` and load app.js from the
+    # version-pinned GitHub Pages URL; no viewer code is bundled or served locally.
+    SNAPSHOT_VIEWER_VERSION = _viewer_meta["version"]
+    SNAPSHOT_VIEWER_PAGES_URL = _viewer_meta["pagesBaseUrl"]
+    SNAPSHOT_VIEWER_APP_JS = f"{_viewer_meta['pagesBaseUrl']}/viewer/{_viewer_meta['version']}/app.js"
 
     # ---- Cirro upload. Strictly additive; off unless all three vars are set. ----
     CIRRO_BASE_URL = os.environ.get("CIRRO_BASE_URL", "")

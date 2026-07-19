@@ -40,9 +40,10 @@ class BoxGeometry(BaseModel):
     vertices: tuple[Point, Point, Point, Point]
 
 
-class TrapezoidGeometry(BaseModel):
-    kind: Literal["trapezoid"]
-    vertices: tuple[Point, Point, Point, Point]
+class PolygonGeometry(BaseModel):
+    kind: Literal["polygon"]
+    # A free-form closed ring (last vertex connects back to the first).
+    vertices: list[Point] = Field(min_length=3)
 
 
 class EllipseGeometry(BaseModel):
@@ -57,14 +58,16 @@ class TextGeometry(BaseModel):
     kind: Literal["text"]
     position: Point
     text: str
-    fontSize: float = Field(ge=1)
+    # World-space glyph height (see the frontend TextLayer's sizeUnits: 'common'),
+    # so it can be well below 1 for fine-coordinate datasets.
+    fontSize: float = Field(gt=0)
     # Radians about the anchor; defaults to 0 so labels authored before rotation
     # existed still validate.
     rotation: float = 0.0
 
 
 ShapeGeometry = Annotated[
-    Union[LineGeometry, BoxGeometry, TrapezoidGeometry, EllipseGeometry, TextGeometry],
+    Union[LineGeometry, BoxGeometry, PolygonGeometry, EllipseGeometry, TextGeometry],
     Field(discriminator="kind"),
 ]
 

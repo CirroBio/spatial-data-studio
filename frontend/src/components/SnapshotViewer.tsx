@@ -18,8 +18,8 @@ import { defaultChannelColor } from './canvas/colorUtils';
 import { colorByLabel } from './canvas/colorBy';
 import { CellColorLegend, ChannelLegend, LoadingCue } from './canvas/CanvasOverlays';
 import type { Channel } from './canvas/useImageChannels';
+import { ZOOM_LIMITS } from './canvas/viewFit';
 
-const ZOOM_LIMITS = { minZoom: -8, maxZoom: 8 };
 const DEFAULT_ROTATION_X = 25;
 const SETTLE_MS = 200;
 
@@ -93,11 +93,7 @@ function zoomOf(vs: ViewState): number {
 }
 
 interface Props {
-  url: string;  // snapshot config URL (/snapshots/<name>.sview.json)
-  // Maps the app-relative URLs baked into a snapshot (its config URL and the
-  // config's /api/checkpoints/<name> checkpoint URL) to wherever they actually
-  // live. Identity in the app; the standalone bundle rewrites them to relative paths.
-  resolveUrl?: (url: string) => string;
+  url: string;  // snapshot config URL (e.g. /snapshots/<name>.sview.json or a colocated ./<name>.sview.json)
 }
 
 // Read-only deck.gl view of an immutable checkpoint, driven by a SnapshotConfig.
@@ -105,8 +101,10 @@ interface Props {
 // overlays); reads pixels/positions/colors directly from the checkpoint zarr.
 // Parent must remount per snapshot via key={url}. zarrita has no AbortSignal, so
 // effects use an ignore-stale flag and decoded bitmaps live in component state.
-export default function SnapshotViewer({ url, resolveUrl }: Props) {
-  const resolve = resolveUrl ?? ((u: string) => u);
+// The config's `data` path is resolved against the config's own URL (see
+// SNAPSHOT_CONTRACT §4), so the same component serves the in-app preview and the
+// standalone GitHub Pages bundle without any URL rewriting.
+export default function SnapshotViewer({ url }: Props) {
   const [config, setConfig] = useState<SnapshotConfig | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [positions, setPositions] = useState<ScatterPositions | null>(null);
@@ -138,7 +136,8 @@ export default function SnapshotViewer({ url, resolveUrl }: Props) {
     let stale = false;
     (async () => {
       try {
-        const cfg = await fetchSnapshotConfig(resolve(url));
+        const configUrl = new URL(url, window.location.href);
+        const cfg = await fetchSnapshotConfig(configUrl.href);
         if (stale) return;
         setConfig(cfg);
         const embed = cfg.kind === 'embedding' ? (cfg.encoding as EmbeddingEncoding) : null;
@@ -146,7 +145,7 @@ export default function SnapshotViewer({ url, resolveUrl }: Props) {
         setViewState(initial);
         setSettled(initial);  // load detail at the saved viewport without waiting for a pan
 
-        const { root } = await openCheckpoint(resolve(cfg.checkpoint.url));
+        const { root } = await openCheckpoint(new URL(cfg.data, configUrl).href);
         if (stale) return;
         rootRef.current = root;
 
@@ -171,7 +170,7 @@ export default function SnapshotViewer({ url, resolveUrl }: Props) {
           const win = await readImageLevelWhole(root, img.element, coarsest);
           if (stale) return;
           setBase({
-            image: compositeChannels(win, channelsArg(cfg)),
+            image: compositeChannels(win, channelsArg(cfg), img.channel_names),
             bounds: quad(img.pixel_to_world as Affine, 0, 0, img.width, img.height),
           });
         }
@@ -228,7 +227,7 @@ export default function SnapshotViewer({ url, resolveUrl }: Props) {
         const win = await readImageWindow(root, img.element, L, [yL0, yL1], [xL0, xL1]);
         if (stale) return;
         setDetail({
-          image: compositeChannels(win, channelsArg(config)),
+          image: compositeChannels(win, channelsArg(config), img.channel_names),
           bounds: quad(m, xL0 * sx, yL0 * sy, xL1 * sx, yL1 * sy),
         });
       } catch (e) {

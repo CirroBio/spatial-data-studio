@@ -204,7 +204,7 @@ def run_zarr_import_flow(client):
         # archives allocate a temp extract dir (the caller owns its cleanup).
         for label, p, expect_tmp in [("dir", XENIUM_TMA, False), ("zip", zip_path, True),
                                      ("tar.gz", targz_path, True)]:
-            sdata, extract_dir = read_spatialdata_archive(p)
+            sdata, extract_dir, _ = read_spatialdata_archive(p)
             assert list(getattr(sdata, "tables", {}).keys()), f"{label}: no tables read"
             assert (extract_dir is not None) == expect_tmp, f"{label}: extract_dir={extract_dir}"
             if extract_dir:
@@ -403,16 +403,36 @@ def run_snapshot_flow(client, sid):
 
     listing = client.get("/api/snapshots").json()["snapshots"]
     entry = next((s for s in listing if s["name"] == snap["name"]), None)
-    assert entry and entry["kind"] == "spatial" and entry["checkpoint_url"], f"not listed: {listing}"
+    assert entry and entry["kind"] == "spatial" and entry["checkpoint_name"], f"not listed: {listing}"
 
     cfg = client.get(snap["url"]).json()
-    assert cfg["schema"] == 1 and cfg["checkpoint"]["url"].startswith("/api/checkpoints/")
+    # New envelope (SNAPSHOT_CONTRACT §2): semver `schema_version`, a `data` path
+    # relative to the config's own URL, and `checkpoint.name` (no `checkpoint.url`).
+    assert cfg["schema_version"] == config.SNAPSHOT_VIEWER_VERSION, cfg.get("schema_version")
+    assert cfg["data"].startswith("./") and cfg["data"].endswith(".zarr.zip"), cfg.get("data")
+    checkpoint_name = cfg["checkpoint"]["name"]
+    assert checkpoint_name and "url" not in cfg["checkpoint"], cfg["checkpoint"]
     assert cfg["render"]["image"] and cfg["render"]["image"]["pixel_to_world"], "missing image manifest"
     assert cfg["render"]["channels"], "missing per-channel manifest"
-    ck = client.get(cfg["checkpoint"]["url"], headers={"Range": "bytes=0-9"})
+
+    # Version gate (SNAPSHOT_CONTRACT §8): the real emitted config's structural
+    # signature must equal the immutable golden frozen for the CURRENT version. Same
+    # `schema_signature` helper as test_schema_gate, so the cheap check and this one
+    # enforce one shape.
+    from snapshot_schema import schema_signature, load_golden
+    golden = load_golden(config.SNAPSHOT_VIEWER_VERSION)
+    assert schema_signature(cfg) == golden, (
+        "Snapshot schema changed — bump `version` in snapshot-viewer.json, add "
+        "snapshot_schema/<newversion>.json, and republish the viewer."
+    )
+
+    # The checkpoint is now a sibling of the config under /snapshots/, but the
+    # /api/checkpoints/<name> route still exists (checkpoint picker) — build the URL
+    # from checkpoint.name since `checkpoint.url` is gone.
+    ck = client.get(f"/api/checkpoints/{checkpoint_name}", headers={"Range": "bytes=0-9"})
     assert ck.status_code == 206, f"referenced checkpoint not servable: {ck.status_code}"
-    print(f"[ok] snapshot {snap['name']} -> checkpoint {cfg['checkpoint']['name']} "
-          f"(channels={len(cfg['render']['channels'])})")
+    print(f"[ok] snapshot {snap['name']} -> checkpoint {checkpoint_name} "
+          f"(schema {cfg['schema_version']}, channels={len(cfg['render']['channels'])})")
 
 
 def run_regions_flow(client):
@@ -472,6 +492,13 @@ def run_shape_annotations_flow(client):
     job = client.post(f"/api/sessions/{sid}/shape-annotations", json=box).json()
     assert wait_job(client, sid, job["job_id"])["status"] == "completed"
 
+    # a free-form polygon (5 vertices) exercises the variable-length ring
+    poly_verts = [[0, 0], [8, 0], [10, 4], [4, 8], [-2, 4]]
+    polygon = {"geometry": {"kind": "polygon", "vertices": poly_verts},
+               "stroke": stroke(color="#a05ce0"), "fill": fill(color="#a05ce0")}
+    job = client.post(f"/api/sessions/{sid}/shape-annotations", json=polygon).json()
+    assert wait_job(client, sid, job["job_id"])["status"] == "completed"
+
     text = {"geometry": {"kind": "text", "position": [3, 7], "text": "Tumor region",
                          "fontSize": 18, "rotation": 0.5},
             "stroke": stroke(color="#e05c5c")}
@@ -479,11 +506,14 @@ def run_shape_annotations_flow(client):
     assert wait_job(client, sid, job["job_id"])["status"] == "completed"
 
     shapes = client.get(f"/api/sessions/{sid}/shape-annotations").json()["shapes"]
-    assert len(shapes) == 3, shapes
+    assert len(shapes) == 4, shapes
     line_id = next(s["id"] for s in shapes if s["geometry"]["kind"] == "line")
     box_id = next(s["id"] for s in shapes if s["geometry"]["kind"] == "box")
     text_id = next(s["id"] for s in shapes if s["geometry"]["kind"] == "text")
     assert shapes[0]["stroke"]["z"] == 0 and "fill" not in next(s for s in shapes if s["id"] == line_id)
+    poly_shape = next(s for s in shapes if s["geometry"]["kind"] == "polygon")
+    poly_id = poly_shape["id"]
+    assert poly_shape["geometry"]["vertices"] == [[float(x), float(y)] for x, y in poly_verts], poly_shape
     text_shape = next(s for s in shapes if s["id"] == text_id)
     assert text_shape["geometry"]["position"] == [3.0, 7.0], text_shape
     assert text_shape["geometry"]["text"] == "Tumor region", text_shape
@@ -504,13 +534,14 @@ def run_shape_annotations_flow(client):
     assert line_shape["stroke"]["arrowSize"] == 24, line_shape
     print("[ok] updated line geometry + stroke style")
 
-    # delete: the box is removed, the line + text remain. Updating the line above
-    # re-appended it (drop + concat), so it now sorts after the untouched text.
+    # delete: the box is removed, the polygon + line + text remain. Updating the line
+    # above re-appended it (drop + concat), so it now sorts after the untouched
+    # polygon + text.
     job = client.delete(f"/api/sessions/{sid}/shape-annotations/{box_id}").json()
     assert wait_job(client, sid, job["job_id"])["status"] == "completed"
     shapes = client.get(f"/api/sessions/{sid}/shape-annotations").json()["shapes"]
-    assert [s["id"] for s in shapes] == [text_id, line_id], shapes
-    print("[ok] deleted box shape, line + text shapes remain")
+    assert [s["id"] for s in shapes] == [poly_id, text_id, line_id], shapes
+    print("[ok] deleted box shape, polygon + line + text shapes remain")
 
     # persistence: the annotations element survives save + reload
     out = os.path.join(str(config.DATA_DIR), "shape_annotations_session.zarr.zip")
@@ -518,7 +549,7 @@ def run_shape_annotations_flow(client):
     assert wait_job(client, sid, sv["job_id"])["status"] == "completed"
     sid2 = new_session(client, out)
     shapes2 = client.get(f"/api/sessions/{sid2}/shape-annotations").json()["shapes"]
-    assert [s["id"] for s in shapes2] == [text_id, line_id], shapes2
+    assert [s["id"] for s in shapes2] == [poly_id, text_id, line_id], shapes2
     reloaded_text = next(s for s in shapes2 if s["id"] == text_id)
     assert reloaded_text["geometry"]["text"] == "Tumor region", reloaded_text
     print("[ok] shape-annotations element survives save + reload")
@@ -876,6 +907,77 @@ def run_segmentation_flow(client):
     print("\nSEGMENTATION E2E CHECKS PASSED")
 
 
+def run_raster_flow(client):
+    """Client-side (Viv) compositing path: the image /info manifest advertises the
+    raw-raster route and the browser reads the session's on-disk normalized zarr
+    directly. Verifies the new /info fields, that the raster route serves a group
+    zarr.json and a real chunk file (200 + Range 206), and that key traversal /
+    missing keys 404. Uses xenium.zarr, whose rasters normalize_rasters rebuilds
+    into a served store (visium checkpoints can be canonical and serve no store)."""
+    import os as _os
+    from app.main import MANAGER
+
+    # This flow validates the client-compositing serving path, so enable it explicitly
+    # rather than depend on the default (which ships off; see config.CLIENT_IMAGE_COMPOSITING).
+    _prev_flag = config.CLIENT_IMAGE_COMPOSITING
+    config.CLIENT_IMAGE_COMPOSITING = True
+
+    sid = new_session(client, XENIUM)
+    inv = client.get(f"/api/sessions/{sid}/elements").json()
+    image_names = [im["name"] for im in inv["images"]]
+    assert image_names, inv
+
+    # every image /info carries the client-compositing manifest fields, well-typed
+    compositable = None
+    for name in image_names:
+        info = client.get(f"/api/sessions/{sid}/image/{name}/info").json()
+        assert info["raster_base_url"] == f"/api/sessions/{sid}/raster/{name}", info
+        assert info["zarr_group_path"] == f"images/{name}", info
+        assert isinstance(info["client_compositing"], bool) and isinstance(info["is_rgb"], bool), info
+        assert len(info["contrast_limits"]) == info["channels"], info
+        assert all(lo == 0.0 and hi > 0 for lo, hi in info["contrast_limits"]), info["contrast_limits"]
+        if info["client_compositing"]:
+            compositable = (name, info)
+    assert compositable, f"no xenium image advertised client compositing: {image_names}"
+    name, info = compositable
+    base = info["raster_base_url"]
+    print(f"[ok] /info client-compositing manifest for {len(image_names)} image(s); "
+          f"{name} compositable (channels={info['channels']}, rgb={info['is_rgb']})")
+
+    # the group zarr.json is served (zarrita opens the multiscale group here)
+    grp = client.get(f"{base}/{info['zarr_group_path']}/zarr.json")
+    assert grp.status_code == 200 and grp.json()["node_type"] == "group", grp.status_code
+    rng = client.get(f"{base}/{info['zarr_group_path']}/zarr.json", headers={"Range": "bytes=0-9"})
+    assert rng.status_code == 206 and len(rng.content) == 10 and \
+        "content-range" in {k.lower() for k in rng.headers}, (rng.status_code, len(rng.content))
+    assert client.head(f"{base}/zarr.json").status_code == 200
+
+    # a real chunk file off disk (dataset-agnostic: found by walking the served store),
+    # range-read the way zarrita fetches a chunk
+    store_dir = MANAGER.get(sid).raster_stores[name]
+    chunk_rel = next((_os.path.relpath(_os.path.join(r, f), store_dir)
+                      for r, _, fs in _os.walk(store_dir) for f in fs if not f.endswith(".json")), None)
+    assert chunk_rel, f"no chunk file under {store_dir}"
+    ck = client.get(f"{base}/{chunk_rel}")
+    assert ck.status_code == 200 and ck.content, (chunk_rel, ck.status_code)
+    ckr = client.get(f"{base}/{chunk_rel}", headers={"Range": "bytes=0-99"})
+    assert ckr.status_code == 206 and len(ckr.content) == 100, (ckr.status_code, len(ckr.content))
+    print(f"[ok] raster route served group zarr.json + chunk {chunk_rel} (200 + Range 206)")
+
+    # missing chunk (zarr fill), unknown element, and `..` traversal all 404
+    assert client.get(f"{base}/{info['zarr_group_path']}/scale0/image/c/9/9/9").status_code == 404
+    assert client.get(f"/api/sessions/{sid}/raster/not_an_element/zarr.json").status_code == 404
+    # %2e%2e reaches the handler as `..` (httpx would otherwise collapse literal dots
+    # client-side), exercising the server-side traversal guard in _raster_file.
+    assert client.get(f"{base}/%2e%2e/%2e%2e/zarr.json").status_code == 404, "path traversal not rejected"
+    print("[ok] raster route 404s missing chunk + unknown element; rejects traversal")
+
+    config.CLIENT_IMAGE_COMPOSITING = _prev_flag
+
+    assert client.delete(f"/api/sessions/{sid}").status_code == 200
+    print("\nRASTER (client-compositing) E2E CHECKS PASSED")
+
+
 def main():
     with TestClient(app) as client:
         assert client.get("/api/readyz").json()["functions"] > 0
@@ -1073,6 +1175,7 @@ def main():
         run_filter_reshape_flow(client)
         run_zarr_import_flow(client)
         run_segmentation_flow(client)
+        run_raster_flow(client)
 
         run_custom_methods_flow(client)
 

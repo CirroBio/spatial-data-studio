@@ -42,13 +42,22 @@ export type NewSessionSource =
   | { kind: 'load'; path: string }
   | { kind: 'read'; namespace: string; function: string; params: Record<string, unknown> };
 
-export async function createSession(params: { name?: string; source: NewSessionSource }): Promise<SessionSummary> {
+// Present only when loading a hash-named checkpoint (`<name>-<hash>.sdata.zarr.zip`):
+// whether the archive's bytes still hash to the value embedded in its filename.
+export interface HashCheck {
+  ok: boolean;
+  message: string;
+}
+
+export async function createSession(
+  params: { name?: string; source: NewSessionSource },
+): Promise<SessionSummary & { hash_check: HashCheck | null }> {
   const res = await apiFetch('/api/sessions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(params),
   });
-  return res.json() as Promise<SessionSummary>;
+  return res.json() as Promise<SessionSummary & { hash_check: HashCheck | null }>;
 }
 
 export interface FsEntry {

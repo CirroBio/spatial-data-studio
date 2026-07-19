@@ -26,10 +26,10 @@ Never invoke `uvicorn` or `npm run dev` directly, and never pass `--reload` — 
 
 2. **Stop first if relaunching (or if `.run.pids` is stale).** Run `./stop.sh` from the repo root. If `stop.sh` errors because `.run.pids` is missing but a stray `uvicorn app.main:app` or `vite` process is still bound to a port, kill them explicitly (`pkill -f 'uvicorn app.main:app'`, `pkill -f 'vite'`) before continuing — a leftover backend on :8000 will make the new run's frontend proxy to the wrong process.
 
-3. **Launch in the background.** `run.sh` blocks in the foreground, so run it with `run_in_background: true` and redirect output to a log file the user can tail:
+3. **Launch in the background.** `run.sh` blocks in the foreground, so run it with `run_in_background: true` and `tee` its output to a log file — `tee` keeps the stream observable in the background task while also persisting it for the user to tail:
 
    ```bash
-   ./run.sh > .run.log 2>&1   # add `--test` to serve from test-data/
+   ./run.sh 2>&1 | tee .run.log   # add `--test` (before the pipe) to serve from test-data/
    ```
 
    Use `--test` when the user is working against the bundled test datasets (`visium_hne.zarr`, `xenium.zarr`, `xenium_tma.zarr`) — those live under `test-data/`, not `data/`.
@@ -57,7 +57,7 @@ Never invoke `uvicorn` or `npm run dev` directly, and never pass `--reload` — 
 `run.sh` self-checks these and prints a fix — don't re-verify them proactively. If launch does fail, the likely causes are:
 
 - `.venv-introspect/` missing. Create it per the README:
-  `python3.11 -m venv .venv-introspect && . .venv-introspect/bin/activate && pip install -r backend/requirements.txt && pip uninstall -y leidenalg igraph`
+  `uv venv --python 3.11 .venv-introspect && . .venv-introspect/bin/activate && uv pip install -r backend/requirements.txt && uv pip uninstall leidenalg igraph`
 - `frontend/node_modules/` missing. `run.sh` auto-runs `npm install` if it's absent — a fresh install just makes the first launch slow, not broken.
 - Port 8000 already bound. `lsof -i :8000` — kill the squatter or ask the user which process it is.
 

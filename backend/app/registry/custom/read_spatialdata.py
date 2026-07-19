@@ -55,7 +55,7 @@ store
             return CallResult(status="failed", error="a store path is required")
         with capture_log() as buf:
             try:
-                sdata, extract_dir = read_spatialdata_archive(store)
+                sdata, extract_dir, _ = read_spatialdata_archive(store)
             except Exception as e:
                 return CallResult(status="failed", log=buf.getvalue() + "\n" + traceback.format_exc(),
                                   error=short_error(e))

@@ -69,13 +69,6 @@ def _now():
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
-def _envelope(result) -> dict:
-    """The JSON-safe contract envelope (v3 Part 2) for the agent loop."""
-    return {"status": result.status, "logs": result.log, "error": result.error,
-            "structural_diff": result.structural_diff, "result_value": result.result_value,
-            "manifest_before": result.manifest_before, "manifest_after": result.manifest_after}
-
-
 class Session:
     def __init__(self, sid, name, sdata, app_state, manager, parent_id=None, store_path=None):
         self.id = sid
@@ -102,6 +95,8 @@ class Session:
         self._save_lock = threading.Lock()
         self.extract_dir = None  # temp dir if loaded from a .zarr.zip; cleaned on close
         self.raster_cache_dir = None  # temp store of tile-normalized rasters; cleaned on close
+        self.raster_stores: dict[str, str] = {}  # element name -> its {i}.zarr store dir in raster_cache_dir
+        self.hash_check = None  # content-hash verification result when loaded from a hash-named checkpoint (store._hash_result)
         self.created_at = _now()
         self.status = "ready" if sdata is not None else "loading"
         self.active_table_key = self._default_table_key()
@@ -164,22 +159,20 @@ class Session:
             rec["structural_diff"] = {}
         return ec, rec
 
-    def _enqueue_job(self, entry_id: str, ec: str, descriptor: dict, keep_failures: bool = True):
-        self._jobs[entry_id] = {"kind": ec, "descriptor": descriptor, "status": "queued",
-                                "keep_failures": keep_failures}
+    def _enqueue_job(self, entry_id: str, ec: str, descriptor: dict):
+        self._jobs[entry_id] = {"kind": ec, "descriptor": descriptor, "status": "queued"}
         self._queue.put((entry_id, ec, descriptor))
         BUS.publish("job.queued", {"session_id": self.id, "job_id": entry_id,
                                    "descriptor": descriptor, "position": self._queue.qsize(),
                                    "effect_class": ec})
 
-    def enqueue_descriptor(self, descriptor: dict, keep_failures: bool = True) -> str:
-        """Run-now fast path: record + submit immediately. Frontend invocations keep
-        failures in history (keep_failures=True, v3 Part 2); the AI agent passes
-        keep_failures=False so its exploration never clutters the audit log."""
+    def enqueue_descriptor(self, descriptor: dict) -> str:
+        """Run-now fast path: record + submit immediately. A failed job stays in
+        history for the user to inspect or delete (audit-log model, DESIGN §6.1)."""
         entry_id = str(uuid.uuid4())
         ec, rec = self._make_record(descriptor, entry_id, "queued")
         self._collection(ec).append(rec)
-        self._enqueue_job(entry_id, ec, descriptor, keep_failures)
+        self._enqueue_job(entry_id, ec, descriptor)
         return entry_id
 
     def stage_descriptor(self, descriptor: dict) -> str:
@@ -188,18 +181,6 @@ class Session:
         ec, rec = self._make_record(descriptor, entry_id, "pending")
         self._collection(ec).append(rec)
         return entry_id
-
-    def run_and_wait(self, descriptor: dict, keep_failures: bool = False, timeout: float = 300) -> dict:
-        """Enqueue a call and block (in the caller's thread, not the worker) until it
-        reaches a terminal state, returning the contract envelope. The agent's
-        run_function tool uses this with keep_failures=False (v3 Part 2/5)."""
-        job_id = self.enqueue_descriptor(descriptor, keep_failures=keep_failures)
-        t0 = time.time()
-        while time.time() - t0 < timeout:
-            if self.job_status(job_id) in ("completed", "drawn", "failed", "cancelled"):
-                return self._jobs.get(job_id, {}).get("envelope") or {"status": self.job_status(job_id)}
-            time.sleep(0.1)
-        return {"status": "timeout", "error": f"job did not finish within {timeout}s"}
 
     def _descriptor_of(self, rec: dict) -> dict:
         return {"namespace": rec["namespace"], "function": rec["function"], "params": rec["params"]}
@@ -283,7 +264,16 @@ class Session:
                     continue
                 job["status"] = "running"
             if not self.manager.admit_job(self):
-                self._fail(job_id, kind, "memory boundary (>=80%) reached; refused to dequeue")
+                # Memory boundary hit at dequeue: hold the job (put it back) rather than
+                # fail it — admit_job reports it as "held", and the pressure (often a
+                # transient tile burst) usually clears in seconds. Reset to queued so it
+                # retries and stays cancellable; back off so we don't spin.
+                with self._book:
+                    j = self._jobs.get(job_id)
+                    if j is not None and j["status"] == "running":
+                        j["status"] = "queued"
+                        self._queue.put((job_id, kind, payload))
+                self._stop.wait(self._MEMORY_HOLD_BACKOFF_S)
                 continue
             try:
                 self._dispatch(job_id, kind, payload)
@@ -293,7 +283,8 @@ class Session:
                 self._fail(job_id, kind, str(e))
 
     def _dispatch(self, job_id, kind, payload):
-        self._jobs[job_id]["status"] = "running"
+        # The job's worker-record status was already claimed "running" under _book in
+        # _run (the atomic point vs cancel); here just mirror it to the durable record.
         self._set_status(job_id, kind, "running")
         BUS.publish("job.started", {"session_id": self.id, "job_id": job_id})
         started = time.time()
@@ -317,6 +308,7 @@ class Session:
             self._prune_jobs()
 
     _TERMINAL_JOB_CAP = 200
+    _MEMORY_HOLD_BACKOFF_S = 2.0  # pause before retrying a job held at the memory boundary
 
     def _prune_jobs(self):
         """Bound worker job bookkeeping. Queued/running entries are always kept; the
@@ -324,18 +316,18 @@ class Session:
         dropped beyond a recent window."""
         terminal = [jid for jid, j in list(self._jobs.items())
                     if j["status"] in ("completed", "drawn", "failed", "cancelled")]
-        for jid in terminal[:-self._TERMINAL_JOB_CAP] if len(terminal) > self._TERMINAL_JOB_CAP else []:
+        if len(terminal) <= self._TERMINAL_JOB_CAP:
+            return
+        for jid in terminal[:-self._TERMINAL_JOB_CAP]:  # all but the most recent CAP
             self._jobs.pop(jid, None)
             self._failed_logs.pop(jid, None)
 
     def _run_call(self, job_id, kind, descriptor):
-        from ..manifest import build_manifest
         # kind is always "compute" or "plot" here (the only two _dispatch routes here);
         # both need the write lock — render_plot (registry/base.py) calls squidpy/scanpy
         # pl.* functions on the live adata, and those cache things like
         # uns['<col>_colors'] as a side effect even for a pure "plot" job.
         with self.lock.writing():
-            manifest_before = build_manifest(self)  # v3 Part 2: capture before the call
             result = ADAPTER.execute(descriptor, self)
             # Adopt a returned object (read bootstrap / Edge B) while still holding
             # the write lock so readers never see a new sdata with a stale table key.
@@ -353,7 +345,7 @@ class Session:
                 # session) leaves the prior per-session raster store orphaned; drop it
                 # before reassigning so a reshape doesn't leak a tempdir each time.
                 prev_cache = self.raster_cache_dir
-                self.raster_cache_dir = rasters.normalize_rasters(self.sdata)
+                self.raster_cache_dir, self.raster_stores = rasters.normalize_rasters(self.sdata)
                 if prev_cache and prev_cache != self.raster_cache_dir:
                     shutil.rmtree(prev_cache, ignore_errors=True)
                 self.active_table_key = self._default_table_key()
@@ -367,10 +359,6 @@ class Session:
                 # canvas refetch and dependent plots invalidate.
                 if replaced and not result.changed_fields:
                     result.changed_fields = self._table_field_paths()
-            result.manifest_before = manifest_before
-            result.manifest_after = build_manifest(self)
-
-        self._jobs[job_id]["envelope"] = _envelope(result)  # for the agent loop (Part 2/5)
 
         if result.status == "failed":
             # A failed read bootstrap (no object ever adopted) leaves the session unusable.
@@ -558,30 +546,17 @@ class Session:
     def _fail(self, job_id, kind, error, log=""):
         self._jobs[job_id]["status"] = "failed"
         self._failed_logs[job_id] = log or error
-        keep = self._jobs.get(job_id, {}).get("keep_failures", True)
-        if kind == "compute":
-            # v3 Part 2: frontend failures stay in history (keep_failures=True) for the
-            # user to inspect/delete; AI failures (keep_failures=False) are dropped from
-            # the audit log but still surfaced to the agent via job.failed.
-            if keep:
-                rec = self._find_record(job_id, "compute")
-                if rec:
-                    rec["status"] = "failed"
-                    rec["_log"] = log or error
-            else:
-                self._drop_history(job_id, kind)
-        elif kind == "plot":
-            if keep:
-                rec = self._find_record(job_id, "plot")
-                if rec:
-                    rec["status"] = "failed"
-                    rec["_log"] = log or error
-            else:
-                self.app_state["plots"] = [r for r in list(self.app_state["plots"]) if r["id"] != job_id]
+        # Failed compute/plot jobs stay in history for the user to inspect or delete
+        # (audit-log model, DESIGN §6.1); mark the durable record failed.
+        if kind in ("compute", "plot"):
+            rec = self._find_record(job_id, kind)
+            if rec:
+                rec["status"] = "failed"
+                rec["_log"] = log or error
         descriptor = self._jobs.get(job_id, {}).get("descriptor") or {}
         source = f"{descriptor['namespace']}.{descriptor['function']}" if "function" in descriptor else kind
-        BUS.publish("job.failed", {"session_id": self.id, "job_id": job_id, "error": error,
-                                   "source": source, "timestamp": time.strftime("%H:%M:%S")})
+        BUS.publish("job.failed", {"session_id": self.id, "job_id": job_id, "kind": kind,
+                                   "error": error, "source": source, "timestamp": time.strftime("%H:%M:%S")})
 
     def _drop_history(self, job_id, kind="compute"):
         """Cancelling a queued job (or dropping a not-kept failure) must remove its

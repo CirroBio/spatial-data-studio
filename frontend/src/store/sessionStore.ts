@@ -10,8 +10,9 @@ import type {
   PlotEntry,
 } from '../types';
 import { isSpatialDisplay } from '../types';
-import { putDisplay, getSession, listShapeAnnotations } from '../api';
-import type { ShapeAnnotation, ShapeKind } from '../schemas/annotations';
+import { putDisplay, getSession, listShapeAnnotations, createShapeAnnotation } from '../api';
+import type { ShapeAnnotation, ShapeGeometry, ShapeKind } from '../schemas/annotations';
+import { defaultStroke, defaultFill } from '../schemas/annotations';
 
 // A job's status lands in whichever collection holds it; these narrow the shared
 // status union so setEntryStatus can update the right record type without a cast.
@@ -91,15 +92,20 @@ interface AppStore {
   commitDrawRing: () => void;
   clearDraw: () => void;
 
-  // shape-annotation editor (arrows/lines/boxes/trapezoids/ellipses) — the fetched
+  // shape-annotation editor (arrows/lines/boxes/polygons/ellipses) — the fetched
   // list, which tool is armed, which shape is selected (shows edit handles), and
   // the vertices collected so far for an in-progress creation (a drag supplies two
-  // points at once for line/box/ellipse; trapezoid collects up to four clicks).
+  // points at once for line/box/ellipse; a polygon collects a click per vertex
+  // until the user closes it).
   shapeAnnotations: ShapeAnnotation[];
   setShapeAnnotations: (shapes: ShapeAnnotation[]) => void;
   refreshShapeAnnotations: (sessionId: string) => Promise<void>;
   upsertShapeAnnotation: (shape: ShapeAnnotation) => void;
   removeShapeAnnotationLocal: (id: string) => void;
+  // Persist a freshly drawn shape (optimistically; the job.completed refetch
+  // reconciles) and select it. Shared by the canvas (drag/click creation) and the
+  // annotations panel (the polygon Close Shape button).
+  commitNewShape: (geometry: ShapeGeometry) => void;
 
   activeShapeTool: ShapeKind | null;
   setActiveShapeTool: (tool: ShapeKind | null) => void;
@@ -371,6 +377,23 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }),
   removeShapeAnnotationLocal: (id) =>
     set((s) => ({ shapeAnnotations: s.shapeAnnotations.filter((x) => x.id !== id) })),
+  commitNewShape: (geometry) => {
+    const sessionId = get().activeSessionId;
+    if (!sessionId) return;
+    const shape: ShapeAnnotation = {
+      id: crypto.randomUUID(),
+      geometry,
+      // Line and text have no interior to fill.
+      stroke: defaultStroke(),
+      fill: geometry.kind === 'line' || geometry.kind === 'text' ? undefined : defaultFill(),
+    };
+    get().upsertShapeAnnotation(shape); // optimistic — the job.completed refetch reconciles
+    createShapeAnnotation(sessionId, shape).catch((err) => {
+      get().pushNotification({ kind: 'error', message: `Create shape failed: ${err instanceof Error ? err.message : String(err)}` });
+      get().removeShapeAnnotationLocal(shape.id);
+    });
+    get().setSelectedShapeId(shape.id); // also clears activeShapeTool + draft (see setSelectedShapeId)
+  },
 
   activeShapeTool: null,
   setActiveShapeTool: (tool) => set({ activeShapeTool: tool, selectedShapeId: null, draftVertices: [] }),

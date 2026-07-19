@@ -41,6 +41,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
     && rm -rf /var/lib/apt/lists/*
 
+# uv (pinned) as the installer: much faster than pip and deterministic against the
+# fully-pinned requirements.txt. Copied from the official image so no bootstrap pip.
+COPY --from=ghcr.io/astral-sh/uv:0.5.16 /uv /uvx /bin/
+
 # Install Python deps before copying app code so this layer is cached across
 # app-code-only changes.
 WORKDIR /app
@@ -48,9 +52,10 @@ COPY backend/requirements.txt ./requirements.txt
 # celltypist declares a hard dependency on the GPL Leiden chain (leidenalg ->
 # igraph). This app never uses that code path (it clusters via graspologic-native,
 # MIT), so strip the copyleft packages after install to keep the image GPL-free.
-# The license gate (sds-governance/scan_licenses.py) fails if they reappear.
-RUN pip install --no-cache-dir -r requirements.txt \
-    && pip uninstall -y leidenalg igraph
+# Install + strip are one layer so the sealed image never contains them; the
+# license gate (sds-governance/scan_licenses.py) fails if they reappear.
+RUN uv pip install --system --no-cache -r requirements.txt \
+    && uv pip uninstall --system leidenalg igraph
 
 # Copy backend source
 COPY backend/ ./backend/

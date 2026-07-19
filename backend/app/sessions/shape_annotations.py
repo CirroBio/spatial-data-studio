@@ -1,4 +1,4 @@
-"""Shape-annotation editor: arrows, lines, boxes, trapezoids, ellipses, and text
+"""Shape-annotation editor: arrows, lines, boxes, polygons, ellipses, and text
 labels drawn directly on the canvas, persisted as a `sdata.shapes["annotations"]`
 GeoDataFrame (a queued mutating job, mirroring regions.py's assign).
 
@@ -61,7 +61,7 @@ def _geometry_for(geometry: dict, stroke: dict) -> Polygon:
         return _ellipse_polygon(geometry["center"], geometry["radiusX"], geometry["radiusY"], geometry["rotation"])
     if kind == "text":
         return _text_anchor_polygon(geometry["position"])
-    return Polygon(geometry["vertices"])  # box / trapezoid: exact quadrilateral
+    return Polygon(geometry["vertices"])  # box / polygon: exact ring (Polygon closes it)
 
 
 def _params_for(geometry: dict) -> dict:

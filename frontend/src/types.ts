@@ -234,6 +234,17 @@ export interface ImageInfo {
   pixel_to_world: [number, number, number, number, number, number];
   levels: ImageLevel[];
   tile_size: number;
+  // Client-side (Viv) GPU compositing fields — present only on the live
+  // /image/{element}/info endpoint, never on a snapshot's embedded render.image
+  // (hence optional here, where ImageInfo is shared with SnapshotRender). When
+  // client_compositing is true the live canvas reads the element's Zarr store
+  // directly at raster_base_url/zarr_group_path and composites channels on the GPU;
+  // false keeps the server-composited PNG tile path.
+  client_compositing?: boolean;
+  raster_base_url?: string;   // "/api/sessions/{sid}/raster/{element}" (no trailing slash)
+  zarr_group_path?: string;   // "images/{element}"
+  contrast_limits?: [number, number][];  // per channel, order matches channel_names
+  is_rgb?: boolean;           // true-color 3-channel image shown as-is, not tinted
 }
 
 // ---- Snapshots (read-only checkpoint views; see CONTRACT.md) ---------------
@@ -257,11 +268,12 @@ export interface SnapshotRender {
 }
 
 export interface SnapshotConfig {
-  schema: number;
+  schema_version: string;                     // semver, matches snapshot-viewer.json version
   kind: 'spatial' | 'embedding';
   label: string;
   created: string;
-  checkpoint: { name: string; url: string };
+  data: string;                               // path to the .zarr.zip, relative to this config's URL
+  checkpoint: { name: string };
   table: string;
   viewport: { target: number[]; zoom: number; rotationX?: number; rotationOrbit?: number };
   encoding: DisplayEncoding | EmbeddingEncoding;
@@ -296,6 +308,7 @@ export interface JobCompletedEvent {
 export interface JobFailedEvent {
   session_id: string;
   job_id: string;
+  kind: string;
   error: string;
   source?: string;
   timestamp?: string;
