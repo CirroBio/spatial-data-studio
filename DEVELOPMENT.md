@@ -171,7 +171,11 @@ in [`docker/README.md`](docker/README.md).
   endpoints, cross-session isolation, the eight spatial/multi-sample custom methods
   on `xenium_tma.zarr`, the cell-segmentation `/shapes/{element}/geoarrow`
   polygons on `xenium.zarr`, and the client-compositing raster route + `/info`
-  manifest (raw zarr served with Range 206) on `xenium.zarr`.
+  manifest (raw zarr served with Range 206) on `xenium.zarr`. The four
+  Xenium-backed flows (zarr-import, custom methods, segmentation, raster) skip with
+  a `[skip]` line when their fixture is absent, so CI runs only the Visium-backed
+  subset (including the schema gate); regenerate the Xenium fixtures locally via
+  `scripts/prepare_xenium_*.py` to exercise them.
 - `cd backend && python test_cli.py` — offline CLI round trip: loads
   `visium_hne.zarr`, runs a compute + plot recipe headlessly, and asserts the output
   `.zarr.zip` and `plots/…/figure.{svg,pdf}` are written and reload with history
