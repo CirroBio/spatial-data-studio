@@ -76,7 +76,7 @@ admission control refuses new work at `SDS_ADMISSION_PCT` of it, so it trips
 | `SDS_ADMISSION_PCT`      | `0.80`    | Fraction of container RAM at which new jobs, reads, and image renders are refused. |
 | `SDS_MAX_SESSIONS`       | `8`       | Maximum concurrent in-memory sessions. |
 | `SDS_IMAGE_RENDER_CONCURRENCY` | `2` | Max image tiles/thumbnails composited at once. Caps the transient memory of a zoom/pan tile burst; renders past `SDS_ADMISSION_PCT` return 503 and the canvas keeps its coarse base layer. |
-| `SDS_CLIENT_IMAGE_COMPOSITING` | `0` | Advertise the client-side (Viv) compositing path in `/image/{element}/info` so the browser reads the raw raster zarr and composites channels on the GPU (instant contrast/color, no server round-trip). Off by default: it renders a single GPU-texture pyramid level, so deep zoom into very large images is coarser than the server PNG tile path (used otherwise). Set `1` to opt in. |
+| `SDS_CLIENT_IMAGE_COMPOSITING` | `1` | Advertise the client-side (Viv) compositing path in `/image/{element}/info` so the browser reads the raw raster zarr and composites channels on the GPU (instant contrast/color, no server round-trip; streams full-resolution tiles). On by default. Set `0` to force the server-composited PNG tile path (also the automatic fallback for canonical images or channel counts over the cap). |
 | `SDS_CLIENT_IMAGE_MAX_CHANNELS` | `6` | Max channels the browser will composite in one shader pass; an element with more channels falls back to PNG tiles. |
 | `SDS_RASTER_BASE_PX`     | `1024`    | Coarsest image-pyramid level target (longest side) when re-tiling images at ingest. |
 | `SDS_RASTER_REBUILD_WORKERS` | `2`   | dask worker count for the one-time ingest re-tiling; bounds its peak memory. |

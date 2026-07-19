@@ -275,10 +275,12 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   // GPU-composited image via Viv, when the backend manifest allows it. While the
   // pyramid loads (or after a Viv error) `vivActive` is false and the PNG tile path
   // below covers, so the image never blanks and failures fall back safely.
-  const { layer: vivLayer, active: vivActive } = useVivImageLayer({
+  const { layers: vivLayers, active: vivActive } = useVivImageLayer({
     imageInfo,
     element: display.encoding.image_layer,
     channels,
+    viewState,
+    size: canvasSize,
     show: showImage,
   });
 
@@ -352,7 +354,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   const layers = useMemo(() => {
     // Viv (GPU-composited) replaces the PNG BitmapLayers when active; both keep the
     // same no-depth params so points always draw over the image.
-    const result: Layer[] = vivActive && vivLayer ? [vivLayer] : [...imageLayers];
+    const result: Layer[] = vivActive ? [...vivLayers] : [...imageLayers];
 
     if (showPoints && positions && colors) {
       // In 'points+shapes', the cell-boundary fills replace the points once loaded;
@@ -370,7 +372,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
     }
 
     return result;
-  }, [imageLayers, vivActive, vivLayer, positions, colors, showPoints, shapesOverlay, polygonLayer,
+  }, [imageLayers, vivActive, vivLayers, positions, colors, showPoints, shapesOverlay, polygonLayer,
       display.encoding.point_size, display.encoding.opacity, marker]);
 
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);

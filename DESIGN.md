@@ -688,17 +688,24 @@ back to the **server-composited PNG tiles** (§9.3) — the same additive percen
 blend. A dev-only escape hatch `localStorage['sds:disableClientCompositing']='1'` also forces
 the PNG path.
 
-The client path uses Viv's **single-scale** `ImageLayer` (one `XRLayer` GPU quad), not the
-tiled `MultiscaleImageLayer`: the tiled layer silently fetches no tiles when the image's
-`pixel_to_world` affine carries a non-unit scale (Xenium is ~0.2125 um/px), because its
-deck.gl `TileLayer` derives the pyramid level from `round(log2(modelMatrix.scale))` and the
-scaled matrix breaks tile-index selection. A single `XRLayer` has no tile-index math, so the
-scaled modelMatrix simply positions the quad and it renders correctly (verified against
-`xenium.zarr`). The frontend picks the finest pyramid level that fits one GPU texture
-(<= 4096 px) and adjusts the modelMatrix for that level's downscale. The tradeoff, and why
-this ships **off by default**: one level in one texture means deep zoom into a very large
-image (multi-GB Xenium) shows a coarser level than the PNG path, which tiles full detail.
-Reconciling full-detail tiling with the scaled affine is the remaining enhancement. See `docs/CONTRACT.md` for the info/route schemas. The snapshot viewer and
+The client path streams full-resolution tiles with a **custom tiled layer** rather than Viv's
+`MultiscaleImageLayer`: that tiled layer's deck.gl `TileLayer` never updates its tileset under
+our world-coordinate `OrthographicView` + non-unit `pixel_to_world` scale (Xenium ~0.2125
+um/px), so it renders nothing. Instead `useVivImageLayer.ts` reuses the exact
+world-coordinate tile selection the PNG path uses (`useImageTiles`: pick the pyramid level for
+the current zoom, inverse-affine the viewport to the visible tile bbox) and renders a Viv
+`XRLayer` per visible tile — fetching raw channel data via the pyramid `PixelSource`
+(`loader[level].getTile`) and compositing on the GPU — over a coarse Viv `ImageLayer` base so
+the canvas is never blank while detail streams. Every XRLayer shares one level-0 pixel->world
+`modelMatrix` and expresses its bounds in level-0 pixels, so the scaled/rotated affine
+positions each tile exactly where the points are. Bounds use `[px0, py1, px1, py0]`
+(row-0 side `py0` as `bounds[3]`=top, matching the PNG path's `quad`): this app's world /
+`OrthographicView` is y-up (a cell at world y=0 sits at the screen bottom), so image row 0
+(pixel py=0 → world y=0 via the affine) must land at the bottom to align with the points. Deep zoom fetches only the visible finest-level tiles
+(a ~3x3 grid of level-0 tiles at high zoom), so there is no resolution penalty versus the
+PNG path. It is **on by default** (`SDS_CLIENT_IMAGE_COMPOSITING`, disable with `=0`);
+verified live across single- and multi-channel fluorescence (additive-on-black), RGB/H&E
+true-color passthrough, deep-zoom streaming, and image<->points alignment. See `docs/CONTRACT.md` for the info/route schemas. The snapshot viewer and
 its schema are unchanged by this dual path.
 
 ### 9.5 Editable points transform

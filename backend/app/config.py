@@ -43,15 +43,16 @@ class Config:
     # channel count exceeds the cap). Viv composites up to 6 channels per shader pass;
     # above that the frontend falls back to PNG.
     #
-    # DEFAULT OFF (opt in with SDS_CLIENT_IMAGE_COMPOSITING=1). The client path renders
-    # correctly (Viv's single-scale ImageLayer / XRLayer, positioned by the pixel->world
-    # affine), but it loads one pyramid level into a single GPU texture rather than
-    # streaming tiles, so for very large images (e.g. multi-GB Xenium) it shows a coarser
-    # level on deep zoom than the server PNG path, which tiles full resolution. It stays
-    # off by default until full-detail tiling is reconciled with the scaled affine (the
-    # tiled MultiscaleImageLayer silently fetches no tiles under a non-unit modelMatrix
-    # scale). See DESIGN.md 9.4 and frontend useVivImageLayer.ts.
-    CLIENT_IMAGE_COMPOSITING = os.environ.get("SDS_CLIENT_IMAGE_COMPOSITING", "0") not in ("0", "false", "False")
+    # Default ON (disable with SDS_CLIENT_IMAGE_COMPOSITING=0). The client path streams
+    # full-resolution tiles: the frontend (useVivImageLayer.ts) reuses the PNG path's
+    # world-coordinate tile selection and renders a Viv XRLayer per visible tile over a
+    # coarse base, so deep zoom shows full detail. Verified live: single- and multi-channel
+    # fluorescence (additive-on-black), RGB/H&E true-color passthrough, deep-zoom streaming,
+    # and image<->points alignment. It does NOT use Viv's tiled MultiscaleImageLayer, whose
+    # deck.gl TileLayer silently fetches no tiles under a non-unit pixel->world modelMatrix
+    # scale. The PNG tile path stays intact as the fallback (this flag off, an element with
+    # no served store, or channel count over the cap below). See DESIGN.md 9.4.
+    CLIENT_IMAGE_COMPOSITING = os.environ.get("SDS_CLIENT_IMAGE_COMPOSITING", "1") not in ("0", "false", "False")
     CLIENT_IMAGE_MAX_CHANNELS = int(os.environ.get("SDS_CLIENT_IMAGE_MAX_CHANNELS", "6"))
 
     # Raster (image/label) tiling normalized at ingest (see rasters.py). Every

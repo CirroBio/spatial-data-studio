@@ -111,15 +111,18 @@ exists at the repo root, `run.sh` sources it before launching uvicorn, so `CIRRO
 config set there reaches the backend the same way docker compose's auto-loaded
 `.env` does.
 
-Client-side (Viv) image compositing is **off by default** and opt-in via
-`SDS_CLIENT_IMAGE_COMPOSITING=1`; `SDS_CLIENT_IMAGE_MAX_CHANNELS` (default `6`) caps the
-channels the browser will composite before falling back to PNG tiles. It renders via Viv's
-single-scale `ImageLayer` (`useVivImageLayer.ts` picks the finest pyramid level that fits a
-single <= 4096 px GPU texture and positions it with the level-adjusted `pixel_to_world`
-affine). It stays off by default because that single-texture level is coarser than the PNG
-path's full-resolution tiling on deep zoom into very large images; the tiled
-`MultiscaleImageLayer` is not used because its deck.gl `TileLayer` silently fetches no tiles
-under a non-unit modelMatrix scale. `run.sh` requires no change. The raw-raster route
+Client-side (Viv) image compositing is **on by default** (disable with
+`SDS_CLIENT_IMAGE_COMPOSITING=0`); `SDS_CLIENT_IMAGE_MAX_CHANNELS` (default `6`) caps the
+channels the browser will composite before falling back to PNG tiles. `useVivImageLayer.ts`
+streams full-resolution tiles: it reuses the PNG path's world-coordinate tile selection
+(`useImageTiles`) and renders a Viv `XRLayer` per visible tile (raw channels from the pyramid
+`PixelSource.getTile`, GPU-composited) over a coarse base `XRLayer` (from `getRaster` of the
+coarsest single-texture level). Both use `[px0, py1, px1, py0]` bounds (row-0 side as
+`bounds[3]`=top, matching the PNG `quad`): the world/OrthographicView is y-up, so image row 0
+(world y=0) must land at the screen bottom to align with the points. Viv's tiled `MultiscaleImageLayer` is deliberately NOT
+used: its deck.gl `TileLayer` never updates its tileset under our world-coordinate
+`OrthographicView` + non-unit `pixel_to_world` scale, so it renders nothing. `run.sh`
+requires no change. The raw-raster route
 (`/api/sessions/{id}/raster/{element}/{key}`) serves the session's on-disk normalized
 zarr store; because object-adoption, subset, and close `rmtree` that store under the
 session write lock, the route resolves the path AND reads the file bytes into memory

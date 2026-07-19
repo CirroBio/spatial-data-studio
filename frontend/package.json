@@ -19,6 +19,7 @@
     "@deck.gl/react": "^9.0.0",
     "@geoarrow/deck.gl-layers": "^0.3.2",
     "@math.gl/core": "^4.1.0",
+    "@vivjs/extensions": "0.22.0",
     "@vivjs/layers": "0.22.0",
     "@vivjs/loaders": "0.22.0",
     "@radix-ui/react-dialog": "^1.1.0",
