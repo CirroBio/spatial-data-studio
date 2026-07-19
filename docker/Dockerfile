@@ -60,6 +60,10 @@ RUN uv pip install --system --no-cache -r requirements.txt \
 # Copy backend source
 COPY backend/ ./backend/
 
+# Single source of truth for the snapshot viewer version/base URL. backend/app/config.py
+# reads it from the app root (parents[2] of config.py == /app), so it must sit at /app.
+COPY snapshot-viewer.json ./snapshot-viewer.json
+
 # Copy built SPA from stage 1 into the static dir that uvicorn (and nginx) serves
 COPY --from=spa-builder /build/frontend/dist /app/spa
 
@@ -88,7 +92,10 @@ ENV SDS_STATIC_DIR=/app/spa \
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/supervisord.conf", "-n"]
 
-# Liveness check — generous: 5 s start period, 30 s interval, 3 retries
-# This matches DESIGN §19.8 ("tolerate several consecutive misses")
+# Readiness check — generous: 60 s start period, 30 s interval, 3 retries
+# This matches DESIGN §19.8 ("tolerate several consecutive misses"). Probes
+# /api/readyz (not /api/healthz) so the container reports healthy only once the
+# operation registry has finished building and requests will actually succeed;
+# the 60 s start period covers that build window.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -sf http://127.0.0.1/api/healthz || exit 1
+    CMD curl -sf http://127.0.0.1/api/readyz || exit 1

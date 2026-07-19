@@ -1426,9 +1426,12 @@ corollary: this one process is a single point of failure.
 - Set the per-worker ceiling **strictly below the container cgroup limit** so the app
   raises a catchable `MemoryError` before the OOM killer fires. Admission checks evaluate
   against the container limit.
-- **Liveness** `/api/healthz` / **readiness** `/api/readyz`. A rare GIL-blocking
-  pure-Python job could delay liveness — use a generous timeout and tolerate several
-  consecutive misses; do **not** configure aggressive single-miss kills.
+- **Liveness** `/api/healthz` / **readiness** `/api/readyz`. The container
+  `HEALTHCHECK` probes `/api/readyz` so it reports healthy only once the operation
+  registry has built and requests will succeed; the start period covers that build
+  window. A rare GIL-blocking pure-Python job could delay either probe — use a
+  generous timeout and tolerate several consecutive misses; do **not** configure
+  aggressive single-miss kills.
 - **Config (env):** container memory limit, per-worker ceiling, max concurrent sessions,
   checkpoint policy, liveness tuning, edge SSE buffering, Cirro credentials.
 - **Accepted residual risk:** with one container per box, a native segfault takes down
