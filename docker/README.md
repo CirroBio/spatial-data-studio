@@ -32,7 +32,9 @@ curl http://localhost:8080/api/readyz     # {"status":"ready","functions":N}
 curl http://localhost:8080/               # SPA HTML
 ```
 
-Logs:
+Logs (backend, nginx, and supervisord all stream to the container's stdout/stderr,
+so this surfaces uvicorn startup tracebacks too — including a crash-loop where the
+backend exits before serving any request):
 
 ```
 docker compose logs -f
