@@ -38,8 +38,11 @@ jobs:
           uv pip uninstall --system leidenalg igraph
 
       - name: Prepare test dataset
-        # test_e2e.py runs against test-data/visium_hne.zarr, which is gitignored
-        # and generated on demand (downloads squidpy's visium_hne example, ~375 MB).
+        # CI runs the Visium-backed portion of test_e2e.py (including the snapshot
+        # schema gate). The Xenium flows (segmentation/raster/zarr-import/custom
+        # methods) need the larger xenium.zarr + xenium_tma.zarr fixtures and are
+        # skipped when absent; regenerate them locally via scripts/prepare_xenium_*.py
+        # (see DEVELOPMENT.md "Test datasets") to run the full suite.
         run: python scripts/prepare_test_data.py
 
       - name: Backend round-trip + schema gate

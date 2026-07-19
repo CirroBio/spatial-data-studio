@@ -29,6 +29,17 @@ XENIUM_TMA = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "test
 XENIUM = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "test-data", "xenium.zarr"))
 
 
+def have_fixture(path, flow):
+    """Whether a fixture dataset is present. The Xenium fixtures (xenium.zarr,
+    xenium_tma.zarr) are heavy to build, so CI skips their flows; local runs that
+    regenerated them via scripts/prepare_xenium_*.py exercise the full suite."""
+    if os.path.exists(path):
+        return True
+    print(f"[skip] {flow}: missing fixture {os.path.basename(path)} "
+          f"(regenerate via scripts/prepare_xenium_*.py)")
+    return False
+
+
 def poll(client, sid, predicate, timeout=180):
     t0 = time.time()
     while time.time() - t0 < timeout:
@@ -1173,11 +1184,15 @@ def main():
         run_inspector_flow(client)
         run_isolation_flow(client)
         run_filter_reshape_flow(client)
-        run_zarr_import_flow(client)
-        run_segmentation_flow(client)
-        run_raster_flow(client)
+        if have_fixture(XENIUM_TMA, "zarr-import flow"):
+            run_zarr_import_flow(client)
+        if have_fixture(XENIUM, "segmentation flow"):
+            run_segmentation_flow(client)
+        if have_fixture(XENIUM, "raster flow"):
+            run_raster_flow(client)
 
-        run_custom_methods_flow(client)
+        if have_fixture(XENIUM_TMA, "custom-methods flow"):
+            run_custom_methods_flow(client)
 
         print("\nALL BACKEND E2E CHECKS PASSED")
 
