@@ -304,6 +304,7 @@ export default function FunctionForm({ fn, fields, sessionId, onSubmit, submitti
               {label}
               <input
                 type="number"
+                step={prop.type === 'integer' ? 1 : 'any'}
                 defaultValue={prop.default as number | undefined}
                 {...reg(key)}
                 className={inputClass}
