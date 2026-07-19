@@ -106,7 +106,9 @@ kills each process group).
 
 `SDS_DATA_DIR` is the single read-write data folder — inputs, saved checkpoints,
 and snapshots all live there; `run.sh` sets it to `data/` (or `test-data/` with
-`--test`) and it can be overridden to point at any other folder. If a `.env` file
+`--test`) and it can be overridden to point at any other folder. When unset it
+defaults to `$HOME` (the container image relies on this, running from `$HOME`
+where the deployment environment mounts datasets, e.g. `$HOME/datasets`). If a `.env` file
 exists at the repo root, `run.sh` sources it before launching uvicorn, so `CIRRO_*`
 config set there reaches the backend the same way docker compose's auto-loaded
 `.env` does.

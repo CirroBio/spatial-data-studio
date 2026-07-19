@@ -21,7 +21,9 @@ class Config:
     # and snapshot configs (<name>-<hash>.sview.json). Internal working stores
     # (per-session raster caches, save-staging tempdirs) are dot-/suffix-prefixed here
     # and are skipped by the dataset scanner and never served by name.
-    DATA_DIR = Path(os.environ.get("SDS_DATA_DIR", "/data"))
+    # Defaults to the invoking user's home ($HOME), where the deployment environment
+    # mounts datasets (e.g. $HOME/datasets); override with SDS_DATA_DIR.
+    DATA_DIR = Path(os.environ.get("SDS_DATA_DIR") or Path.home())
 
     # Memory accounting (DESIGN §11, §19.5) — evaluated against the container limit.
     CONTAINER_MEM_MB = _mb("SDS_CONTAINER_MEM_MB", 8192)

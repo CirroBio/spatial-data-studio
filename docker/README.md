@@ -53,6 +53,7 @@ docker run -d \
   --name spatial-data-studio \
   -p 8080:80 \
   -v "$(pwd)/test-data":/data \
+  -e SDS_DATA_DIR=/data \
   -e SDS_CONTAINER_MEM_MB=12288 \
   -e SDS_WORKER_CEILING_MB=9216 \
   -e SDS_MAX_SESSIONS=4 \
@@ -72,7 +73,7 @@ admission control refuses new work at `SDS_ADMISSION_PCT` of it, so it trips
 
 | Variable                 | Default   | Purpose |
 |--------------------------|-----------|---------|
-| `SDS_DATA_DIR`           | `/data`   | Single read-write data folder: input datasets, saved checkpoints (`*.sdata.zarr.zip`), and snapshots (`*.sview.json`) all live here. |
+| `SDS_DATA_DIR`           | `$HOME` (`/home/cirro`) | Single read-write data folder: input datasets, saved checkpoints (`*.sdata.zarr.zip`), and snapshots (`*.sview.json`) all live here. Defaults to the image's `$HOME`, where a deployment environment mounts datasets (e.g. `$HOME/datasets`); the compose and manual-run examples override it to `/data` and mount there. |
 | `SDS_CONTAINER_MEM_MB`   | `8192`    | Container cgroup memory limit in MiB. Set to match `--memory` / `mem_limit`. |
 | `SDS_WORKER_CEILING_MB`  | `6144`    | Per-worker memory ceiling (must be < `SDS_CONTAINER_MEM_MB`). Triggers a catchable `MemoryError` before the OOM killer fires. |
 | `SDS_ADMISSION_PCT`      | `0.80`    | Fraction of container RAM at which new jobs, reads, and image renders are refused. |
@@ -94,7 +95,7 @@ admission control refuses new work at `SDS_ADMISSION_PCT` of it, so it trips
 
 | Mount     | Mode      | Purpose |
 |-----------|-----------|---------|
-| `/data`   | read-write | Single data folder: source datasets (`.zarr`, `.zarr.zip`, Visium/Xenium raw folders), saved checkpoints (`*.sdata.zarr.zip`), and snapshots (`*.sview.json`). **Must be a persistent bind/volume** — container-local storage does not survive a restart. The compose file's host path defaults to `./test-data`; override it with `SDS_DATA_HOST_DIR`. |
+| `$SDS_DATA_DIR` | read-write | Single data folder: source datasets (`.zarr`, `.zarr.zip`, Visium/Xenium raw folders), saved checkpoints (`*.sdata.zarr.zip`), and snapshots (`*.sview.json`). **Must be a persistent bind/volume** — container-local storage does not survive a restart. Mount it at whatever `SDS_DATA_DIR` points to (`$HOME` by default; the compose file uses `/data`, host path defaulting to `./test-data`, override with `SDS_DATA_HOST_DIR`). |
 
 ## Internal process tree
 
