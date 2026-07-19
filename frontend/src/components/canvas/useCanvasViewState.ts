@@ -5,13 +5,13 @@ import type { ScatterPositions } from './useArrowPositions';
 
 const ZOOM_LIMITS = { minZoom: -8, maxZoom: 8 };
 
-// Zoom at which a cell of characteristic world diameter d reaches
-// CELL_FIELD_SWITCH_PX on screen (d * 2**zoom px = px ⇒ zoom = log2(px / d)).
-// The snapshot viewer draws its nearest-cell field below this zoom and the point
-// scatter above it.
-export const CELL_FIELD_SWITCH_PX = 6;
-export function cellZoomThreshold(medianNnWorld: number): number {
-  return Math.log2(CELL_FIELD_SWITCH_PX / Math.max(medianNnWorld, 1e-9));
+// Zoom at which a cell of characteristic world diameter d reaches SHAPES_MIN_CELL_PX
+// on screen (d * 2**zoom px = px ⇒ zoom = log2(px / d)). Below this the cells are too
+// small to warrant their polygon outlines, so the shapes fetch is deferred — the
+// viewport would hold more cells than the backend ships anyway. Points cover the view.
+export const SHAPES_MIN_CELL_PX = 6;
+export function shapesFetchZoomThreshold(meanSpacingWorld: number): number {
+  return Math.log2(SHAPES_MIN_CELL_PX / Math.max(meanSpacingWorld, 1e-9));
 }
 
 interface Params {

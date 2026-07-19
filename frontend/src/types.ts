@@ -125,11 +125,12 @@ export interface DisplayEncoding {
   show_image?: boolean;      // image-layer visibility; defaults to (image_layer != null)
   show_channel_legend?: boolean;  // image channel legend visibility; defaults on
   isolated_category?: string | null;  // isolate one category in the color-by legend (dims the rest)
-  // How the Cells layer renders. 'points' (default): the point scatter, styled by
-  // `point_size` + `point_marker`, visible at every zoom. 'shapes': cell-boundary
-  // outlines from `shapes_layer`, viewport-culled so they only appear once zoomed
-  // in far enough that the visible set fits (hence "Shapes (zoomed in)").
-  render_mode?: 'shapes' | 'points';
+  // How the Cells layer renders. Points always draw (styled by `point_size` +
+  // `point_marker`, overlaps merged not blended), visible at every zoom. 'points'
+  // (default) is points only; 'points+shapes' additionally overlays cell-boundary
+  // fills from `shapes_layer` once zoomed in far enough that the viewport-culled set
+  // fits. The legacy value 'shapes' is read as 'points+shapes'.
+  render_mode?: 'points' | 'points+shapes' | 'shapes';
   point_marker?: 'circle' | 'square' | 'hexagon';  // point glyph shape; defaults to circle
 }
 

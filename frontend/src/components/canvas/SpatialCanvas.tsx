@@ -17,10 +17,9 @@ import { defaultStroke, defaultFill, textGeometryAt } from '../../schemas/annota
 import { geometryFromDrag, trapezoidFromClicks, applyHandleDrag, translateGeometry } from '../../lib/shapeAnnotations';
 import { useArrowPositions } from './useArrowPositions';
 import { useImageTiles } from './useImageTiles';
-import { useCanvasViewState, cellZoomThreshold } from './useCanvasViewState';
+import { useCanvasViewState, shapesFetchZoomThreshold } from './useCanvasViewState';
 import { useSpotColors, arrowToColorSource } from './useSpotColors';
-import { buildSpotLayer } from './buildSpotLayer';
-import { buildCellFieldLayer, estimateFieldRadius } from './buildCellFieldLayer';
+import { buildSpotLayer, estimateMeanSpacing } from './buildSpotLayer';
 import { buildShapeAnnotationLayers, buildShapeHandleLayer, buildDragPreviewLayers } from './buildShapeAnnotationLayers';
 import { usePolygonBbox } from './usePolygonBbox';
 import { useImageChannels } from './useImageChannels';
@@ -299,10 +298,13 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
     show: showImage,
   });
 
-  // How the Cells layer renders. 'shapes' draws viewport-culled outlines; anything
-  // else (or a stale 'auto' from an older session) is the point scatter.
-  const renderMode: 'shapes' | 'points' =
-    display.encoding.render_mode === 'shapes' ? 'shapes' : 'points';
+  // How the Cells layer renders. Points always draw; 'points+shapes' additionally
+  // overlays the cell-boundary fills once zoomed in far enough that the viewport
+  // fits. The old 'shapes' value (points replaced by outlines) maps to 'points+shapes';
+  // anything else (or a stale value from an older session) is points-only.
+  const renderMode: 'points' | 'points+shapes' =
+    display.encoding.render_mode === 'points+shapes' || display.encoding.render_mode === 'shapes'
+      ? 'points+shapes' : 'points';
   const marker = display.encoding.point_marker ?? 'circle';
 
   // Polygon shape sets available for this session (elements inventory filtered to
@@ -335,18 +337,13 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
 
   const zoom = viewState ? (Array.isArray(viewState.zoom) ? viewState.zoom[0] : viewState.zoom) ?? 0 : 0;
 
-  // Zoomed-out cell tier: a GPU nearest-site "field" (each cell a disc; the nearest
-  // centroid wins each pixel) so adjacent same-color cells read as one merged sheet
-  // without shipping any geometry. Below cellZoomThreshold a cell is too small on
-  // screen to warrant glyphs/outlines. Radius is the cheap client-side mean-spacing
-  // estimate, same as the snapshot viewer.
-  const fieldRadius = useMemo(() => (positions ? estimateFieldRadius(positions) : 0), [positions]);
-  const belowFieldZoom = fieldRadius > 0 && zoom < cellZoomThreshold(fieldRadius);
-
-  // Shapes mode needs a polygon element; the outlines are viewport-culled and the
-  // backend serves nothing when the viewport holds more than it can ship, so the
-  // layer is simply empty until the user zooms in far enough ("Shapes (zoomed in)").
-  const outlineMode = renderMode === 'shapes' && shapesElement !== null;
+  // Shapes overlay: cell-boundary fills drawn on top of the points once zoomed in.
+  // The outlines are viewport-culled and the backend serves nothing when the viewport
+  // holds more than it can ship, so the fetch is deferred until a cell is big enough
+  // on screen (shapesFetchZoomThreshold); below that the points are the whole view.
+  const meanSpacing = useMemo(() => (positions ? estimateMeanSpacing(positions) : 0), [positions]);
+  const zoomedInForShapes = meanSpacing > 0 && zoom >= shapesFetchZoomThreshold(meanSpacing);
+  const shapesOverlay = renderMode === 'points+shapes' && shapesElement !== null;
   const { layer: polygonLayer, loading: polygonsLoading } = usePolygonBbox({
     sessionId,
     element: shapesElement,
@@ -355,28 +352,20 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
     size: canvasSize,
     colors,
     opacity: display.encoding.opacity,
-    // The field covers the zoomed-out regime, so don't fetch polygons there — this
-    // also defers the expensive viewport fetch until zoomed in past the threshold.
-    enabled: outlineMode && showPoints && !belowFieldZoom,
+    enabled: shapesOverlay && showPoints && zoomedInForShapes,
   });
 
   const layers = useMemo(() => {
     const result: Layer[] = [...imageLayers];
 
     if (showPoints && positions && colors) {
-      const field = () => buildCellFieldLayer(positions, colors, {
-        radius: fieldRadius,
-        opacity: display.encoding.opacity,
-      });
-      if (outlineMode) {
-        // Real outlines when the viewport's cells fit and have loaded; otherwise the
-        // field — covering the zoomed-out regime, the over-budget "too many to ship"
-        // band, and load latency — so the Cells layer never blanks in Shapes mode.
-        result.push(polygonLayer ?? field());
-      } else if (belowFieldZoom) {
-        result.push(field());
+      // In 'points+shapes', the cell-boundary fills replace the points once loaded;
+      // the points are the fallback for the zoomed-out regime and the shapes
+      // over-budget/loading bands, so the Cells layer never blanks.
+      if (shapesOverlay && polygonLayer) {
+        result.push(polygonLayer);
       } else {
-        result.push(buildSpotLayer(positions, colors, {
+        result.push(...buildSpotLayer(positions, colors, {
           pointSize: display.encoding.point_size,
           opacity: display.encoding.opacity,
           marker,
@@ -385,7 +374,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
     }
 
     return result;
-  }, [imageLayers, positions, colors, showPoints, belowFieldZoom, fieldRadius, outlineMode, polygonLayer,
+  }, [imageLayers, positions, colors, showPoints, shapesOverlay, polygonLayer,
       display.encoding.point_size, display.encoding.opacity, marker]);
 
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);

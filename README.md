@@ -111,29 +111,24 @@ and point their documentation at a per-method section in
   and, when Cirro is configured, the Cirro project list. Warm tasks are
   best-effort — a failure just means the endpoint computes on demand as before.
 - **deck.gl canvas** — binary Arrow scatter colored by any per-cell value over the
-  tissue image; world-unit point sizing. The **Cells** layer renders in one of two
-  **Render modes** (no resegmentation), chosen in the canvas controls and persisted
-  on the display state. The render mode governs the *zoomed-in* view; when zoomed out
-  far enough that a cell is only a few pixels across, both modes automatically switch to
-  a merged-color **field** (below) so the section always reads as a colored cell sheet
-  rather than dots or a blank canvas:
-  - **Points** (default) — the classic scatter, styled by a **Point size** slider and a
+  tissue image; world-unit point sizing. The **Cells** point scatter draws at every zoom
+  (except where the shapes overlay replaces it). Overlapping glyphs are merged, not
+  blended: a two-pass fragment-depth trick makes the nearest centroid win each pixel, so
+  same-color cells that touch read as one contiguous region and overlaps never darken at
+  opacity < 1. A **Render mode** control (persisted on the display state) chooses whether
+  cell-boundary fills replace the points when zoomed in:
+  - **Points** (default) — the scatter alone, styled by a **Point size** slider and a
     **Geometry** picker (circle / square / hexagon glyph, a custom ScatterplotLayer
     whose fragment shader swaps the coverage test).
-  - **Shapes (zoomed in)** — the exact cell-polygon outlines filled by cell color,
-    fetched viewport-clipped as GeoArrow and offered only when the session has a
-    boundary-polygon element (a **Shape set** selector picks which one). Because a
-    full set of e.g. 1M outlines can't ship to the browser, the backend sends nothing
-    while more cells are in view than it can handle; the Cells layer shows the merged
-    field (below) in the meantime and swaps to real outlines once zoomed in far enough
-    that the visible set fits — hence the label. It never blanks.
-  The zoomed-out **field** is a deck.gl nearest-cell density layer — each cell a
-  world-space disc whose fragment shader writes depth so the nearest centroid wins each
-  pixel, making adjacent same-color cells merge into one contiguous color region with no
-  geometry shipped. Each disc uses the same world radius as the point marker (the Point
-  Size setting), so crossing the zoom threshold doesn't jump the cell size; a recolor
-  updates it instantly. (The read-only snapshot viewer draws the same field for 2D
-  spatial snapshots.)
+  - **Points + Shapes (zoomed in)** — the exact cell-polygon fills (same per-cell colors)
+    replace the points once zoomed in, offered only when the session has a boundary-polygon
+    element (a **Shape set** selector picks which one). Because a full set of e.g. 1M outlines
+    can't ship to the browser, the fills are fetched viewport-clipped as GeoArrow and only once
+    zoomed in far enough that a cell is a few pixels across (so the visible set fits under
+    the ship cap); below that, or while a fetch is loading, the points are shown instead —
+    the Cells layer never blanks.
+  The read-only snapshot viewer has no backend to fetch polygons, so for 2D spatial
+  snapshots it draws the same merged point scatter (shapes are never overlaid).
   **Color by** first picks a slot (`obs`, `X`
   gene expression, or a `layer`) and then the column within it: obs columns from a
   dropdown, genes from a type-to-search box backed by

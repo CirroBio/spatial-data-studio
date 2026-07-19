@@ -20,8 +20,8 @@ interface CanvasControlsProps {
   setShowImage: (v: boolean) => void;
   showLegend: boolean;
   setShowLegend: (v: boolean) => void;
-  renderMode: 'shapes' | 'points';
-  setRenderMode: (v: 'shapes' | 'points') => void;
+  renderMode: 'points' | 'points+shapes';
+  setRenderMode: (v: 'points' | 'points+shapes') => void;
   shapeSets: string[];
   shapesElement: string | null;
   setShapesElement: (v: string) => void;
@@ -63,8 +63,8 @@ export default function CanvasControls({
   onFit,
   onEditTransform,
 }: CanvasControlsProps) {
-  // Shapes needs a polygon element; with none available the Cells layer can only
-  // be Points, regardless of any persisted render_mode.
+  // The shapes overlay needs a polygon element; with none available the Cells layer
+  // is Points-only, regardless of any persisted render_mode.
   const mode = shapeSets.length > 0 ? renderMode : 'points';
   return (
     <CanvasSettingsShell collapsed={panelCollapsed} onToggleCollapsed={setPanelCollapsed}>
@@ -95,55 +95,53 @@ export default function CanvasControls({
       <div className="flex flex-col gap-1">
         <label className="text-[10px] text-muted font-mono uppercase tracking-wide">Cells</label>
 
-        {/* Shapes is only offered when polygon element(s) exist; otherwise Points is
-            the only mode, so the selector is hidden and the points controls show. */}
+        {/* The Points + Shapes mode is only offered when polygon element(s) exist;
+            otherwise Points is the only mode and the selector is hidden. */}
         {shapeSets.length > 0 && (
           <div className="flex flex-col gap-1">
             <label className="text-[10px] text-muted font-mono uppercase tracking-wide">Render mode</label>
             <select
               value={mode}
-              onChange={(e) => setRenderMode(e.target.value as 'shapes' | 'points')}
+              onChange={(e) => setRenderMode(e.target.value as 'points' | 'points+shapes')}
               className="bg-bg border border-border rounded px-1 py-0.5 text-xs text-text focus:outline-none focus:border-accent"
-              title="Shapes draws cell-boundary outlines (visible once zoomed in far enough); Points draws the scatter at every zoom."
+              title="Points draws the cell scatter at every zoom; Points + Shapes additionally overlays cell-boundary fills once zoomed in far enough."
             >
-              <option value="shapes">Shapes (zoomed in)</option>
               <option value="points">Points</option>
+              <option value="points+shapes">Points + Shapes (zoomed in)</option>
             </select>
           </div>
         )}
 
-        {mode === 'shapes' ? (
+        <RangeField label="Point size" value={display.encoding.point_size} min={0.1} max={20} step={0.1}
+          onChange={(v) => updateEncoding({ point_size: v })} />
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] text-muted font-mono uppercase tracking-wide">Geometry</label>
+          <select
+            value={display.encoding.point_marker ?? 'circle'}
+            onChange={(e) => updateEncoding({ point_marker: e.target.value as 'circle' | 'square' | 'hexagon' })}
+            className="bg-bg border border-border rounded px-1 py-0.5 text-xs text-text focus:outline-none focus:border-accent"
+            title="Point glyph shape."
+          >
+            <option value="circle">Circle</option>
+            <option value="square">Square</option>
+            <option value="hexagon">Hexagon</option>
+          </select>
+        </div>
+
+        {mode === 'points+shapes' && (
           <div className="flex flex-col gap-1">
             <label className="text-[10px] text-muted font-mono uppercase tracking-wide">Shape set</label>
             <select
               value={shapesElement ?? ''}
               onChange={(e) => setShapesElement(e.target.value)}
               className="bg-bg border border-border rounded px-1 py-0.5 text-xs text-text focus:outline-none focus:border-accent"
-              title="Which polygon element to draw as cell outlines."
+              title="Which polygon element to overlay as cell-boundary fills."
             >
               {shapeSets.map((s) => (
                 <option key={s} value={s}>{s}</option>
               ))}
             </select>
           </div>
-        ) : (
-          <>
-            <RangeField label="Point size" value={display.encoding.point_size} min={0.1} max={20} step={0.1}
-              onChange={(v) => updateEncoding({ point_size: v })} />
-            <div className="flex flex-col gap-1">
-              <label className="text-[10px] text-muted font-mono uppercase tracking-wide">Geometry</label>
-              <select
-                value={display.encoding.point_marker ?? 'circle'}
-                onChange={(e) => updateEncoding({ point_marker: e.target.value as 'circle' | 'square' | 'hexagon' })}
-                className="bg-bg border border-border rounded px-1 py-0.5 text-xs text-text focus:outline-none focus:border-accent"
-                title="Point glyph shape."
-              >
-                <option value="circle">Circle</option>
-                <option value="square">Square</option>
-                <option value="hexagon">Hexagon</option>
-              </select>
-            </div>
-          </>
         )}
 
         <div className="flex flex-col gap-1">

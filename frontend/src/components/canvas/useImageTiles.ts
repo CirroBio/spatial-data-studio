@@ -78,8 +78,8 @@ export function useImageTiles(
         image: baseImg,
         bounds: quad(m, 0, 0, W0, H0),
         // The image never participates in depth: it must not occlude the cell
-        // layers drawn after it (the cell-field writes gl_FragDepth to resolve
-        // nearest-cell fill, and cells must always sit above the tissue image).
+        // layers drawn after it (the merged cell scatter writes gl_FragDepth to
+        // resolve overlaps, and cells must always sit above the tissue image).
         parameters: { depthWriteEnabled: false, depthCompare: 'always' },
       }));
     } else {

@@ -13,8 +13,6 @@ import {
 import type { ScatterPositions } from './canvas/useArrowPositions';
 import { useSpotColors, type ColorSource } from './canvas/useSpotColors';
 import { buildSpotLayer } from './canvas/buildSpotLayer';
-import { buildCellFieldLayer, estimateFieldRadius } from './canvas/buildCellFieldLayer';
-import { cellZoomThreshold } from './canvas/useCanvasViewState';
 import { quad, worldToPixel, type Affine } from './canvas/imageAffine';
 import { defaultChannelColor } from './canvas/colorUtils';
 import { colorByLabel } from './canvas/colorBy';
@@ -252,35 +250,22 @@ export default function SnapshotViewer({ url, resolveUrl }: Props) {
     [is3d],
   );
 
-  // Mirror the live canvas's zoomed-out field for 2D spatial snapshots. The
-  // snapshot has no backend, so R is the cheap mean-spacing estimate (no cKDTree);
-  // polygon outlines when zoomed in are deferred (they'd need geometry read from the
-  // bundled zarr), so a zoomed-in snapshot keeps the point scatter.
-  const isSpatial2d = config?.kind === 'spatial' && !is3d;
-  const fieldRadius = useMemo(() => (positions ? estimateFieldRadius(positions) : 0), [positions]);
-  const zoom = viewState ? zoomOf(viewState) : 0;
-
+  // The snapshot has no backend to serve polygon outlines (they'd need geometry read
+  // from the bundled zarr), so it draws only the point scatter; the 2D merged scatter
+  // handles overlapping cells at every zoom without shipping geometry.
   const layers = useMemo(() => {
     const result: Layer[] = [];
     if (base) result.push(new BitmapLayer({ id: 'snap-base', image: base.image, bounds: base.bounds }));
     if (detail) result.push(new BitmapLayer({ id: 'snap-detail', image: detail.image, bounds: detail.bounds }));
     if (config && positions && colors) {
-      const useField = isSpatial2d && fieldRadius > 0 && zoom < cellZoomThreshold(fieldRadius);
-      if (useField) {
-        result.push(...buildCellFieldLayer(positions, colors, {
-          pointSize: config.render.point_size,
-          opacity: config.render.opacity,
-        }));
-      } else {
-        result.push(buildSpotLayer(positions, colors, {
-          pointSize: config.render.point_size,
-          opacity: config.render.opacity,
-          is3d,
-        }));
-      }
+      result.push(...buildSpotLayer(positions, colors, {
+        pointSize: config.render.point_size,
+        opacity: config.render.opacity,
+        is3d,
+      }));
     }
     return result;
-  }, [base, detail, config, positions, colors, is3d, isSpatial2d, fieldRadius, zoom]);
+  }, [base, detail, config, positions, colors, is3d]);
 
   const legendChannels = useMemo((): Channel[] => {
     const img = config?.render.image;

@@ -218,7 +218,7 @@ export async function getFieldData(sessionId: string, fieldPath: string): Promis
 // Viewport-bbox cell polygons as a GeoArrow Arrow-IPC table (geometry column +
 // int32 cell_index). bbox is [minx, miny, maxx, maxy] in the coords world space.
 // Returns an empty table when the viewport holds more than `limit` cells (the
-// "Shapes (zoomed in)" gate).
+// zoomed-in gate for the Points + Shapes overlay).
 export async function getShapesGeoArrow(
   sessionId: string,
   element: string,

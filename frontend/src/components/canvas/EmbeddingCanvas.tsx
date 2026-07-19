@@ -231,11 +231,11 @@ function EmbeddingCanvasView({
 
   const layers = useMemo(() => {
     if (!positions || !colors) return [] as Layer[];
-    return [buildSpotLayer(positions, colors, {
+    return buildSpotLayer(positions, colors, {
       pointSize: display.encoding.point_size,
       opacity: display.encoding.opacity,
       is3d: is_3d,
-    })];
+    });
   }, [positions, colors, is_3d, display.encoding.point_size, display.encoding.opacity]);
 
   // Update the store mirror immediately, then debounce the PUT so a slider drag or a

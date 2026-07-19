@@ -9,9 +9,9 @@ import { getShapesGeoArrow } from '../../api';
 
 // Cap features per viewport request so the main-thread earcut triangulation can't
 // stall on a pathological bbox. The backend returns an EMPTY table when the
-// viewport holds more than this — so "Shapes (zoomed in)" stays blank until the
-// user zooms in far enough that the visible set fits, rather than showing a
-// partial subset.
+// viewport holds more than this — so the shapes overlay stays absent (the points
+// remain the view) until the user zooms in far enough that the visible set fits,
+// rather than showing a partial subset.
 const POLYGON_LIMIT = 20000;
 // Debounce viewport moves before firing a fetch, and pad the fetched bbox past the
 // viewport so a small pan reuses the cached table instead of refetching.
@@ -136,9 +136,9 @@ export function usePolygonBbox(
     const table = getTable(key, sessionId, element, b, bump);
     if (!table) return { layer: lastLayer.current, loading: true };
     // Over budget (viewport holds > POLYGON_LIMIT cells) → the backend returns a
-    // 0-row table. Report no layer (not an empty one) so the caller can fall back
-    // to the zoomed-out field instead of blanking. Clear lastLayer so stale
-    // outlines from a denser-but-fitting neighbour bbox don't linger.
+    // 0-row table. Report no layer (not an empty one) so the caller shows just the
+    // points instead of blanking. Clear lastLayer so stale outlines from a
+    // denser-but-fitting neighbour bbox don't linger.
     if (table.numRows === 0) { lastLayer.current = null; return { layer: null, loading: false }; }
 
     const layer = new GeoArrowSolidPolygonLayer({

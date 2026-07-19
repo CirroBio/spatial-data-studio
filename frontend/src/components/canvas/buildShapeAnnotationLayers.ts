@@ -7,7 +7,7 @@ import { shapeOutline, shapeHandles, shapeCentroid, arrowheadTriangle, ROTATE_HA
 
 type Point = [number, number];
 
-// UI overlays must render on top regardless of the cell-field layer's depth trick
+// UI overlays must render on top regardless of the cell scatter's depth trick
 // (same OVERLAY_PARAMS used by the lasso selection layers in SpatialCanvas).
 const OVERLAY_PARAMS = { depthCompare: 'always' as const, depthWriteEnabled: false };
 
