@@ -105,8 +105,11 @@ export default function AnnotationsPanel() {
               />
               <label className="flex items-center gap-2 text-[11px] text-text/80">
                 Font size
+                {/* fontSize is world-space, so it varies with the dataset's
+                    coordinate scale; step relative to the current value keeps the
+                    spinner useful whether it reads ~0.5 or ~12000. */}
                 <input
-                  type="number" min={1} step={1}
+                  type="number" min={0} step={Math.max(selectedShape.geometry.fontSize / 20, 0.01)}
                   value={selectedShape.geometry.fontSize}
                   onChange={(e) => patchText({ fontSize: Number(e.target.value) })}
                   className="w-16 bg-bg border border-border rounded px-1.5 py-0.5 text-xs text-text focus:outline-none focus:border-accent"
