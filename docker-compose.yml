@@ -6,7 +6,7 @@ services:
     image: spatial-data-studio:latest
 
     ports:
-      - "8080:80"
+      - "8080:8888"
 
     # Single read-write data mount (DESIGN §19.9): inputs + saved checkpoints +
     # snapshots share it. Defaults to ./test-data (ships with the repo) so demo
@@ -47,7 +47,7 @@ services:
     restart: unless-stopped
 
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://127.0.0.1/api/healthz"]
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8888/api/healthz"]
       interval: 30s
       timeout: 10s
       start_period: 60s

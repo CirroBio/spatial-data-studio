@@ -51,7 +51,7 @@ docker compose down
 ```
 docker run -d \
   --name spatial-data-studio \
-  -p 8080:80 \
+  -p 8080:8888 \
   -v "$(pwd)/test-data":/data \
   -e SDS_DATA_DIR=/data \
   -e SDS_CONTAINER_MEM_MB=12288 \

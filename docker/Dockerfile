@@ -78,8 +78,8 @@ ENV HOME=/home/cirro
 RUN mkdir -p "$HOME"
 WORKDIR $HOME
 
-# Expose the edge port
-EXPOSE 80
+# Expose the edge port (nginx)
+EXPOSE 8888
 
 # Runtime env defaults (overridden in docker-compose or docker run -e). SDS_DATA_DIR is
 # left unset so it defaults to $HOME (the single read-write data dir: inputs + checkpoints
@@ -102,4 +102,4 @@ CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/supervisord.conf", "-n"]
 # operation registry has finished building and requests will actually succeed;
 # the 60 s start period covers that build window.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -sf http://127.0.0.1/api/readyz || exit 1
+    CMD curl -sf http://127.0.0.1:8888/api/readyz || exit 1
