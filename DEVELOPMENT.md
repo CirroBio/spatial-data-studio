@@ -15,10 +15,17 @@ core, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 - **Frontend** — React + TypeScript + Vite + Tailwind + Radix + deck.gl
   (`frontend/src`), a single-page app that renders cell-scale data in WebGL and
   drives all interaction.
-- **One process, sessions run concurrently.** Jobs are serial *within* a session
-  (mutating the object in place under a per-session read/write lock) and concurrent
-  *across* sessions. The heavy squidpy/scanpy/custom call itself runs in a
-  subprocess pool so a long compute never holds the API process's GIL.
+- **One process, sessions run concurrently.** *Mutating* jobs are serial within a
+  session and concurrent across sessions. The heavy squidpy/scanpy/custom call runs in a
+  subprocess pool on a pickled copy, so a long compute never holds the API process's
+  GIL *or* the per-session write lock: the worker takes the write lock only for the
+  brief commit (applying the child's result back onto the live object), so reads keep
+  serving the last-committed object throughout a running job instead of stalling on it
+  (see `session._run_call`; DESIGN §24). *Extracts* (`sc.get.*` — read a value out, write
+  nothing back) skip the serial queue and run concurrently in a read lane
+  (`session._run_read_lane`) on a cheap shallow snapshot of the active table. Plots stay on
+  the serial mutation path (they persist a `uns` color cache), so they block behind a
+  running compute and render the up-to-date object.
 - **Execution is an audit log, not a replay graph.** Compute mutates the object in
   place; there is no undo and no reactive recomputation. App state persists in
   `sdata.attrs["app_state"]` and round-trips through the Zarr store.
@@ -170,12 +177,16 @@ in [`docker/README.md`](docker/README.md).
   survive. Also covers staged/pending recipe steps + preflight, region annotate and
   its persistence, the shape-annotation editor, the editable points-transform,
   content-hashed checkpoint naming, plot invalidation/redraw, the data-inspector
-  endpoints, cross-session isolation, the eight spatial/multi-sample custom methods
-  on `xenium_tma.zarr`, the cell-segmentation `/shapes/{element}/geoarrow`
-  polygons on `xenium.zarr`, and the client-compositing raster route + `/info`
-  manifest (raw zarr served with Range 206) on `xenium.zarr`. The four
-  Xenium-backed flows (zarr-import, custom methods, segmentation, raster) skip with
-  a `[skip]` line when their fixture is absent, so CI runs only the Visium-backed
+  endpoints, cross-session isolation, saving a session that ran
+  `filter_rank_genes_groups` (whose `uns` record arrays carry NaN gene names), the
+  eight spatial/multi-sample custom methods on `xenium_tma.zarr`, the
+  cell-segmentation `/shapes/{element}/geoarrow` polygons on `xenium.zarr`, the
+  client-compositing raster route + `/info` manifest (raw zarr served with Range
+  206) on `xenium.zarr`, and that an image tile keeps its signal after a reshaping
+  compute (filter_cells) — i.e. the per-session raster store isn't deleted while the
+  adopted object still references it. The five Xenium-backed flows (zarr-import,
+  custom methods, segmentation, raster, raster-survives-reshape) skip with a
+  `[skip]` line when their fixture is absent, so CI runs only the Visium-backed
   subset (including the schema gate); regenerate the Xenium fixtures locally via
   `scripts/prepare_xenium_*.py` to exercise them.
 - `cd backend && python test_cli.py` — offline CLI round trip: loads

@@ -9,9 +9,19 @@ import { reportError } from '../lib/errors';
 // displayed without a reload, so they show but aren't selectable. Each row also
 // exposes a delete control.
 export default function SessionPicker() {
-  const { sessions, activeSessionId, setActiveSessionId, removeSession } = useAppStore();
+  const { sessions, activeSessionId, setActiveSessionId, removeSession, sessionState } = useAppStore();
   if (sessions.length === 0) return null;
   const active = sessions.find((s) => s.id === activeSessionId);
+  // Does the active session have a job in flight? Derived from its durable history
+  // (not the ephemeral activeJobIds set, which is wiped on switch) so the signal is
+  // correct after switching back into a session whose job is still running — the
+  // header "running" pill can't show that on return, so bind the cue to the switcher,
+  // which is where a returning user reorients (designer critique). Only the active
+  // session's state is loaded, so only its row/trigger can carry the dot today.
+  const activeHasJob =
+    !!sessionState &&
+    (sessionState.app_state.compute_history.some((h) => h.status === 'queued' || h.status === 'running') ||
+      sessionState.app_state.plots.some((p) => p.status === 'queued' || p.status === 'running'));
 
   async function handleDelete(e: React.MouseEvent, id: string, name: string) {
     e.preventDefault();
@@ -36,6 +46,12 @@ export default function SessionPicker() {
           className="flex items-center gap-1 max-w-[240px] px-2 py-1 rounded text-xs text-text/80 hover:bg-accent-lo/30 hover:text-text transition-colors"
           title="Switch session"
         >
+          {activeHasJob && (
+            <span
+              className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse shrink-0"
+              title="A job is running in this session"
+            />
+          )}
           <span className="truncate">{active ? active.name : 'Select session'}</span>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-muted">
             <path d="M6 9l6 6 6-6" />
@@ -76,6 +92,11 @@ export default function SessionPicker() {
                     {s.status === 'errored' && <span className="text-[9px] text-danger font-mono">errored</span>}
                     {s.status === 'loading' && <span className="text-[9px] text-muted/50 font-mono">loading</span>}
                     {isActive && <span className="text-[9px] text-accent font-mono">active</span>}
+                    {isActive && activeHasJob && (
+                      <span className="text-[9px] text-accent font-mono flex items-center gap-1">
+                        <span className="w-1 h-1 rounded-full bg-accent animate-pulse" />running
+                      </span>
+                    )}
                   </div>
                 </div>
                 {isActive && (

@@ -8,6 +8,7 @@ import shutil
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -24,11 +25,23 @@ class RWLock:
         self._readers = 0
         self._writer = False
 
-    def acquire_read(self):
+    def acquire_read(self, timeout=None):
+        """Block until the write lock is free, then register a reader. With `timeout`
+        (seconds), give up and return False if a writer still holds the lock when it
+        elapses; return True once the read lock is held."""
         with self._cond:
-            while self._writer:
-                self._cond.wait()
+            if timeout is None:
+                while self._writer:
+                    self._cond.wait()
+            else:
+                deadline = time.monotonic() + timeout
+                while self._writer:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        return False
+                    self._cond.wait(remaining)
             self._readers += 1
+            return True
 
     def release_read(self):
         with self._cond:
@@ -48,8 +61,9 @@ class RWLock:
             self._cond.notify_all()
 
     @contextmanager
-    def reading(self):
-        self.acquire_read()
+    def reading(self, timeout=None):
+        if not self.acquire_read(timeout):
+            raise TimeoutError("read lock not acquired within timeout")
         try:
             yield
         finally:
@@ -67,6 +81,66 @@ class RWLock:
 def _now():
     import datetime
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+# Non-mutating jobs (plots, extracts) run off the serial queue on this shared pool so
+# they don't wait behind a long compute (DESIGN §24). Each task blocks on the compute
+# pool, so a few threads suffice — extras just queue on the compute pool.
+_READ_LANE_WORKERS = 4
+_read_lane_pool: "ThreadPoolExecutor | None" = None
+_read_lane_lock = threading.Lock()
+
+
+def _read_lane_executor() -> "ThreadPoolExecutor":
+    # Lazily built the first time an extract is dispatched. Guard the init: HTTP
+    # executor threads for different sessions can reach here concurrently, and an
+    # unlocked check-then-create would build (and orphan) two pools.
+    global _read_lane_pool
+    if _read_lane_pool is None:
+        with _read_lane_lock:
+            if _read_lane_pool is None:
+                _read_lane_pool = ThreadPoolExecutor(max_workers=_READ_LANE_WORKERS,
+                                                     thread_name_prefix="readlane")
+    return _read_lane_pool
+
+
+def _shallow_adata(adata):
+    """A container-level copy of the active table that SHARES the underlying arrays but
+    has independent obs/var/obsm/... containers. Compute commits only ever rebind
+    container entries (`m[k] = v`, DESIGN §24), never mutate array contents in place, so
+    this snapshot stays consistent while the live object keeps changing — safe to pickle
+    to the compute pool for a read-only plot/extract even as a concurrent compute commits.
+    (loky pickles args asynchronously on a feeder thread, so a read lock can't cover the
+    pickle; a private snapshot is what makes it race-free.)"""
+    import anndata as ad
+    import pandas as pd
+    snap = ad.AnnData(
+        X=adata.X,
+        obs=adata.obs.copy(deep=False), var=adata.var.copy(deep=False),
+        obsm=dict(adata.obsm), varm=dict(adata.varm),
+        obsp=dict(adata.obsp), varp=dict(adata.varp),
+        layers=dict(adata.layers), uns=dict(adata.uns),
+    )
+    if adata.raw is not None:
+        # .raw is never rebound by a commit, so share its arrays too (no data copy).
+        snap.raw = ad.AnnData(X=adata.raw.X, var=adata.raw.var.copy(deep=False),
+                              obs=pd.DataFrame(index=adata.obs_names))
+    return snap
+
+
+class _ReadSnapshot:
+    """The read-only slice of the `session` surface a plot/extract `execute()` touches
+    (active_table/sdata/active_image), backed by a shallow table snapshot. Read-lane jobs
+    are adata-only, so sdata/image are None."""
+    def __init__(self, adata):
+        self._adata = adata
+        self.sdata = None
+
+    def active_table(self):
+        return self._adata
+
+    def active_image(self):
+        return None
 
 
 class Session:
@@ -96,6 +170,7 @@ class Session:
         self.extract_dir = None  # temp dir if loaded from a .zarr.zip; cleaned on close
         self.raster_cache_dir = None  # temp store of tile-normalized rasters; cleaned on close
         self.raster_stores: dict[str, str] = {}  # element name -> its {i}.zarr store dir in raster_cache_dir
+        self.raster_cache_mb = 0.0  # on-disk size of raster_cache_dir; computed once at load, surfaced in resource_sample
         self.hash_check = None  # content-hash verification result when loaded from a hash-named checkpoint (store._hash_result)
         self.created_at = _now()
         self.status = "ready" if sdata is not None else "loading"
@@ -139,10 +214,6 @@ class Session:
         imgs = list(getattr(self.sdata, "images", {}).keys())
         return self.sdata.images[imgs[0]] if imgs else None
 
-    def stash_result(self, key, value):
-        ad = self.active_table()
-        ad.uns.setdefault("_results", {})[key] = value
-
     # ---- enqueue / staging (PENDING lifecycle, spec §5.4) -----------------
     def _collection(self, ec: str) -> list:
         return self.app_state["plots"] if ec == "plot" else self.app_state["compute_history"]
@@ -161,6 +232,15 @@ class Session:
 
     def _enqueue_job(self, entry_id: str, ec: str, descriptor: dict):
         self._jobs[entry_id] = {"kind": ec, "descriptor": descriptor, "status": "queued"}
+        fn = self.manager.registry.get(f"{descriptor['namespace']}.{descriptor['function']}")
+        if fn is not None and fn.read_lane:
+            # Extract: run it concurrently on a table snapshot instead of behind the serial
+            # mutation queue, so an extract of existing data doesn't wait out a running
+            # compute (DESIGN §24). Plots stay on the queue (they persist uns colors).
+            BUS.publish("job.queued", {"session_id": self.id, "job_id": entry_id,
+                                       "descriptor": descriptor, "position": 0, "effect_class": ec})
+            _read_lane_executor().submit(self._run_read_lane, entry_id, ec, descriptor)
+            return
         self._queue.put((entry_id, ec, descriptor))
         BUS.publish("job.queued", {"session_id": self.id, "job_id": entry_id,
                                    "descriptor": descriptor, "position": self._queue.qsize(),
@@ -323,15 +403,27 @@ class Session:
             self._failed_logs.pop(jid, None)
 
     def _run_call(self, job_id, kind, descriptor):
-        # kind is always "compute" or "plot" here (the only two _dispatch routes here);
-        # both need the write lock — render_plot (registry/base.py) calls squidpy/scanpy
-        # pl.* functions on the live adata, and those cache things like
-        # uns['<col>_colors'] as a side effect even for a pure "plot" job.
+        # kind is always "compute" or "plot" here (the only two _dispatch routes here).
+        # The call itself (ADAPTER.execute) runs the compute in a subprocess and holds
+        # NO lock: the child works on a pickled copy (registry/kernel.py), so the live
+        # object is untouched for the whole — possibly minutes-long — compute. Reads
+        # (session state, obs values, image tiles, arrow data) therefore keep serving
+        # the last-committed object during a job instead of blocking on the write lock
+        # for its entire duration (DESIGN §20.2). Only the commit below mutates the live
+        # object, held under a brief write lock.
+        result = ADAPTER.execute(descriptor, self)
+
+        if result.status == "failed":
+            # A failed read bootstrap (no object ever adopted) leaves the session unusable.
+            if self.sdata is None:
+                self.status = "errored"
+            self._fail(job_id, kind, result.error or "failed", log=result.log)
+            return
+
         with self.lock.writing():
-            result = ADAPTER.execute(descriptor, self)
-            # Adopt a returned object (read bootstrap / Edge B) while still holding
-            # the write lock so readers never see a new sdata with a stale table key.
-            if result.status != "failed" and result.new_object is not None:
+            if result.new_object is not None:
+                # Adopt a returned object (read bootstrap / Edge B) under the write lock
+                # so readers never see a new sdata with a stale table key.
                 replaced = self.sdata is not None and self.sdata is not result.new_object
                 if replaced:
                     from .. import imaging
@@ -341,13 +433,20 @@ class Session:
                 # A reader's images/labels can be single-scale or huge-chunked; tile
                 # them now so the canvas never realizes a multi-GB chunk per tile.
                 from .. import rasters
-                # Adopting a fresh object (e.g. filter_cells on a checkpoint-loaded
-                # session) leaves the prior per-session raster store orphaned; drop it
-                # before reassigning so a reshape doesn't leak a tempdir each time.
+                # A reshaping op (e.g. filter_cells) returns a new object that carries the
+                # SAME already-tiled image/label refs forward, so normalize_rasters finds
+                # them canonical and rebuilds nothing (returns None). Those refs still stream
+                # lazily from prev_cache, so it must be KEPT — deleting it would leave every
+                # image a dangling ref that zarr fills with 0 (a black canvas, no error). Only
+                # when a genuinely fresh, non-canonical object is adopted (a reader bootstrap)
+                # does normalize build a new store, orphaning prev_cache; drop it only then.
                 prev_cache = self.raster_cache_dir
-                self.raster_cache_dir, self.raster_stores = rasters.normalize_rasters(self.sdata)
-                if prev_cache and prev_cache != self.raster_cache_dir:
-                    shutil.rmtree(prev_cache, ignore_errors=True)
+                new_cache, new_stores = rasters.normalize_rasters(self.sdata)
+                if new_cache is not None:
+                    self.raster_cache_dir, self.raster_stores = new_cache, new_stores
+                    self.raster_cache_mb = rasters.cache_size_mb(new_cache)
+                    if prev_cache and prev_cache != new_cache:
+                        shutil.rmtree(prev_cache, ignore_errors=True)
                 self.active_table_key = self._default_table_key()
                 if not self.app_state["displays"]:
                     self.manager.auto_displays(self)
@@ -359,13 +458,13 @@ class Session:
                 # canvas refetch and dependent plots invalidate.
                 if replaced and not result.changed_fields:
                     result.changed_fields = self._table_field_paths()
-
-        if result.status == "failed":
-            # A failed read bootstrap (no object ever adopted) leaves the session unusable.
-            if self.sdata is None:
-                self.status = "errored"
-            self._fail(job_id, kind, result.error or "failed", log=result.log)
-            return
+            else:
+                # The common compute/plot path: write the child's changed facets back
+                # onto the live object. This is the only live-object mutation here, so it
+                # alone needs the write lock.
+                from ..registry import kernel
+                if result.changed_facets:
+                    kernel.apply_changed_facets(self.active_table(), self.sdata, result.changed_facets)
 
         self.saved = False  # a completed compute/plot changed the object or its cached state
 
@@ -391,6 +490,36 @@ class Session:
                                       "data_versions": self.app_state["data_versions"]})
         if invalidated:
             BUS.publish("plot.invalidated", {"session_id": self.id, "plot_ids": invalidated})
+
+    def _run_read_lane(self, job_id, ec, descriptor):
+        """Run an extract concurrently on a shallow snapshot of the active table, off the
+        serial worker (DESIGN §24). An extract reads a value out of the object (e.g.
+        `sc.get.*`) and writes nothing back, so it never needs the mutation queue. Claims
+        the job against cancel() like `_run`, snapshots under a brief read lock, then runs
+        the call in the compute pool with NO lock held — the snapshot is private, so a
+        concurrent compute commit can't corrupt its async pickle."""
+        with self._book:
+            job = self._jobs.get(job_id)
+            if job is None or job["status"] == "cancelled":
+                return
+            job["status"] = "running"
+        self._set_status(job_id, ec, "running")
+        BUS.publish("job.started", {"session_id": self.id, "job_id": job_id})
+        try:
+            with self.lock.reading():
+                snapshot = _ReadSnapshot(_shallow_adata(self.active_table()))
+            result = ADAPTER.execute(descriptor, snapshot)  # runs in the compute pool, no lock held
+            if result.status == "failed":
+                self._fail(job_id, ec, result.error or "failed", log=result.log)
+                return
+            # Read-only: the extract's value is not written back to the live object.
+            self._set_status(job_id, ec, "completed", log=result.log)
+            BUS.publish("job.completed", {"session_id": self.id, "job_id": job_id, "kind": "compute",
+                                          "structural_diff": {}, "data_versions": self.app_state["data_versions"]})
+        except Exception as e:  # a read-lane failure must never take down the pool thread
+            self._fail(job_id, ec, str(e))
+        finally:
+            self._prune_jobs()
 
     def _run_annotate(self, job_id, payload):
         """Region labeling: mutate obs/shapes in place under the write lock (§3.1)."""
@@ -598,11 +727,7 @@ class Session:
         descriptor = {"namespace": rec["namespace"], "function": rec["function"], "params": rec["params"]}
         # redraw reuses the SAME plot id so the figure cache key stays stable
         rec["status"] = "queued"
-        self._jobs[plot_id] = {"kind": "plot", "descriptor": descriptor, "status": "queued"}
-        self._queue.put((plot_id, "plot", descriptor))
-        BUS.publish("job.queued", {"session_id": self.id, "job_id": plot_id,
-                                   "descriptor": descriptor, "position": self._queue.qsize(),
-                                   "effect_class": "plot"})
+        self._enqueue_job(plot_id, "plot", descriptor)  # read-lane or serial, per the fn
         return True
 
     def job_status(self, job_id: str):

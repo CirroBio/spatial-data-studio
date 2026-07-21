@@ -132,6 +132,9 @@ export interface DisplayEncoding {
   // fits. The legacy value 'shapes' is read as 'points+shapes'.
   render_mode?: 'points' | 'points+shapes' | 'shapes';
   point_marker?: 'circle' | 'square' | 'hexagon';  // point glyph shape; defaults to circle
+  invert_x?: boolean;                   // mirror the plot horizontally; defaults off
+  invert_y?: boolean;                   // mirror the plot vertically; defaults off
+  background?: 'light' | 'dark';        // per-plot backdrop; unset follows the app theme
 }
 
 export interface Viewport {
@@ -265,6 +268,9 @@ export interface SnapshotRender {
   channels: Record<string, SnapshotChannel>;  // per-channel color/contrast, keyed by channel index string
   point_size: number;
   opacity: number;
+  invert_x?: boolean;             // spatial view: mirror horizontally (schema >= 1.1.0; absent on older snapshots)
+  invert_y?: boolean;             // spatial view: mirror vertically (schema >= 1.1.0)
+  background?: 'light' | 'dark';  // per-plot backdrop (schema >= 1.1.0; defaults dark when absent)
 }
 
 export interface SnapshotConfig {
@@ -340,11 +346,21 @@ export interface SessionRemovedEvent {
   reason: 'closed' | 'subset';
 }
 
+// Progress from a synchronous checkpoint load, routed by the client-minted `load_id`
+// (no session id exists until the load finishes). `pct` is present only for the
+// byte-fraction extraction step; null for coarse stage messages.
+export interface SessionLoadingEvent {
+  load_id: string;
+  message: string;
+  pct: number | null;
+}
+
 export interface ResourceSample {
   global: {
     rss_mb: number;
     rss_pct: number;
     cpu_pct: number;
+    rasters_mb: number;
   };
   per_session: Record<string, number>;
 }

@@ -40,11 +40,16 @@ class SessionManager:
         self._proc = psutil.Process()
 
     # ---- creation ---------------------------------------------------------
-    def create_from_load(self, path: str, name: str | None = None) -> Session:
+    def create_from_load(self, path: str, name: str | None = None,
+                          progress=None) -> Session:
+        """`progress(message, pct)` (optional) is called from this executor thread as
+        the slow steps advance, to feed the New Session dialog's SSE progress overlay;
+        None makes every progress call a no-op."""
+        report = progress or (lambda *a, **k: None)
         self._check_capacity()
         resolved = str(_resolve_or_raise(path))  # validated, resolved path for every fs op below
         self._check_admission(estimate_resident_mb(resolved))
-        sdata, app_state, newer, extract_dir, hash_check = load_spatialdata(resolved)
+        sdata, app_state, newer, extract_dir, hash_check = load_spatialdata(resolved, report)
         sid = str(uuid.uuid4())
         name = name or _basename(resolved)
         sess = Session(sid, name, sdata, app_state, self, store_path=resolved)
@@ -53,7 +58,9 @@ class SessionManager:
         # Older stores hold huge-chunked rasters; re-tile them so canvas tiles stay
         # cheap (a no-op for stores already written in canonical form). See rasters.py.
         from .. import rasters
-        sess.raster_cache_dir, sess.raster_stores = rasters.normalize_rasters(sdata)
+        sess.raster_cache_dir, sess.raster_stores = rasters.normalize_rasters(sdata, report)
+        sess.raster_cache_mb = rasters.cache_size_mb(sess.raster_cache_dir)
+        report("Building views…")
         if not app_state["displays"]:
             self.auto_displays(sess)
         self.sessions[sid] = sess
@@ -230,8 +237,10 @@ class SessionManager:
         child.extract_dir = parent.extract_dir
         child.raster_cache_dir = parent.raster_cache_dir
         child.raster_stores = parent.raster_stores
+        child.raster_cache_mb = parent.raster_cache_mb
         parent.extract_dir = parent.raster_cache_dir = None
         parent.raster_stores = {}
+        parent.raster_cache_mb = 0.0
 
         self.close(parent.id, save=False, reason="subset")
         return child
@@ -307,10 +316,12 @@ class SessionManager:
         return True
 
     def resource_sample(self) -> dict:
+        sessions = list(self.sessions.values())
         return {"global": {"rss_mb": round(self._rss_mb(), 1),
                            "rss_pct": round(self._rss_mb() / config.CONTAINER_MEM_MB * 100, 1),
-                           "cpu_pct": self._proc.cpu_percent()},
-                "per_session": {s.id: self._resident_mb(s) for s in list(self.sessions.values())}}
+                           "cpu_pct": self._proc.cpu_percent(),
+                           "rasters_mb": round(sum(s.raster_cache_mb for s in sessions), 1)},
+                "per_session": {s.id: self._resident_mb(s) for s in sessions}}
 
 
 def _basename(path: str) -> str:

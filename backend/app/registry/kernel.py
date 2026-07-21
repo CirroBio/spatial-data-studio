@@ -147,7 +147,9 @@ def _child_library_call(library, path, effect_class, injected_order, bound, adat
         return {"status": "completed", "log": log, "new_object": ret,
                 "element_transforms": _capture_transforms(ret)}
     if effect_class == "extract":
-        return {"status": "completed", "log": log, "result_value_raw": ret}
+        # Runs for its side-effect-free return, but nothing is written back or
+        # persisted — the value is not carried past the worker (DESIGN §4.6).
+        return {"status": "completed", "log": log}
 
     # compute
     if _table_reshaped(shape_before, adata) and sdata is not None:

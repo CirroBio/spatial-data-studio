@@ -28,6 +28,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+import numpy as np
 import spatialdata as sd
 import zarr
 
@@ -118,23 +119,28 @@ def _hash_result(name: str, expected: str, actual: str) -> dict:
     return {"ok": ok, "message": message}
 
 
-def read_spatialdata_archive(path: str):
+def read_spatialdata_archive(path: str, progress=None):
     """Read a SpatialData zarr store from a bare `.zarr` directory, a `.zarr.zip`,
     or a `.zarr.tar.gz` archive. Returns (sdata, extract_dir, hash_check);
     `extract_dir` is the temp directory an archive was unpacked into (None for a bare
     directory) — zarr maps chunks from it lazily, so the caller owns cleanup for the
     object's lifetime. `hash_check` is the embedded-content-hash verification result
     (`_hash_result`), or None when the name carries no hash to verify. Shared by the
-    checkpoint load path and the SpatialData-zarr import reader."""
+    checkpoint load path and the SpatialData-zarr import reader. `progress(message,
+    pct)` (optional) reports extraction/read progress; see `create_from_load`."""
+    report = progress or (lambda *a, **k: None)
     if path.endswith((".zarr.tar.gz", ".zarr.tgz")):
         extract_dir = tempfile.mkdtemp(suffix=".zarr")
+        report("Extracting checkpoint…")
         with tarfile.open(path, "r:gz") as tf:
             tf.extractall(extract_dir, filter="data")
+        report("Reading data tables…")
         return sd.read_zarr(_zarr_root(extract_dir)), extract_dir, None
     if path.endswith(".zarr.zip") or (os.path.isfile(path) and zipfile.is_zipfile(path)):
         extract_dir = tempfile.mkdtemp(suffix=".zarr")
         expected = _expected_content_hash(path)
         if expected is None:
+            report("Extracting checkpoint…")
             with zipfile.ZipFile(path) as zf:
                 zf.extractall(extract_dir)
             hash_check = None
@@ -142,22 +148,39 @@ def read_spatialdata_archive(path: str):
             # Auto-named checkpoint: recompute the embedded content hash while
             # unzipping (same sorted-arcname + bytes scheme as `_zip_dir`), so the
             # verification costs no extra read pass over the archive.
-            hash_check = _extract_zip_verifying(path, extract_dir, expected)
+            hash_check = _extract_zip_verifying(path, extract_dir, expected, report)
+        report("Reading data tables…")
         return sd.read_zarr(_zarr_root(extract_dir)), extract_dir, hash_check
+    report("Reading data tables…")
     return sd.read_zarr(path), None, None
 
 
-def _extract_zip_verifying(path: str, extract_dir: str, expected: str) -> dict:
+def _extract_zip_verifying(path: str, extract_dir: str, expected: str,
+                           progress=None) -> dict:
     """Unzip an auto-named checkpoint into `extract_dir` while recomputing the
     content hash `_zip_dir` embedded in its name, in a single read pass, then report
     whether they still match. These archives are ones we wrote — file entries only,
-    relative arcnames — so a plain per-entry extract is safe (untrusted imports go
-    through `extractall` in `read_spatialdata_archive` instead)."""
+    relative arcnames — but each entry is still checked to stay inside `extract_dir`
+    before writing (untrusted imports go through `extractall` in
+    `read_spatialdata_archive` instead). `progress(message, pct)` (optional) reports the
+    extracted byte fraction, throttled to whole percent."""
+    report = progress or (lambda *a, **k: None)
+    extract_root = Path(extract_dir).resolve()
     h = hashlib.sha256()
     with zipfile.ZipFile(path) as zf:
+        total = sum(zi.file_size for zi in zf.infolist()) or 1
+        done = 0
+        last_pct = -1
+        report("Extracting checkpoint…", 0.0)
         for arcname in sorted(zf.namelist()):
             h.update(arcname.encode())
             target = os.path.join(extract_dir, arcname)
+            # Zip-slip guard: reject any entry that resolves outside extract_dir. Even
+            # though these are archives we wrote, a hash-named drop-in could carry a
+            # `../` arcname, and the content-hash check runs only AFTER the full extract.
+            resolved = Path(target).resolve()
+            if resolved != extract_root and extract_root not in resolved.parents:
+                raise ValueError(f"unsafe archive entry escapes extract dir: {arcname!r}")
             if arcname.endswith("/"):
                 os.makedirs(target, exist_ok=True)
                 continue
@@ -166,17 +189,23 @@ def _extract_zip_verifying(path: str, extract_dir: str, expected: str) -> dict:
                 for chunk in iter(lambda s=src: s.read(1 << 20), b""):
                     h.update(chunk)
                     dst.write(chunk)
+                    done += len(chunk)
+                    pct = done / total
+                    if int(pct * 100) > last_pct:
+                        last_pct = int(pct * 100)
+                        report("Extracting checkpoint…", pct)
     return _hash_result(os.path.basename(path), expected, h.hexdigest()[:HASH_LEN])
 
 
-def load_spatialdata(path: str):
+def load_spatialdata(path: str, progress=None):
     """Returns (sdata, app_state, newer, extract_dir, hash_check). `extract_dir` is
     the temp directory an archive checkpoint was unpacked into — zarr maps chunks
     from it lazily for the object's lifetime, so the caller owns cleanup on session
     close. `hash_check` is the embedded-content-hash verification result, verified
     during extraction (see `read_spatialdata_archive`), or None when the name carries
-    no hash."""
-    sdata, extract_dir, hash_check = read_spatialdata_archive(path)
+    no hash. `progress(message, pct)` (optional) reports load progress; see
+    `create_from_load`."""
+    sdata, extract_dir, hash_check = read_spatialdata_archive(path, progress)
     st = appstate.ensure(sdata.attrs)
     # Rendered figures are never persisted (§13); plots load undrawn and render
     # lazily on open (§7.2). A persisted `drawn`/`failed` is meaningless without bytes.
@@ -185,6 +214,61 @@ def load_spatialdata(path: str):
             p["status"] = "invalidated"
     newer = st.get("schema_version", 1) > appstate.SCHEMA_VERSION
     return sdata, st, newer, extract_dir, hash_check
+
+
+def _coerce_object_string_fields(arr: np.ndarray) -> np.ndarray | None:
+    """A record array whose object-dtype fields hold a non-string (a float) somewhere,
+    rebuilt with those fields as fixed-length unicode ('' for the non-strings); None if
+    nothing needed fixing. `sc.tl.filter_rank_genes_groups` marks dropped genes with
+    `np.nan` in the object `names` field, which breaks anndata's zarr writer two ways:
+    it calls `.encode()` on every entry (dying on the float), and when a whole group is
+    filtered every entry becomes '' — a zero-length string dtype zarr v3 rejects. A
+    fixed `<U{L}` (L>=1) field avoids both: no per-entry encode, and a floor of 1."""
+    names = arr.dtype.names
+    if not names:
+        return None
+    obj_fields = [n for n in names if arr.dtype[n].kind == "O"]
+    if not any(any(not isinstance(x, str) for x in arr[n].tolist()) for n in obj_fields):
+        return None
+    new_dtype, cols = [], {}
+    for n in names:
+        if n in obj_fields:
+            vals = [x if isinstance(x, str) else "" for x in arr[n].tolist()]
+            width = max((len(v) for v in vals), default=0) or 1
+            cols[n] = np.array(vals, dtype=f"<U{width}")
+            new_dtype.append((n, f"<U{width}"))
+        else:
+            cols[n] = arr[n]
+            new_dtype.append((n, arr.dtype[n]))
+    out = np.empty(arr.shape, dtype=new_dtype)
+    for n in names:
+        out[n] = cols[n]
+    return out
+
+
+def _stringify_uns_recarrays(sdata) -> list[tuple[dict, str, object]]:
+    """Make every table's `uns` safe for anndata's zarr writer by replacing the
+    non-string entries in object-dtype record arrays (see `_coerce_object_string_fields`)
+    for the write only. Returns [(mapping, key, original)] so `save_spatialdata` can
+    restore the live object's arrays — the NaNs are how scanpy marks filtered genes,
+    so the in-memory object must keep them."""
+    swaps: list[tuple[dict, str, object]] = []
+
+    def walk(mapping: dict) -> None:
+        for key, val in mapping.items():
+            if isinstance(val, dict):
+                walk(val)
+            elif isinstance(val, np.ndarray):
+                fixed = _coerce_object_string_fields(val)
+                if fixed is not None:
+                    mapping[key] = fixed
+                    swaps.append((mapping, key, val))
+
+    for table in getattr(sdata, "tables", {}).values():
+        uns = getattr(table, "uns", None)
+        if isinstance(uns, dict):
+            walk(uns)
+    return swaps
 
 
 def save_spatialdata(sdata, path: str, app_state: dict, hash_name: bool = False) -> str:
@@ -196,6 +280,7 @@ def save_spatialdata(sdata, path: str, app_state: dict, hash_name: bool = False)
     persisted, logs = _split_logs(app_state)
     original = sdata.attrs.get("app_state")
     sdata.attrs["app_state"] = persisted
+    uns_swaps = _stringify_uns_recarrays(sdata)
     try:
         if path.endswith(".zarr.zip"):
             written = _save_zip(sdata, path, hash_name, logs)
@@ -205,6 +290,8 @@ def save_spatialdata(sdata, path: str, app_state: dict, hash_name: bool = False)
         # Restore the identity between sdata.attrs and the live session app_state
         # (they are the same object during a live session).
         sdata.attrs["app_state"] = original if original is not None else app_state
+        for mapping, key, orig in uns_swaps:
+            mapping[key] = orig
     _invalidate_dataset_scan()
     return written
 

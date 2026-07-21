@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import DeckGL from '@deck.gl/react';
-import { OrthographicView } from '@deck.gl/core';
 import { ScatterplotLayer, PolygonLayer, PathLayer } from '@deck.gl/layers';
+import { LinearInterpolator } from '@deck.gl/core';
 import type { Layer, OrthographicViewState, PickingInfo } from '@deck.gl/core';
 import { useAppStore } from '../../store/sessionStore';
 import { useArrowField } from '../../hooks/useArrowField';
@@ -19,22 +19,28 @@ import { useArrowPositions } from './useArrowPositions';
 import { useImageTiles } from './useImageTiles';
 import { useVivImageLayer } from './useVivImageLayer';
 import { useCanvasViewState, shapesFetchZoomThreshold } from './useCanvasViewState';
+import { ZOOM_LIMITS, ZOOM_STEP } from './viewFit';
 import { useSpotColors, arrowToColorSource } from './useSpotColors';
 import { buildSpotLayer, estimateMeanSpacing } from './buildSpotLayer';
+import { PLOT_BACKGROUNDS } from './colorUtils';
 import { buildShapeAnnotationLayers, buildShapeHandleLayer, buildDragPreviewLayers } from './buildShapeAnnotationLayers';
 import { usePolygonBbox } from './usePolygonBbox';
 import { useImageChannels } from './useImageChannels';
 import CanvasControls from './CanvasControls';
+import { FlipOrthographicView } from './FlipOrthographicView';
 import { colorByLabel } from './colorBy';
 import { LoadingCue, ChannelLegend, CellColorLegend, DrawHint } from './CanvasOverlays';
+
+// Animate zoom-button clicks so the level eases to the target instead of snapping.
+// Matches the axes deck's OrthographicController interpolates for its own transitions.
+const ZOOM_TRANSITION = new LinearInterpolator(['target', 'zoomX', 'zoomY']);
+const ZOOM_TRANSITION_MS = 250;
 
 type Point = [number, number];
 type ShapeDragTarget =
   | { kind: 'create'; tool: Exclude<ShapeKind, 'polygon' | 'text'>; start: Point }
   | { kind: 'handle'; shapeId: string; handleId: string }
   | { kind: 'translate'; shapeId: string; start: Point; origin: ShapeGeometry };
-
-const VIEWS = [new OrthographicView({ id: 'main', flipY: false })];
 
 interface Props {
   display: SpatialDisplaySpec;
@@ -46,7 +52,7 @@ interface Props {
 }
 
 export default function SpatialCanvas({ display, sessionId, canvasMode, annotationTarget }: Props) {
-  const { sessionState, updateDisplay, isolatedCategory, pushNotification, openSnapshots, setSnapshotHandler } = useAppStore();
+  const { sessionState, updateDisplay, isolatedCategory, pushNotification, openSnapshots, setSnapshotHandler, theme } = useAppStore();
   const fields = sessionState?.fields;
   const dataVersions = sessionState?.data_versions ?? {};
 
@@ -64,6 +70,16 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   const showPoints = display.encoding.show_points ?? true;
   const showImage = display.encoding.show_image ?? (display.encoding.image_layer !== null);
   const showLegend = display.encoding.show_channel_legend ?? true;
+  // View orientation + backdrop. Both flips live in the camera (FlipOrthographicView),
+  // so picking/drawing stay consistent; the backdrop follows the app theme until the
+  // user pins one explicitly.
+  const invertX = display.encoding.invert_x ?? false;
+  const invertY = display.encoding.invert_y ?? false;
+  const bg = display.encoding.background ?? theme;
+  const views = useMemo(
+    () => [new FlipOrthographicView({ id: 'main', flipX: invertX, flipY: invertY })],
+    [invertX, invertY],
+  );
   const [transformOpen, setTransformOpen] = useState(false);
   const [openColorPicker, setOpenColorPicker] = useState<number | null>(null);
   const [panelCollapsed, setPanelCollapsed] = useState(false);
@@ -479,9 +495,9 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   }
 
   return (
-    <div ref={containerRef} className="w-full h-full relative bg-bg">
+    <div ref={containerRef} className="w-full h-full relative" style={{ backgroundColor: PLOT_BACKGROUNDS[bg] }}>
       <DeckGL
-        views={VIEWS}
+        views={views}
         viewState={viewState as unknown as Record<string, OrthographicViewState>}
         onViewStateChange={({ viewState: vs }) => {
           const v = vs as OrthographicViewState;
@@ -524,6 +540,12 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
         setShowPoints={(v) => updateEncoding({ show_points: v })}
         showImage={showImage}
         setShowImage={(v) => updateEncoding({ show_image: v })}
+        invertX={invertX}
+        setInvertX={(v) => updateEncoding({ invert_x: v })}
+        invertY={invertY}
+        setInvertY={(v) => updateEncoding({ invert_y: v })}
+        background={bg}
+        setBackground={(v) => updateEncoding({ background: v })}
         showLegend={showLegend}
         setShowLegend={(v) => updateEncoding({ show_channel_legend: v })}
         renderMode={renderMode}
@@ -537,6 +559,20 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
         setOpenColorPicker={setOpenColorPicker}
         panelCollapsed={panelCollapsed}
         setPanelCollapsed={setPanelCollapsed}
+        zoom={zoom}
+        onZoom={(dir) => {
+          const next = Math.max(ZOOM_LIMITS.minZoom, Math.min(ZOOM_LIMITS.maxZoom, zoom + dir * ZOOM_STEP));
+          const t = viewState.target as number[];
+          // A wheel zoom leaves deck's per-axis zoomX/zoomY on the view state, and
+          // those override `zoom` — so a button update that set only `zoom` would be
+          // ignored. Write the new scalar into all three to keep them consistent.
+          const updated = {
+            ...viewState, zoom: next, zoomX: next, zoomY: next,
+            transitionDuration: ZOOM_TRANSITION_MS, transitionInterpolator: ZOOM_TRANSITION,
+          };
+          setViewState(updated);
+          persistDisplay({ ...currentSpec(), viewport: { target: [t[0], t[1]], zoom: next } });
+        }}
         onFit={() => { const fit = fitToData(); if (fit) setViewState(fit); }}
         onEditTransform={() => setTransformOpen(true)}
       />

@@ -172,6 +172,13 @@ export function useVivImageLayer(
     const T = imageInfo.tile_size;
     const [W0, H0] = [levels[0].width, levels[0].height];
 
+    // Fluorescence composites additively from black, so zero-intensity pixels are
+    // opaque black and would hide the themed backdrop (PLOT_BACKGROUNDS) behind the
+    // image's whole bounding box — making the light/dark background toggle look dead.
+    // Map exact black to alpha 0 so empty areas show the backdrop. A true-color RGB
+    // image keeps black (it is real data, e.g. an H&E stain), so it stays opaque.
+    const useTransparentColor = !isRgb;
+
     const channelsVisible = isRgb
       ? selections.map(() => true)
       : selections.map((_, i) => channels[i]?.visible ?? true);
@@ -217,6 +224,8 @@ export function useVivImageLayer(
         coordinateSystem: COORDINATE_SYSTEM.CARTESIAN,
         parameters: IMAGE_PARAMS,
         extensions: [new ColorPaletteExtension()],
+        transparentColor: [0, 0, 0],
+        useTransparentColor,
         opacity: 1,
       }) as Layer);
     }
@@ -293,6 +302,8 @@ export function useVivImageLayer(
             coordinateSystem: COORDINATE_SYSTEM.CARTESIAN,
             parameters: IMAGE_PARAMS,
             extensions: [new ColorPaletteExtension()],
+            transparentColor: [0, 0, 0],
+            useTransparentColor,
             opacity: 1,
           }) as Layer);
         }

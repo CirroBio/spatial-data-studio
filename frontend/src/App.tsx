@@ -175,6 +175,21 @@ export default function App() {
       );
     }
 
+    // A read-imported session is created empty; its data arrives from a background
+    // reader/parse job (create_from_read enqueues the reader as the first job), so no
+    // display exists until that job finishes. Show a spinner across every tab while the
+    // spatialdata-io / reader parse runs, rather than the bare "no display" fallback.
+    const importing = sessionState.app_state.displays.length === 0
+      && sessionState.app_state.compute_history.some((h) => h.status === 'running' || h.status === 'queued');
+    if (importing) {
+      return (
+        <div className="flex flex-col items-center justify-center h-full gap-3 text-muted">
+          <div className="w-6 h-6 rounded-full border-2 border-border border-t-accent animate-spin" />
+          <span className="text-sm">Importing data…</span>
+        </div>
+      );
+    }
+
     // The viewer mode switch toggles between the canvas, embeddings, and the table inspector.
     if (mainView === 'tables') return <DataInspector />;
 

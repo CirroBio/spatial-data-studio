@@ -4,15 +4,34 @@ import type {
   SessionState,
   FunctionEntry,
   ResourceSample,
+  SessionLoadingEvent,
   DisplaySpec,
   SpatialDisplaySpec,
   HistEntry,
   PlotEntry,
 } from '../types';
 import { isSpatialDisplay } from '../types';
-import { putDisplay, getSession, listShapeAnnotations, createShapeAnnotation } from '../api';
+import { putDisplay, getSession, listShapeAnnotations, createShapeAnnotation, ApiError } from '../api';
 import type { ShapeAnnotation, ShapeGeometry, ShapeKind } from '../schemas/annotations';
 import { defaultStroke, defaultFill } from '../schemas/annotations';
+
+// A read endpoint fast-fails with 503 while a compute/plot job holds the session
+// write lock (backend: _read_locked / READ_LOCK_TIMEOUT_S). Retry the non-critical
+// refetch a few times with backoff so state converges once the job frees the lock,
+// without surfacing a transient "busy" error. Non-503 errors propagate immediately.
+async function fetchWhenIdle<T>(fn: () => Promise<T>, tries = 6, delayMs = 2000): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt < tries && err instanceof ApiError && err.status === 503) {
+        await new Promise((r) => setTimeout(r, delayMs));
+        continue;
+      }
+      throw err;
+    }
+  }
+}
 
 // A job's status lands in whichever collection holds it; these narrow the shared
 // status union so setEntryStatus can update the right record type without a cast.
@@ -36,15 +55,16 @@ interface AppStore {
   sessionState: SessionState | null;
   setSessionState: (state: SessionState | null) => void;
   // Refetch a session's full state, applying it only if that session is still active
-  // when the fetch resolves. getSession blocks on the read lock while a job runs, so a
-  // switch during a compute can let a stale resolve clobber the now-active session.
+  // when the fetch resolves. The read fast-fails with 503 while a job holds the write
+  // lock, so this retries with backoff (fetchWhenIdle) — a switch during a compute can
+  // still let a stale resolve arrive, hence the active-session guard before applying.
   refreshSessionState: (sessionId: string) => Promise<void>;
   updateDataVersions: (versions: Record<string, number>) => void;
   updateDisplay: (display: DisplaySpec) => void;
   addDisplay: (display: DisplaySpec) => void;
   // Optimistically show a submitted compute/plot as queued straight from the
-  // job.queued event — a refetch can't do this because it blocks on the session
-  // read lock until the (already-running) job finishes.
+  // job.queued event — a refetch can't do this because the read won't return until
+  // the (already-running) job frees the write lock (it 503s and retries until then).
   addQueuedEntry: (
     effectClass: 'compute' | 'plot',
     base: { id: string; namespace: string; function: string; params: Record<string, unknown> },
@@ -160,6 +180,11 @@ interface AppStore {
   setCirroEnabled: (on: boolean) => void;
   cirroUploads: { uploading: number; pending: number };
   setCirroUploads: (u: { uploading: number; pending: number }) => void;
+  // Live progress of a checkpoint load, keyed by the New Session dialog's load_id.
+  // useSSE writes it from `session.loading`; the dialog reads the entry for its own
+  // load_id and clears it when the load resolves.
+  loadProgress: SessionLoadingEvent | null;
+  setLoadProgress: (p: SessionLoadingEvent | null) => void;
 }
 
 export interface AppNotification {
@@ -217,13 +242,15 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setSessionState: (state) => set({ sessionState: state }),
   refreshSessionState: async (sessionId) => {
     try {
-      const state = await getSession(sessionId);
+      const state = await fetchWhenIdle(() => getSession(sessionId));
       if (get().activeSessionId !== sessionId) return; // switched away mid-fetch
       set({ sessionState: state });
       // Restore the persisted isolated category (setActiveSessionId cleared it).
       const spatial = state.app_state.displays.find(isSpatialDisplay);
       get().setIsolatedCategory(spatial ? spatial.encoding.isolated_category ?? null : null);
     } catch (err) {
+      // Still busy after retries: the next job.completed re-triggers this, so stay quiet.
+      if (err instanceof ApiError && err.status === 503) return;
       get().pushNotification({
         kind: 'error',
         message: `Failed to refresh session: ${err instanceof Error ? err.message : String(err)}`,
@@ -357,10 +384,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setShapeAnnotations: (shapes) => set({ shapeAnnotations: shapes }),
   refreshShapeAnnotations: async (sessionId) => {
     try {
-      const { shapes } = await listShapeAnnotations(sessionId);
+      const { shapes } = await fetchWhenIdle(() => listShapeAnnotations(sessionId));
       if (get().activeSessionId !== sessionId) return; // switched away mid-fetch
       set({ shapeAnnotations: shapes });
     } catch (err) {
+      // Still busy after retries: the next job.completed re-triggers this, so stay quiet.
+      if (err instanceof ApiError && err.status === 503) return;
       get().pushNotification({
         kind: 'error',
         message: `Failed to refresh annotations: ${err instanceof Error ? err.message : String(err)}`,
@@ -445,4 +474,6 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setCirroEnabled: (on) => set({ cirroEnabled: on }),
   cirroUploads: { uploading: 0, pending: 0 },
   setCirroUploads: (u) => set({ cirroUploads: u }),
+  loadProgress: null,
+  setLoadProgress: (p) => set({ loadProgress: p }),
 }));

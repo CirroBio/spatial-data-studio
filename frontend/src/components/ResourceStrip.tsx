@@ -30,6 +30,12 @@ export default function ResourceStrip() {
               <span>{sessionRss.toFixed(0)} MB session</span>
             </>
           )}
+          {global.rasters_mb > 0 && (
+            <>
+              <span className="text-border">|</span>
+              <span>{global.rasters_mb.toFixed(0)} MB rasters (disk)</span>
+            </>
+          )}
           <span className="text-border">|</span>
           <span>CPU {global.cpu_pct.toFixed(0)}%</span>
         </>

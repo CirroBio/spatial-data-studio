@@ -13,11 +13,21 @@ import type {
 import type { Snapshot } from './lib/snapshots';
 import type { ShapeAnnotation } from './schemas/annotations';
 
+// Carries the HTTP status so callers can distinguish a transient 503 (a read
+// endpoint refusing while a compute/plot job holds the session write lock) from a
+// real failure, and retry the former quietly.
+export class ApiError extends Error {
+  constructor(public status: number, message: string) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
 async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   const res = await fetch(path, init);
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText);
-    throw new Error(`API ${path}: ${res.status} ${text}`);
+    throw new ApiError(res.status, `API ${path}: ${res.status} ${text}`);
   }
   return res;
 }
@@ -50,7 +60,7 @@ export interface HashCheck {
 }
 
 export async function createSession(
-  params: { name?: string; source: NewSessionSource },
+  params: { name?: string; source: NewSessionSource; load_id?: string },
 ): Promise<SessionSummary & { hash_check: HashCheck | null }> {
   const res = await apiFetch('/api/sessions', {
     method: 'POST',

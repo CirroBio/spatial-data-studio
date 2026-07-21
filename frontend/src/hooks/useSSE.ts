@@ -11,6 +11,7 @@ import type {
   DisplayUpdatedEvent,
   SessionCreatedEvent,
   SessionRemovedEvent,
+  SessionLoadingEvent,
   ResourceSample,
   MemoryWarningEvent,
 } from '../types';
@@ -38,6 +39,7 @@ export function useSSE(): void {
     setSessions,
     removeSession,
     setCirroUploads,
+    setLoadProgress,
   } = useAppStore();
 
   useEffect(() => {
@@ -46,6 +48,12 @@ export function useSSE(): void {
     es.addEventListener('session.created', (e: MessageEvent) => {
       const data = parseEvent<SessionCreatedEvent>(e);
       upsertSession(data.summary);
+    });
+
+    // Progress of a synchronous checkpoint load, before any session id exists. The
+    // New Session dialog mints the load_id, subscribes via the store, and clears it.
+    es.addEventListener('session.loading', (e: MessageEvent) => {
+      setLoadProgress(parseEvent<SessionLoadingEvent>(e));
     });
 
     // A session another user (or a subset eviction) closed drops out of everyone's
@@ -216,5 +224,5 @@ export function useSSE(): void {
     return () => {
       es.close();
     };
-  }, [activeSessionId, upsertSession, setResourceSample, updateDataVersions, updateDisplay, addActiveJob, removeActiveJob, addQueuedEntry, setEntryStatus, setSessionState, refreshSessionState, refreshShapeAnnotations, pushNotification, setActiveSessionId, setSessions, removeSession, setCirroUploads]);
+  }, [activeSessionId, upsertSession, setResourceSample, updateDataVersions, updateDisplay, addActiveJob, removeActiveJob, addQueuedEntry, setEntryStatus, setSessionState, refreshSessionState, refreshShapeAnnotations, pushNotification, setActiveSessionId, setSessions, removeSession, setCirroUploads, setLoadProgress]);
 }

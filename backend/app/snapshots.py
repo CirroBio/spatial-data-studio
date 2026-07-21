@@ -116,6 +116,12 @@ def save_snapshot(session, label: str | None = None, viewport: dict | None = Non
             "color_by": enc.get("color_by") or "",
             "point_size": enc.get("point_size", 4),
             "opacity": enc.get("opacity", 0.85),
+            # Spatial view orientation + backdrop (spatial displays; ignored by the
+            # embedding viewer). `background` follows the app's default theme when the
+            # user never pinned one — save has no access to the live theme.
+            "invert_x": bool(enc.get("invert_x", False)),
+            "invert_y": bool(enc.get("invert_y", False)),
+            "background": enc.get("background") or "dark",
             "image": None,
             "channels": {},
         }

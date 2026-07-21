@@ -90,10 +90,16 @@ async def _in_executor(fn, *a):
 async def _read_locked(sess, fn, *a):
     """Run `fn(*a)` in the executor under the session's read lock — the shape
     every read-only endpoint below needs to serve a field/manifest/preview off a
-    session that a queued job may be mutating concurrently."""
+    session that a queued job may be mutating concurrently. A compute/plot job holds
+    the write lock for its whole duration; rather than block past a fronting proxy's
+    origin timeout (which surfaces as a 504), give up after READ_LOCK_TIMEOUT_S with a
+    retryable 503 the frontend re-issues once the job completes."""
     def _run():
-        with sess.lock.reading():
-            return fn(*a)
+        try:
+            with sess.lock.reading(config.READ_LOCK_TIMEOUT_S):
+                return fn(*a)
+        except TimeoutError:
+            raise HTTPException(503, "session busy: compute in progress, retry")
     return await _in_executor(_run)
 
 
@@ -150,9 +156,19 @@ async def sessions():
 async def create_session(body: dict):
     source = body.get("source", {})
     name = body.get("name")
+    # `load_id` is a client-minted nonce the New Session dialog subscribes to on the
+    # SSE bus: the load runs synchronously before any session id exists, so its
+    # `session.loading` progress events are routed by this nonce instead. Absent for
+    # older clients, in which case the load simply emits nothing (progress is a no-op).
+    load_id = body.get("load_id")
+
+    def _progress(message: str, pct: float | None = None):
+        if load_id:
+            BUS.publish("session.loading", {"load_id": load_id, "message": message, "pct": pct})
+
     try:
         if source.get("kind") == "load":
-            sess = await _in_executor(_mgr().create_from_load, source["path"], name)
+            sess = await _in_executor(_mgr().create_from_load, source["path"], name, _progress)
         elif source.get("kind") == "read":
             # squidpy `read` namespace or spatialdata-io readers (namespace `io`)
             sess = _mgr().create_from_read(
@@ -913,25 +929,24 @@ async def raster_store(sid: str, element: str, path: str, request: Request):
     range_header = request.headers.get("range")
 
     def _read():
-        # Resolve AND read while holding the read lock: object-adoption
+        # Resolve AND read while holding the read lock (via _read_locked): object-adoption
         # (session.py::_run_call), perform_subset, and close() all rmtree/replace the
         # raster cache dir under the write lock, so reading the bytes into memory here
         # (rather than streaming a FileResponse lazily after the handler returns) is
         # what guarantees the store can't be deleted mid-read. Files are one 512-chunk
         # each (<= a few MB), so a single in-memory read never stalls a writer.
-        with sess.lock.reading():
-            store_dir = sess.raster_stores.get(element)
-            if store_dir is None or not Path(store_dir).is_dir():
-                return None
-            target = _raster_file(store_dir, path)
-            # A missing chunk file is a zarr empty/fill chunk: 404 is correct (zarrita
-            # reads it as the array's fill value). Same for a bad key or a gone store.
-            if target is None or not target.is_file():
-                return None
-            media = "application/json" if target.name.endswith(".json") else "application/octet-stream"
-            return target.read_bytes(), media
+        store_dir = sess.raster_stores.get(element)
+        if store_dir is None or not Path(store_dir).is_dir():
+            return None
+        target = _raster_file(store_dir, path)
+        # A missing chunk file is a zarr empty/fill chunk: 404 is correct (zarrita
+        # reads it as the array's fill value). Same for a bad key or a gone store.
+        if target is None or not target.is_file():
+            return None
+        media = "application/json" if target.name.endswith(".json") else "application/octet-stream"
+        return target.read_bytes(), media
 
-    result = await _in_executor(_read)
+    result = await _read_locked(sess, _read)
     if result is None:
         raise HTTPException(404, "not found")
     data, media = result

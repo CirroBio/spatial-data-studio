@@ -115,10 +115,14 @@ class CallResult:
     log: str = ""
     structural_diff: dict = field(default_factory=dict)
     changed_fields: list = field(default_factory=list)  # field paths for version bump
+    # The child's changed facets ({facet: {key: value}}), carried back UNAPPLIED: the
+    # session worker applies them onto the live object under a brief write lock in the
+    # commit phase (session._run_call), so the long pool compute runs lock-free and
+    # reads keep serving the last-committed object (DESIGN §20.2).
+    changed_facets: dict = field(default_factory=dict)
     figure_svg: bytes | None = None
     figure_pdf: bytes | None = None
     new_object: object | None = None
-    result_value: object | None = None  # extract-class return (e.g. a DataFrame), JSON-safe summary
     error: str | None = None
 
 
@@ -176,6 +180,15 @@ class Function(ABC):
             "unsupported_params": self.unsupported_params,
             "input_kind": self.input_kind,
         }
+
+    @property
+    def read_lane(self) -> bool:
+        """An extract reads a value out of the active table and writes nothing back, so the
+        session worker runs it concurrently on a shallow table snapshot off the serial
+        mutation queue instead of behind a running compute (DESIGN §24). Plots are NOT
+        eligible: a plot caches `uns['<col>_colors']` on the live object, so it stays on the
+        lock-blocked mutation path where that write is applied and persisted."""
+        return self.effect_class == "extract"
 
     @abstractmethod
     def execute(self, params: dict, session) -> CallResult:
@@ -258,8 +271,10 @@ def diff(before: dict, after: dict) -> tuple[dict, list]:
 
 def run_compute(session, mutate) -> CallResult:
     """Run an in-place compute mutation `mutate(adata)` in the compute pool (see
-    kernel.py) so a slow custom function never holds the API process's GIL. The
-    caller already holds the session write lock."""
+    kernel.py) so a slow custom function never holds the API process's GIL. Returns
+    the changed facets UNAPPLIED — the session worker applies them under a brief
+    write lock in its commit phase (session._run_call); the pool call itself holds
+    no lock so reads serve the last-committed object during the compute."""
     from . import kernel
     adata = session.active_table()
     env = kernel.run_mutate(mutate, adata, session.sdata)
@@ -270,24 +285,25 @@ def run_compute(session, mutate) -> CallResult:
         # rather than facet-merged (see kernel._table_reshaped).
         return CallResult(status="completed", log=env.get("log", ""), new_object=env["new_object"])
     facets = env.get("changed_facets", {})
-    kernel.apply_changed_facets(adata, session.sdata, facets)
     structural_diff = {facet: sorted(values) for facet, values in facets.items()}
-    return CallResult(status="completed", log=env.get("log", ""), structural_diff=structural_diff,
-                      changed_fields=env.get("changed_fields", []))
+    return CallResult(status="completed", log=env.get("log", ""), changed_facets=facets,
+                      structural_diff=structural_diff, changed_fields=env.get("changed_fields", []))
 
 
 def run_plot(session, fn, injected: list | None = None, bound: dict | None = None) -> CallResult:
     """Run a custom plotting callable in the compute pool (see kernel.py) — the
     same GIL isolation as a library plot. `injected` defaults to `[active_table]`,
-    the shape every custom plot function uses today."""
+    the shape every custom plot function uses today. Returns any incidental changed
+    facets (e.g. matplotlib's uns['<col>_colors']) UNAPPLIED, for the worker to
+    commit under a brief write lock."""
     from . import kernel
     adata = session.active_table()
     env = kernel.run_custom_plot(fn, injected if injected is not None else [adata], bound or {},
                                   adata, session.sdata)
     if env["status"] == "failed":
         return CallResult(status="failed", error=env.get("error"), log=env.get("log", ""))
-    kernel.apply_changed_facets(adata, session.sdata, env.get("changed_facets", {}))
     return CallResult(status=env["status"], log=env.get("log", ""),
+                      changed_facets=env.get("changed_facets", {}),
                       figure_svg=env.get("figure_svg"), figure_pdf=env.get("figure_pdf"))
 
 

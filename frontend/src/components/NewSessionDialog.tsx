@@ -41,6 +41,8 @@ function formatTimestamp(mtime: number): string {
 export default function NewSessionDialog({ onClose, onCreated }: Props) {
   const functions = useAppStore((s) => s.functions);
   const pushNotification = useAppStore((s) => s.pushNotification);
+  const loadProgress = useAppStore((s) => s.loadProgress);
+  const setLoadProgress = useAppStore((s) => s.setLoadProgress);
   const readers = functions.filter((f) => f.effect_class === 'read');
 
   const [mode, setMode] = useState<'load' | 'import'>('load');
@@ -49,6 +51,7 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
   const [nameEdited, setNameEdited] = useState(false);  // user typed a name -> stop autofilling
   const [selectedPath, setSelectedPath] = useState('');  // chosen checkpoint / folder / file
   const [loading, setLoading] = useState(false);
+  const [loadId, setLoadId] = useState<string | null>(null);  // nonce matching this load's SSE progress
   const [error, setError] = useState<string | null>(null);
 
   const selectedReader = readers.find((f) => f.key === reader);
@@ -144,11 +147,13 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
     } else {
       source = { kind: 'load', path: chosen };
     }
+    const id = crypto.randomUUID();
+    setLoadId(id);
     setLoading(true);
     setError(null);
     try {
       const finalName = name.trim() || deriveSessionName(chosen);
-      const session = await createSession({ name: finalName || undefined, source });
+      const session = await createSession({ name: finalName || undefined, source, load_id: id });
       if (session.hash_check) {
         pushNotification({
           kind: session.hash_check.ok ? 'info' : 'error',
@@ -160,6 +165,8 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
       setError(formatError(err));
     } finally {
       setLoading(false);
+      setLoadId(null);
+      setLoadProgress(null);
     }
   }
 
@@ -385,14 +392,24 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
             </div>
           </form>
 
-          {loading && (
-            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-surface/80 backdrop-blur-[1px]">
-              <div className="w-8 h-8 rounded-full border-2 border-border border-t-accent animate-spin" />
-              <span className="text-sm text-text">
-                {mode === 'import' ? 'Importing data…' : 'Loading checkpoint…'}
-              </span>
-            </div>
-          )}
+          {loading && (() => {
+            // Live load progress arrives on the SSE bus keyed by this load's nonce; a
+            // stale entry from another load (or an import, which emits none) is ignored.
+            const live = mode === 'load' && loadProgress?.load_id === loadId ? loadProgress : null;
+            const message = live?.message ?? (mode === 'import' ? 'Importing data…' : 'Loading checkpoint…');
+            const pct = live?.pct;
+            return (
+              <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-surface/80 backdrop-blur-[1px]">
+                <div className="w-8 h-8 rounded-full border-2 border-border border-t-accent animate-spin" />
+                <span className="text-sm text-text">{message}</span>
+                {pct != null && (
+                  <div className="w-48 h-1.5 rounded-full bg-border overflow-hidden">
+                    <div className="h-full bg-accent transition-[width]" style={{ width: `${Math.round(pct * 100)}%` }} />
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

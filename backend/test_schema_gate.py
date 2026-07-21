@@ -74,6 +74,9 @@ def reference_config() -> dict:
             "color_by": "obs:cluster",
             "point_size": 4,
             "opacity": 0.85,
+            "invert_x": False,
+            "invert_y": False,
+            "background": "dark",
             "image": {
                 "element": "hne",
                 "height": 512,

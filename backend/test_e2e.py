@@ -989,6 +989,80 @@ def run_raster_flow(client):
     print("\nRASTER (client-compositing) E2E CHECKS PASSED")
 
 
+def run_raster_survives_reshape_flow(client):
+    """A reshaping compute (filter_cells) adopts a new object that carries the already
+    tile-normalized image refs forward, so normalize_rasters finds them canonical and
+    rebuilds nothing. The per-session raster store built at load must then be KEPT: the
+    old code rmtree'd it whenever the re-normalize returned no new store, leaving every
+    image a dangling zarr ref that reads back all-zero -- a black canvas, with contrast
+    collapsing to [0,1] and no error raised. Guards that an image tile carries real
+    signal both before AND after the filter, and the store stays mapped."""
+    import numpy as np
+    from PIL import Image
+    from app.main import MANAGER
+
+    sid = new_session(client, XENIUM)
+    sess = MANAGER.get(sid)
+    assert sess.raster_stores, "xenium load rebuilt no raster store; flow needs a rebuilt image"
+    name = next(iter(sess.raster_stores))
+    coarse = len(client.get(f"/api/sessions/{sid}/image/{name}/info").json()["levels"]) - 1
+
+    def tile_max():
+        r = client.get(f"/api/sessions/{sid}/image/{name}/tile/{coarse}/0/0")
+        assert r.status_code == 200 and r.content, (r.status_code, len(r.content))
+        return int(np.asarray(Image.open(io.BytesIO(r.content))).max())
+
+    before = tile_max()
+    assert before > 0, f"image tile is black before any reshape (max={before}); fixture issue"
+
+    per_cell = np.asarray(sess.active_table().X.sum(axis=1)).ravel()
+    min_counts = int(np.quantile(per_cell, 0.25)) + 1
+    client.post(f"/api/sessions/{sid}/jobs", json={
+        "namespace": "sc.pp", "function": "filter_cells", "params": {"min_counts": min_counts}})
+    poll(client, sid, lambda s: hist_status(s, "filter_cells")[0] in ("completed", "failed"))
+    assert hist_status(client.get(f"/api/sessions/{sid}").json(), "filter_cells")[0] == "completed", \
+        "filter_cells did not complete"
+
+    after = tile_max()
+    assert after > 0, (f"image tile went black after filter_cells (max={after}): the "
+                       "per-session raster store was deleted while still referenced")
+    assert name in MANAGER.get(sid).raster_stores, "raster store dropped from map after reshape"
+    print(f"[ok] image tile survived reshape (max {before} -> {after}); raster store kept")
+    assert client.delete(f"/api/sessions/{sid}").status_code == 200
+
+
+def run_filter_rank_genes_save_flow(client):
+    """sc.tl.filter_rank_genes_groups marks dropped genes with np.nan (a float) in the
+    object `names` record array of uns['rank_genes_groups_filtered']. anndata's zarr
+    writer calls .encode() on that float (and hits a zero-length string dtype when a
+    whole group is filtered), so no such session could be saved. save_spatialdata now
+    coerces those fields to fixed-length unicode for the write only. Guards that a
+    rank-and-filter session saves, and that the live object keeps its NaNs afterward."""
+    def nan_count(client, sid):
+        from app.main import MANAGER
+        names = MANAGER.get(sid).active_table().uns["rank_genes_groups_filtered"]["names"]
+        return sum(1 for row in names for x in tuple(row) if not isinstance(x, str))
+
+    sid = new_session(client, DATA)  # visium_hne carries obs['leiden']
+    for fn, params in (("rank_genes_groups", {"groupby": "leiden"}),
+                       ("filter_rank_genes_groups", {})):
+        client.post(f"/api/sessions/{sid}/jobs",
+                    json={"namespace": "sc.tl", "function": fn, "params": params})
+        poll(client, sid, lambda s, fn=fn: hist_status(s, fn)[0] in ("completed", "failed"))
+        assert hist_status(client.get(f"/api/sessions/{sid}").json(), fn)[0] == "completed", \
+            f"{fn} did not complete"
+
+    before = nan_count(client, sid)
+    out = os.path.join(str(config.DATA_DIR), "rank_filter_session.zarr.zip")
+    sv = client.post(f"/api/sessions/{sid}/save", json={"path": out}).json()
+    js = wait_job(client, sid, sv["job_id"])
+    assert js["status"] == "completed", \
+        f"save after filter_rank_genes_groups failed: {js.get('error')}"
+    assert nan_count(client, sid) == before, "save mutated the live uns names array"
+    print(f"[ok] rank+filter session saved; live uns NaN markers preserved ({before})")
+    assert client.delete(f"/api/sessions/{sid}").status_code == 200
+
+
 def main():
     with TestClient(app) as client:
         assert client.get("/api/readyz").json()["functions"] > 0
@@ -1184,12 +1258,15 @@ def main():
         run_inspector_flow(client)
         run_isolation_flow(client)
         run_filter_reshape_flow(client)
+        run_filter_rank_genes_save_flow(client)
         if have_fixture(XENIUM_TMA, "zarr-import flow"):
             run_zarr_import_flow(client)
         if have_fixture(XENIUM, "segmentation flow"):
             run_segmentation_flow(client)
         if have_fixture(XENIUM, "raster flow"):
             run_raster_flow(client)
+        if have_fixture(XENIUM, "raster-survives-reshape flow"):
+            run_raster_survives_reshape_flow(client)
 
         if have_fixture(XENIUM_TMA, "custom-methods flow"):
             run_custom_methods_flow(client)

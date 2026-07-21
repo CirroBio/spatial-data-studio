@@ -81,7 +81,7 @@ def _rebuild(el, is_label: bool):
                               chunks=(data.shape[0], TILE, TILE), transformations=transforms)
 
 
-def normalize_rasters(sdata) -> tuple[str | None, dict[str, str]]:
+def normalize_rasters(sdata, progress=None) -> tuple[str | None, dict[str, str]]:
     """Rebuild every non-canonical image/label of `sdata` into a tile-chunked 2x
     pyramid, persist them to a fresh cache store under DATA_DIR, and rebind
     `sdata`'s elements to lazy refs into it. Returns (cache_dir, element_stores):
@@ -89,7 +89,9 @@ def normalize_rasters(sdata) -> tuple[str | None, dict[str, str]]:
     nothing needed rebuilding) and a map from each rebuilt element's name to the
     absolute `{i}.zarr` store dir written for it. The raster HTTP route resolves an
     element to its store via that map (spatialdata element names are globally unique
-    across images/labels, so a single name-keyed map is unambiguous)."""
+    across images/labels, so a single name-keyed map is unambiguous). `progress(message,
+    pct)` (optional) reports per-element rebuild progress; see `create_from_load`."""
+    report = progress or (lambda *a, **k: None)
     todo = [("images", n) for n, el in getattr(sdata, "images", {}).items() if not _is_canonical(el, False)]
     todo += [("labels", n) for n, el in getattr(sdata, "labels", {}).items() if not _is_canonical(el, True)]
     if not todo:
@@ -103,6 +105,7 @@ def normalize_rasters(sdata) -> tuple[str | None, dict[str, str]]:
     # element (~2.1 GB for the 3.8 GB morphology image).
     with dask.config.set(scheduler="threads", num_workers=config.RASTER_REBUILD_WORKERS):
         for i, (kind, name) in enumerate(todo):
+            report(f"Preparing image {i + 1}/{len(todo)}…")
             rebuilt = _rebuild(getattr(sdata, kind)[name], is_label=(kind == "labels"))
             store = os.path.join(cache_dir, f"{i}.zarr")  # write() needs a non-existing path
             sd.SpatialData(**{kind: {name: rebuilt}}).write(store)
@@ -111,3 +114,20 @@ def normalize_rasters(sdata) -> tuple[str | None, dict[str, str]]:
             del rebuilt
             gc.collect()
     return cache_dir, stores
+
+
+def cache_size_mb(cache_dir: str | None) -> float:
+    """On-disk size (MB) of a raster cache store dir, for the resource strip's disk
+    accounting. 0.0 when the load was canonical and built no cache (cache_dir is None).
+    Called once per load, not per resource tick — the cache is immutable for a
+    session's life, so the sampler reads the stored figure rather than re-walking."""
+    if not cache_dir:
+        return 0.0
+    total = 0
+    for root, _dirs, files in os.walk(cache_dir):
+        for f in files:
+            try:
+                total += os.path.getsize(os.path.join(root, f))
+            except OSError:
+                continue  # file vanished mid-walk (a concurrent close); skip it
+    return round(total / 1e6, 1)

@@ -395,9 +395,8 @@ context (per-job log capture, key-set snapshot for the structural diff, per-work
 memory ceiling), invokes the callable, and handles the effect by class:
 
 - **compute** → object mutated in place; compute the structural diff (after − before).
-  If the call returns non-`None` with an empty diff (a return-only function), capture
-  the return into `uns["_results"][descriptor.id]`. If it returns a data object
-  (always-copies despite pinned `copy=False`), adopt it as the session object. If an
+  If it returns a data object (always-copies despite pinned `copy=False`), adopt it as
+  the session object. If an
   in-place call instead *reshaped* the active table (changed its row/column count —
   e.g. `sc.pp.filter_cells` / `filter_genes`), the same whole-object adoption applies:
   the facet-merge writeback can only carry same-length columns back, so a shortened
@@ -408,7 +407,8 @@ memory ceiling), invokes the callable, and handles the effect by class:
   `plt.gcf()`), render to SVG/PDF bytes in memory; no mutation, no diff, bytes not
   persisted. Held under a **process-global plotting lock** with the **Agg** backend
   (pyplot state is process-global and sessions plot concurrently). Extract calls
-  return a value captured like a return-only compute.
+  (`sc.get.*`) run for their side-effect-free return value, which is not written back
+  or persisted — the object is unchanged.
 - **read** → the return value *is* the new session object; adopt it as `session.sdata`.
 
 ### 4.7 The result envelope
@@ -416,8 +416,7 @@ memory ceiling), invokes the callable, and handles the effect by class:
 Every function returns one uniform envelope:
 
 ```
-CallResult { status, logs, structural_diff?, figure_bytes?, new_object?,
-             result_value?, error? }
+CallResult { status, logs, structural_diff?, figure_bytes?, new_object?, error? }
 ```
 
 The worker applies it (update history/plots/`attrs`, emit SSE). A failed
@@ -601,6 +600,8 @@ library calls but with a signature **defined by the application**:
 | `opacity` | number (0–1) | — |
 | `channels` | per-index list | image channel visibility / name / color |
 | `render_mode` | `points` \| `points+shapes` | cell render (§9.10); `points` is default (legacy `shapes` == `points+shapes`) |
+| `invert_x` / `invert_y` | bool | Spatial-only; mirror the plot horizontally / vertically (camera-level, see §9.2) |
+| `background` | `light` \| `dark` | Spatial-only per-plot backdrop; unset follows the app theme |
 
 On load, default specs are generated from the object's structure. **Color by** first
 picks a slot (`obs`, `X` gene expression, or a `layer`) then the column within it:
@@ -615,6 +616,18 @@ so datasets with tens of thousands of genes stay responsive.
 - Cell boundaries → the points + boundary-fill overlay segmentation display (§9.10).
 - Tissue image → `BitmapLayer`(s) fed from the multiscale pyramid (§9.3).
 - Selection → editable-layers overlay (Polygon/Path/Scatterplot draw modes).
+
+**Orientation + backdrop (Spatial only).** `invert_x`/`invert_y` and `background` are
+applied at the camera, not per layer: `FlipOrthographicView` (a thin mirror of deck's
+`OrthographicViewport` adding an `flipX` term to the view-matrix scale, alongside the
+native `flipY`) flips the whole scene — points, image, and annotations together — so
+picking, `info.coordinate`, pan, and fit stay consistent with no layer/coordinate changes.
+The backdrop paints the canvas container behind the transparent deck canvas (matching a
+theme's `--color-bg`), defaulting to the app theme until pinned. Both are baked into the
+snapshot config's `render` (`invert_x`/`invert_y`/`background`, schema >= 1.1.0) and applied
+by `SnapshotViewer` through the same `FlipOrthographicView`, so a snapshot preserves the
+plot's orientation and backdrop (baked `background` defaults to `dark` when the user never
+pinned one, since save can't see the live app theme).
 
 ### 9.3 Tiled image pyramid + coordinate reconciliation
 
@@ -1263,6 +1276,7 @@ each tagged by `session_id`, with a monotonic id so a reconnecting client resume
 | `plot.drawn` / `plot.invalidated` | plotId(s) | Enable figure / flag for redraw |
 | `display.updated` | displayId, spec | Re-derive canvas |
 | `region.updated` | regions | Refresh annotations panel + coloring |
+| `session.loading` | load_id, message, pct? | Show live progress in the New Session load overlay (no session id yet; routed by client nonce) |
 | `session.created` | sessionId (child) | Add to lineage |
 | `session.removed` | sessionId, reason | Prune from list; if it was active and reason≠subset, clear the view |
 | `resource.sample` | global + per-session RSS, CPU | Update resource strip |
@@ -1443,18 +1457,27 @@ corollary: this one process is a single point of failure.
 
 ## 24. Concurrency and threading model
 
-The hard constraint is the in-place mutation model: an object being mutated by a compute
-job cannot be safely read or mutated concurrently. Everything below maximizes parallelism
-*around* that constraint.
+The hard constraint is the in-place mutation model: an object being mutated cannot be
+safely read concurrently. But a compute mutates the *live* object only when it commits —
+the call itself runs in a subprocess on a pickled copy (§4.6), so the live object is
+untouched for the whole (possibly minutes-long) compute and only the brief commit needs
+exclusivity. Everything below maximizes parallelism *around* that narrow window.
 
 1. **Cross-session parallelism (full):** sessions own independent objects, so their
    worker threads run truly in parallel for the GIL-releasing numerical work that
    dominates `squidpy`/`scanpy`. Unrestricted except by the global thread budget (§24.3).
-2. **Per-session read/write lock** (`RWLock`): the worker is the exclusive **writer**
-   while executing a compute call; Arrow/tile/table serving and plotting are shared
-   **readers**. The client defers refetch to `job.completed` and shows `STALE` in the
-   meantime, so the UI never blocks on the writer; an explicit mid-compute read waits and
-   shows `LOADING`.
+2. **Per-session read/write lock** (`RWLock`), held only for the commit: the worker runs
+   the compute lock-free (the subprocess holds the copy) and takes the **write** lock
+   only for the brief commit phase — applying the child's changed facets
+   back onto the live object, or adopting a returned object (`session._run_call`).
+   Arrow/tile/table serving and plotting are shared **readers**, so they serve the
+   last-committed object *throughout* a running job instead of stalling on it — the
+   "one-operation-stale" read (the picture as of the job's start), reconciled when the
+   client's `job.completed` handler refetches. A read still acquires the lock with a
+   `READ_LOCK_TIMEOUT_S` bound (`_read_locked`): a read that lands during the brief commit
+   gives up with a retryable **503** the client re-issues with backoff (`fetchWhenIdle`)
+   rather than block past a fronting proxy's origin timeout — but that window is now
+   sub-second, not the whole compute.
 3. **Within-job parallelism + global thread budget:** `n_jobs` is surfaced as a form
    field; a process-wide thread budget (a global semaphore capping concurrent compute
    jobs + per-job `OMP_NUM_THREADS`/`OPENBLAS_NUM_THREADS`/`NUMBA_NUM_THREADS`) prevents
@@ -1465,9 +1488,22 @@ job cannot be safely read or mutated concurrently. Everything below maximizes pa
 5. **Save, subset, annotate as queued operations:** operations that need a consistent
    view of the object are enqueued as **special queue jobs** rather than run off async
    endpoints, serializing them against compute using the existing queue.
-6. **Honest limits:** the GIL still serializes any pure-Python hot loop; running jobs are
-   not interruptible; within-session compute is serial by design (concurrent mutation of
-   one object is unsafe and is not attempted).
+6. **Extracts run off the serial queue (read lane):** an extract reads a value out of the
+   object (e.g. `sc.get.*`) and writes nothing back, so it needn't sit behind a running
+   compute in the FIFO. An eligible extract (`Function.read_lane`; adata-only) is dispatched
+   to a shared thread pool (`_run_read_lane`), which takes a **shallow snapshot** of the
+   active table under a brief read lock — independent containers sharing the underlying
+   arrays, so it stays consistent under later `m[k]=v` commits — then runs the call in the
+   compute pool with no lock held. (The snapshot is required because loky pickles pool args
+   asynchronously on a feeder thread, so a read lock can't cover the pickle of the *live*
+   object; a private snapshot can.) **Plots stay on the lock-blocked mutation path**, not
+   the read lane: a plot caches `uns['<col>_colors']` on the live table, so it goes through
+   the serial worker where that write is applied and persisted — it therefore blocks behind
+   any queued compute and renders the up-to-date object (at the cost of waiting for it).
+7. **Honest limits:** the GIL still serializes any pure-Python hot loop; running jobs are
+   not interruptible; within-session *mutation* is serial by design (concurrent mutation
+   of one object is unsafe and is not attempted); an extract in the read lane reads the
+   committed state as of its snapshot, so it can be one operation stale.
 
 ---
 
@@ -1563,7 +1599,9 @@ A structured adversarial pass over the design. Each item is tagged **Resolved**
 - **Read/write races** between async data serving and an in-place mutation. Per-session
   read/write lock. **Resolved** (§24.2).
 - **Reader starvation / UI blocking** under a long writer. Client defers refetch to
-  completion and shows `STALE`. **Resolved** (§9.8, §24.2).
+  completion and shows `STALE`; a mid-compute read fast-fails with a retryable 503
+  (`READ_LOCK_TIMEOUT_S`) instead of hanging past a fronting proxy's origin timeout
+  (a 504). **Resolved** (§9.8, §24.2).
 - **Thread oversubscription** across sessions. Global thread budget + per-job thread-count
   env. **Resolved** (§24.3).
 - **matplotlib pyplot global state** across concurrent plot jobs. Process-global plotting

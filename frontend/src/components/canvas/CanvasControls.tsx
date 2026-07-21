@@ -1,9 +1,11 @@
+import type { ReactNode } from 'react';
 import ColorBySelect from './ColorBySelect';
 import CanvasSettingsShell from './CanvasSettingsShell';
 import LegendControls from './LegendControls';
 import RangeField from './RangeField';
 import type { SpatialDisplaySpec, ObsField } from '../../types';
 import { CHANNEL_COLORS } from './colorUtils';
+import { ZOOM_LIMITS } from './viewFit';
 import type { Channel } from './useImageChannels';
 
 interface CanvasControlsProps {
@@ -18,6 +20,12 @@ interface CanvasControlsProps {
   setShowPoints: (v: boolean) => void;
   showImage: boolean;
   setShowImage: (v: boolean) => void;
+  invertX: boolean;
+  setInvertX: (v: boolean) => void;
+  invertY: boolean;
+  setInvertY: (v: boolean) => void;
+  background: 'light' | 'dark';
+  setBackground: (v: 'light' | 'dark') => void;
   showLegend: boolean;
   setShowLegend: (v: boolean) => void;
   renderMode: 'points' | 'points+shapes';
@@ -31,8 +39,48 @@ interface CanvasControlsProps {
   setOpenColorPicker: (v: number | null) => void;
   panelCollapsed: boolean;
   setPanelCollapsed: (v: boolean) => void;
+  zoom: number;
+  onZoom: (delta: number) => void;
   onFit: () => void;
   onEditTransform: () => void;
+}
+
+function IconToggle({
+  active, onClick, title, children,
+}: { active: boolean; onClick: () => void; title: string; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      aria-label={title}
+      aria-pressed={active}
+      className={`w-7 h-7 flex items-center justify-center rounded border transition-colors ${
+        active
+          ? 'border-accent bg-accent text-white'
+          : 'border-border text-muted hover:text-accent hover:border-accent'
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function IconButton({
+  onClick, title, disabled, children,
+}: { onClick: () => void; title: string; disabled?: boolean; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      aria-label={title}
+      disabled={disabled}
+      className="w-7 h-7 flex items-center justify-center rounded border border-border text-muted transition-colors hover:text-accent hover:border-accent disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-muted disabled:hover:border-border"
+    >
+      {children}
+    </button>
+  );
 }
 
 export default function CanvasControls({
@@ -47,6 +95,12 @@ export default function CanvasControls({
   setShowPoints,
   showImage,
   setShowImage,
+  invertX,
+  setInvertX,
+  invertY,
+  setInvertY,
+  background,
+  setBackground,
   showLegend,
   setShowLegend,
   renderMode,
@@ -60,6 +114,8 @@ export default function CanvasControls({
   setOpenColorPicker,
   panelCollapsed,
   setPanelCollapsed,
+  zoom,
+  onZoom,
   onFit,
   onEditTransform,
 }: CanvasControlsProps) {
@@ -90,6 +146,58 @@ export default function CanvasControls({
             Show image
           </label>
         )}
+      </div>
+
+      <div className="flex flex-col gap-1">
+        <label className="text-[10px] text-muted font-mono uppercase tracking-wide">View</label>
+        <div className="flex items-center gap-1.5">
+          <IconToggle active={invertX} onClick={() => setInvertX(!invertX)} title="Invert horizontal axis">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="m3 7 5 5-5 5V7" />
+              <path d="m21 7-5 5 5 5V7" />
+              <path d="M12 2v2" /><path d="M12 8v2" /><path d="M12 14v2" /><path d="M12 20v2" />
+            </svg>
+          </IconToggle>
+          <IconToggle active={invertY} onClick={() => setInvertY(!invertY)} title="Invert vertical axis">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="m17 3-5 5-5-5h10" />
+              <path d="m17 21-5-5-5 5h10" />
+              <path d="M2 12h2" /><path d="M8 12h2" /><path d="M14 12h2" /><path d="M20 12h2" />
+            </svg>
+          </IconToggle>
+          <IconToggle
+            active={background === 'light'}
+            onClick={() => setBackground(background === 'dark' ? 'light' : 'dark')}
+            title={`Switch to ${background === 'dark' ? 'light' : 'dark'} background`}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10" />
+              <path d="M12 2a10 10 0 0 1 0 20z" fill="currentColor" stroke="none" />
+            </svg>
+          </IconToggle>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <IconButton onClick={() => onZoom(-1)} title="Zoom out" disabled={zoom <= ZOOM_LIMITS.minZoom}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="11" cy="11" r="8" />
+              <path d="m21 21-4.3-4.3" />
+              <path d="M8 11h6" />
+            </svg>
+          </IconButton>
+          <span
+            className="min-w-[3rem] text-center text-xs font-mono tabular-nums text-text"
+            title="Zoom level (deck.gl log2 scale)"
+          >
+            {zoom.toFixed(1)}
+          </span>
+          <IconButton onClick={() => onZoom(1)} title="Zoom in" disabled={zoom >= ZOOM_LIMITS.maxZoom}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="11" cy="11" r="8" />
+              <path d="m21 21-4.3-4.3" />
+              <path d="M11 8v6" /><path d="M8 11h6" />
+            </svg>
+          </IconButton>
+        </div>
       </div>
 
       <div className="flex flex-col gap-1">

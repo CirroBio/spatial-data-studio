@@ -43,7 +43,7 @@ ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_cate
 | GET  | `/api/functions` | — | registry |
 | GET  | `/api/functions/coverage` | — | parameter-term coverage report (unmatched params ranked by reuse) |
 | GET  | `/api/sessions` | — | `{sessions:[SessionSummary]}` |
-| POST | `/api/sessions` | `{name?, source:{kind:"read"|"load", ...}}` | `SessionSummary` |
+| POST | `/api/sessions` | `{name?, source:{kind:"read"|"load", ...}, load_id?}` | `SessionSummary` (`load_id`: client nonce to receive `session.loading` progress during a `load`) |
 | GET  | `/api/fs/datasets` | — | `{datasets:[{name, path}]}` (loadable `.zarr`/`.zarr.zip` found under the data roots + CWD; New Session picker) |
 | GET  | `/api/fs/browse?path=&include_files=` | — | `{path, parent, entries:[{name, path, kind:"dir"\|"dataset"\|"file"}]}` (folder navigation for raw-data import) |
 | GET  | `/api/sessions/{id}` | — | `SessionState` |
@@ -148,7 +148,8 @@ PlotEntry = {id, namespace:"pl", function, params, status:"pending|queued|runnin
 { "id":"uuid", "type":"spatial_canvas",
   "encoding": { "coords":"obsm:spatial", "color_by":"obs:leiden", "image_layer":"hne",
                 "shapes_layer":null, "point_size":3, "opacity":0.8, "colormap":"viridis",
-                "render_mode":"points" },   // "points" (scatter alone) | "points+shapes" (scatter + boundary-fill overlay once zoomed in); legacy "shapes" == "points+shapes"
+                "render_mode":"points",   // "points" (scatter alone) | "points+shapes" (scatter + boundary-fill overlay once zoomed in); legacy "shapes" == "points+shapes"
+                "invert_x":false, "invert_y":false, "background":"dark" },   // optional Spatial-only view controls: mirror the plot horizontally/vertically; per-plot backdrop "light"|"dark" (unset follows the app theme)
   "viewport": { "target":[x,y], "zoom":z } }
 ```
 ```jsonc
@@ -165,7 +166,7 @@ PlotEntry = {id, namespace:"pl", function, params, status:"pending|queued|runnin
 ### Snapshot config (`<name>-<hash>.sview.json`)
 Written by `POST /api/sessions/{id}/snapshot` and read by the shared viewer.
 ```jsonc
-{ "schema_version": "1.0.0",           // semver string, == snapshot-viewer.json `version`
+{ "schema_version": "1.1.0",           // semver string, == snapshot-viewer.json `version`
   "kind": "spatial",                   // "spatial" | "embedding"
   "label": "visium_hne",
   "created": "ISO8601",
@@ -175,7 +176,9 @@ Written by `POST /api/sessions/{id}/snapshot` and read by the shared viewer.
   "viewport": { "target":[x,y], "zoom":z, "rotationX"?:.., "rotationOrbit"?:.. },
   "encoding": DisplaySpec.encoding,    // unchanged from the source display
   "render": { "coords":"obsm:spatial", "coords_transform":[a,b,c,d,e,f], "color_by":"obs:leiden",
-              "point_size":4, "opacity":0.85, "image": image_info|null,
+              "point_size":4, "opacity":0.85,
+              "invert_x":false, "invert_y":false, "background":"dark",  // schema >= 1.1.0: spatial view flips + per-plot backdrop ("light"|"dark")
+              "image": image_info|null,
               "channels": { "<i>": {"visible":bool, "color":"#rrggbb", "contrast_limit":float} } } }
 ```
 - **Path-resolution rule:** paths inside the JSON (`data`) resolve against the **config
@@ -229,7 +232,7 @@ the per-cell colors.
     `limit` truncates to the first N intersecting features.
 
 ## SSE events (`/api/events`, single multiplexed stream)
-Each event: `event: <type>`, `data: <json>`, every payload carries `session_id`. Monotonic `id:` for `Last-Event-ID` resume.
+Each event: `event: <type>`, `data: <json>`, every payload carries `session_id` (except `session.loading`, which predates the session and is routed by the client-minted `load_id`). Monotonic `id:` for `Last-Event-ID` resume.
 
 | event | data |
 |---|---|
@@ -240,8 +243,9 @@ Each event: `event: <type>`, `data: <json>`, every payload carries `session_id`.
 | `plot.drawn` | `{session_id, plot_id}` |
 | `plot.invalidated` | `{session_id, plot_ids:[...]}` |
 | `display.updated` | `{session_id, display_id, spec}` |
+| `session.loading` | `{load_id, message, pct:float|null}` (checkpoint-load progress; `pct` present only for the byte-fraction extraction step, else `null`) |
 | `session.created` | `{session_id, summary}` |
 | `session.removed` | `{session_id, reason:"closed"|"subset"}` (closed or lasso-evicted; clients prune it from the session list) |
 | `session.errored` | `{session_id, error}` |
-| `resource.sample` | `{global:{rss_mb, rss_pct, cpu_pct}, per_session:{<id>:rss_mb}}` |
+| `resource.sample` | `{global:{rss_mb, rss_pct, cpu_pct, rasters_mb}, per_session:{<id>:rss_mb}}` (`rasters_mb`: total on-disk size of all sessions' normalized-raster caches) |
 | `memory.warning` | `{session_id?, message}` |

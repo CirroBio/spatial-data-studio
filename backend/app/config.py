@@ -77,6 +77,14 @@ class Config:
     RESOURCE_HZ = float(os.environ.get("SDS_RESOURCE_HZ", "2"))   # resource sample cadence
     LONG_RUNNING_S = float(os.environ.get("SDS_LONG_RUNNING_S", "120"))  # watchdog threshold
 
+    # Max time a read-only endpoint waits on the session read lock before giving up
+    # with a fast 503 instead of hanging. Reads block while a compute/plot job holds
+    # the write lock for its whole duration; behind a fronting proxy (e.g. CloudFront,
+    # ~30s origin timeout) a longer block returns a 504 to the browser. Failing fast
+    # under that limit turns the hang into a retryable 503 the frontend re-issues once
+    # the job completes (via SSE). Keep comfortably below the proxy's timeout.
+    READ_LOCK_TIMEOUT_S = float(os.environ.get("SDS_READ_LOCK_TIMEOUT_S", "25"))
+
     STATIC_DIR = Path(os.environ.get("SDS_STATIC_DIR", "")) or None  # built SPA, optional
 
     # Shared snapshot viewer, read from /snapshot-viewer.json (see above). Snapshots

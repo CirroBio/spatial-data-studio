@@ -4,6 +4,8 @@ import { useState, useEffect, useRef, type RefObject } from 'react';
 // read-only SnapshotViewer). Kept in one place so the zoom range and fit math
 // can't drift between the views that must frame data identically.
 export const ZOOM_LIMITS = { minZoom: -8, maxZoom: 8 };
+// Zoom delta per zoom-button click (OrthographicView zoom is log2, so 0.5 ≈ 1.41× per step).
+export const ZOOM_STEP = 0.5;
 const FIT_MARGIN = 0.9; // leave ~10% padding around the data
 
 // Zoom that frames a world extent (extentX x extentY) inside a pixel viewport

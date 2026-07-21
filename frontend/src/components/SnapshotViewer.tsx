@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import DeckGL from '@deck.gl/react';
-import { OrthographicView, OrbitView } from '@deck.gl/core';
+import { OrbitView } from '@deck.gl/core';
 import { BitmapLayer } from '@deck.gl/layers';
 import type { Layer, OrthographicViewState, OrbitViewState } from '@deck.gl/core';
 import { fetchSnapshotConfig } from '../lib/snapshots';
@@ -13,8 +13,9 @@ import {
 import type { ScatterPositions } from './canvas/useArrowPositions';
 import { useSpotColors, type ColorSource } from './canvas/useSpotColors';
 import { buildSpotLayer } from './canvas/buildSpotLayer';
+import { FlipOrthographicView } from './canvas/FlipOrthographicView';
 import { quad, worldToPixel, type Affine } from './canvas/imageAffine';
-import { defaultChannelColor } from './canvas/colorUtils';
+import { defaultChannelColor, PLOT_BACKGROUNDS } from './canvas/colorUtils';
 import { colorByLabel } from './canvas/colorBy';
 import { CellColorLegend, ChannelLegend, LoadingCue } from './canvas/CanvasOverlays';
 import type { Channel } from './canvas/useImageChannels';
@@ -244,9 +245,13 @@ export default function SnapshotViewer({ url }: Props) {
     isolatedCategory: null,
   });
 
+  // Spatial view orientation is baked into render (schema >= 1.1.0); older snapshots
+  // lack the fields and default to no flip. Embeddings use the OrbitView unchanged.
+  const invertX = config?.render.invert_x ?? false;
+  const invertY = config?.render.invert_y ?? false;
   const views = useMemo(
-    () => (is3d ? [new OrbitView({ id: 'main' })] : [new OrthographicView({ id: 'main', flipY: false })]),
-    [is3d],
+    () => (is3d ? [new OrbitView({ id: 'main' })] : [new FlipOrthographicView({ id: 'main', flipX: invertX, flipY: invertY })]),
+    [is3d, invertX, invertY],
   );
 
   // The snapshot has no backend to serve polygon outlines (they'd need geometry read
@@ -293,9 +298,10 @@ export default function SnapshotViewer({ url }: Props) {
 
   const legendVisible = config.encoding.legend_visible !== false;
   const legendTitle = config.encoding.legend_title || colorByLabel(config.render.color_by);
+  const background = PLOT_BACKGROUNDS[config.render.background ?? 'dark'];
 
   return (
-    <div ref={containerRef} className="w-full h-full relative bg-bg">
+    <div ref={containerRef} className="w-full h-full relative" style={{ backgroundColor: background }}>
       <DeckGL
         views={views}
         viewState={viewState as unknown as Record<string, ViewState>}

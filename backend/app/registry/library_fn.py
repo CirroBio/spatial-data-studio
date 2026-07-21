@@ -52,6 +52,12 @@ class LibraryFunction(Function):
         # archive files is the custom reader, which sets its own input_kind.
         self.input_kind = "folder" if effect_class == "read" else None
 
+    @property
+    def read_lane(self) -> bool:
+        # Extracts (sc.get.*) are adata-only reads — run them concurrently. Plots stay on
+        # the lock-blocked mutation path (they persist uns colors), so they're excluded.
+        return self.effect_class == "extract" and set(self.injected.values()) <= {"adata"}
+
     def execute(self, params: dict, session) -> CallResult:
         try:
             bound = self._bind_and_validate(params, session)
@@ -59,7 +65,10 @@ class LibraryFunction(Function):
             return CallResult(status="failed", error=str(e), log=str(e))
 
         injected_order = list(self.injected.values())
-        adata = session.active_table() if session.sdata is not None else None
+        # Only a `read` bootstrap runs before any object exists; every other class has a
+        # table. (Gating on effect_class, not `session.sdata`, lets a read-lane snapshot —
+        # which carries the table but no sdata — inject its adata correctly.)
+        adata = None if self.effect_class == "read" else session.active_table()
         image = session.active_image() if "image" in injected_order else None
 
         # The call itself (inject/invoke/before-after-diff) runs in a subprocess
@@ -73,29 +82,31 @@ class LibraryFunction(Function):
         return self._apply(session, envelope)
 
     def _apply(self, session, env: dict) -> CallResult:
+        # Carries the child result back UNAPPLIED: the session worker mutates the live
+        # object (facet write-back or the extract stash) under a brief write lock in
+        # its commit phase, so this call — which blocks on the pool — holds no lock and
+        # reads keep serving the last-committed object (DESIGN §20.2).
         if env["status"] == "failed":
             return CallResult(status="failed", error=env.get("error"), log=env.get("log", ""))
         log = env.get("log", "")
         if env.get("new_object") is not None:
             return CallResult(status="completed", log=log, new_object=env["new_object"])
-        if "result_value_raw" in env:
-            # read-only extraction (sc.get.*): returns a DataFrame, mutates nothing.
-            ret = env["result_value_raw"]
-            session.stash_result(self.key, ret)
-            return CallResult(status="completed", log=log, result_value=_summarize(ret))
+        if self.effect_class == "extract":
+            # read-only extraction (sc.get.*): runs for its return value but writes
+            # nothing back, and nothing currently consumes the result (DESIGN §4.6).
+            return CallResult(status="completed", log=log)
         facets = env.get("changed_facets", {})
-        kernel.apply_changed_facets(session.active_table(), session.sdata, facets)
         if self.effect_class == "plot":
-            return CallResult(status=env["status"], log=log,
+            return CallResult(status=env["status"], log=log, changed_facets=facets,
                               figure_svg=env.get("figure_svg"), figure_pdf=env.get("figure_pdf"))
         structural_diff = {facet: sorted(values) for facet, values in facets.items()}
-        return CallResult(status="completed", log=log, structural_diff=structural_diff,
-                          changed_fields=env.get("changed_fields", []))
+        return CallResult(status="completed", log=log, changed_facets=facets,
+                          structural_diff=structural_diff, changed_fields=env.get("changed_fields", []))
 
     def _bind_and_validate(self, params: dict, session) -> dict:
         bound = dict(self.pinned)  # pinned policy params first (DESIGN §16, can't be overridden)
         # A `read` bootstrap job runs before any object exists; nothing to validate yet (§12).
-        adata = session.active_table() if session.sdata is not None else None
+        adata = None if self.effect_class == "read" else session.active_table()
         by_name = {p.name: p for p in self.params}
         for name, value in params.items():
             if name in self.pinned:
@@ -136,23 +147,6 @@ class LibraryFunction(Function):
             for v in vals:
                 if v not in adata.layers:
                     raise ValueError(f"layer '{v}' does not exist")
-
-
-def _summarize(ret) -> dict:
-    """A small JSON-safe summary of an extract result (DataFrame/Series) for the
-    contract envelope; the full object is stashed in uns['_results']."""
-    cols = getattr(ret, "columns", None)
-    shape = getattr(ret, "shape", None)
-    out: dict = {"type": ret.__class__.__name__}
-    if shape is not None:
-        out["shape"] = list(shape)
-    if cols is not None:
-        out["columns"] = [str(c) for c in list(cols)[:50]]
-    try:
-        out["head"] = ret.head(10).to_string()
-    except Exception:
-        out["head"] = str(ret)[:1000]
-    return out
 
 
 # ---- introspection builder (DESIGN §4) -------------------------------------

@@ -48,10 +48,12 @@ neighborhood. The left panel is the analysis history that produced this view.*
 </tr>
 </table>
 
-![The display settings panel: color by, render mode, point size, image channel colors, and legends.](docs/images/display.jpg)
+![The display settings panel: color by, render mode, point size, plot orientation, zoom, background, image channel colors, and legends.](docs/images/display.jpg)
 
-*Customize the display — choose what colors the cells, how they render, and how the
-tissue-image channels are tinted and blended.*
+*Customize the display — choose what colors the cells, how they render, how the plot is
+oriented (flip the horizontal/vertical axes), the zoom level (buttons plus scroll/pinch)
+and its background (light or dark), and how the tissue-image channels are tinted and
+blended.*
 
 ## Analyses available
 
