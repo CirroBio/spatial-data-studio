@@ -53,17 +53,20 @@ def _submit_prewarm_tasks():
 
 async def _resource_loop():
     interval = 1.0 / config.RESOURCE_HZ
-    warned = False
+    relog_every = max(1, int(config.RESOURCE_HZ * 300))  # repeat the warning ~every 5 min
+    failing = 0  # consecutive failed ticks; reset to 0 on success
     while True:
         try:
             BUS._publish_inloop("resource.sample", MANAGER.resource_sample())
-            warned = False
-        except Exception as e:
-            # Sampling runs every tick; log once when it starts failing (and again
-            # after a recovery) rather than spamming a warning per second.
-            if not warned:
-                _log.warning("resource sampling failed (%s); retrying each tick", e)
-                warned = True
+            failing = 0
+        except Exception:
+            # Sampling runs every tick; log with a traceback the first time it
+            # starts failing and then only periodically, so a persistent failure
+            # (which leaves the resource strip stuck on "waiting…") stays visible
+            # in the logs instead of scrolling past as a single line.
+            if failing % relog_every == 0:
+                _log.warning("resource sampling failed; retrying each tick", exc_info=True)
+            failing += 1
         await asyncio.sleep(interval)
 
 

@@ -77,7 +77,7 @@ class SessionManager:
         # a read when we're already at the admission boundary. create_from_load has
         # its own size-based _check_admission since a saved store's table cost is known.
         if self.over_memory_boundary():
-            pct = self._rss_mb() / config.CONTAINER_MEM_MB
+            pct = self._rss_fraction()
             raise RuntimeError(
                 f"read blocked: memory at {pct*100:.0f}% (>= {config.ADMISSION_PCT*100:.0f}%)")
         for k, v in descriptor.get("params", {}).items():
@@ -279,6 +279,16 @@ class SessionManager:
     def _rss_mb(self) -> float:
         return self._proc.memory_info().rss / 1e6
 
+    def _rss_fraction(self) -> float:
+        """RSS as a fraction of the container memory limit. Returns 0.0 (unknown)
+        when the limit is non-positive — e.g. SDS_CONTAINER_MEM_MB=0 in the task
+        definition — so a misconfigured limit degrades to "no percentage / never
+        blocks" instead of a ZeroDivisionError that would wedge the sampler and
+        admission on every call."""
+        if config.CONTAINER_MEM_MB <= 0:
+            return 0.0
+        return self._rss_mb() / config.CONTAINER_MEM_MB
+
     def _resident_mb(self, sess: Session) -> float:
         if sess.sdata is None:
             return 0.0
@@ -305,11 +315,11 @@ class SessionManager:
     def over_memory_boundary(self) -> bool:
         """True once RSS has reached the admission boundary — the point past which
         we refuse to start new memory-hungry work (a job, a read, a tile render)."""
-        return self._rss_mb() / config.CONTAINER_MEM_MB >= config.ADMISSION_PCT
+        return self._rss_fraction() >= config.ADMISSION_PCT
 
     def admit_job(self, sess: Session) -> bool:
         if self.over_memory_boundary():
-            pct = self._rss_mb() / config.CONTAINER_MEM_MB
+            pct = self._rss_fraction()
             BUS.publish("memory.warning", {"session_id": sess.id,
                         "message": f"RSS at {pct*100:.0f}% (>= {config.ADMISSION_PCT*100:.0f}%); job held"})
             return False
@@ -318,7 +328,7 @@ class SessionManager:
     def resource_sample(self) -> dict:
         sessions = list(self.sessions.values())
         return {"global": {"rss_mb": round(self._rss_mb(), 1),
-                           "rss_pct": round(self._rss_mb() / config.CONTAINER_MEM_MB * 100, 1),
+                           "rss_pct": round(self._rss_fraction() * 100, 1),
                            "cpu_pct": self._proc.cpu_percent(),
                            "rasters_mb": round(sum(s.raster_cache_mb for s in sessions), 1)},
                 "per_session": {s.id: self._resident_mb(s) for s in sessions}}
