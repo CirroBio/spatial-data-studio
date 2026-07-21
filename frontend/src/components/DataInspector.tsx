@@ -8,7 +8,7 @@ import {
   type ElementInventory,
   type TablePreview,
 } from '../api';
-import { formatError } from '../lib/errors';
+import { formatError } from '../lib/format';
 import type { ImageInfo } from '../types';
 
 const PAGE_SIZE = 50;

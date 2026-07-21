@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { createSession, browsePath, getDatasets } from '../api';
 import { useAppStore } from '../store/sessionStore';
-import { formatError } from '../lib/errors';
+import { formatError } from '../lib/format';
 import AnsiLog from './AnsiLog';
 import type { SessionSummary, FunctionEntry } from '../types';
 import type { FsEntry, FsListing, NewSessionSource, DatasetEntry } from '../api';

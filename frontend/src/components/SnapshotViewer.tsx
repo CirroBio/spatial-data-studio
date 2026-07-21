@@ -4,7 +4,7 @@ import { OrbitView } from '@deck.gl/core';
 import { BitmapLayer } from '@deck.gl/layers';
 import type { Layer, OrthographicViewState, OrbitViewState } from '@deck.gl/core';
 import { fetchSnapshotConfig } from '../lib/snapshots';
-import { formatError } from '../lib/errors';
+import { formatError } from '../lib/format';
 import type { EmbeddingEncoding, SnapshotConfig } from '../types';
 import {
   openCheckpoint, readObsm, readColorSource, readImageLevelWhole, readImageWindow,

@@ -1,8 +1,5 @@
 import { useAppStore } from '../store/sessionStore';
-
-export function formatError(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
+import { formatError } from './format';
 
 export function reportError(prefix: string, err: unknown): void {
   useAppStore.getState().pushNotification({

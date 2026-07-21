@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import './index.css';
 import SnapshotViewer from './components/SnapshotViewer';
 import { fetchSnapshotConfig } from './lib/snapshots';
-import { formatError } from './lib/errors';
+import { formatError } from './lib/format';
 
 // The schema major this bundle understands, baked in from snapshot-viewer.json at
 // build time (see vite.app.config.ts `define`). A snapshot whose schema_version

@@ -4,7 +4,8 @@ import {
   getCirroFolders, getCirroProjects, getDatasets, getSnapshots, uploadToCirro,
   type CirroProject, type DatasetEntry,
 } from '../api';
-import { formatError, reportError } from '../lib/errors';
+import { formatError } from '../lib/format';
+import { reportError } from '../lib/errors';
 import type { Snapshot } from '../lib/snapshots';
 import { ModalOverlay, ModalHeader } from './DetailModal';
 import SnapshotList from './SnapshotList';

@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from '../store/sessionStore';
 import { getPointsTransform, setPointsTransform } from '../api';
-import { formatError, reportError } from '../lib/errors';
+import { formatError } from '../lib/format';
+import { reportError } from '../lib/errors';
 import { ModalOverlay, ModalHeader } from './DetailModal';
 
 interface Props {

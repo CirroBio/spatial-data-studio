@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import * as arrow from 'apache-arrow';
 import { getFieldData } from '../api';
-import { formatError } from '../lib/errors';
+import { formatError } from '../lib/format';
 
 type CacheKey = string; // `${sessionId}:${fieldPath}:${version}`
 
