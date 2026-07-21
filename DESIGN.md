@@ -1266,7 +1266,10 @@ Arrow IPC (binary). See `docs/CONTRACT.md` for the full contract.
 
 All events for a client arrive over a **single multiplexed SSE stream** (`/api/events`),
 each tagged by `session_id`, with a monotonic id so a reconnecting client resumes via
-`Last-Event-ID`.
+`Last-Event-ID`. An idle stream emits a comment-line **heartbeat** (`: keepalive`, every
+15 s) so a fronting reverse proxy or cloud load balancer (e.g. an AWS ALB, default 60 s
+idle timeout) does not silently drop the connection — without it a deployed client stops
+receiving updates until a reload, even though local dev (no load balancer) works fine.
 
 | Event | Payload | Consumer effect |
 |---|---|---|
@@ -1407,8 +1410,10 @@ PID 1: tini                      # signal forwarding + zombie reaping
 ```
 
 **SSE requires response buffering disabled** on the edge (`proxy_buffering off`) or
-events stall. The edge stays up while uvicorn restarts, so the SPA can render a
-"reconnecting" state instead of a dead page.
+events stall. Any load balancer *in front of* this edge (e.g. an AWS ALB terminating
+ECS traffic) must also not buffer the stream; its idle timeout is survived by the
+15 s stream heartbeat (§19.2), not by proxy config. The edge stays up while uvicorn
+restarts, so the SPA can render a "reconnecting" state instead of a dead page.
 
 ### 23.2 Single worker is mandatory (and is the single point of failure)
 

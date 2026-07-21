@@ -10,6 +10,14 @@ from collections import deque
 # subscriber's stream so the browser's EventSource reconnects with Last-Event-ID.
 _CLOSE = object()
 
+# When idle the stream sends nothing, so a reverse proxy or cloud load balancer
+# (e.g. an AWS ALB, default 60 s idle timeout) silently drops the connection and
+# the browser's EventSource stops receiving updates until a reload. Emit an SSE
+# comment line (ignored by the EventSource parser) on this cadence so an idle
+# stream keeps flowing bytes and stays well under such timeouts; it also lets the
+# endpoint notice a disconnected client promptly and reap it.
+_HEARTBEAT_SECONDS = 15
+
 
 class EventBus:
     def __init__(self, ring_size: int = 2048):
@@ -54,7 +62,11 @@ class EventBus:
                     if item[0] > last_event_id:
                         yield self._format(*item)
             while True:
-                item = await q.get()
+                try:
+                    item = await asyncio.wait_for(q.get(), _HEARTBEAT_SECONDS)
+                except asyncio.TimeoutError:
+                    yield b": keepalive\n\n"
+                    continue
                 if item is _CLOSE:
                     return
                 yield self._format(*item)
