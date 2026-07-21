@@ -19,13 +19,13 @@
     "@deck.gl/react": "^9.0.0",
     "@geoarrow/deck.gl-layers": "^0.3.2",
     "@math.gl/core": "^4.1.0",
-    "@vivjs/extensions": "0.22.0",
-    "@vivjs/layers": "0.22.0",
-    "@vivjs/loaders": "0.22.0",
     "@radix-ui/react-dialog": "^1.1.0",
     "@radix-ui/react-dropdown-menu": "^2.1.0",
     "@radix-ui/react-tabs": "^1.1.0",
     "@radix-ui/react-tooltip": "^1.1.0",
+    "@vivjs/extensions": "0.22.0",
+    "@vivjs/layers": "0.22.0",
+    "@vivjs/loaders": "0.22.0",
     "@zarrita/storage": "^0.2.0",
     "apache-arrow": "^18.0.0",
     "driver.js": "^1.6.0",
@@ -40,11 +40,11 @@
     "@playwright/test": "^1.61.1",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
-    "@vitejs/plugin-react": "^4.3.1",
+    "@vitejs/plugin-react": "^4.7.0",
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.13",
     "typescript": "^5.5.3",
-    "vite": "^5.4.8"
+    "vite": "^6.4.3"
   }
 }
