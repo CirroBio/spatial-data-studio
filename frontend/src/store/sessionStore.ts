@@ -146,6 +146,13 @@ interface AppStore {
   addActiveJob: (jobId: string) => void;
   removeActiveJob: (jobId: string) => void;
 
+  // Live log lines streamed from a running reader (`job.log`), keyed by job_id, so the
+  // import spinner and the compute detail view show progress before the job completes.
+  // Dropped once the job finishes (the full log is then fetched from the store).
+  jobLogs: Record<string, string>;
+  appendJobLog: (jobId: string, chunk: string) => void;
+  clearJobLog: (jobId: string) => void;
+
   // the in-flight "save session" job, if any — drives the blocking save overlay
   savingJobId: string | null;
   setSavingJobId: (jobId: string | null) => void;
@@ -185,6 +192,11 @@ interface AppStore {
   // load_id and clears it when the load resolves.
   loadProgress: SessionLoadingEvent | null;
   setLoadProgress: (p: SessionLoadingEvent | null) => void;
+  // Accumulated reader log lines for the in-flight checkpoint load (the `log` chunks of
+  // `session.loading`), shown live in the dialog overlay and reset per load.
+  loadLog: string;
+  appendLoadLog: (chunk: string) => void;
+  resetLoadLog: () => void;
 }
 
 export interface AppNotification {
@@ -447,6 +459,17 @@ export const useAppStore = create<AppStore>((set, get) => ({
       return { activeJobIds: next };
     }),
 
+  jobLogs: {},
+  appendJobLog: (jobId, chunk) =>
+    set((s) => ({ jobLogs: { ...s.jobLogs, [jobId]: (s.jobLogs[jobId] ?? '') + chunk } })),
+  clearJobLog: (jobId) =>
+    set((s) => {
+      if (!(jobId in s.jobLogs)) return {};
+      const next = { ...s.jobLogs };
+      delete next[jobId];
+      return { jobLogs: next };
+    }),
+
   savingJobId: null,
   setSavingJobId: (jobId) => set({ savingJobId: jobId }),
 
@@ -476,4 +499,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setCirroUploads: (u) => set({ cirroUploads: u }),
   loadProgress: null,
   setLoadProgress: (p) => set({ loadProgress: p }),
+  loadLog: '',
+  appendLoadLog: (chunk) => set((s) => ({ loadLog: s.loadLog + chunk })),
+  resetLoadLog: () => set({ loadLog: '' }),
 }));

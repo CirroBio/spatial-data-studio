@@ -2,7 +2,8 @@
 
 Shared ground for backend + frontend. All command/control is REST (JSON). All
 server→client updates are SSE. Bulk field data is Apache Arrow IPC (binary).
-Base path for the API behind the edge server: `/api`. SSE stream: `/api/events`.
+Base path for the API behind the edge server: `/api`. SSE stream: `/api/events`;
+JSON polling fallback `/api/events/poll` (see below) for proxies that block SSE.
 
 Pinned versions: squidpy 1.8.2, spatialdata 0.7.3, anndata, pyarrow.
 
@@ -87,8 +88,8 @@ ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_cate
 | GET  | `/api/sessions/{id}/elements` | — | `{tables:[{name,n_obs,n_vars,active}], shapes, points, images, labels}` (data inspector inventory) |
 | GET  | `/api/sessions/{id}/table?path=&offset=&limit=` | path = `obs`, `var`, `shapes:<name>`, `points:<name>` | `{total_rows, offset, limit, index_name, index, columns:[{name,dtype}], rows}` (JSON page) |
 | GET  | `/api/sessions/{id}/image/{element}/info` | — | `{levels:[{level,width,height}], channels, channel_names, bounds, pixel_to_world, tile_size, client_compositing, raster_base_url, zarr_group_path, contrast_limits, is_rgb}` (see below) |
-| GET  | `/api/sessions/{id}/image/{element}/thumbnail?max_px=&channels=` | — | composited PNG (LRU-cached) |
-| GET  | `/api/sessions/{id}/image/{element}/tile/{level}/{col}/{row}?channels=` | — | composited PNG tile (LRU-cached) |
+| GET  | `/api/sessions/{id}/image/{element}/thumbnail?max_px=&channels=` | — | composited WebP (`image/webp`, LRU-cached) |
+| GET  | `/api/sessions/{id}/image/{element}/tile/{level}/{col}/{row}?channels=` | — | composited WebP tile (`image/webp`, LRU-cached) |
 | GET/HEAD | `/api/sessions/{id}/raster/{element}/{key}` | `key` is a zarr store path (e.g. `zarr.json`, `images/{element}/zarr.json`, a chunk key `images/{element}/s0/c/0/0/0`) | raw bytes from the session's on-disk normalized raster zarr store (`application/octet-stream`, or `application/json` for `*.json`); `Accept-Ranges: bytes`, `Cache-Control: no-cache`; honors `Range` (206) and `HEAD`; 404 for a missing chunk (zarr fill value), unknown element, or gone store |
 | GET  | `/api/recipes` | — | `{recipes:[{name, description, steps:[Descriptor]}]}` (curated catalog) |
 | GET  | `/api/sessions/{id}/recipe` | — | recipe JSON |
@@ -96,25 +97,35 @@ ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_cate
 | POST | `/api/sessions/{id}/recipe/run` | recipe JSON, `{steps, mode?:"run"\|"stage"}` | `{queued:int}`, or `{staged:int}` when `mode:"stage"` |
 | GET  | `/api/healthz` / `/api/readyz` | — | `{status}` |
 
+### Response compression
+Responses whose content type is `application/vnd.apache.arrow.stream` or
+`application/json` are gzip-encoded when the client sends `Accept-Encoding: gzip`
+(`SelectiveGZipMiddleware`, `backend/app/transport/compression.py`) — a `Vary:
+Accept-Encoding` is set and browsers decode transparently. The gene/obs columns and
+rounded GeoArrow polygons compress heavily; the already-compressed WebP tiles, the
+Range-served raster chunks (`application/octet-stream`), and the `text/event-stream`
+SSE channel are deliberately left untouched so Range semantics and live streaming
+are preserved.
+
 ### Image info & client-side (Viv) compositing
 `/image/{element}/info` returns the tile-server metadata (`levels`, `channels`,
 `channel_names`, `bounds`, `pixel_to_world`, `tile_size`) plus fields that let the
 browser composite channels on the GPU by reading the raw raster zarr directly,
-instead of fetching server-composited PNG tiles:
+instead of fetching server-composited WebP tiles:
 - `client_compositing: bool` — true only when the server flag `CLIENT_IMAGE_COMPOSITING`
   is on, the element has a served on-disk normalized store, and its channel count is
-  `<= CLIENT_IMAGE_MAX_CHANNELS` (or it is RGB). When false the frontend uses the PNG
+  `<= CLIENT_IMAGE_MAX_CHANNELS` (or it is RGB). When false the frontend uses the WebP
   tile/thumbnail path (always available as the fallback).
 - `raster_base_url: str` — `/api/sessions/{id}/raster/{element}` (no trailing slash);
   the root a zarrita `FetchStore` opens the store at.
 - `zarr_group_path: str` — `images/{element}`, the multiscale group to open inside the store.
 - `contrast_limits: [[lo, hi], ...]` — per channel in `channel_names` order (`lo` is 0.0,
-  `hi` the same upper bound the PNG compositor uses), so client and server brightness match.
+  `hi` the same upper bound the server tile compositor uses), so client and server brightness match.
 - `is_rgb: bool` — true for a true-color RGB/H&E image (shown as-is, not tinted).
 
 Only rasters that `normalize_rasters` rebuilds into the per-session cache store are
 served (and thus compositable); an already-canonical element has no served store and
-stays on the PNG path.
+stays on the WebP tile path.
 
 ### Session source on create
 - read:  `{kind:"read", namespace:"read", function:"visium", params:{path:"..."}}` — any `path`/`input`/`image_path`/`alignment_file` param must resolve under `DATA_DIR`, else 400.
@@ -224,6 +235,8 @@ the per-cell colors.
     coordinates. The polygons are transformed from their intrinsic element coordinates
     into the `obsm:spatial` world space (the region element's affine — a boundary
     element's own transform is not used, since on Xenium it disagrees with the region's).
+    Coordinates are rounded to sub-pixel precision (2 decimals) so the near-incompressible
+    float64 mantissa bits collapse and the gzip transport (below) can shrink the stream.
   - `cell_index` — `int32`, the row of each polygon's cell in the **active table**
     (matched by the shape's index label against the obs index or `instance_key`), or
     `-1` if the shape maps to no table row. The frontend gathers the already-loaded
@@ -232,7 +245,9 @@ the per-cell colors.
     `limit` truncates to the first N intersecting features.
 
 ## SSE events (`/api/events`, single multiplexed stream)
-Each event: `event: <type>`, `data: <json>`, every payload carries `session_id` (except `session.loading`, which predates the session and is routed by the client-minted `load_id`). Monotonic `id:` for `Last-Event-ID` resume.
+Each event: `event: <type>`, `data: <json>`, every payload carries `session_id` (except `session.loading`, which predates the session and is routed by the client-minted `load_id`). Monotonic `id:` for `Last-Event-ID` resume. An idle stream emits a `: keepalive` comment every 15 s so a load-balancer idle timeout does not drop it.
+
+**Polling fallback** `GET /api/events/poll?after=<id>` → `{last_id, events:[{id, event, data}]}`. Returns the same events off the in-memory ring as `application/json`, for clients behind a proxy that rejects the SSE `text/event-stream` content type (e.g. a JSON-only auth gateway) or buffers the stream. Omit `after` to get a baseline cursor (`last_id`, no events); then poll with `after=last_id`. Lock-free (reads the event ring, never a session lock). The client switches to this only when the browser reports the `EventSource` fatally closed.
 
 | event | data |
 |---|---|
@@ -240,10 +255,11 @@ Each event: `event: <type>`, `data: <json>`, every payload carries `session_id` 
 | `job.started` | `{session_id, job_id}` |
 | `job.completed` | `{session_id, job_id, kind:"compute"|"plot", structural_diff?, data_versions, plot_id?}` |
 | `job.failed` | `{session_id, job_id, error}` |
+| `job.log` | `{session_id, job_id, chunk}` (a reader/compute's log streamed live as it runs — emitted only for read-bootstrap jobs today; the client appends `chunk` to the job's live-log buffer and drops it on completion) |
 | `plot.drawn` | `{session_id, plot_id}` |
 | `plot.invalidated` | `{session_id, plot_ids:[...]}` |
 | `display.updated` | `{session_id, display_id, spec}` |
-| `session.loading` | `{load_id, message, pct:float|null}` (checkpoint-load progress; `pct` present only for the byte-fraction extraction step, else `null`) |
+| `session.loading` | `{load_id, message, pct:float|null, log?}` (checkpoint-load progress; a milestone event carries `message` (+ `pct` for the byte-fraction extraction step); a live-log event carries `log` (a reader log chunk) with `message`/`pct` null) |
 | `session.created` | `{session_id, summary}` |
 | `session.removed` | `{session_id, reason:"closed"|"subset"}` (closed or lasso-evicted; clients prune it from the session list) |
 | `session.errored` | `{session_id, error}` |

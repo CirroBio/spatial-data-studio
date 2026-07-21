@@ -203,9 +203,60 @@ def short_error(e: Exception) -> str:
     return f"{e.__class__.__name__}: {msg}"[:300]
 
 
+# Cap the captured job log. A progress bar (pynndescent/tqdm) or a repeated warning can
+# push a single compute's raw output into tens of MB; we collapse and bound it so the
+# persisted checkpoint log and the /jobs/{id}/log fetch stay small.
+MAX_LOG_CHARS = 256 * 1024
+
+
+def _clean_log(text: str) -> str:
+    r"""Render captured output the way a terminal would, then bound its size. A bare
+    `\r` rewrites the current line, so a progress bar that wrote thousands of updates
+    collapses to the final frame of each line (CRLF newlines are normalised first so a
+    real line isn't mistaken for a rewrite)."""
+    if not text:
+        return text
+    lines = [ln.rsplit("\r", 1)[-1] for ln in text.replace("\r\n", "\n").split("\n")]
+    cleaned = "\n".join(lines)
+    if len(cleaned) > MAX_LOG_CHARS:
+        keep = MAX_LOG_CHARS // 2
+        omitted = len(cleaned) - 2 * keep
+        cleaned = f"{cleaned[:keep]}\n... [{omitted} chars omitted] ...\n{cleaned[-keep:]}"
+    return cleaned
+
+
+class _CaptureBuffer(io.StringIO):
+    """Captures everything a call logs/prints. `getvalue()` returns the cleaned,
+    size-bounded text (see _clean_log). When a live `sink` is given, each raw write is
+    also forwarded to it so transport/livelog.py can stream it to the client as the
+    call runs."""
+    def __init__(self, sink=None):
+        super().__init__()
+        self._sink = sink
+
+    def write(self, s):
+        n = super().write(s)
+        if s and self._sink is not None:
+            try:
+                self._sink(s)
+            except Exception:
+                # A live-stream failure must never corrupt the captured call.
+                pass
+        return n
+
+    def getvalue(self):
+        return _clean_log(super().getvalue())
+
+
 @contextlib.contextmanager
-def capture_log():
-    buf = io.StringIO()
+def capture_log(sink=None):
+    """Capture everything the call logs/prints into a returned buffer. When a `sink`
+    is given (or an ambient live-log target is set — see transport/livelog.py), each
+    write is also streamed to the client live."""
+    if sink is None:
+        from ..transport import livelog
+        sink = livelog.current_sink()
+    buf = _CaptureBuffer(sink)
     handler = logging.StreamHandler(buf)
     handler.setLevel(logging.DEBUG)
     root = logging.getLogger()

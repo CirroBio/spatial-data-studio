@@ -320,6 +320,14 @@ export interface JobFailedEvent {
   timestamp?: string;
 }
 
+// A chunk of a running reader's log, streamed live so the import UI shows progress
+// instead of a frozen spinner. Appended to the per-job live-log buffer.
+export interface JobLogEvent {
+  session_id: string;
+  job_id: string;
+  chunk: string;
+}
+
 export interface PlotDrawnEvent {
   session_id: string;
   plot_id: string;
@@ -347,12 +355,14 @@ export interface SessionRemovedEvent {
 }
 
 // Progress from a synchronous checkpoint load, routed by the client-minted `load_id`
-// (no session id exists until the load finishes). `pct` is present only for the
-// byte-fraction extraction step; null for coarse stage messages.
+// (no session id exists until the load finishes). A milestone event carries `message`
+// (+ `pct` for the byte-fraction extraction step); a live-log event carries `log` (a
+// reader log chunk to append) with `message`/`pct` null.
 export interface SessionLoadingEvent {
   load_id: string;
-  message: string;
+  message: string | null;
   pct: number | null;
+  log?: string | null;
 }
 
 export interface ResourceSample {

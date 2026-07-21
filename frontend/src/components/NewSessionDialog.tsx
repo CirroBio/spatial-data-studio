@@ -3,6 +3,7 @@ import * as Dialog from '@radix-ui/react-dialog';
 import { createSession, browsePath, getDatasets } from '../api';
 import { useAppStore } from '../store/sessionStore';
 import { formatError } from '../lib/errors';
+import AnsiLog from './AnsiLog';
 import type { SessionSummary, FunctionEntry } from '../types';
 import type { FsEntry, FsListing, NewSessionSource, DatasetEntry } from '../api';
 
@@ -43,6 +44,8 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
   const pushNotification = useAppStore((s) => s.pushNotification);
   const loadProgress = useAppStore((s) => s.loadProgress);
   const setLoadProgress = useAppStore((s) => s.setLoadProgress);
+  const loadLog = useAppStore((s) => s.loadLog);
+  const resetLoadLog = useAppStore((s) => s.resetLoadLog);
   const readers = functions.filter((f) => f.effect_class === 'read');
 
   const [mode, setMode] = useState<'load' | 'import'>('load');
@@ -151,6 +154,7 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
     setLoadId(id);
     setLoading(true);
     setError(null);
+    resetLoadLog();
     try {
       const finalName = name.trim() || deriveSessionName(chosen);
       const session = await createSession({ name: finalName || undefined, source, load_id: id });
@@ -167,6 +171,7 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
       setLoading(false);
       setLoadId(null);
       setLoadProgress(null);
+      resetLoadLog();
     }
   }
 
@@ -399,13 +404,19 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
             const message = live?.message ?? (mode === 'import' ? 'Importing data…' : 'Loading checkpoint…');
             const pct = live?.pct;
             return (
-              <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-surface/80 backdrop-blur-[1px]">
+              <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-surface/80 backdrop-blur-[1px] px-6">
                 <div className="w-8 h-8 rounded-full border-2 border-border border-t-accent animate-spin" />
                 <span className="text-sm text-text">{message}</span>
                 {pct != null && (
                   <div className="w-48 h-1.5 rounded-full bg-border overflow-hidden">
                     <div className="h-full bg-accent transition-[width]" style={{ width: `${Math.round(pct * 100)}%` }} />
                   </div>
+                )}
+                {loadLog && (
+                  <AnsiLog
+                    text={loadLog}
+                    className="w-full max-w-lg mt-1 bg-bg border border-border rounded p-3 text-xs font-mono text-muted overflow-auto max-h-48 whitespace-pre-wrap"
+                  />
                 )}
               </div>
             );

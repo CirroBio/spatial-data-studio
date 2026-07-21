@@ -15,6 +15,45 @@ def _mb(env: str, default_mb: int) -> int:
     return int(os.environ.get(env, default_mb))
 
 
+def _cgroup_mem_limit_mb() -> int | None:
+    """The container's memory hard-limit in MiB, read from the cgroup the kernel OOM
+    killer actually enforces (cgroup v2 `memory.max`, then v1 `memory.limit_in_bytes`),
+    or None when no limit is set. ECS (Fargate and EC2 launch types), `docker run
+    --memory`, and Compose `mem_limit` all surface the task/container limit here. An
+    unset limit reads as the literal "max" (v2) or a page-count sentinel near INT64_MAX
+    (v1); both map to None. Assumes the container sees its own cgroup as the hierarchy
+    root — true under the private cgroup namespace ECS and modern Docker use."""
+    UNBOUNDED = 1 << 62  # v1 reports ~0x7ffffffffffff000 when unlimited
+    for path in ("/sys/fs/cgroup/memory.max",                     # cgroup v2
+                 "/sys/fs/cgroup/memory/memory.limit_in_bytes"):   # cgroup v1
+        try:
+            raw = Path(path).read_text().strip()
+        except OSError:
+            continue
+        if raw == "max":
+            return None
+        try:
+            nbytes = int(raw)
+        except ValueError:
+            continue
+        return nbytes // (1024 * 1024) if 0 < nbytes < UNBOUNDED else None
+    return None
+
+
+def _container_mem_mb() -> tuple[int, str]:
+    """(limit in MiB, source) for admission accounting. An explicit SDS_CONTAINER_MEM_MB
+    wins — including 0, which disables the memory percentage (see manager._rss_fraction).
+    Otherwise auto-detect from the cgroup, falling back to 8192 MiB when the container
+    runs without a memory limit (e.g. a bare `docker run`)."""
+    env = os.environ.get("SDS_CONTAINER_MEM_MB")
+    if env is not None:
+        return int(env), "SDS_CONTAINER_MEM_MB"
+    detected = _cgroup_mem_limit_mb()
+    if detected is not None:
+        return detected, "cgroup"
+    return 8192, "default (no cgroup limit)"
+
+
 class Config:
     # Single data directory (DESIGN §19.9). Everything on disk lives here, read-write:
     # raw inputs the user imports, saved checkpoints (<name>-<hash>.sdata.zarr.zip),
@@ -26,7 +65,9 @@ class Config:
     DATA_DIR = Path(os.environ.get("SDS_DATA_DIR") or Path.home())
 
     # Memory accounting (DESIGN §11, §19.5) — evaluated against the container limit.
-    CONTAINER_MEM_MB = _mb("SDS_CONTAINER_MEM_MB", 8192)
+    # Auto-detected from the cgroup when SDS_CONTAINER_MEM_MB is unset, so an ECS task
+    # (or `docker run --memory`) needs no separate env var; an explicit value overrides.
+    CONTAINER_MEM_MB, CONTAINER_MEM_SOURCE = _container_mem_mb()
     WORKER_CEILING_MB = _mb("SDS_WORKER_CEILING_MB", 6144)   # < container limit
     ADMISSION_PCT = float(os.environ.get("SDS_ADMISSION_PCT", "0.80"))  # 80% boundary rule
 

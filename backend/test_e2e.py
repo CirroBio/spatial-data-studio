@@ -223,15 +223,34 @@ def run_zarr_import_flow(client):
             print(f"[ok] read_spatialdata_archive({label}) -> tables={list(sdata.tables.keys())}")
 
         # API import round-trip: each archive bootstraps a ready session via io.read_zarr.
+        # The zip import also asserts the reader's log streams live as `job.log` events
+        # (transport/livelog.py) so the import UI shows progress instead of a frozen
+        # spinner; the tar.gz import just confirms the plain round-trip.
+        from app.transport.sse import BUS
         for label, p in [("zip", zip_path), ("tar.gz", targz_path)]:
-            r = client.post("/api/sessions", json={"source": {
-                "kind": "read", "namespace": "io", "function": "read_zarr", "params": {"store": p}}})
-            assert r.status_code == 200, r.text
-            sid = r.json()["id"]
-            st = poll(client, sid, lambda s: s["summary"]["status"] in ("ready", "errored"))
+            streamed = []
+            orig_publish = BUS.publish
+            def _spy(event_type, data, _orig=orig_publish):
+                if event_type == "job.log":
+                    streamed.append(data)
+                return _orig(event_type, data)
+            BUS.publish = _spy
+            try:
+                r = client.post("/api/sessions", json={"source": {
+                    "kind": "read", "namespace": "io", "function": "read_zarr", "params": {"store": p}}})
+                assert r.status_code == 200, r.text
+                sid = r.json()["id"]
+                st = poll(client, sid, lambda s: s["summary"]["status"] in ("ready", "errored"))
+            finally:
+                BUS.publish = orig_publish
             assert st["summary"]["status"] == "ready", f"{label} import errored"
             assert [c["function"] for c in st["app_state"]["compute_history"]] == ["read_zarr"]
             assert st["fields"]["obs"], f"{label}: no obs fields after import"
+            if label == "zip":
+                mine = [d for d in streamed if d["session_id"] == sid]
+                assert mine, "no job.log events streamed during import"
+                assert all(set(d) == {"session_id", "job_id", "chunk"} for d in mine)
+                print(f"[ok] import streamed {len(mine)} live job.log chunks")
             assert client.delete(f"/api/sessions/{sid}").status_code == 200
             print(f"[ok] imported {label} archive -> ready session {sid[:8]}")
     finally:
@@ -1174,6 +1193,17 @@ def main():
         fig = client.get(f"/api/sessions/{sid}/plots/{plot['id']}/figure?fmt=svg")
         assert fig.status_code == 200 and fig.content[:5] in (b"<?xml", b"<svg "), fig.content[:50]
         print(f"[ok] figure svg bytes={len(fig.content)}")
+
+        # the polled session-state response must NOT inline job logs — a verbose compute
+        # leaves tens of MB of log per record and this endpoint is refetched constantly.
+        # The log stays reachable via the per-job endpoint (get_log reads it from app_state).
+        assert all("_log" not in r for r in
+                   st["app_state"]["compute_history"] + st["app_state"]["plots"]), \
+            "session-state response inlined _log"
+        nb = next(r for r in st["app_state"]["compute_history"] if r["function"] == "spatial_neighbors")
+        lg_live = client.get(f"/api/sessions/{sid}/jobs/{nb['id']}/log")
+        assert lg_live.status_code == 200 and isinstance(lg_live.json().get("log"), str), lg_live.text
+        print("[ok] live session-state omits inline _log; per-job log endpoint still serves it")
 
         # save (must land under DATA_DIR — the save endpoint validates the target path)
         out = os.path.join(str(config.DATA_DIR), "session.zarr.zip")

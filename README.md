@@ -18,7 +18,8 @@ neighborhood. The left panel is the analysis history that produced this view.*
 ## What you can do
 
 - **Load your data.** Point the app at a raw acquisition folder (a spatialdata-io
-  reader parses it) or open an existing SpatialData `.zarr` store. Datasets stay
+  reader parses it) or open an existing SpatialData `.zarr` store. Large datasets can
+  take a while to read, so the reader's log streams live while it works. Datasets stay
   resident in memory for the session.
 - **Run analyses without writing code.** Every `squidpy` and (curated) `scanpy`
   function appears in a searchable picker with a form generated from the function's

@@ -15,6 +15,7 @@ import ResourceStrip from './components/ResourceStrip';
 const SpatialCanvas = lazy(() => import('./components/canvas/SpatialCanvas'));
 const EmbeddingCanvas = lazy(() => import('./components/canvas/EmbeddingCanvas'));
 import ComputeDetail from './components/ComputeDetail';
+import AnsiLog from './components/AnsiLog';
 import PlotDetail from './components/PlotDetail';
 import DataInspector from './components/DataInspector';
 import DetailModal from './components/DetailModal';
@@ -46,6 +47,7 @@ export default function App() {
     activeRegionSetId,
     setCirroEnabled,
     setCirroUploads,
+    jobLogs,
   } = useAppStore();
 
   useSession(activeSessionId);
@@ -179,13 +181,21 @@ export default function App() {
     // reader/parse job (create_from_read enqueues the reader as the first job), so no
     // display exists until that job finishes. Show a spinner across every tab while the
     // spatialdata-io / reader parse runs, rather than the bare "no display" fallback.
-    const importing = sessionState.app_state.displays.length === 0
-      && sessionState.app_state.compute_history.some((h) => h.status === 'running' || h.status === 'queued');
-    if (importing) {
+    const readJob = sessionState.app_state.displays.length === 0
+      ? sessionState.app_state.compute_history.find((h) => h.status === 'running' || h.status === 'queued')
+      : undefined;
+    if (readJob) {
+      const liveLog = jobLogs[readJob.id];
       return (
-        <div className="flex flex-col items-center justify-center h-full gap-3 text-muted">
+        <div className="flex flex-col items-center justify-center h-full gap-3 text-muted px-6">
           <div className="w-6 h-6 rounded-full border-2 border-border border-t-accent animate-spin" />
           <span className="text-sm">Importing data…</span>
+          {liveLog && (
+            <AnsiLog
+              text={liveLog}
+              className="w-full max-w-2xl mt-1 bg-bg border border-border rounded p-3 text-xs font-mono text-muted overflow-auto max-h-64 whitespace-pre-wrap"
+            />
+          )}
         </div>
       );
     }

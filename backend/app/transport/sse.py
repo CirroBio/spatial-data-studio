@@ -53,6 +53,19 @@ class EventBus:
                     pass
                 q.put_nowait(_CLOSE)
 
+    def events_since(self, after: int | None) -> tuple[int, list[dict]]:
+        """Snapshot of the ring for the polling fallback (`GET /api/events/poll`),
+        used where a fronting proxy rejects the SSE `text/event-stream` stream. Runs
+        on the event loop thread alongside `_publish_inloop`, so it needs no lock and
+        never touches a session lock. `after is None` establishes a baseline cursor
+        (current head id, no replay); otherwise returns events newer than `after`."""
+        head = self._counter
+        if after is None:
+            return head, []
+        events = [{"id": i, "event": t, "data": d}
+                  for (i, t, d) in list(self._ring) if i > after]
+        return head, events
+
     async def subscribe(self, last_event_id: int | None = None):
         q: asyncio.Queue = asyncio.Queue(maxsize=1024)
         self._subscribers.add(q)

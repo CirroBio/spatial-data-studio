@@ -12,6 +12,7 @@ from . import appstate
 from .session import Session
 from ..config import config, within_data_dir
 from ..persistence.store import load_spatialdata, estimate_resident_mb, save_spatialdata
+from ..transport import livelog
 from ..transport.sse import BUS
 
 # Reader params that terms.yaml documents as filesystem paths (see the
@@ -41,15 +42,17 @@ class SessionManager:
 
     # ---- creation ---------------------------------------------------------
     def create_from_load(self, path: str, name: str | None = None,
-                          progress=None) -> Session:
+                          progress=None, load_id: str | None = None) -> Session:
         """`progress(message, pct)` (optional) is called from this executor thread as
         the slow steps advance, to feed the New Session dialog's SSE progress overlay;
-        None makes every progress call a no-op."""
+        None makes every progress call a no-op. When `load_id` is set, the reader's log
+        lines are also streamed live to that overlay (transport/livelog.py)."""
         report = progress or (lambda *a, **k: None)
         self._check_capacity()
         resolved = str(_resolve_or_raise(path))  # validated, resolved path for every fs op below
         self._check_admission(estimate_resident_mb(resolved))
-        sdata, app_state, newer, extract_dir, hash_check = load_spatialdata(resolved, report)
+        with livelog.forward_load_logs(load_id):
+            sdata, app_state, newer, extract_dir, hash_check = load_spatialdata(resolved, report)
         sid = str(uuid.uuid4())
         name = name or _basename(resolved)
         sess = Session(sid, name, sdata, app_state, self, store_path=resolved)
@@ -160,10 +163,17 @@ class SessionManager:
         # list(<list>) is a single atomic C copy under the GIL; the per-record dict()
         # then iterates that snapshot, never the live list.
         app_state = sess.app_state
+        # Drop each record's full captured log (`_log`) from this polled response: the
+        # frontend fetches a job's log on demand via GET /api/sessions/{id}/jobs/{job_id}/log
+        # (get_log reads `_log` straight from app_state) and streams it live over `job.log`,
+        # so inlining it here only bloated every refetch — a verbose scanpy run (e.g. neighbors)
+        # leaves tens of MB of log on a single record.
+        def _public(rec):
+            return {k: v for k, v in rec.items() if k != "_log"}
         safe_state = {
             **app_state,
-            "compute_history": [dict(r) for r in list(app_state.get("compute_history", []))],
-            "plots": [dict(r) for r in list(app_state.get("plots", []))],
+            "compute_history": [_public(r) for r in list(app_state.get("compute_history", []))],
+            "plots": [_public(r) for r in list(app_state.get("plots", []))],
             "displays": [dict(d) for d in list(app_state.get("displays", []))],
             "data_versions": dict(app_state.get("data_versions", {})),
         }

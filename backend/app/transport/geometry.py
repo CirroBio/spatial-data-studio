@@ -23,6 +23,7 @@ import logging
 import numpy as np
 import pyarrow as pa
 import pyarrow.ipc as ipc
+import shapely
 from shapely.affinity import affine_transform
 
 from ..sessions import transform
@@ -30,6 +31,14 @@ from ..sessions import transform
 _log = logging.getLogger(__name__)
 
 _POLYGON_GEOM_TYPES = {"Polygon", "MultiPolygon"}
+
+# Boundary coordinates are world-space micron/pixel units, so 2 decimals is far
+# below on-screen resolution but zeros the low float64 mantissa bits, which is
+# what lets the gzip transport actually compress the geometry stream (raw float64
+# coordinates are near-incompressible; rounded, the stream shrinks ~2x). Rounding
+# via shapely.transform maps coordinates only — it preserves every vertex and the
+# geometry type and cannot raise the topology errors that set_precision does.
+_COORD_DECIMALS = 2
 
 
 def is_polygonal(gdf) -> bool:
@@ -111,6 +120,8 @@ def polygons_geoarrow(sdata, table, element: str, bbox, limit: int | None = None
     sub = gdf.iloc[hits]
     aff = [m[0, 0], m[0, 1], m[1, 0], m[1, 1], m[0, 2], m[1, 2]]  # shapely: a,b,d,e,xoff,yoff
     geoms = [affine_transform(g, aff) for g in sub.geometry.to_numpy()]
+    geoms = shapely.transform(np.asarray(geoms, dtype=object),
+                              lambda coords: np.round(coords, _COORD_DECIMALS), include_z=False)
     geometry = ga.as_geoarrow(ga.array([g.wkb for g in geoms]))
     cell_index = _cell_index(table, list(sub.index))
     table_out = pa.table({"geometry": geometry, "cell_index": pa.array(cell_index, type=pa.int32())})

@@ -7,7 +7,7 @@ import RerunEditor from './RerunEditor';
 import { useRerunEditor } from '../hooks/useRerunEditor';
 
 export default function ComputeDetail() {
-  const { selectedComputeId, sessionState, activeSessionId, setSelectedComputeId } = useAppStore();
+  const { selectedComputeId, sessionState, activeSessionId, setSelectedComputeId, jobLogs } = useAppStore();
   const [log, setLog] = useState<string>('');
 
   const item = sessionState?.app_state.compute_history.find(
@@ -18,6 +18,9 @@ export default function ComputeDetail() {
     () => setSelectedComputeId(null)
   );
   const isPending = item?.status === 'pending';
+  // While a reader/compute runs its stored log is empty (delivered at completion), so
+  // fall back to the live buffer streamed over `job.log` (transport/livelog.py).
+  const shownLog = log || (selectedComputeId ? jobLogs[selectedComputeId] : '') || '';
 
   useEffect(() => {
     if (!activeSessionId || !selectedComputeId || !item) return;
@@ -96,11 +99,11 @@ export default function ComputeDetail() {
             </section>
           )}
 
-          {log && (
+          {shownLog && (
             <section className="flex-1">
               <h3 className="text-xs font-mono text-muted uppercase tracking-wide mb-2">Log</h3>
               <AnsiLog
-                text={log}
+                text={shownLog}
                 className="bg-bg border border-border rounded p-3 text-xs font-mono text-muted overflow-auto max-h-64 whitespace-pre-wrap"
               />
             </section>

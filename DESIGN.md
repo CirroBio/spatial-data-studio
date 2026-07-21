@@ -636,7 +636,7 @@ pyramid (`backend/app/imaging.py`): a coarse whole-image base thumbnail plus
 level-of-detail tiles for the current viewport, so only what's on screen at the
 resolution it needs is fetched, and zooming reaches full resolution. Served by `GET
 /api/sessions/{id}/image/{element}/tile/{level}/{col}/{row}?channels=` (composited
-PNGs, 512px tiles, LRU-cached); `…/info` reports pyramid levels, tile size, and a
+WebP, 512px tiles, LRU-cached); `…/info` reports pyramid levels, tile size, and a
 `pixel_to_world` affine.
 
 Because a table's `obsm["spatial"]` and its image can live in different coordinate
@@ -697,26 +697,26 @@ The server advertises this per image in `/image/{element}/info` (`client_composi
 gated by `SDS_CLIENT_IMAGE_COMPOSITING` (**default off**, opt-in with `=1`) and a channel
 cap `SDS_CLIENT_IMAGE_MAX_CHANNELS` (default 6). Above the cap, or for a canonical image
 with no rebuilt raster store (§9.3), `client_compositing` is false and the client falls
-back to the **server-composited PNG tiles** (§9.3) — the same additive percentile-normalized
+back to the **server-composited WebP tiles** (§9.3) — the same additive percentile-normalized
 blend. A dev-only escape hatch `localStorage['sds:disableClientCompositing']='1'` also forces
-the PNG path.
+the WebP tile path.
 
 The client path streams full-resolution tiles with a **custom tiled layer** rather than Viv's
 `MultiscaleImageLayer`: that tiled layer's deck.gl `TileLayer` never updates its tileset under
 our world-coordinate `OrthographicView` + non-unit `pixel_to_world` scale (Xenium ~0.2125
 um/px), so it renders nothing. Instead `useVivImageLayer.ts` reuses the exact
-world-coordinate tile selection the PNG path uses (`useImageTiles`: pick the pyramid level for
+world-coordinate tile selection the WebP tile path uses (`useImageTiles`: pick the pyramid level for
 the current zoom, inverse-affine the viewport to the visible tile bbox) and renders a Viv
 `XRLayer` per visible tile — fetching raw channel data via the pyramid `PixelSource`
 (`loader[level].getTile`) and compositing on the GPU — over a coarse Viv `ImageLayer` base so
 the canvas is never blank while detail streams. Every XRLayer shares one level-0 pixel->world
 `modelMatrix` and expresses its bounds in level-0 pixels, so the scaled/rotated affine
 positions each tile exactly where the points are. Bounds use `[px0, py1, px1, py0]`
-(row-0 side `py0` as `bounds[3]`=top, matching the PNG path's `quad`): this app's world /
+(row-0 side `py0` as `bounds[3]`=top, matching the WebP tile path's `quad`): this app's world /
 `OrthographicView` is y-up (a cell at world y=0 sits at the screen bottom), so image row 0
 (pixel py=0 → world y=0 via the affine) must land at the bottom to align with the points. Deep zoom fetches only the visible finest-level tiles
 (a ~3x3 grid of level-0 tiles at high zoom), so there is no resolution penalty versus the
-PNG path. It is **on by default** (`SDS_CLIENT_IMAGE_COMPOSITING`, disable with `=0`);
+WebP tile path. It is **on by default** (`SDS_CLIENT_IMAGE_COMPOSITING`, disable with `=0`);
 verified live across single- and multi-channel fluorescence (additive-on-black), RGB/H&E
 true-color passthrough, deep-zoom streaming, and image<->points alignment. See `docs/CONTRACT.md` for the info/route schemas. The snapshot viewer and
 its schema are unchanged by this dual path.
@@ -1253,7 +1253,7 @@ Arrow IPC (binary). See `docs/CONTRACT.md` for the full contract.
 | `GET` | `/api/sessions/{id}/data/{fieldPath}` | **Arrow IPC** stream of a field |
 | `GET` | `/api/sessions/{id}/elements` | Data-inspector element inventory |
 | `GET` | `/api/sessions/{id}/table?path=&offset=&limit=` | Data-inspector dataframe page |
-| `GET` | `/api/sessions/{id}/image/{element}/tile/{level}/{col}/{row}?channels=` | Image pyramid tile (PNG) |
+| `GET` | `/api/sessions/{id}/image/{element}/tile/{level}/{col}/{row}?channels=` | Image pyramid tile (WebP) |
 | `GET` | `/api/sessions/{id}/image/{element}/info` | Pyramid levels, tile size, `pixel_to_world` |
 | `POST` | `/api/sessions/{id}/snapshot` | Save a snapshot (writes `.sview.json` + `.html`); returns `{status,name,url,html}` |
 | `GET` | `/api/snapshots` | List saved snapshots (`checkpoint_name`, `schema_version`, `html`, …) |
@@ -1271,15 +1271,26 @@ each tagged by `session_id`, with a monotonic id so a reconnecting client resume
 idle timeout) does not silently drop the connection — without it a deployed client stops
 receiving updates until a reload, even though local dev (no load balancer) works fine.
 
+**Polling fallback.** Some deployments front the app with a proxy that rejects the SSE
+`text/event-stream` content type outright (a JSON-only auth gateway responds 406) or
+buffers the stream, so SSE never delivers. `GET /api/events/poll?after=<id>` returns the
+same events off the in-memory ring as `application/json` (`{last_id, events}`), which such
+a proxy passes through; the client replays them through the identical event handlers,
+seeding its cursor from `last_id`. The endpoint is **lock-free** — it reads the event
+ring, never a session lock — so it stays responsive while a compute job holds the write
+lock. The client switches to it only when the browser reports the `EventSource` fatally
+closed (a 406 does not auto-reconnect), so SSE remains the path wherever it works.
+
 | Event | Payload | Consumer effect |
 |---|---|---|
 | `job.queued` / `job.started` | jobId (+ descriptor) | Update queue list / mark RUNNING |
 | `job.completed` | jobId, structural_diff | Refetch changed fields; invalidate dependents |
 | `job.failed` | jobId | Surface the error; keep the row for inspect/remove; offer log |
+| `job.log` | jobId, chunk | Append to the job's live-log buffer (read bootstrap only) so the import UI streams the reader's log; dropped on completion |
 | `plot.drawn` / `plot.invalidated` | plotId(s) | Enable figure / flag for redraw |
 | `display.updated` | displayId, spec | Re-derive canvas |
 | `region.updated` | regions | Refresh annotations panel + coloring |
-| `session.loading` | load_id, message, pct? | Show live progress in the New Session load overlay (no session id yet; routed by client nonce) |
+| `session.loading` | load_id, message, pct?, log? | Show live progress in the New Session load overlay (no session id yet; routed by client nonce); a `log` chunk is the reader's live output, appended below the milestone message |
 | `session.created` | sessionId (child) | Add to lineage |
 | `session.removed` | sessionId, reason | Prune from list; if it was active and reason≠subset, clear the view |
 | `resource.sample` | global + per-session RSS, CPU | Update resource strip |
@@ -1444,7 +1455,10 @@ corollary: this one process is a single point of failure.
 
 - Set the per-worker ceiling **strictly below the container cgroup limit** so the app
   raises a catchable `MemoryError` before the OOM killer fires. Admission checks evaluate
-  against the container limit.
+  against the container limit, which is **auto-detected from the cgroup** (v2 `memory.max`,
+  then v1 `memory.limit_in_bytes`) when `SDS_CONTAINER_MEM_MB` is unset — so an ECS task or
+  `docker run --memory` needs no separate env var — and falls back to 8192 MiB when the
+  container has no memory limit.
 - **Liveness** `/api/healthz` / **readiness** `/api/readyz`. The container
   `HEALTHCHECK` probes `/api/readyz` so it reports healthy only once the operation
   registry has built and requests will succeed; the start period covers that build

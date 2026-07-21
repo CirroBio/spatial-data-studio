@@ -3,6 +3,7 @@ its attrs state (DESIGN §11.1). Compute mutates in place; the queue is strictly
 serial (§6.2). A read/write lock keeps async data serving off a half-mutated
 object (§20.2).
 """
+import contextlib
 import queue
 import shutil
 import threading
@@ -15,6 +16,8 @@ from pathlib import Path
 from . import appstate
 from .adapter import ADAPTER
 from ..config import within_data_dir
+from ..registry.introspect import REGISTRY
+from ..transport import livelog
 from ..transport.sse import BUS
 
 
@@ -411,7 +414,13 @@ class Session:
         # the last-committed object during a job instead of blocking on the write lock
         # for its entire duration (DESIGN §20.2). Only the commit below mutates the live
         # object, held under a brief write lock.
-        result = ADAPTER.execute(descriptor, self)
+        # A read bootstrap can run for minutes; stream its log to the client live so the
+        # import spinner shows progress (transport/livelog.py). Other jobs just buffer.
+        fn = REGISTRY.get(f"{descriptor['namespace']}.{descriptor['function']}")
+        target = (livelog.job_target(self.id, job_id)
+                  if fn is not None and fn.effect_class == "read" else contextlib.nullcontext())
+        with target:
+            result = ADAPTER.execute(descriptor, self)
 
         if result.status == "failed":
             # A failed read bootstrap (no object ever adopted) leaves the session unusable.

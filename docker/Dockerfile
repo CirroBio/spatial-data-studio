@@ -83,9 +83,9 @@ EXPOSE 8888
 
 # Runtime env defaults (overridden in docker-compose or docker run -e). SDS_DATA_DIR is
 # left unset so it defaults to $HOME (the single read-write data dir: inputs + checkpoints
-# + snapshots).
+# + snapshots). SDS_CONTAINER_MEM_MB is left unset so the memory limit auto-detects from
+# the container cgroup (ECS task memory / `--memory` / `mem_limit`); set it only to override.
 ENV SDS_STATIC_DIR=/app/spa \
-    SDS_CONTAINER_MEM_MB=8192 \
     SDS_WORKER_CEILING_MB=6144 \
     SDS_MAX_SESSIONS=8 \
     SDS_ADMISSION_PCT=0.80 \

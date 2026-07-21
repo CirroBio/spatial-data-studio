@@ -11,7 +11,8 @@ core, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 - **Backend** — FastAPI + uvicorn (`backend/app`). Holds one in-memory
   `SpatialData` object per session, runs compute/plot jobs on a per-session FIFO
-  worker thread, and serves field data as Apache Arrow IPC and image tiles as PNGs.
+  worker thread, and serves field data as Apache Arrow IPC and image tiles as WebP
+  (Arrow and JSON responses are gzip-encoded; see "Response compression" in `docs/CONTRACT.md`).
 - **Frontend** — React + TypeScript + Vite + Tailwind + Radix + deck.gl
   (`frontend/src`), a single-page app that renders cell-scale data in WebGL and
   drives all interaction.
@@ -55,7 +56,8 @@ backend/    FastAPI app
   app/schemas/    pydantic request-body schemas (annotations.py, kept in sync with
                   frontend/src/schemas/annotations.ts's zod schema)
   app/transport/  arrow (field -> Arrow IPC), tables (element inventory + dataframe page JSON),
-                  annotations (shape-annotation read/JSON conversion), sse
+                  annotations (shape-annotation read/JSON conversion), sse, livelog
+                  (streams a running reader's log to the client live during import)
   app/recipes/    curated analysis recipes — JSON bundle files, discovered at startup
   app/persistence/ store (.zarr / .zarr.zip)
   app/imaging.py  tiled image pyramid + channel compositing + coordinate reconciliation;
@@ -63,7 +65,7 @@ backend/    FastAPI app
                   path (raster_base_url, zarr_group_path, contrast_limits, is_rgb)
   app/rasters.py  ingest-time re-tiling into a tile-chunked sharded pyramid; the resulting
                   per-session on-disk zarr store is also served raw (see the raster route)
-                  for client-side (Viv) GPU compositing, with PNG tiles as the fallback
+                  for client-side (Viv) GPU compositing, with WebP tiles as the fallback
   app/snapshots.py JSON snapshot-config write/list
   app/datasets.py saved-checkpoint scan for the load/upload pickers (prewarmed cache)
   app/prewarm.py  background async queue that warms slow first-open menu lists off the event loop
@@ -91,6 +93,7 @@ Component-level notes: [`backend/README.md`](backend/README.md),
 | Expose more of a library, or add a library | `backend/app/registry/library_catalog.yaml` + `library_meta.yaml` | [DESIGN.md](DESIGN.md) §4.3 |
 | Improve a parameter's widget/binding everywhere it appears | `backend/app/registry/terms.yaml` | [DESIGN.md](DESIGN.md) §4.4 |
 | Change the REST/SSE/Arrow API | `backend/app/main.py` + `backend/app/transport/` | [docs/CONTRACT.md](docs/CONTRACT.md) |
+| Change what streams live during import | `backend/app/transport/livelog.py` (+ `capture_log` in `registry/base.py`) | below |
 | Change session/queue/worker behavior | `backend/app/sessions/` | [DESIGN.md](DESIGN.md) §5–6 |
 | Change the checkpoint/persistence format | `backend/app/persistence/store.py` | [DESIGN.md](DESIGN.md) §3 |
 | Change the deck.gl canvas / rendering | `frontend/src/components/canvas/` | [frontend/README.md](frontend/README.md) |
@@ -98,6 +101,24 @@ Component-level notes: [`backend/README.md`](backend/README.md),
 | Change the parameter-form UI | `frontend/src/components/forms/` | — |
 | Change the snapshot viewer or its emitted schema | `backend/app/snapshots.py` + `frontend/src/components/SnapshotViewer.tsx` + `snapshot-viewer.json` | schema rule in [CLAUDE.md](CLAUDE.md) |
 | Change Cirro upload | `backend/app/cirro.py` + `frontend/src/components/CirroUploadDialog.tsx` | — |
+
+### Live import logging
+
+A reader can run for minutes; `transport/livelog.py` streams its log to the client as
+it runs so the import UI shows progress instead of a frozen spinner. The full log is
+still captured and delivered at completion — this only adds a live tap.
+
+The session worker sets an ambient sink (`livelog.job_target`) around a read-bootstrap
+job; `capture_log` (`registry/base.py`) tees each captured write to it, published as
+`job.log` (`{session_id, job_id, chunk}`). The custom `.zarr` reader runs in the worker
+thread, so it publishes directly. Library readers (spatialdata-io Xenium/Visium/…) run
+in the loky child, which can't reach the bus: `kernel.run_library_call` opens a
+`livelog.child_log_stream` (a `multiprocessing.Manager` queue + a drainer thread) for
+read calls, the child's `capture_log(sink=queue.put)` pushes lines onto it, and the
+parent drainer forwards them to the bus. The checkpoint-load path (`manager.create_from_load`)
+uses `forward_load_logs(load_id)`, routing lines onto the existing `session.loading`
+channel (`log` field) since no session id exists yet. The frontend accumulates these in
+per-job / per-load buffers (`sessionStore`) and renders them with `AnsiLog`.
 
 ## Local dev environment
 
@@ -122,12 +143,12 @@ config set there reaches the backend the same way docker compose's auto-loaded
 
 Client-side (Viv) image compositing is **on by default** (disable with
 `SDS_CLIENT_IMAGE_COMPOSITING=0`); `SDS_CLIENT_IMAGE_MAX_CHANNELS` (default `6`) caps the
-channels the browser will composite before falling back to PNG tiles. `useVivImageLayer.ts`
-streams full-resolution tiles: it reuses the PNG path's world-coordinate tile selection
+channels the browser will composite before falling back to WebP tiles. `useVivImageLayer.ts`
+streams full-resolution tiles: it reuses the WebP tile path's world-coordinate tile selection
 (`useImageTiles`) and renders a Viv `XRLayer` per visible tile (raw channels from the pyramid
 `PixelSource.getTile`, GPU-composited) over a coarse base `XRLayer` (from `getRaster` of the
 coarsest single-texture level). Both use `[px0, py1, px1, py0]` bounds (row-0 side as
-`bounds[3]`=top, matching the PNG `quad`): the world/OrthographicView is y-up, so image row 0
+`bounds[3]`=top, matching the WebP tile `quad`): the world/OrthographicView is y-up, so image row 0
 (world y=0) must land at the screen bottom to align with the points. Viv's tiled `MultiscaleImageLayer` is deliberately NOT
 used: its deck.gl `TileLayer` never updates its tileset under our world-coordinate
 `OrthographicView` + non-unit `pixel_to_world` scale, so it renders nothing. `run.sh`
@@ -195,6 +216,10 @@ in [`docker/README.md`](docker/README.md).
   intact.
 - `cd backend && PYTHONPATH=. python test_schema_gate.py` — dataset-free snapshot
   schema gate (see the schema-versioning rule in [CLAUDE.md](CLAUDE.md)).
+- `cd backend && PYTHONPATH=. python test_compression.py` — dataset-free unit test
+  for `SelectiveGZipMiddleware`: which content types compress, round-trip/passthrough
+  correctness, and the regression guard that gzip runs off the event loop (a
+  concurrent request is not stalled for the whole compress on the single worker).
 - `cd frontend && npx tsc --noEmit -p tsconfig.app.json && npm run build` — typecheck
   + build.
 - `cd frontend && npm run check:tours` — static guard that every guided-tour anchor

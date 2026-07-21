@@ -1,7 +1,7 @@
 """Image serving for the canvas background (DESIGN §9.2).
 
-Large sections (Xenium: ~34k x 14k px, multi-GB) can't ship as one PNG, so we
-serve the SpatialData multiscale pyramid as tiles: deck.gl requests only the
+Large sections (Xenium: ~34k x 14k px, multi-GB) can't ship as one image, so we
+serve the SpatialData multiscale pyramid as WebP tiles: deck.gl requests only the
 tiles visible at the current zoom, from the level whose native resolution matches
 the screen. A single coarse thumbnail is still served as an always-present base
 layer under the tiles.
@@ -19,9 +19,17 @@ from collections import OrderedDict
 import numpy as np
 
 TILE_SIZE = 512
-_TILE_CACHE_MAX = 512  # composited tile PNGs kept in memory (LRU)
+_TILE_CACHE_MAX = 512  # composited tile images kept in memory (LRU)
 
-# element pixels -> composited tile PNG bytes, and element -> per-channel norm.
+# Composited display tiles ship as WebP, not PNG: these are already a lossy
+# display render (contrast-clipped uint8 RGB), so lossy encoding costs no source
+# fidelity and is ~10-16x smaller on the wire than PNG. Browsers decode WebP
+# natively via the <img> tile path, so the frontend needs no change.
+TILE_IMAGE_FORMAT = "WEBP"
+TILE_IMAGE_MEDIA_TYPE = "image/webp"
+TILE_WEBP_QUALITY = 80
+
+# element pixels -> composited tile image bytes, and element -> per-channel norm.
 # Keyed by (id(sdata), ...). id() is only unique among *live* objects, so entries
 # MUST be evicted when a session closes (see evict_caches): otherwise they leak, and
 # a later session whose sdata is allocated at the same address would read another
@@ -330,9 +338,9 @@ def image_info(sdata, element, table=None) -> dict:
             "tile_size": TILE_SIZE}
 
 
-def tile_png(sdata, element, level: int, col: int, row: int,
-             channel_colors: dict[int, tuple[int, int, int]] | None = None) -> bytes:
-    """One TILE_SIZE tile at pyramid `level`, tile grid (col, row). Cached."""
+def tile_image(sdata, element, level: int, col: int, row: int,
+               channel_colors: dict[int, tuple[int, int, int]] | None = None) -> bytes:
+    """One TILE_SIZE tile at pyramid `level`, tile grid (col, row), WebP-encoded. Cached."""
     chanspec = tuple(sorted(channel_colors.items())) if channel_colors else None
     key = (id(sdata), element, level, col, row, chanspec)
     cached = _tile_cache.get(key)
@@ -352,19 +360,19 @@ def tile_png(sdata, element, level: int, col: int, row: int,
     data = np.asarray(region.data if hasattr(region, "data") else region)
     hwc = _composite(data, _channel_norm(sdata, element), channel_colors, rgb=_is_rgb(sdata, element))
     buf = io.BytesIO()
-    Image.fromarray(hwc).save(buf, format="PNG")
-    png = buf.getvalue()
+    Image.fromarray(hwc).save(buf, format=TILE_IMAGE_FORMAT, quality=TILE_WEBP_QUALITY)
+    encoded = buf.getvalue()
 
-    _tile_cache[key] = png
+    _tile_cache[key] = encoded
     if len(_tile_cache) > _TILE_CACHE_MAX:
         _tile_cache.popitem(last=False)
-    return png
+    return encoded
 
 
-def thumbnail_png(
+def thumbnail_image(
     sdata, element, max_px: int = 2048, channel_colors: dict[int, tuple[int, int, int]] | None = None
 ) -> bytes:
-    """Whole-image thumbnail from the coarsest level (base layer / snapshots)."""
+    """Whole-image thumbnail from the coarsest level (base layer), WebP-encoded."""
     from PIL import Image
     arr = _image_array(sdata, element)
     data = np.asarray(arr.data if hasattr(arr, "data") else arr)
@@ -372,7 +380,7 @@ def thumbnail_png(
     img = Image.fromarray(hwc)
     img.thumbnail((max_px, max_px))
     buf = io.BytesIO()
-    img.save(buf, format="PNG")
+    img.save(buf, format=TILE_IMAGE_FORMAT, quality=TILE_WEBP_QUALITY)
     return buf.getvalue()
 
 

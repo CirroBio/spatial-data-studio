@@ -48,6 +48,20 @@ export async function getSessions(): Promise<{ sessions: SessionSummary[] }> {
   return res.json() as Promise<{ sessions: SessionSummary[] }>;
 }
 
+// Polling fallback for the SSE stream (useSSE) when a fronting proxy rejects
+// text/event-stream. Returns the same events off the backend ring; `after` is the
+// last id the client processed (omit to establish a baseline without replay).
+export interface PolledEvent {
+  id: number;
+  event: string;
+  data: unknown;
+}
+export async function pollEvents(after?: number): Promise<{ last_id: number; events: PolledEvent[] }> {
+  const q = after === undefined ? '' : `?after=${after}`;
+  const res = await apiFetch(`/api/events/poll${q}`);
+  return res.json() as Promise<{ last_id: number; events: PolledEvent[] }>;
+}
+
 export type NewSessionSource =
   | { kind: 'load'; path: string }
   | { kind: 'read'; namespace: string; function: string; params: Record<string, unknown> };

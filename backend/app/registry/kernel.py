@@ -125,7 +125,8 @@ def _child_plot(fn, injected, bound, adata, sdata):
             "changed_facets": _facet_values(adata, sdata, changed), "changed_fields": fields}
 
 
-def _child_library_call(library, path, effect_class, injected_order, bound, adata, sdata, image):
+def _child_library_call(library, path, effect_class, injected_order, bound, adata, sdata, image,
+                        log_queue=None):
     fn = _resolve_callable(library, path)
     values = {"adata": adata, "sdata": sdata, "image": image}
     injected = [values[kind] for kind in injected_order]
@@ -133,8 +134,11 @@ def _child_library_call(library, path, effect_class, injected_order, bound, adat
     if effect_class == "plot":
         return _child_plot(fn, injected, bound, adata, sdata)
 
+    # A read bootstrap streams its log back to the parent live (loky child → Manager
+    # queue → parent drainer → SSE); other calls just buffer (log_queue is None).
+    sink = log_queue.put if log_queue is not None else None
     shape_before = adata.shape if (effect_class == "compute" and adata is not None) else None
-    with capture_log() as buf:
+    with capture_log(sink=sink) as buf:
         try:
             before = keyset(adata, sdata) if effect_class == "compute" else None
             ret = fn(*injected, **bound)
@@ -189,10 +193,15 @@ def _child_mutate(mutate, adata, sdata):
 # event loop — concurrent.futures/loky's wait releases the GIL) -------------
 
 def run_library_call(*, library, path, effect_class, injected_order, bound, adata, sdata, image) -> dict:
+    from ..transport import livelog
     pre = _capture_transforms(sdata) if sdata is not None else {}
-    future = compute_pool.executor().submit(
-        _child_library_call, library, path, effect_class, injected_order, bound, adata, sdata, image)
-    return _restore_transforms(future.result(), pre)
+    # Stream a read bootstrap's log to the client as it runs; nothing else streams.
+    sink = livelog.current_sink() if effect_class == "read" else None
+    with livelog.child_log_stream(sink) as log_queue:
+        future = compute_pool.executor().submit(
+            _child_library_call, library, path, effect_class, injected_order, bound,
+            adata, sdata, image, log_queue)
+        return _restore_transforms(future.result(), pre)
 
 
 def run_mutate(mutate, adata, sdata) -> dict:

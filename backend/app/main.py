@@ -14,6 +14,7 @@ from .sessions.manager import SessionManager
 from .transport.sse import BUS
 from .transport import arrow
 from .transport import tables
+from .transport.compression import SelectiveGZipMiddleware
 from .prewarm import PREWARM
 from . import datasets
 from . import imaging
@@ -27,6 +28,8 @@ _READY = False
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global MANAGER, _READY
+    _log.info("container memory limit: %d MiB (source: %s)",
+              config.CONTAINER_MEM_MB, config.CONTAINER_MEM_SOURCE)
     REGISTRY.build()
     MANAGER = SessionManager(REGISTRY)
     BUS.bind_loop(asyncio.get_running_loop())
@@ -71,6 +74,7 @@ async def _resource_loop():
 
 
 app = FastAPI(title="Spatial Data Studio", lifespan=lifespan)
+app.add_middleware(SelectiveGZipMiddleware)
 
 
 def _mgr() -> SessionManager:
@@ -171,7 +175,7 @@ async def create_session(body: dict):
 
     try:
         if source.get("kind") == "load":
-            sess = await _in_executor(_mgr().create_from_load, source["path"], name, _progress)
+            sess = await _in_executor(_mgr().create_from_load, source["path"], name, _progress, load_id)
         elif source.get("kind") == "read":
             # squidpy `read` namespace or spatialdata-io readers (namespace `io`)
             sess = _mgr().create_from_read(
@@ -855,13 +859,13 @@ async def image_thumbnail(sid: str, element: str, max_px: int = 2048, channels: 
     channel_colors = imaging.parse_channel_colors(channels)
 
     def _render():
-        return imaging.thumbnail_png(sess.sdata, element, max_px, channel_colors)
+        return imaging.thumbnail_image(sess.sdata, element, max_px, channel_colors)
 
     try:
-        png = await _render_image(sess, _render)
+        image = await _render_image(sess, _render)
     except KeyError as e:
         raise HTTPException(404, str(e))
-    return Response(content=png, media_type="image/png",
+    return Response(content=image, media_type=imaging.TILE_IMAGE_MEDIA_TYPE,
                     headers={"Cache-Control": "public, max-age=3600"})
 
 
@@ -872,13 +876,13 @@ async def image_tile(sid: str, element: str, level: int, col: int, row: int,
     channel_colors = imaging.parse_channel_colors(channels)
 
     def _render():
-        return imaging.tile_png(sess.sdata, element, level, col, row, channel_colors)
+        return imaging.tile_image(sess.sdata, element, level, col, row, channel_colors)
 
     try:
-        png = await _render_image(sess, _render)
+        image = await _render_image(sess, _render)
     except KeyError as e:
         raise HTTPException(404, str(e))
-    return Response(content=png, media_type="image/png",
+    return Response(content=image, media_type=imaging.TILE_IMAGE_MEDIA_TYPE,
                     headers={"Cache-Control": "public, max-age=3600"})
 
 
@@ -970,6 +974,17 @@ async def events(request: Request):
 
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.get("/api/events/poll")
+async def events_poll(after: int | None = None):
+    """JSON polling fallback for clients behind a proxy that rejects or buffers the
+    SSE stream (e.g. a gateway that only content-negotiates application/json). Returns
+    the same events off the in-memory ring; the client replays them through the same
+    handlers as SSE, seeding its cursor from `last_id`. Lock-free: reads the event
+    ring, never a session lock, so it stays responsive while a compute job runs."""
+    last_id, events = BUS.events_since(after)
+    return {"last_id": last_id, "events": events}
 
 
 # The backend exposes no WebSocket endpoints — live updates use SSE (/api/events).
