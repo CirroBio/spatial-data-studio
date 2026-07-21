@@ -23,6 +23,9 @@ import { ZOOM_LIMITS } from './canvas/viewFit';
 
 const DEFAULT_ROTATION_X = 25;
 const SETTLE_MS = 200;
+// Image layers must not write depth; the 2D scatter's overlap-merge owns the depth
+// buffer (see buildSpotLayer). Mirrors useImageTiles / useVivImageLayer.
+const IMAGE_PARAMS = { depthWriteEnabled: false, depthCompare: 'always' as const };
 
 type ViewState = OrthographicViewState | OrbitViewState;
 interface Bitmap { image: ImageData; bounds: ReturnType<typeof quad> }
@@ -259,8 +262,11 @@ export default function SnapshotViewer({ url }: Props) {
   // handles overlapping cells at every zoom without shipping geometry.
   const layers = useMemo(() => {
     const result: Layer[] = [];
-    if (base) result.push(new BitmapLayer({ id: 'snap-base', image: base.image, bounds: base.bounds }));
-    if (detail) result.push(new BitmapLayer({ id: 'snap-detail', image: detail.image, bounds: detail.bounds }));
+    // Same no-depth params the live canvas gives its image layers (useImageTiles /
+    // useVivImageLayer): the image must not write depth, or it culls the 2D scatter's
+    // fragment-depth overlap-merge (see buildSpotLayer) and the points vanish.
+    if (base) result.push(new BitmapLayer({ id: 'snap-base', image: base.image, bounds: base.bounds, parameters: IMAGE_PARAMS }));
+    if (detail) result.push(new BitmapLayer({ id: 'snap-detail', image: detail.image, bounds: detail.bounds, parameters: IMAGE_PARAMS }));
     if (config && positions && colors) {
       result.push(...buildSpotLayer(positions, colors, {
         pointSize: config.render.point_size,

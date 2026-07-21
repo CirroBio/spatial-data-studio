@@ -177,7 +177,7 @@ PlotEntry = {id, namespace:"pl", function, params, status:"pending|queued|runnin
 ### Snapshot config (`<name>-<hash>.sview.json`)
 Written by `POST /api/sessions/{id}/snapshot` and read by the shared viewer.
 ```jsonc
-{ "schema_version": "1.1.1",           // semver string, == snapshot-viewer.json `version`
+{ "schema_version": "1.1.2",           // semver string, == snapshot-viewer.json `version`
   "kind": "spatial",                   // "spatial" | "embedding"
   "label": "visium_hne",
   "created": "ISO8601",
