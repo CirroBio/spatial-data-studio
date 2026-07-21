@@ -1457,8 +1457,10 @@ corollary: this one process is a single point of failure.
   raises a catchable `MemoryError` before the OOM killer fires. Admission checks evaluate
   against the container limit, which is **auto-detected from the cgroup** (v2 `memory.max`,
   then v1 `memory.limit_in_bytes`) when `SDS_CONTAINER_MEM_MB` is unset — so an ECS task or
-  `docker run --memory` needs no separate env var — and falls back to 8192 MiB when the
-  container has no memory limit.
+  `docker run --memory` needs no separate env var — and falls back to the host's total
+  physical RAM when the container has no memory hard-limit (a soft `memoryReservation`, or a
+  bare `docker run`), so admission tracks what the container may actually use rather than a
+  stale 8 GiB default (8192 MiB only if physical memory can't be read).
 - **Liveness** `/api/healthz` / **readiness** `/api/readyz`. The container
   `HEALTHCHECK` probes `/api/readyz` so it reports healthy only once the operation
   registry has built and requests will succeed; the start period covers that build

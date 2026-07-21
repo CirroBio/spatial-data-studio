@@ -40,18 +40,33 @@ def _cgroup_mem_limit_mb() -> int | None:
     return None
 
 
+def _host_mem_mb() -> int | None:
+    """Total physical RAM in MiB, or None if it can't be read."""
+    try:
+        import psutil
+        return int(psutil.virtual_memory().total // (1024 * 1024))
+    except Exception:
+        return None
+
+
 def _container_mem_mb() -> tuple[int, str]:
     """(limit in MiB, source) for admission accounting. An explicit SDS_CONTAINER_MEM_MB
     wins — including 0, which disables the memory percentage (see manager._rss_fraction).
-    Otherwise auto-detect from the cgroup, falling back to 8192 MiB when the container
-    runs without a memory limit (e.g. a bare `docker run`)."""
+    Otherwise auto-detect from the cgroup hard-limit. When there is no hard limit — an
+    ECS task with only a soft `memoryReservation`, `docker run` without `--memory` — the
+    container may use the host's full RAM, so fall back to total physical memory (a 64 GiB
+    box then admits against 64 GiB, not a stale 8 GiB default). 8192 MiB is a last resort
+    only if physical memory can't be read."""
     env = os.environ.get("SDS_CONTAINER_MEM_MB")
     if env is not None:
         return int(env), "SDS_CONTAINER_MEM_MB"
     detected = _cgroup_mem_limit_mb()
     if detected is not None:
         return detected, "cgroup"
-    return 8192, "default (no cgroup limit)"
+    host = _host_mem_mb()
+    if host is not None:
+        return host, "host physical memory (no cgroup limit)"
+    return 8192, "default (no cgroup limit, host RAM unknown)"
 
 
 class Config:

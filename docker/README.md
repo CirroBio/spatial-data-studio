@@ -69,16 +69,18 @@ of the container limit, so it trips *before* the OS OOM killer fires. That limit
 **auto-detected from the container's cgroup** — the same value the kernel enforces —
 so you normally do **not** need to set `SDS_CONTAINER_MEM_MB`: leave it unset and the
 app reads `--memory` / `mem_limit` / an ECS task's memory / `deploy.resources.limits.memory`
-directly. Set it explicitly only to override the detected value, or when the container
-runs with no memory limit at all (detection then falls back to 8192 MiB). The example
-above passes it just to illustrate the override.
+directly. Set it explicitly only to override the detected value. When the container runs
+with no memory hard-limit at all — a bare `docker run`, or an ECS task with only a soft
+`memoryReservation` — detection falls back to the host's **total physical RAM** (which is
+what the container may actually use), and only to 8192 MiB if physical memory can't be
+read. The example above passes it just to illustrate the override.
 
 ## Environment contract (DESIGN §19.9)
 
 | Variable                 | Default   | Purpose |
 |--------------------------|-----------|---------|
 | `SDS_DATA_DIR`           | `$HOME` (`/home/cirro`) | Single read-write data folder: input datasets, saved checkpoints (`*.sdata.zarr.zip`), and snapshots (`*.sview.json`) all live here. Defaults to the image's `$HOME`, where a deployment environment mounts datasets (e.g. `$HOME/datasets`); the compose and manual-run examples override it to `/data` and mount there. |
-| `SDS_CONTAINER_MEM_MB`   | auto (cgroup, else `8192`) | Container memory limit in MiB. **Unset: auto-detected from the cgroup** (`--memory` / `mem_limit` / ECS task memory), falling back to `8192` only when the container has no memory limit. Set it to override the detected value. A value of `0` disables the memory percentage (the resource strip shows `0%` and admission control never blocks) rather than being treated as a limit. |
+| `SDS_CONTAINER_MEM_MB`   | auto (cgroup, else host RAM) | Container memory limit in MiB. **Unset: auto-detected from the cgroup** (`--memory` / `mem_limit` / ECS task memory), falling back to the host's total physical RAM when the container has no memory hard-limit (and to `8192` only if physical memory can't be read). Set it to override the detected value. A value of `0` disables the memory percentage (the resource strip shows `0%` and admission control never blocks) rather than being treated as a limit. |
 | `SDS_WORKER_CEILING_MB`  | `6144`    | Per-worker memory ceiling (must be < `SDS_CONTAINER_MEM_MB`). Triggers a catchable `MemoryError` before the OOM killer fires. |
 | `SDS_ADMISSION_PCT`      | `0.80`    | Fraction of container RAM at which new jobs, reads, and image renders are refused. |
 | `SDS_MAX_SESSIONS`       | `8`       | Maximum concurrent in-memory sessions. |
