@@ -22,8 +22,9 @@ REMOTE="${REGISTRY}/${IMAGE}:${HASH}"
 aws ecr-public get-login-password --region us-east-1 \
   | docker login --username AWS --password-stdin "$REGISTRY"
 
-# 4. Build the image (context is the repo root; Dockerfile lives under docker/).
-docker build -f docker/Dockerfile -t "$LOCAL" .
+# 4. Build the image for amd64 (deployment target; Cirro ECR runs on x86_64).
+#    Context is the repo root; Dockerfile lives under docker/.
+docker build --platform linux/amd64 -f docker/Dockerfile -t "$LOCAL" .
 
 # 5. Tag it with the remote URI.
 docker tag "$LOCAL" "$REMOTE"
