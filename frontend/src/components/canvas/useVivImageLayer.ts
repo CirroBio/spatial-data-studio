@@ -76,6 +76,12 @@ interface ChannelRaster {
 const CACHE_MAX = 240;
 const tileCache = new Map<string, ChannelRaster>();
 const tilePending = new Set<string>();
+// Last-failure time per key. The layers memo re-runs on every render, so without
+// this a tile whose fetch rejected (e.g. a slow-storage read that 503'd) would be
+// re-issued every frame — a request storm that saturates the browser's per-host
+// connection pool and starves the coords/colors reads. Back off before retrying.
+const tileFailedAt = new Map<string, number>();
+const RETRY_COOLDOWN_MS = 5000;
 
 function getTileData(
   key: string,
@@ -88,17 +94,25 @@ function getTileData(
     tileCache.set(key, hit); // LRU bump
     return hit;
   }
-  if (!tilePending.has(key)) {
-    tilePending.add(key);
-    fetchTile()
-      .then((raster) => {
-        tilePending.delete(key);
-        tileCache.set(key, raster);
-        if (tileCache.size > CACHE_MAX) tileCache.delete(tileCache.keys().next().value as string);
-        onLoad();
-      })
-      .catch(() => { tilePending.delete(key); });
-  }
+  if (tilePending.has(key)) return null;
+  const failedAt = tileFailedAt.get(key);
+  if (failedAt !== undefined && Date.now() - failedAt < RETRY_COOLDOWN_MS) return null;
+  tilePending.add(key);
+  fetchTile()
+    .then((raster) => {
+      tilePending.delete(key);
+      tileFailedAt.delete(key);
+      tileCache.set(key, raster);
+      if (tileCache.size > CACHE_MAX) tileCache.delete(tileCache.keys().next().value as string);
+      onLoad();
+    })
+    .catch(() => {
+      tilePending.delete(key);
+      tileFailedAt.set(key, Date.now());
+      // Re-render once the cooldown lapses so the tile retries instead of staying
+      // blank forever after a transient failure.
+      setTimeout(() => { tileFailedAt.delete(key); onLoad(); }, RETRY_COOLDOWN_MS);
+    });
   return null;
 }
 
@@ -162,9 +176,15 @@ export function useVivImageLayer(
   const tx = target ? target[0] : 0;
   const ty = target ? target[1] : 0;
 
-  const layers = useMemo(() => {
-    if (!enabled || failed || !loader || !imageInfo?.pixel_to_world || !imageInfo.levels.length) {
-      return [];
+  const { layers, baseReady } = useMemo(() => {
+    // Defer all Viv chunk fetching until the canvas has a viewState — i.e. until the
+    // coords have loaded and the cells are drawing. Viv's base level fans out into
+    // dozens of per-channel chunk requests; firing them at mount (before coords) lets
+    // them monopolize the browser's per-host connections and starve the coords read
+    // (measured: coords queued 30s+ behind the image storm on slow-storage deploys).
+    if (!enabled || failed || !loader || !imageInfo?.pixel_to_world
+        || !imageInfo.levels.length || !viewState || !size) {
+      return { layers: [] as Layer[], baseReady: false };
     }
     const m = imageInfo.pixel_to_world;
     const levels = imageInfo.levels;
@@ -194,6 +214,10 @@ export function useVivImageLayer(
     const modelMatrix0 = new Matrix4([a, d, 0, 0, b, e, 0, 0, 0, 0, 1, 0, c, f, 0, 1]);
 
     const result: Layer[] = [];
+    // True once the coarse whole-image texture has decoded: the signal the caller
+    // uses to hand off from the PNG fallback to Viv, so the canvas is never blank
+    // during the (slow-storage) window before the first Viv tile paints.
+    let baseReady = false;
 
     // Coarse whole-image base so the canvas is never blank while detail tiles load.
     // Finest pyramid level that fits a single texture (the coarsest always qualifies).
@@ -211,6 +235,7 @@ export function useVivImageLayer(
       bump,
     );
     if (baseRaster) {
+      baseReady = true;
       result.push(new XRLayer({
         id: `viv-image-base-${element}`,
         channelData: baseRaster,
@@ -310,11 +335,14 @@ export function useVivImageLayer(
       }
     }
 
-    return result;
+    return { layers: result, baseReady };
     // bump/tick is a render trigger; tileCache reads are keyed by the deps below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, failed, loader, imageInfo, isRgb, selections, channels, element,
       viewState, size, zoom, tx, ty, size?.width, size?.height, tick]);
 
-  return { layers, active: enabled && !failed && loader !== null };
+  // `active` (caller suppresses the PNG path when true) means Viv is actually
+  // painting the image, not merely that the pyramid metadata loaded — so the
+  // server-composited PNG base keeps covering until the first Viv texture is up.
+  return { layers, active: enabled && !failed && loader !== null && baseReady };
 }

@@ -11,6 +11,7 @@ frontend/dist-viewer/
 frontend/playwright-report/
 frontend/test-results/
 frontend/blob-report/
+frontend/*.tsbuildinfo
 
 # Data (large; fetched via scripts/prepare_test_data.py)
 test-data/

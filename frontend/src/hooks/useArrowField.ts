@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import * as arrow from 'apache-arrow';
-import { getFieldData } from '../api';
+import { getFieldData, fetchWhenIdle } from '../api';
 import { formatError } from '../lib/format';
 
 type CacheKey = string; // `${sessionId}:${fieldPath}:${version}`
@@ -58,7 +58,11 @@ export function useArrowField(
     setLoading(true);
     setError(null);
 
-    getFieldData(sessionId, fieldPath)
+    // Retry a transient 503 (session busy — most often the async checkpoint load
+    // holding the write lock on first open) so coords/colors converge once the lock
+    // frees, instead of leaving the canvas stuck on "Loading…" until an unrelated
+    // data_versions bump happens to re-trigger this effect.
+    fetchWhenIdle(() => getFieldData(sessionId, fieldPath), { signal: controller.signal })
       .then((t) => {
         if (controller.signal.aborted) return;
         cacheSet(sessionId, fieldPath, key, t);

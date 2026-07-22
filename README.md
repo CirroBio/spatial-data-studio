@@ -53,8 +53,8 @@ neighborhood. The left panel is the analysis history that produced this view.*
 
 *Customize the display — choose what colors the cells, how they render, how the plot is
 oriented (flip the horizontal/vertical axes), the zoom level (buttons plus scroll/pinch)
-and its background (light or dark), and how the tissue-image channels are tinted and
-blended.*
+and its background (light or dark), how the tissue-image channels are tinted and
+blended, and add text/shape annotations that persist with the dataset.*
 
 ![A Xenium section zoomed in, each cell drawn as its true segmentation outline and colored by Leiden cluster, over the morphology image.](docs/images/cell-outlines.jpg)
 

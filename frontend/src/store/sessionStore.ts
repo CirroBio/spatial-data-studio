@@ -11,27 +11,9 @@ import type {
   PlotEntry,
 } from '../types';
 import { isSpatialDisplay } from '../types';
-import { putDisplay, getSession, listShapeAnnotations, createShapeAnnotation, ApiError } from '../api';
+import { putDisplay, getSession, listShapeAnnotations, createShapeAnnotation, ApiError, fetchWhenIdle } from '../api';
 import type { ShapeAnnotation, ShapeGeometry, ShapeKind } from '../schemas/annotations';
 import { defaultStroke, defaultFill } from '../schemas/annotations';
-
-// A read endpoint fast-fails with 503 while a compute/plot job holds the session
-// write lock (backend: _read_locked / READ_LOCK_TIMEOUT_S). Retry the non-critical
-// refetch a few times with backoff so state converges once the job frees the lock,
-// without surfacing a transient "busy" error. Non-503 errors propagate immediately.
-async function fetchWhenIdle<T>(fn: () => Promise<T>, tries = 6, delayMs = 2000): Promise<T> {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return await fn();
-    } catch (err) {
-      if (attempt < tries && err instanceof ApiError && err.status === 503) {
-        await new Promise((r) => setTimeout(r, delayMs));
-        continue;
-      }
-      throw err;
-    }
-  }
-}
 
 // A job's status lands in whichever collection holds it; these narrow the shared
 // status union so setEntryStatus can update the right record type without a cast.

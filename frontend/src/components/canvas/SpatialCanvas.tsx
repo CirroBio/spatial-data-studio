@@ -7,7 +7,7 @@ import { useAppStore } from '../../store/sessionStore';
 import { useArrowField } from '../../hooks/useArrowField';
 import {
   getImageInfo, putDisplay, saveSnapshot, getElements,
-  updateShapeAnnotation,
+  updateShapeAnnotation, fetchWhenIdle,
 } from '../../api';
 import { reportError } from '../../lib/errors';
 import TransformEditor from '../TransformEditor';
@@ -268,13 +268,18 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
     setShapeDragPreview(null);
   }, [shapeDragTarget, shapeDragPreview, shapeAnnotations, sessionId, commitNewShape, upsertShapeAnnotation]);
 
-  // Load image info
+  // Load image info. Retry a transient 503 (session busy — the async checkpoint load
+  // holds the write lock on first open) so the image layer materializes once the lock
+  // frees; without this a single 503 here leaves imageInfo null and the image blank,
+  // since nothing else re-runs this effect after the session becomes ready.
   useEffect(() => {
-    if (display.encoding.image_layer && sessionId) {
-      getImageInfo(sessionId, display.encoding.image_layer)
-        .then(setImageInfo)
-        .catch(console.error);
-    }
+    const element = display.encoding.image_layer;
+    if (!element || !sessionId) return;
+    const controller = new AbortController();
+    fetchWhenIdle(() => getImageInfo(sessionId, element), { signal: controller.signal })
+      .then((info) => { if (!controller.signal.aborted) setImageInfo(info); })
+      .catch((err) => { if (!controller.signal.aborted) console.error(err); });
+    return () => controller.abort();
   }, [sessionId, display.encoding.image_layer]);
 
   const colorSource = useMemo(() => arrowToColorSource(colorTable), [colorTable]);
