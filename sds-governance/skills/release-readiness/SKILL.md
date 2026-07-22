@@ -3,8 +3,8 @@
 **Triggers on:** preparing a build / image for distribution.
 
 ## Steps
-1. Confirm the runtime shape: one uvicorn worker, per-worker memory ceiling below
-   the container limit (config + startup assertion). (R9)
+1. Confirm the runtime shape: one uvicorn worker; sessions never span worker
+   processes (supervisord `--workers 1`). (R9)
 2. Verify snapshots open standalone (HTML + content-hashed `assets/`) and share the
    render core. (R13)
 3. Run `scan_licenses.py`: no torch/scvi, all copyleft adjudicated in

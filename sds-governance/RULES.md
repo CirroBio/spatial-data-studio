@@ -16,7 +16,7 @@ incrementally.
 | R5 | Every function returns the contract envelope and respects `keep_failures`. | v3 | `test_contracts.py` (skip-until-`SYNTH_FIXTURE`) |
 | R6/R7 | Compute history is append-only; never `COMPLETED→QUEUED`; rerun appends. | v1 | `test_invariants.py` (R6/R7 needs a run harness) |
 | R8 | Effect class is explicit; plotting render params are managed. | v2 | `test_invariants.py::test_r8_*` |
-| R9 | One uvicorn worker; per-worker ceiling < container limit. | v1 | startup assertion (backend) |
+| R9 | One uvicorn worker; sessions never span worker processes. | v1 | supervisord `--workers 1` |
 | R10 | State-changing ops are queued mutating jobs under the write lock. | v1 | `test_invariants.py::test_r10_*` |
 | R11 | *Retired.* Governed the AI agent's context replay; the agent was removed. | v3 | — |
 | R12 | *Retired.* Governed the AI agent's meta-tool set; the agent was removed. | v3 | — |

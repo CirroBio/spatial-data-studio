@@ -83,7 +83,7 @@ def _rebuild(el, is_label: bool):
 
 def normalize_rasters(sdata, progress=None) -> tuple[str | None, dict[str, str]]:
     """Rebuild every non-canonical image/label of `sdata` into a tile-chunked 2x
-    pyramid, persist them to a fresh cache store under DATA_DIR, and rebind
+    pyramid, persist them to a fresh cache store under WORK_DIR, and rebind
     `sdata`'s elements to lazy refs into it. Returns (cache_dir, element_stores):
     the cache dir (the caller must rmtree it when the session closes, or None if
     nothing needed rebuilding) and a map from each rebuilt element's name to the
@@ -97,7 +97,7 @@ def normalize_rasters(sdata, progress=None) -> tuple[str | None, dict[str, str]]
     if not todo:
         return None, {}
 
-    cache_dir = tempfile.mkdtemp(suffix=".rasters", dir=str(config.DATA_DIR))
+    cache_dir = tempfile.mkdtemp(suffix=".rasters", dir=str(config.WORK_DIR))
     stores: dict[str, str] = {}
     # Rebuild one element at a time, freeing between: each is a full read, so writing
     # them together sums their footprints (all four Xenium rasters at once peak

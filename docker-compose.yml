@@ -17,12 +17,32 @@ services:
         source: ${SDS_DATA_HOST_DIR:-./test-data}
         target: /data
 
+    # RAM-backed working set: the unpacked .zarr.zip extract dir and the per-session
+    # normalized raster caches live on this tmpfs instead of disk, so tile/chunk reads
+    # are served from memory. Its usage counts against the memory budget (see
+    # SDS_WORK_DIR_IN_RAM), so admission trips a soft 503 before the tmpfs can grow past
+    # the container limit and trigger the OOM killer. Durable checkpoints/snapshots stay
+    # on the /data bind mount, never here.
+    # The size=10g here is only a pre-resize fallback: on startup the work-tmpfs.sh
+    # entrypoint remounts /work to SDS_WORK_TMPFS_PCT (85%) of the DETECTED memory limit,
+    # so the tmpfs autoscales with whatever memory the container is given. That remount
+    # needs CAP_SYS_ADMIN (cap_add below); without it the fallback size stands.
+    tmpfs:
+      - /work:size=10g,mode=1777
+
+    # Required so the entrypoint can remount /work at the detected size. Scoped to this
+    # single capability (not --privileged); it enables the mount syscall and nothing else.
+    cap_add:
+      - SYS_ADMIN
+
     environment:
       SDS_DATA_DIR: /data
-      # Memory: container gets 12 GB; worker ceiling is 9 GB, safely below cgroup limit
-      # so catchable MemoryError fires before the OOM killer (DESIGN §19.5)
-      SDS_CONTAINER_MEM_MB: "12288"
-      SDS_WORKER_CEILING_MB: "9216"
+      SDS_WORK_DIR: /work
+      SDS_WORK_DIR_IN_RAM: "1"
+      # Memory: container gets 12 GB (mem_limit below). SDS_CONTAINER_MEM_MB is left unset
+      # so admission auto-detects the limit from the cgroup — the same value the entrypoint
+      # sizes the tmpfs from — so raising mem_limit scales admission and the tmpfs together.
+      # The /work tmpfs is folded into that admission accounting (SDS_WORK_DIR_IN_RAM).
       SDS_MAX_SESSIONS: "4"
       SDS_ADMISSION_PCT: "0.80"
       MPLBACKEND: "Agg"

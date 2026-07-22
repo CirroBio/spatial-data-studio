@@ -379,7 +379,8 @@ export interface SessionLoadingEvent {
 export interface ResourceSample {
   global: {
     rss_mb: number;
-    rss_pct: number;
+    work_dir_mb: number;  // RAM-backed working set (0 unless WORK_DIR is tmpfs)
+    rss_pct: number;      // effective memory (RSS + work_dir_mb) as % of the limit
     cpu_pct: number;
     rasters_mb: number;
   };

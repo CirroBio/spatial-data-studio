@@ -71,12 +71,25 @@ COPY --from=spa-builder /build/frontend/dist /app/spa
 COPY docker/nginx.conf     /etc/nginx/nginx.conf
 COPY docker/supervisord.conf /etc/supervisor/conf.d/spatial-data-studio.conf
 
+# Entrypoint shim: sizes the /work tmpfs from the detected memory limit before starting
+# supervisord (needs CAP_SYS_ADMIN, granted via compose cap_add; fail-open otherwise).
+COPY docker/work-tmpfs.sh /usr/local/bin/work-tmpfs.sh
+RUN chmod +x /usr/local/bin/work-tmpfs.sh
+
 # Home directory for the app. SDS_DATA_DIR defaults to $HOME (backend/app/config.py),
 # where the deployment environment mounts datasets (e.g. $HOME/datasets). Create it and
 # run from it so the app reads/writes there when no external volume is mounted over it.
 ENV HOME=/home/cirro
 RUN mkdir -p "$HOME"
 WORKDIR $HOME
+
+# Working dir for the live session working set (unpacked archives + raster caches).
+# Created so a bare `docker run` works (on the container's writable layer, i.e. disk);
+# docker-compose mounts a tmpfs here and sets SDS_WORK_DIR_IN_RAM=1 to hold it in RAM,
+# and the work-tmpfs.sh entrypoint resizes that tmpfs to SDS_WORK_TMPFS_PCT of the
+# detected memory limit. Left in RAM mode OFF by default so a run without a tmpfs at
+# /work doesn't statvfs the whole overlay fs as if it were the app's working set.
+RUN mkdir -p /work
 
 # Expose the edge port (nginx)
 EXPOSE 8888
@@ -86,14 +99,15 @@ EXPOSE 8888
 # + snapshots). SDS_CONTAINER_MEM_MB is left unset so the memory limit auto-detects from
 # the container cgroup (ECS task memory / `--memory` / `mem_limit`); set it only to override.
 ENV SDS_STATIC_DIR=/app/spa \
-    SDS_WORKER_CEILING_MB=6144 \
+    SDS_WORK_DIR=/work \
+    SDS_WORK_TMPFS_PCT=85 \
     SDS_MAX_SESSIONS=8 \
     SDS_ADMISSION_PCT=0.80 \
     PYTHONUNBUFFERED=1 \
     MPLBACKEND=Agg
 
-# tini as PID 1; supervisor is the main process
-ENTRYPOINT ["/usr/bin/tini", "--"]
+# tini as PID 1; the work-tmpfs shim sizes /work then execs supervisord (the main process)
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/work-tmpfs.sh"]
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/supervisord.conf", "-n"]
 
 # Readiness check — generous: 60 s start period, 30 s interval, 3 retries

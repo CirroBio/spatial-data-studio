@@ -948,7 +948,12 @@ async def raster_store(sid: str, element: str, path: str, request: Request):
         if target is None or not target.is_file():
             return None
         media = "application/json" if target.name.endswith(".json") else "application/octet-stream"
-        return target.read_bytes(), media
+        cached = imaging.raster_chunk_get(sess.sdata, element, path)
+        if cached is not None:
+            return cached, media
+        data = target.read_bytes()
+        imaging.raster_chunk_put(sess.sdata, element, path, data)
+        return data, media
 
     result = await _read_locked(sess, _read)
     if result is None:

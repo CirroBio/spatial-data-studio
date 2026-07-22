@@ -32,6 +32,7 @@ import numpy as np
 import spatialdata as sd
 import zarr
 
+from ..config import config
 from ..sessions import appstate
 
 # Sharding parameters for raster (image/label) arrays. Small inner chunks keep a
@@ -130,14 +131,14 @@ def read_spatialdata_archive(path: str, progress=None):
     pct)` (optional) reports extraction/read progress; see `create_from_load`."""
     report = progress or (lambda *a, **k: None)
     if path.endswith((".zarr.tar.gz", ".zarr.tgz")):
-        extract_dir = tempfile.mkdtemp(suffix=".zarr")
+        extract_dir = tempfile.mkdtemp(suffix=".zarr", dir=str(config.WORK_DIR))
         report("Extracting checkpoint…")
         with tarfile.open(path, "r:gz") as tf:
             tf.extractall(extract_dir, filter="data")
         report("Reading data tables…")
         return sd.read_zarr(_zarr_root(extract_dir)), extract_dir, None
     if path.endswith(".zarr.zip") or (os.path.isfile(path) and zipfile.is_zipfile(path)):
-        extract_dir = tempfile.mkdtemp(suffix=".zarr")
+        extract_dir = tempfile.mkdtemp(suffix=".zarr", dir=str(config.WORK_DIR))
         expected = _expected_content_hash(path)
         if expected is None:
             report("Extracting checkpoint…")

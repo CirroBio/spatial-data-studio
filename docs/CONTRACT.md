@@ -263,5 +263,5 @@ Each event: `event: <type>`, `data: <json>`, every payload carries `session_id` 
 | `session.created` | `{session_id, summary}` |
 | `session.removed` | `{session_id, reason:"closed"|"subset"}` (closed or lasso-evicted; clients prune it from the session list) |
 | `session.errored` | `{session_id, error}` |
-| `resource.sample` | `{global:{rss_mb, rss_pct, cpu_pct, rasters_mb}, per_session:{<id>:rss_mb}}` (`rasters_mb`: total on-disk size of all sessions' normalized-raster caches) |
+| `resource.sample` | `{global:{rss_mb, work_dir_mb, rss_pct, cpu_pct, rasters_mb}, per_session:{<id>:rss_mb}}` (`rss_pct`: effective memory = RSS + RAM-backed working set, as % of the limit — the fraction the admission boundary gates on; `work_dir_mb`: WORK_DIR usage when RAM-backed, else 0; `rasters_mb`: total size of all sessions' normalized-raster caches) |
 | `memory.warning` | `{session_id?, message}` |

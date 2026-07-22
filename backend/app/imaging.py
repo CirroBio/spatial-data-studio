@@ -14,9 +14,12 @@ overlays the spots onto the image and returns the image->spot-space affine, so
 points and image line up on the canvas.
 """
 import io
+import threading
 from collections import OrderedDict
 
 import numpy as np
+
+from .config import config
 
 TILE_SIZE = 512
 _TILE_CACHE_MAX = 512  # composited tile images kept in memory (LRU)
@@ -38,14 +41,60 @@ _tile_cache: "OrderedDict[tuple, bytes]" = OrderedDict()
 _norm_cache: "OrderedDict[tuple, np.ndarray]" = OrderedDict()
 _NORM_CACHE_MAX = 256  # per-channel norm arrays kept in memory (LRU)
 
+# Raw Viv chunk bytes (the default client-compositing path). The raster_store route
+# reads one compressed chunk file per browser request; without this, panning back
+# over already-seen tiles re-reads each chunk (a syscall + read-lock round trip, and
+# a real disk read when WORK_DIR is not RAM-backed). Same (id(sdata), ...) keying as
+# the tile cache, so evict_caches drops it on the same adoption/close boundary.
+# Byte-budgeted because these bytes live in the API process heap (counted in RSS);
+# guarded by a lock since reads run under the shared — hence concurrent — read lock.
+_raster_chunk_cache: "OrderedDict[tuple, bytes]" = OrderedDict()
+_raster_chunk_lock = threading.Lock()
+_raster_chunk_bytes = 0
+_RASTER_CHUNK_BUDGET = int(config.RASTER_CHUNK_CACHE_MB * 1e6)
+
 
 def evict_caches(sdata) -> None:
     """Drop every cache entry belonging to `sdata`. Call before a session's object is
-    released so a reused id() can't serve another image's cached norm/tiles."""
+    released so a reused id() can't serve another image's cached norm/tiles/chunks."""
+    global _raster_chunk_bytes
     sid = id(sdata)
     for cache in (_tile_cache, _norm_cache):
         for key in [k for k in cache if k[0] == sid]:
             cache.pop(key, None)
+    with _raster_chunk_lock:
+        for key in [k for k in _raster_chunk_cache if k[0] == sid]:
+            _raster_chunk_bytes -= len(_raster_chunk_cache.pop(key))
+
+
+def raster_chunk_get(sdata, element: str, key: str) -> bytes | None:
+    """Cached raw chunk bytes for a Viv store read, or None on miss/disabled."""
+    if _RASTER_CHUNK_BUDGET <= 0:
+        return None
+    k = (id(sdata), element, key)
+    with _raster_chunk_lock:
+        data = _raster_chunk_cache.get(k)
+        if data is not None:
+            _raster_chunk_cache.move_to_end(k)
+        return data
+
+
+def raster_chunk_put(sdata, element: str, key: str, data: bytes) -> None:
+    """Cache raw chunk bytes, evicting the least-recently-used until under budget.
+    Skips a single chunk larger than the whole budget (it would evict everything)."""
+    global _raster_chunk_bytes
+    if _RASTER_CHUNK_BUDGET <= 0 or len(data) > _RASTER_CHUNK_BUDGET:
+        return
+    k = (id(sdata), element, key)
+    with _raster_chunk_lock:
+        if k in _raster_chunk_cache:
+            _raster_chunk_bytes -= len(_raster_chunk_cache[k])
+        _raster_chunk_cache[k] = data
+        _raster_chunk_cache.move_to_end(k)
+        _raster_chunk_bytes += len(data)
+        while _raster_chunk_bytes > _RASTER_CHUNK_BUDGET:
+            _, evicted = _raster_chunk_cache.popitem(last=False)
+            _raster_chunk_bytes -= len(evicted)
 
 
 # ---- multiscale access -----------------------------------------------------

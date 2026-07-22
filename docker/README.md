@@ -55,12 +55,23 @@ docker run -d \
   -v "$(pwd)/test-data":/data \
   -e SDS_DATA_DIR=/data \
   -e SDS_CONTAINER_MEM_MB=12288 \
-  -e SDS_WORKER_CEILING_MB=9216 \
   -e SDS_MAX_SESSIONS=4 \
+  --tmpfs /work:size=10g,mode=1777 \
+  -e SDS_WORK_DIR_IN_RAM=1 \
+  --cap-add SYS_ADMIN \
   --memory=12g \
   --memory-swap=12g \
   spatial-data-studio
 ```
+
+The `--tmpfs /work` mount holds the working set (unpacked archives + raster caches) in
+RAM (`SDS_WORK_DIR` defaults to `/work` in the image); `SDS_WORK_DIR_IN_RAM=1` folds that
+tmpfs usage into the admission accounting so the soft 503 boundary trips before the tmpfs
+can grow the container past `--memory` into an OOM kill. `--cap-add SYS_ADMIN` lets the
+`work-tmpfs.sh` entrypoint **remount `/work` to `SDS_WORK_TMPFS_PCT` (85%) of the detected
+memory limit at startup**, so the tmpfs autoscales with `--memory` instead of staying at the
+`size=` fallback. Without the capability it fails open — the `size=10g` fallback stands.
+Omit the tmpfs entirely to keep the working set on disk (the container's writable layer).
 
 `--memory` is the hard OS ceiling; `--memory-swap=12g` (equal to `--memory`)
 disables swap so a runaway allocation is OOM-killed promptly instead of thrashing
@@ -75,13 +86,16 @@ with no memory hard-limit at all — a bare `docker run`, or an ECS task with on
 what the container may actually use), and only to 8192 MiB if physical memory can't be
 read. The example above passes it just to illustrate the override.
 
-## Environment contract (DESIGN §19.9)
+## Environment contract (DESIGN §23.4)
 
 | Variable                 | Default   | Purpose |
 |--------------------------|-----------|---------|
 | `SDS_DATA_DIR`           | `$HOME` (`/home/cirro`) | Single read-write data folder: input datasets, saved checkpoints (`*.sdata.zarr.zip`), and snapshots (`*.sview.json`) all live here. Defaults to the image's `$HOME`, where a deployment environment mounts datasets (e.g. `$HOME/datasets`); the compose and manual-run examples override it to `/data` and mount there. |
+| `SDS_WORK_DIR`           | `/work` (image) / system temp | Working dir for the live session working set: the unpacked `.zarr.zip` extract dir and per-session normalized raster caches. Kept out of `SDS_DATA_DIR` so a transient `*.zarr` extract never surfaces in the dataset picker. Point it at a tmpfs mount (compose mounts `/work`) to hold the working set in RAM. |
+| `SDS_WORK_DIR_IN_RAM`    | `0` (compose: `1`) | Set to `1` when `SDS_WORK_DIR` is a **dedicated** tmpfs mount, so its usage (`os.statvfs` of the mount) is added to RSS in the admission/boundary math — otherwise tmpfs RAM is invisible to admission and could grow past the limit into an OOM kill. Leave `0` when `WORK_DIR` is on disk. |
+| `SDS_WORK_TMPFS_PCT`     | `85`      | Percentage of the detected memory limit that the `work-tmpfs.sh` entrypoint sizes the `/work` tmpfs to on startup (so the tmpfs autoscales with the container's allocation). Needs `CAP_SYS_ADMIN` (compose `cap_add`); without it the entrypoint fails open and the tmpfs keeps its mount-time `size=`. Keep it **above** `SDS_ADMISSION_PCT` so the soft 503 trips before the tmpfs ENOSPCs. |
+| `SDS_RASTER_CHUNK_CACHE_MB` | `256`  | Server-side LRU (MB) of raw Viv chunk bytes for the client-compositing raster route; caps repeat-view reads. Lives in the API-process heap (counts against RSS). `0` disables. |
 | `SDS_CONTAINER_MEM_MB`   | auto (cgroup, else host RAM) | Container memory limit in MiB. **Unset: auto-detected from the cgroup** (`--memory` / `mem_limit` / ECS task memory), falling back to the host's total physical RAM when the container has no memory hard-limit (and to `8192` only if physical memory can't be read). Set it to override the detected value. A value of `0` disables the memory percentage (the resource strip shows `0%` and admission control never blocks) rather than being treated as a limit. |
-| `SDS_WORKER_CEILING_MB`  | `6144`    | Per-worker memory ceiling (must be < `SDS_CONTAINER_MEM_MB`). Triggers a catchable `MemoryError` before the OOM killer fires. |
 | `SDS_ADMISSION_PCT`      | `0.80`    | Fraction of container RAM at which new jobs, reads, and image renders are refused. |
 | `SDS_MAX_SESSIONS`       | `8`       | Maximum concurrent in-memory sessions. |
 | `SDS_IMAGE_RENDER_CONCURRENCY` | `2` | Max image tiles/thumbnails composited at once. Caps the transient memory of a zoom/pan tile burst; renders past `SDS_ADMISSION_PCT` return 503 and the canvas keeps its coarse base layer. |
@@ -102,6 +116,7 @@ read. The example above passes it just to illustrate the override.
 | Mount     | Mode      | Purpose |
 |-----------|-----------|---------|
 | `$SDS_DATA_DIR` | read-write | Single data folder: source datasets (`.zarr`, `.zarr.zip`, Visium/Xenium raw folders), saved checkpoints (`*.sdata.zarr.zip`), and snapshots (`*.sview.json`). **Must be a persistent bind/volume** — container-local storage does not survive a restart. Mount it at whatever `SDS_DATA_DIR` points to (`$HOME` by default; the compose file uses `/data`, host path defaulting to `./test-data`, override with `SDS_DATA_HOST_DIR`). |
+| `/work` (tmpfs) | RAM | Transient working set (unpacked archives + raster caches). The compose file mounts it as a `size=10g` tmpfs with `SDS_WORK_DIR_IN_RAM=1`; the `work-tmpfs.sh` entrypoint then remounts it to `SDS_WORK_TMPFS_PCT` of the detected memory limit (needs `cap_add: SYS_ADMIN`). Nothing durable lives here, so it needs no persistence. Omit the tmpfs to keep the working set on the container's writable layer (disk). |
 
 ## Internal process tree
 

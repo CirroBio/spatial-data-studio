@@ -3,6 +3,7 @@
 sampler (§11.3). One shared process; one worker thread per session.
 """
 import copy
+import os
 import uuid
 from pathlib import Path
 
@@ -67,7 +68,7 @@ class SessionManager:
         # a read when we're already at the admission boundary. create_from_load has
         # its own size-based _check_admission since a saved store's table cost is known.
         if self.over_memory_boundary():
-            pct = self._rss_fraction()
+            pct = self._mem_fraction()
             raise RuntimeError(
                 f"read blocked: memory at {pct*100:.0f}% (>= {config.ADMISSION_PCT*100:.0f}%)")
         for k, v in descriptor.get("params", {}).items():
@@ -276,15 +277,37 @@ class SessionManager:
     def _rss_mb(self) -> float:
         return self._proc.memory_info().rss / 1e6
 
-    def _rss_fraction(self) -> float:
-        """RSS as a fraction of the container memory limit. Returns 0.0 (unknown)
-        when the limit is non-positive — e.g. SDS_CONTAINER_MEM_MB=0 in the task
-        definition — so a misconfigured limit degrades to "no percentage / never
-        blocks" instead of a ZeroDivisionError that would wedge the sampler and
-        admission on every call."""
+    def _work_dir_mb(self) -> float:
+        """RAM held by the working set (unpacked archives + raster caches) when
+        WORK_DIR is tmpfs-backed. tmpfs pages don't show up in process RSS but do
+        count against the cgroup limit the OOM killer enforces, so the boundary and
+        admission math must add them in — otherwise it would keep admitting loads,
+        jobs and tile renders until the OOM killer fires. 0.0 when WORK_DIR is on
+        disk (the default), where it isn't spending the RAM budget. O(1): reads the
+        mount's used blocks, so it stays cheap at the resource-sample cadence.
+        Assumes WORK_DIR is a dedicated mount (see config.WORK_DIR_IN_RAM)."""
+        if not config.WORK_DIR_IN_RAM:
+            return 0.0
+        try:
+            st = os.statvfs(config.WORK_DIR)
+        except OSError:
+            return 0.0
+        return (st.f_blocks - st.f_bfree) * st.f_frsize / 1e6
+
+    def _effective_mb(self) -> float:
+        """Process RSS plus the RAM-backed working set — the real memory pressure
+        spent against the container limit (see `_work_dir_mb`)."""
+        return self._rss_mb() + self._work_dir_mb()
+
+    def _mem_fraction(self) -> float:
+        """Effective memory (RSS + RAM-backed working set) as a fraction of the
+        container memory limit. Returns 0.0 (unknown) when the limit is non-positive
+        — e.g. SDS_CONTAINER_MEM_MB=0 in the task definition — so a misconfigured
+        limit degrades to "no percentage / never blocks" instead of a
+        ZeroDivisionError that would wedge the sampler and admission on every call."""
         if config.CONTAINER_MEM_MB <= 0:
             return 0.0
-        return self._rss_mb() / config.CONTAINER_MEM_MB
+        return self._effective_mb() / config.CONTAINER_MEM_MB
 
     def _resident_mb(self, sess: Session) -> float:
         if sess.sdata is None:
@@ -304,35 +327,39 @@ class SessionManager:
             raise RuntimeError(f"max concurrent sessions ({config.MAX_SESSIONS}) reached")
 
     def _check_admission(self, resident_mb: float):
-        avail = config.CONTAINER_MEM_MB - self._rss_mb()
+        avail = config.CONTAINER_MEM_MB - self._effective_mb()
         if resident_mb > avail:
             raise RuntimeError(
                 f"load blocked: estimated {resident_mb:.0f} MB exceeds available {avail:.0f} MB")
 
     def over_memory_boundary(self) -> bool:
-        """True once RSS has reached the admission boundary — the point past which
-        we refuse to start new memory-hungry work (a job, a read, a tile render)."""
-        return self._rss_fraction() >= config.ADMISSION_PCT
+        """True once effective memory has reached the admission boundary — the point
+        past which we refuse to start new memory-hungry work (a job, a read, a tile
+        render). Effective memory includes the RAM-backed working set (`_mem_fraction`)."""
+        return self._mem_fraction() >= config.ADMISSION_PCT
 
     def admit_job(self, sess: Session) -> bool:
         if self.over_memory_boundary():
-            pct = self._rss_fraction()
+            pct = self._mem_fraction()
             BUS.publish("memory.warning", {"session_id": sess.id,
-                        "message": f"RSS at {pct*100:.0f}% (>= {config.ADMISSION_PCT*100:.0f}%); job held"})
+                        "message": f"memory at {pct*100:.0f}% (>= {config.ADMISSION_PCT*100:.0f}%); job held"})
             return False
         return True
 
     def resource_sample(self) -> dict:
         sessions = list(self.sessions.values())
+        # rss_pct is the effective fraction (RSS + RAM-backed working set) that the
+        # admission boundary actually gates on; work_dir_mb is that working set (0.0
+        # unless WORK_DIR is tmpfs-backed). rss_mb stays raw process RSS.
         return {"global": {"rss_mb": round(self._rss_mb(), 1),
-                           "rss_pct": round(self._rss_fraction() * 100, 1),
+                           "work_dir_mb": round(self._work_dir_mb(), 1),
+                           "rss_pct": round(self._mem_fraction() * 100, 1),
                            "cpu_pct": self._proc.cpu_percent(),
                            "rasters_mb": round(sum(s.raster_cache_mb for s in sessions), 1)},
                 "per_session": {s.id: self._resident_mb(s) for s in sessions}}
 
 
 def _basename(path: str) -> str:
-    import os
     from ..persistence.store import strip_content_hash, strip_checkpoint_ext
     stem = strip_checkpoint_ext(os.path.basename(path.rstrip("/")))
     return strip_content_hash(stem)

@@ -140,7 +140,14 @@ kills each process group).
 and snapshots all live there; `run.sh` sets it to `data/` (or `test-data/` with
 `--test`) and it can be overridden to point at any other folder. When unset it
 defaults to `$HOME` (the container image relies on this, running from `$HOME`
-where the deployment environment mounts datasets, e.g. `$HOME/datasets`). If a `.env` file
+where the deployment environment mounts datasets, e.g. `$HOME/datasets`).
+
+The *working set* — the unpacked `.zarr.zip` extract dir and per-session normalized
+raster caches — lives separately under `SDS_WORK_DIR` (default the system temp dir; kept
+out of `DATA_DIR` so a transient `*.zarr` extract never shows up in the dataset picker).
+`run.sh` needs no change for local dev (the temp-dir default is on disk, as before). In
+Docker it is a `/work` tmpfs with `SDS_WORK_DIR_IN_RAM=1`, so the working set is held in
+RAM and its usage is folded into the admission accounting (see DESIGN §23.4). If a `.env` file
 exists at the repo root, `run.sh` sources it before launching uvicorn, so `CIRRO_*`
 config set there reaches the backend the same way docker compose's auto-loaded
 `.env` does.
@@ -157,11 +164,15 @@ coarsest single-texture level). Both use `[px0, py1, px1, py0]` bounds (row-0 si
 used: its deck.gl `TileLayer` never updates its tileset under our world-coordinate
 `OrthographicView` + non-unit `pixel_to_world` scale, so it renders nothing. `run.sh`
 requires no change. The raw-raster route
-(`/api/sessions/{id}/raster/{element}/{key}`) serves the session's on-disk normalized
-zarr store; because object-adoption, subset, and close `rmtree` that store under the
-session write lock, the route resolves the path AND reads the file bytes into memory
-while holding `sess.lock.reading()` (returning them with manual Range handling rather
-than a lazily-streamed `FileResponse`), so a read can never race a store deletion.
+(`/api/sessions/{id}/raster/{element}/{key}`) serves the session's normalized zarr store
+(on disk, or in RAM when `WORK_DIR` is a tmpfs); because object-adoption, subset, and
+close `rmtree` that store under the session write lock, the route resolves the path AND
+reads the file bytes into memory while holding `sess.lock.reading()` (returning them with
+manual Range handling rather than a lazily-streamed `FileResponse`), so a read can never
+race a store deletion. A byte-budgeted server-side LRU of the raw chunk bytes
+(`SDS_RASTER_CHUNK_CACHE_MB`, default 256; `imaging._raster_chunk_cache`, evicted by
+`evict_caches` on the same adoption/close boundary as the tile cache) short-circuits the
+re-read when a pan returns over already-seen tiles.
 
 It expects a `.venv-introspect/` virtualenv at the repo root (Python 3.11; squidpy
 does not support 3.13+), created with [uv](https://docs.astral.sh/uv/) (`uv venv`
@@ -181,12 +192,15 @@ picked up live by Vite. To run the backend alone (or hit it with `curl`), see
 
 ## Deploying with Docker
 
-The single-image build (SPA + backend, `tini` → `supervisord` → {`nginx` edge,
-`uvicorn`}) is the recommended production form and the researcher quickstart in the
-[README](README.md#run-it). The build stages, the two-tier memory limit
+The single-image build (SPA + backend, `tini` → `work-tmpfs.sh` → `supervisord` →
+{`nginx` edge, `uvicorn`}) is the recommended production form and the researcher
+quickstart in the [README](README.md#run-it). The build stages, the two-tier memory limit
 (`mem_limit` / `SDS_CONTAINER_MEM_MB` / `SDS_ADMISSION_PCT`), the render-concurrency
 cap, the manual `docker run` form, and the full environment contract are documented
-in [`docker/README.md`](docker/README.md).
+in [`docker/README.md`](docker/README.md). The `work-tmpfs.sh` entrypoint sizes the
+`/work` tmpfs to `SDS_WORK_TMPFS_PCT` of the detected memory limit at startup so the
+RAM working set autoscales with `mem_limit`; it needs `cap_add: SYS_ADMIN` (compose)
+and fails open to the mount-time `size=` otherwise.
 
 ## Tests
 

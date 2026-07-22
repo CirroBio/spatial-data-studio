@@ -391,8 +391,8 @@ injected (their path comes from the form).
 It then binds and coerces params (validate against JSON Schema, coerce JSON→Python,
 resolve convention-bound references against the **current** object — validate-on-
 dequeue), applies the managed pins from the Term Dictionary, enters an execution
-context (per-job log capture, key-set snapshot for the structural diff, per-worker
-memory ceiling), invokes the callable, and handles the effect by class:
+context (per-job log capture, key-set snapshot for the structural diff), invokes the
+callable, and handles the effect by class:
 
 - **compute** → object mutated in place; compute the structural diff (after − before).
   If it returns a data object (always-copies despite pinned `copy=False`), adopt it as
@@ -655,8 +655,9 @@ adopts a `SpatialData` (read bootstrap in `Session._run_call`, and
 `create_from_load`): every image/label that isn't already a tile-chunked pyramid
 is rebuilt via `Image2DModel`/`Labels2DModel.parse` into a 2× pyramid down to a
 `SDS_RASTER_BASE_PX` (1024) base, chunked at `imaging.TILE_SIZE`, and written to a
-per-session cache store under `DATA_DIR`; the live elements are rebound to
-lazy refs into it. An in-memory rechunk alone can't fix this — a small tile read
+per-session cache store under `WORK_DIR` (the system temp dir by default, a tmpfs
+mount in Docker so the cache is held in RAM — see §23.4); the live elements are
+rebound to lazy refs into it. An in-memory rechunk alone can't fix this — a small tile read
 still fetches the large *store* chunk from disk — so the rewrite is the point.
 After it, one tile realizes one ~2 MB chunk. Elements are rebuilt one at a time
 and freed between (writing all four Xenium rasters together peaks ~8.8 GB); with a
@@ -720,6 +721,14 @@ WebP tile path. It is **on by default** (`SDS_CLIENT_IMAGE_COMPOSITING`, disable
 verified live across single- and multi-channel fluorescence (additive-on-black), RGB/H&E
 true-color passthrough, deep-zoom streaming, and image<->points alignment. See `docs/CONTRACT.md` for the info/route schemas. The snapshot viewer and
 its schema are unchanged by this dual path.
+
+The `raster_store` route reads one compressed chunk file per browser request, so a
+pan back over already-seen tiles would re-read each chunk under the session read lock.
+A byte-budgeted server-side LRU of raw chunk bytes (`SDS_RASTER_CHUNK_CACHE_MB`, default
+256; `imaging._raster_chunk_cache`) caps that repeat cost. It is keyed by `(id(sdata),
+element, key)` so it is evicted on the same object-adoption/close boundary as the tile
+cache (`evict_caches`); the bytes live in the API-process heap, so they count against RSS
+and the admission budget like any other resident memory.
 
 ### 9.5 Editable points transform
 
@@ -1141,9 +1150,6 @@ process that holds it — no IPC hop, which matters for high-performance renderi
 
 - One process; one worker thread per session; the FastAPI event loop stays responsive
   because heavy `squidpy`/`scanpy` work releases the GIL (numpy/numba/C).
-- **Hard per-worker memory ceiling:** cap each worker so an overrun raises a catchable
-  `MemoryError` (fail that one job, keep the server and other sessions alive) instead of
-  inviting the OS OOM killer.
 
 ### 16.3 Memory accounting and guards
 
@@ -1152,12 +1158,20 @@ structures). Therefore: **monitor closely, expose live, guard at boundaries.**
 
 - **Monitor:** sample process **RSS** via `psutil` on a fixed cadence; push over SSE to
   the resource strip. Show global and per-session resident cost.
+- **RAM-backed working set:** when `WORK_DIR` is a tmpfs mount (`SDS_WORK_DIR_IN_RAM=1`,
+  §23.4), the unpacked archives and raster caches living there consume RAM that the
+  cgroup/OOM killer counts but process RSS does not. So the boundary/admission math uses
+  **effective memory = RSS + WORK_DIR usage** (`manager._effective_mb`, an `os.statvfs`
+  of the dedicated mount); otherwise (`WORK_DIR` on disk) the term is 0 and behaviour is
+  unchanged. `resource.sample` surfaces this as `work_dir_mb`, and `rss_pct` is the
+  effective fraction the boundary gates on.
 - **Load-admission control:** before loading a dataset, estimate its **resident** cost
   from Zarr metadata (tables load eagerly and dominate; images/labels are lazy). If it
-  won't fit, block the load.
-- **Boundary admission (`ADMISSION_PCT`):** if usage is already ≥ the threshold, refuse
-  to dequeue the next job and warn. Only the per-worker ceiling bounds an in-flight
-  spike.
+  won't fit in the effective-memory headroom, block the load.
+- **Boundary admission (`ADMISSION_PCT`):** if effective usage is already ≥ the threshold,
+  refuse to dequeue the next job (and refuse tile renders) and warn. Admission only gates
+  *new* work; an already-running job that spikes is bounded only by the OS hard limit — an
+  OOM kill, after which supervisord restarts the backend — not by any in-process cap.
 
 ### 16.4 Session death
 
@@ -1301,7 +1315,7 @@ closed (a 406 does not auto-reconnect), so SSE remains the path wherever it work
 | `session.loading` | load_id, message, pct?, log?, done?, status?, hash_check?, error? | Show live progress in the New Session load overlay (routed by client nonce); a `log` chunk is the reader's live output, appended below the milestone message; the terminal `done` event (`status:"ready"|"errored"`) finalizes the overlay — toast `hash_check` and open the session, or show `error` for a retry |
 | `session.created` | sessionId (child) | Add to lineage |
 | `session.removed` | sessionId, reason | Prune from list; if it was active and reason≠subset, clear the view |
-| `resource.sample` | global + per-session RSS, CPU | Update resource strip |
+| `resource.sample` | global (RSS, effective `rss_pct`, `work_dir_mb`, CPU) + per-session RSS | Update resource strip |
 | `memory.warning` | threshold breached | Block dequeue; warn |
 
 ---
@@ -1367,9 +1381,9 @@ closed (a 406 does not auto-reconnect), so SSE remains the path wherever it work
 10. A child session's `attrs` are deep-copied; its compute history starts empty.
 11. State-changing ops (compute, annotate, subset, save) are queued jobs under the write
     lock; region annotation and subset are queued mutating jobs.
-12. The per-worker memory ceiling and the boundary-admission check are always active; the
-    ceiling is set below the container limit so the catchable `MemoryError` fires before
-    the cgroup OOM killer.
+12. The boundary-admission check is always active: new work is refused once effective
+    memory reaches `ADMISSION_PCT` of the container limit. An in-flight spike past that is
+    bounded only by the cgroup OOM killer (followed by a supervised restart).
 13. uvicorn runs exactly one worker; sessions are never spread across worker processes.
 14. Snapshots are read-only and share point coloring with the live canvas; assets are
     content-hashed.
@@ -1459,24 +1473,44 @@ corollary: this one process is a single point of failure.
   flush each session to its checkpoint volume, close SSE cleanly. The stop-timeout must
   be generous — large datasets flush slowly.
 
-### 23.4 Memory ceiling, health, config, residual risk
+### 23.4 Memory limit, health, config, residual risk
 
-- Set the per-worker ceiling **strictly below the container cgroup limit** so the app
-  raises a catchable `MemoryError` before the OOM killer fires. Admission checks evaluate
-  against the container limit, which is **auto-detected from the cgroup** (v2 `memory.max`,
+- Admission checks evaluate against the container memory limit, which is **auto-detected
+  from the cgroup** (v2 `memory.max`,
   then v1 `memory.limit_in_bytes`) when `SDS_CONTAINER_MEM_MB` is unset — so an ECS task or
   `docker run --memory` needs no separate env var — and falls back to the host's total
   physical RAM when the container has no memory hard-limit (a soft `memoryReservation`, or a
   bare `docker run`), so admission tracks what the container may actually use rather than a
   stale 8 GiB default (8192 MiB only if physical memory can't be read).
+- **RAM-backed working set (`WORK_DIR`).** The live session working set — the unpacked
+  `.zarr.zip` extract dir and the per-session normalized raster caches — lives under
+  `WORK_DIR` (`SDS_WORK_DIR`, default the system temp dir). Point it at a tmpfs mount and
+  set `SDS_WORK_DIR_IN_RAM=1` to hold that working set in RAM, so tile/chunk reads are
+  served from memory instead of disk. tmpfs pages count against the cgroup limit but not
+  process RSS, so with `SDS_WORK_DIR_IN_RAM=1` the admission math adds current `WORK_DIR`
+  usage (an `os.statvfs` of the mount) to RSS — the soft admission boundary therefore
+  trips before the tmpfs can grow the container past its hard limit into an OOM kill.
+  `WORK_DIR` must be a **dedicated** mount for that statvfs to reflect only the app's own
+  usage. Durable checkpoints/snapshots always stay on the real `DATA_DIR` disk; the
+  save-staging tempdir stays beside the destination so its commit is a same-filesystem
+  rename regardless of `WORK_DIR`. The Docker image ships a `/work` tmpfs enabled by
+  `docker-compose.yml`; the `work-tmpfs.sh` entrypoint remounts it to
+  `SDS_WORK_TMPFS_PCT` (default 85%) of the memory limit it detects from the cgroup — the
+  same limit admission auto-detects — so the tmpfs and the admission budget both scale
+  from `mem_limit` with no hardcoded size. That remount needs `CAP_SYS_ADMIN` (compose
+  `cap_add`); it fails open to the mount-time `size=` fallback if the capability is
+  absent. Keep `SDS_WORK_TMPFS_PCT` above `SDS_ADMISSION_PCT` so the soft admission 503
+  trips before the tmpfs ENOSPCs.
 - **Liveness** `/api/healthz` / **readiness** `/api/readyz`. The container
   `HEALTHCHECK` probes `/api/readyz` so it reports healthy only once the operation
   registry has built and requests will succeed; the start period covers that build
   window. A rare GIL-blocking pure-Python job could delay either probe — use a
   generous timeout and tolerate several consecutive misses; do **not** configure
   aggressive single-miss kills.
-- **Config (env):** container memory limit, per-worker ceiling, max concurrent sessions,
-  checkpoint policy, liveness tuning, edge SSE buffering, Cirro credentials.
+- **Config (env):** container memory limit, max concurrent sessions,
+  working-dir location + RAM-backing (`SDS_WORK_DIR` / `SDS_WORK_DIR_IN_RAM`), Viv chunk
+  cache size (`SDS_RASTER_CHUNK_CACHE_MB`), checkpoint policy, liveness tuning, edge SSE
+  buffering, Cirro credentials.
 - **Accepted residual risk:** with one container per box, a native segfault takes down
   all co-resident sessions until restart. Mitigated by fast supervised restart + the
   checkpoint policy (the primary durability lever), not eliminated. A max-concurrent-

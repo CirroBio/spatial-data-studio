@@ -30,7 +30,12 @@ export default function ResourceStrip() {
               <span>{sessionRss.toFixed(0)} MB session</span>
             </>
           )}
-          {global.rasters_mb > 0 && (
+          {global.work_dir_mb > 0 ? (
+            <>
+              <span className="text-border">|</span>
+              <span>{global.work_dir_mb.toFixed(0)} MB working set (RAM)</span>
+            </>
+          ) : global.rasters_mb > 0 && (
             <>
               <span className="text-border">|</span>
               <span>{global.rasters_mb.toFixed(0)} MB rasters (disk)</span>

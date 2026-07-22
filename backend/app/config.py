@@ -1,5 +1,6 @@
 import json
 import os
+import tempfile
 from pathlib import Path
 
 # Single source of truth for the shared snapshot viewer: /snapshot-viewer.json at
@@ -9,10 +10,6 @@ from pathlib import Path
 # loading their exact viewer version even after the schema evolves.
 _SNAPSHOT_VIEWER_JSON = Path(__file__).resolve().parents[2] / "snapshot-viewer.json"
 _viewer_meta = json.loads(_SNAPSHOT_VIEWER_JSON.read_text())
-
-
-def _mb(env: str, default_mb: int) -> int:
-    return int(os.environ.get(env, default_mb))
 
 
 def _cgroup_mem_limit_mb() -> int | None:
@@ -51,7 +48,7 @@ def _host_mem_mb() -> int | None:
 
 def _container_mem_mb() -> tuple[int, str]:
     """(limit in MiB, source) for admission accounting. An explicit SDS_CONTAINER_MEM_MB
-    wins — including 0, which disables the memory percentage (see manager._rss_fraction).
+    wins — including 0, which disables the memory percentage (see manager._mem_fraction).
     Otherwise auto-detect from the cgroup hard-limit. When there is no hard limit — an
     ECS task with only a soft `memoryReservation`, `docker run` without `--memory` — the
     container may use the host's full RAM, so fall back to total physical memory (a 64 GiB
@@ -70,20 +67,39 @@ def _container_mem_mb() -> tuple[int, str]:
 
 
 class Config:
-    # Single data directory (DESIGN §19.9). Everything on disk lives here, read-write:
-    # raw inputs the user imports, saved checkpoints (<name>-<hash>.sdata.zarr.zip),
-    # and snapshot configs (<name>-<hash>.sview.json). Internal working stores
-    # (per-session raster caches, save-staging tempdirs) are dot-/suffix-prefixed here
-    # and are skipped by the dataset scanner and never served by name.
+    # Single data directory (DESIGN §19.9). User-facing artifacts live here,
+    # read-write: raw inputs the user imports, saved checkpoints
+    # (<name>-<hash>.sdata.zarr.zip), and snapshot configs (<name>-<hash>.sview.json).
+    # Save-staging tempdirs (`.save-`) are dot-prefixed here and skipped by the
+    # dataset scanner; the atomic os.replace of a finished checkpoint stays a
+    # same-filesystem rename because staging sits beside the destination. Transient
+    # working stores (unpacked archives, per-session raster caches) live under
+    # WORK_DIR, not here.
     # Defaults to the invoking user's home ($HOME), where the deployment environment
     # mounts datasets (e.g. $HOME/datasets); override with SDS_DATA_DIR.
     DATA_DIR = Path(os.environ.get("SDS_DATA_DIR") or Path.home())
+
+    # Working directory for the live session working set: the unpacked `.zarr.zip`
+    # extract dir (persistence/store.py) and the per-session normalized raster cache
+    # (rasters.py). Kept separate from DATA_DIR so a transient `*.zarr` extract never
+    # surfaces in the dataset picker (fs_browse lists `*.zarr` dirs as loadable), and
+    # so the whole working set can be relocated with one knob. Defaults to the system
+    # temp dir (where the extract dir already lived); point SDS_WORK_DIR at a sized
+    # tmpfs mount to hold the working set in RAM for much faster tile/chunk reads.
+    WORK_DIR = Path(os.environ.get("SDS_WORK_DIR") or tempfile.gettempdir())
+
+    # Set when WORK_DIR is RAM-backed (tmpfs). tmpfs pages count against the cgroup
+    # memory limit the OOM killer enforces but NOT against process RSS, so without
+    # this the admission/boundary math (manager.py) can't see the working set and
+    # would keep admitting loads/jobs/tile renders until the OOM killer fires. When
+    # on, current WORK_DIR usage is added to RSS in that math (see manager._effective_mb).
+    # Requires WORK_DIR to be a dedicated mount, so its statvfs usage is the app's own.
+    WORK_DIR_IN_RAM = os.environ.get("SDS_WORK_DIR_IN_RAM", "0") not in ("0", "false", "False")
 
     # Memory accounting (DESIGN §11, §19.5) — evaluated against the container limit.
     # Auto-detected from the cgroup when SDS_CONTAINER_MEM_MB is unset, so an ECS task
     # (or `docker run --memory`) needs no separate env var; an explicit value overrides.
     CONTAINER_MEM_MB, CONTAINER_MEM_SOURCE = _container_mem_mb()
-    WORKER_CEILING_MB = _mb("SDS_WORKER_CEILING_MB", 6144)   # < container limit
     ADMISSION_PCT = float(os.environ.get("SDS_ADMISSION_PCT", "0.80"))  # 80% boundary rule
 
     MAX_SESSIONS = int(os.environ.get("SDS_MAX_SESSIONS", "8"))
@@ -119,6 +135,12 @@ class Config:
     # The rebuild reads each element once; a small dask pool bounds its peak RSS.
     RASTER_BASE_PX = int(os.environ.get("SDS_RASTER_BASE_PX", "1024"))
     RASTER_REBUILD_WORKERS = int(os.environ.get("SDS_RASTER_REBUILD_WORKERS", "2"))
+
+    # Server-side LRU (MB) of raw Viv chunk bytes read by the client-compositing path
+    # (main.py raster_store). Caps repeat-view reads of the same chunk under the read
+    # lock; the bytes live in the API-process heap so they count against RSS/admission.
+    # 0 disables the cache. See imaging._raster_chunk_cache.
+    RASTER_CHUNK_CACHE_MB = int(os.environ.get("SDS_RASTER_CHUNK_CACHE_MB", "256"))
 
     # Default for thread-count form params (n_jobs etc.): SDS_N_THREADS if set,
     # else all cores on the machine.
@@ -162,10 +184,11 @@ class Config:
 
 
 config = Config()
-try:
-    config.DATA_DIR.mkdir(parents=True, exist_ok=True)
-except OSError:
-    pass  # read-only or unavailable mount; save endpoints surface the error per-call
+for _dir in (config.DATA_DIR, config.WORK_DIR):
+    try:
+        _dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass  # read-only or unavailable mount; save endpoints surface the error per-call
 
 
 # ---- data-root allowlist. Everything the app touches on disk — imports, loads,
