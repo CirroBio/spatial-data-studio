@@ -354,15 +354,26 @@ export interface SessionRemovedEvent {
   reason: 'closed' | 'subset';
 }
 
-// Progress from a synchronous checkpoint load, routed by the client-minted `load_id`
-// (no session id exists until the load finishes). A milestone event carries `message`
-// (+ `pct` for the byte-fraction extraction step); a live-log event carries `log` (a
-// reader log chunk to append) with `message`/`pct` null.
+// Result of verifying a hash-named checkpoint's content hash on load.
+export interface HashCheck {
+  ok: boolean;
+  message: string;
+}
+
+// Progress from an asynchronous checkpoint load (Session._run_load), routed by the
+// client-minted `load_id`. A milestone event carries `message` (+ `pct` for the
+// byte-fraction extraction step); a live-log event carries `log` (a reader log chunk to
+// append) with `message`/`pct` null; the single terminal event carries `done: true`
+// with `status` and, on success, the `hash_check` (else `error`).
 export interface SessionLoadingEvent {
   load_id: string;
   message: string | null;
   pct: number | null;
   log?: string | null;
+  done?: boolean;
+  status?: 'ready' | 'errored';
+  hash_check?: HashCheck | null;
+  error?: string;
 }
 
 export interface ResourceSample {

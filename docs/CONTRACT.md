@@ -44,7 +44,7 @@ ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_cate
 | GET  | `/api/functions` | — | registry |
 | GET  | `/api/functions/coverage` | — | parameter-term coverage report (unmatched params ranked by reuse) |
 | GET  | `/api/sessions` | — | `{sessions:[SessionSummary]}` |
-| POST | `/api/sessions` | `{name?, source:{kind:"read"|"load", ...}, load_id?}` | `SessionSummary` (`load_id`: client nonce to receive `session.loading` progress during a `load`) |
+| POST | `/api/sessions` | `{name?, source:{kind:"read"|"load", ...}, load_id?}` | `SessionSummary` — returned immediately with `status:"loading"` for both kinds; the checkpoint unzip/read/re-tile (`load`) and the reader bootstrap (`read`) run on the session's worker, so the load never blocks the request past a fronting proxy's origin timeout. `load_id` is a client nonce to receive `session.loading` progress + the terminal event during a `load`; the load's `hash_check` rides that terminal event (no longer in this response body). |
 | GET  | `/api/fs/datasets` | — | `{datasets:[{name, path}]}` (loadable `.zarr`/`.zarr.zip` found under the data roots + CWD; New Session picker) |
 | GET  | `/api/fs/browse?path=&include_files=` | — | `{path, parent, entries:[{name, path, kind:"dir"\|"dataset"\|"file"}]}` (folder navigation for raw-data import) |
 | GET  | `/api/sessions/{id}` | — | `SessionState` |
@@ -245,7 +245,7 @@ the per-cell colors.
     `limit` truncates to the first N intersecting features.
 
 ## SSE events (`/api/events`, single multiplexed stream)
-Each event: `event: <type>`, `data: <json>`, every payload carries `session_id` (except `session.loading`, which predates the session and is routed by the client-minted `load_id`). Monotonic `id:` for `Last-Event-ID` resume. An idle stream emits a `: keepalive` comment every 15 s so a load-balancer idle timeout does not drop it.
+Each event: `event: <type>`, `data: <json>`, every payload carries `session_id` (except `session.loading`, which is routed by the client-minted `load_id` since it narrates the load into a session whose id the client may not yet be watching). Monotonic `id:` for `Last-Event-ID` resume. An idle stream emits a `: keepalive` comment every 15 s so a load-balancer idle timeout does not drop it.
 
 **Polling fallback** `GET /api/events/poll?after=<id>` → `{last_id, events:[{id, event, data}]}`. Returns the same events off the in-memory ring as `application/json`, for clients behind a proxy that rejects the SSE `text/event-stream` content type (e.g. a JSON-only auth gateway) or buffers the stream. Omit `after` to get a baseline cursor (`last_id`, no events); then poll with `after=last_id`. Lock-free (reads the event ring, never a session lock). The client switches to this only when the browser reports the `EventSource` fatally closed.
 
@@ -259,7 +259,7 @@ Each event: `event: <type>`, `data: <json>`, every payload carries `session_id` 
 | `plot.drawn` | `{session_id, plot_id}` |
 | `plot.invalidated` | `{session_id, plot_ids:[...]}` |
 | `display.updated` | `{session_id, display_id, spec}` |
-| `session.loading` | `{load_id, message, pct:float|null, log?}` (checkpoint-load progress; a milestone event carries `message` (+ `pct` for the byte-fraction extraction step); a live-log event carries `log` (a reader log chunk) with `message`/`pct` null) |
+| `session.loading` | `{load_id, message, pct:float|null, log?, done?, status?, hash_check?, error?}` (checkpoint-load progress + completion; a milestone event carries `message` (+ `pct` for the byte-fraction extraction step); a live-log event carries `log` (a reader log chunk) with `message`/`pct` null; the single terminal event carries `done:true` with `status:"ready"|"errored"` and, on success, the `hash_check` (`{ok,message}` for a hash-named checkpoint, else null), else `error`) |
 | `session.created` | `{session_id, summary}` |
 | `session.removed` | `{session_id, reason:"closed"|"subset"}` (closed or lasso-evicted; clients prune it from the session list) |
 | `session.errored` | `{session_id, error}` |

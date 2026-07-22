@@ -164,18 +164,14 @@ async def create_session(body: dict):
     source = body.get("source", {})
     name = body.get("name")
     # `load_id` is a client-minted nonce the New Session dialog subscribes to on the
-    # SSE bus: the load runs synchronously before any session id exists, so its
-    # `session.loading` progress events are routed by this nonce instead. Absent for
-    # older clients, in which case the load simply emits nothing (progress is a no-op).
+    # SSE bus: the checkpoint load runs on the session's worker (Session._run_load), so
+    # its `session.loading` progress + terminal (done/hash_check) events are routed by
+    # this nonce. Absent for older clients, in which case the load emits nothing.
     load_id = body.get("load_id")
-
-    def _progress(message: str, pct: float | None = None):
-        if load_id:
-            BUS.publish("session.loading", {"load_id": load_id, "message": message, "pct": pct})
 
     try:
         if source.get("kind") == "load":
-            sess = await _in_executor(_mgr().create_from_load, source["path"], name, _progress, load_id)
+            sess = await _in_executor(_mgr().create_from_load, source["path"], name, load_id)
         elif source.get("kind") == "read":
             # squidpy `read` namespace or spatialdata-io readers (namespace `io`)
             sess = _mgr().create_from_read(
@@ -185,8 +181,9 @@ async def create_session(body: dict):
             raise HTTPException(400, "source.kind must be 'load' or 'read'")
     except (RuntimeError, FileNotFoundError, KeyError) as e:
         raise HTTPException(400, str(e))
-    # `hash_check` is present only when loading a hash-named checkpoint; the client
-    # surfaces it as a toast (match or mismatch). None for imports / unhashed loads.
+    # `hash_check` now rides the terminal `session.loading` event, since the checkpoint
+    # load runs asynchronously (Session._run_load) — the shell returned here always has
+    # it None. Kept in the response shape for the read / older-client paths.
     return {**_mgr().summary(sess), "hash_check": sess.hash_check}
 
 

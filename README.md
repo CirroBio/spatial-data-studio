@@ -56,6 +56,12 @@ oriented (flip the horizontal/vertical axes), the zoom level (buttons plus scrol
 and its background (light or dark), and how the tissue-image channels are tinted and
 blended.*
 
+![A Xenium section zoomed in, each cell drawn as its true segmentation outline and colored by Leiden cluster, over the morphology image.](docs/images/cell-outlines.jpg)
+
+*Switch to cell-boundary rendering to draw each cell as its actual segmentation
+shape rather than a point — pick the shape set (here `cell_boundaries`) and the app
+fills each outline with the cell's color.*
+
 ## Analyses available
 
 The gallery leads with a **guided Xenium region-analysis workflow** you run in order:

@@ -1175,6 +1175,14 @@ structures). Therefore: **monitor closely, expose live, guard at boundaries.**
   builds the initial `SpatialData`.
 - A `read` call is enqueued as the **first job** in the session and appears as the first
   entry in `compute_history`.
+- **Opening a saved checkpoint (`load`)** is the same shape: `create_from_load` runs only
+  the cheap admission checks synchronously, then returns a `loading` shell and enqueues the
+  unzip/read/re-tile as the session's first worker job (`Session._run_load`), which adopts
+  the object under the write lock exactly like a read bootstrap. This keeps a large
+  (multi-GB Xenium) checkpoint load off the HTTP request, so it never blocks past a fronting
+  proxy's origin timeout (a 504, §24.2); progress and a terminal `done` event stream over
+  `session.loading` keyed by the client-minted `load_id`, and the checkpoint's `hash_check`
+  rides that terminal event.
 - Loading must pass load-admission control (§16.3) before the object is materialized.
 - **Startup splash:** the frontend polls `GET /api/readyz` and shows a full-screen splash
   until the backend finishes importing `squidpy` and building the registry, so a slow
@@ -1290,7 +1298,7 @@ closed (a 406 does not auto-reconnect), so SSE remains the path wherever it work
 | `plot.drawn` / `plot.invalidated` | plotId(s) | Enable figure / flag for redraw |
 | `display.updated` | displayId, spec | Re-derive canvas |
 | `region.updated` | regions | Refresh annotations panel + coloring |
-| `session.loading` | load_id, message, pct?, log? | Show live progress in the New Session load overlay (no session id yet; routed by client nonce); a `log` chunk is the reader's live output, appended below the milestone message |
+| `session.loading` | load_id, message, pct?, log?, done?, status?, hash_check?, error? | Show live progress in the New Session load overlay (routed by client nonce); a `log` chunk is the reader's live output, appended below the milestone message; the terminal `done` event (`status:"ready"|"errored"`) finalizes the overlay — toast `hash_check` and open the session, or show `error` for a retry |
 | `session.created` | sessionId (child) | Add to lineage |
 | `session.removed` | sessionId, reason | Prune from list; if it was active and reason≠subset, clear the view |
 | `resource.sample` | global + per-session RSS, CPU | Update resource strip |
@@ -1623,6 +1631,12 @@ A structured adversarial pass over the design. Each item is tagged **Resolved**
   completion and shows `STALE`; a mid-compute read fast-fails with a retryable 503
   (`READ_LOCK_TIMEOUT_S`) instead of hanging past a fronting proxy's origin timeout
   (a 504). **Resolved** (§9.8, §24.2).
+- **Checkpoint load blocking the POST past the proxy timeout** — a large (multi-GB Xenium)
+  `.zarr.zip` load ran synchronously inside `POST /api/sessions`, so its tens-of-seconds
+  unzip/read/re-tile blew past the fronting proxy's ~30 s origin timeout and returned a 504
+  even though the backend was still working. The load now runs as the session's first
+  worker job (`Session._run_load`), so the POST returns a `loading` shell at once and the
+  client follows `session.loading` to completion. **Resolved** (§17).
 - **Thread oversubscription** across sessions. Global thread budget + per-job thread-count
   env. **Resolved** (§24.3).
 - **matplotlib pyplot global state** across concurrent plot jobs. Process-global plotting

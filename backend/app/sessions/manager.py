@@ -11,8 +11,7 @@ import psutil
 from . import appstate
 from .session import Session
 from ..config import config, within_data_dir
-from ..persistence.store import load_spatialdata, estimate_resident_mb, save_spatialdata
-from ..transport import livelog
+from ..persistence.store import estimate_resident_mb, save_spatialdata
 from ..transport.sse import BUS
 
 # Reader params that terms.yaml documents as filesystem paths (see the
@@ -42,34 +41,22 @@ class SessionManager:
 
     # ---- creation ---------------------------------------------------------
     def create_from_load(self, path: str, name: str | None = None,
-                          progress=None, load_id: str | None = None) -> Session:
-        """`progress(message, pct)` (optional) is called from this executor thread as
-        the slow steps advance, to feed the New Session dialog's SSE progress overlay;
-        None makes every progress call a no-op. When `load_id` is set, the reader's log
-        lines are also streamed live to that overlay (transport/livelog.py)."""
-        report = progress or (lambda *a, **k: None)
+                         load_id: str | None = None) -> Session:
+        """Open a saved checkpoint. The unzip/read/re-tile is slow (tens of seconds to
+        minutes for a large Xenium store), so — like create_from_read — this returns a
+        `loading` shell immediately and runs the heavy load as the session's first worker
+        job (Session._run_load), which adopts the object under the write lock and streams
+        progress + a terminal result over the `session.loading` SSE channel keyed by
+        `load_id`. Only the cheap admission checks run here, so a bad path / over-capacity
+        / over-budget load still fails fast with a clear 400 instead of a background
+        session that never becomes ready."""
         self._check_capacity()
         resolved = str(_resolve_or_raise(path))  # validated, resolved path for every fs op below
         self._check_admission(estimate_resident_mb(resolved))
-        with livelog.forward_load_logs(load_id):
-            sdata, app_state, newer, extract_dir, hash_check = load_spatialdata(resolved, report)
         sid = str(uuid.uuid4())
-        name = name or _basename(resolved)
-        sess = Session(sid, name, sdata, app_state, self, store_path=resolved)
-        sess.extract_dir = extract_dir
-        sess.hash_check = hash_check
-        # Older stores hold huge-chunked rasters; re-tile them so canvas tiles stay
-        # cheap (a no-op for stores already written in canonical form). See rasters.py.
-        from .. import rasters
-        sess.raster_cache_dir, sess.raster_stores = rasters.normalize_rasters(sdata, report)
-        sess.raster_cache_mb = rasters.cache_size_mb(sess.raster_cache_dir)
-        report("Building views…")
-        if not app_state["displays"]:
-            self.auto_displays(sess)
+        sess = Session(sid, name or _basename(resolved), None, appstate.fresh(), self, store_path=resolved)
         self.sessions[sid] = sess
-        if newer:
-            BUS.publish("memory.warning", {"session_id": sid,
-                        "message": "app_state schema newer than app; opened read-only"})
+        sess.enqueue_load(resolved, load_id)  # heavy load is the first queue job (§12)
         BUS.publish("session.created", {"session_id": sid, "summary": self.summary(sess)})
         return sess
 

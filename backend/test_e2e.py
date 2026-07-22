@@ -167,9 +167,30 @@ def run_custom_methods_flow(client):
     assert js["status"] == "completed", f"save status {js['status']}"
     print(f"[ok] saved custom-methods session {out} ({os.path.getsize(out)/1e6:.1f} MB)")
 
-    r2 = client.post("/api/sessions", json={"source": {"kind": "load", "path": out}})
-    sid2 = r2.json()["id"]
-    st2 = client.get(f"/api/sessions/{sid2}").json()
+    # Load runs on the worker now (fix for the CloudFront 504): the POST returns a
+    # `loading` shell immediately and completion arrives on the terminal `session.loading`
+    # event the New Session dialog follows. Spy the bus to assert that contract, mirroring
+    # the import flow's job.log spy.
+    from app.transport.sse import BUS
+    loading_events = []
+    orig_publish = BUS.publish
+    def _spy(event_type, data, _orig=orig_publish):
+        if event_type == "session.loading":
+            loading_events.append(data)
+        return _orig(event_type, data)
+    BUS.publish = _spy
+    try:
+        r2 = client.post("/api/sessions", json={"source": {"kind": "load", "path": out},
+                                                "load_id": "e2e-load"})
+        assert r2.status_code == 200, r2.text
+        sid2 = r2.json()["id"]
+        st2 = poll(client, sid2, lambda s: s["summary"]["status"] in ("ready", "errored"))
+    finally:
+        BUS.publish = orig_publish
+    assert st2["summary"]["status"] == "ready", "reloaded session errored"
+    terminal = [e for e in loading_events if e.get("done")]
+    assert terminal and terminal[-1]["status"] == "ready", f"no terminal load event: {loading_events}"
+    print(f"[ok] async load emitted {len(loading_events)} session.loading events (terminal status=ready)")
     ch = st2["app_state"]["compute_history"]
     fn_names = [c["function"] for c in ch]
     expected = ["read_zarr", "normalize_total", "log1p", "pca", "neighbors", "leiden", "rank_genes_groups",
@@ -261,25 +282,20 @@ def run_zarr_import_flow(client):
 def new_session(client, path=DATA):
     """Open a saved checkpoint (`.zarr.zip`/`.sdata.zarr.zip`) via `load`, or bootstrap
     a raw `.zarr` dataset via the `read_zarr` reader. Both live under the single
-    DATA_DIR now; the file kind (zipped checkpoint vs raw dir) picks the path. The read
-    bootstrap runs on the worker, so wait for the session to become ready."""
+    DATA_DIR now; the file kind (zipped checkpoint vs raw dir) picks the path. Both run
+    on the session's worker — the load unzips/re-tiles, the read bootstraps — so the POST
+    returns a `loading` shell immediately; wait for the session to become ready."""
     if str(path).endswith(".zarr.zip"):
-        r = client.post("/api/sessions", json={"source": {"kind": "load", "path": path}})
-        assert r.status_code == 200, r.text
-        return r.json()["id"]
-    r = client.post("/api/sessions", json={"source": {
-        "kind": "read", "namespace": "io", "function": "read_zarr", "params": {"store": path}}})
+        source = {"kind": "load", "path": path}
+    else:
+        source = {"kind": "read", "namespace": "io", "function": "read_zarr", "params": {"store": path}}
+    r = client.post("/api/sessions", json={"source": source})
     assert r.status_code == 200, r.text
     sid = r.json()["id"]
-    t0 = time.time()
-    while time.time() - t0 < 180:
-        st = next((s for s in client.get("/api/sessions").json()["sessions"] if s["id"] == sid), None)
-        if st and st["status"] == "ready":
-            return sid
-        if st and st["status"] == "errored":
-            raise RuntimeError(f"read session {sid} errored")
-        time.sleep(0.5)
-    raise TimeoutError(f"read session {sid} did not become ready")
+    st = poll(client, sid, lambda s: s["summary"]["status"] in ("ready", "errored"))
+    if st["summary"]["status"] == "errored":
+        raise RuntimeError(f"session {sid} errored")
+    return sid
 
 
 def wait_job(client, sid, job_id, timeout=180):
@@ -1219,10 +1235,13 @@ def main():
             f"save produced {os.path.getsize(out) if os.path.exists(out) else 0} bytes"
         print(f"[ok] saved {out} ({os.path.getsize(out)/1e6:.1f} MB)")
 
-        # reload into a NEW session, verify app_state preserved
+        # reload into a NEW session, verify app_state preserved. The load runs on the
+        # worker, so wait for the session to become ready before reading app_state.
         r2 = client.post("/api/sessions", json={"source": {"kind": "load", "path": out}})
+        assert r2.status_code == 200, r2.text
         sid2 = r2.json()["id"]
-        st2 = client.get(f"/api/sessions/{sid2}").json()
+        st2 = poll(client, sid2, lambda s: s["summary"]["status"] in ("ready", "errored"))
+        assert st2["summary"]["status"] == "ready", "reloaded session errored"
         ch = st2["app_state"]["compute_history"]
         pl = st2["app_state"]["plots"]
         disp = st2["app_state"]["displays"]

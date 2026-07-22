@@ -115,10 +115,14 @@ thread, so it publishes directly. Library readers (spatialdata-io Xenium/Visium/
 in the loky child, which can't reach the bus: `kernel.run_library_call` opens a
 `livelog.child_log_stream` (a `multiprocessing.Manager` queue + a drainer thread) for
 read calls, the child's `capture_log(sink=queue.put)` pushes lines onto it, and the
-parent drainer forwards them to the bus. The checkpoint-load path (`manager.create_from_load`)
-uses `forward_load_logs(load_id)`, routing lines onto the existing `session.loading`
-channel (`log` field) since no session id exists yet. The frontend accumulates these in
-per-job / per-load buffers (`sessionStore`) and renders them with `AnsiLog`.
+parent drainer forwards them to the bus. Opening a saved checkpoint runs as the session's
+first worker job too: `manager.create_from_load` returns a `loading` shell immediately and
+enqueues `Session._run_load`, which does the slow unzip/read/re-tile and adopts the object
+under the write lock (like a read bootstrap), so a large load never blocks the POST past a
+fronting proxy's origin timeout (the 504 fix). It uses `forward_load_logs(load_id)`, routing
+lines — plus milestone progress and a terminal `done`/`hash_check` event — onto the
+`session.loading` channel keyed by the client-minted `load_id`. The frontend accumulates
+these in per-job / per-load buffers (`sessionStore`) and renders them with `AnsiLog`.
 
 ## Local dev environment
 

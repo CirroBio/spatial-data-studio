@@ -317,6 +317,13 @@ class Session:
                                    "descriptor": {"kind": kind}, "position": self._queue.qsize()})
         return job_id
 
+    def enqueue_load(self, path: str, load_id: str | None = None) -> str:
+        """Open a saved checkpoint as this session's first job (create_from_load). The
+        unzip/read/re-tile is too slow to run inside the POST — a large store blows past a
+        fronting proxy's origin timeout (a 504) — so it runs here on the worker and adopts
+        the object under the write lock, exactly like a read bootstrap."""
+        return self.enqueue_special("load", {"path": path, "load_id": load_id})
+
     def cancel(self, job_id: str) -> bool:
         """Cancel a QUEUED job only (RUNNING is non-interruptible, §6.1). Claims the
         job under _book so it can't race the worker's dequeue: the worker flips the
@@ -384,6 +391,8 @@ class Session:
                 self._run_shape_annotate(job_id, payload)
             elif kind == "set_transform":
                 self._run_set_transform(job_id, payload)
+            elif kind == "load":
+                self._run_load(job_id, payload)
         except Exception as e:  # worker must never die
             self._fail(job_id, kind, str(e))
         finally:
@@ -657,6 +666,57 @@ class Session:
         self._jobs[job_id]["status"] = "completed"
         BUS.publish("job.completed", {"session_id": self.id, "job_id": job_id, "kind": "subset",
                                       "child_id": child.id, "data_versions": self.app_state["data_versions"]})
+
+    def _run_load(self, job_id, payload):
+        """Open a saved checkpoint on the worker: unzip/read the archive and re-tile its
+        rasters (both slow for a large Xenium store), then adopt the object under the
+        write lock — the async analogue of the read-bootstrap adoption in _run_call. The
+        POST that created this session already returned a `loading` shell, so progress and
+        the terminal result stream over `session.loading`, keyed by the client-minted
+        `load_id`; the checkpoint's own app_state replaces the shell's fresh one."""
+        from ..persistence.store import load_spatialdata
+        from .. import rasters
+        load_id = payload.get("load_id")
+
+        def report(message, pct=None):
+            if load_id:
+                BUS.publish("session.loading", {"load_id": load_id, "message": message, "pct": pct})
+
+        try:
+            with livelog.forward_load_logs(load_id):
+                sdata, app_state, newer, extract_dir, hash_check = load_spatialdata(payload["path"], report)
+            with self.lock.writing():
+                self.sdata = sdata
+                self.app_state = app_state
+                self.extract_dir = extract_dir
+                self.hash_check = hash_check
+                # Older stores hold huge-chunked rasters; re-tile them so canvas tiles
+                # stay cheap (a no-op for stores already in canonical form). See rasters.py.
+                self.raster_cache_dir, self.raster_stores = rasters.normalize_rasters(sdata, report)
+                self.raster_cache_mb = rasters.cache_size_mb(self.raster_cache_dir)
+                self.active_table_key = self._default_table_key()
+                report("Building views…")
+                if not self.app_state["displays"]:
+                    self.manager.auto_displays(self)
+                self.status = "ready"
+        except Exception as e:
+            # Handle the failure here rather than letting it propagate to _dispatch: the
+            # New Session dialog follows the load over `session.loading` (keyed by load_id),
+            # not job.failed, so it needs the terminal event to surface the error.
+            self.status = "errored"
+            self._fail(job_id, "load", str(e))
+            if load_id:
+                BUS.publish("session.loading", {"load_id": load_id, "done": True,
+                                                "status": "errored", "error": str(e)})
+            return
+        self.saved = True  # the in-memory object matches the checkpoint it was loaded from
+        self._jobs[job_id]["status"] = "completed"
+        if newer:
+            BUS.publish("memory.warning", {"session_id": self.id,
+                        "message": "app_state schema newer than app; opened read-only"})
+        if load_id:
+            BUS.publish("session.loading", {"load_id": load_id, "done": True, "status": "ready",
+                                            "hash_check": hash_check, "message": "Ready"})
 
     # ---- status bookkeeping ----------------------------------------------
     def _set_status(self, job_id, kind, status, structural_diff=None, log=None):

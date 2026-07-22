@@ -9,6 +9,7 @@ import type {
   DisplaySpec,
   ImageInfo,
   UiFieldInfo,
+  HashCheck,
 } from './types';
 import type { Snapshot } from './lib/snapshots';
 import type { ShapeAnnotation } from './schemas/annotations';
@@ -65,13 +66,6 @@ export async function pollEvents(after?: number): Promise<{ last_id: number; eve
 export type NewSessionSource =
   | { kind: 'load'; path: string }
   | { kind: 'read'; namespace: string; function: string; params: Record<string, unknown> };
-
-// Present only when loading a hash-named checkpoint (`<name>-<hash>.sdata.zarr.zip`):
-// whether the archive's bytes still hash to the value embedded in its filename.
-export interface HashCheck {
-  ok: boolean;
-  message: string;
-}
 
 export async function createSession(
   params: { name?: string; source: NewSessionSource; load_id?: string },

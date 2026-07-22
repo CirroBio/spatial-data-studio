@@ -55,6 +55,7 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
   const [selectedPath, setSelectedPath] = useState('');  // chosen checkpoint / folder / file
   const [loading, setLoading] = useState(false);
   const [loadId, setLoadId] = useState<string | null>(null);  // nonce matching this load's SSE progress
+  const [pendingSession, setPendingSession] = useState<SessionSummary | null>(null);  // load in flight; finalized on the terminal event
   const [error, setError] = useState<string | null>(null);
 
   const selectedReader = readers.find((f) => f.key === reader);
@@ -158,22 +159,53 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
     try {
       const finalName = name.trim() || deriveSessionName(chosen);
       const session = await createSession({ name: finalName || undefined, source, load_id: id });
-      if (session.hash_check) {
-        pushNotification({
-          kind: session.hash_check.ok ? 'info' : 'error',
-          message: session.hash_check.message,
-        });
+      if (mode === 'import') {
+        // Read bootstrap: the session is created and its data loads in the background;
+        // closing the dialog hands off to the main-area "Importing data…" spinner.
+        onCreated(session);
+        clearLoadState();
+      } else {
+        // Checkpoint load runs on the worker (Session._run_load); keep the dialog and its
+        // progress overlay open and finalize when the terminal `session.loading` event
+        // arrives (the effect below). The POST only returned a `loading` shell.
+        setPendingSession(session);
       }
-      onCreated(session);
     } catch (err) {
+      // An immediate rejection (bad path / over-capacity / over-budget → 400).
       setError(formatError(err));
-    } finally {
-      setLoading(false);
-      setLoadId(null);
-      setLoadProgress(null);
-      resetLoadLog();
+      clearLoadState();
     }
   }
+
+  function clearLoadState() {
+    setLoading(false);
+    setLoadId(null);
+    setPendingSession(null);
+    setLoadProgress(null);
+    resetLoadLog();
+  }
+
+  // Finalize an async checkpoint load when its terminal `session.loading` event lands
+  // (keyed by the client-minted load_id): surface the hash-check toast and open the
+  // session, or show the error in the red box for a retry.
+  useEffect(() => {
+    if (mode !== 'load' || !loadId || !pendingSession) return;
+    if (loadProgress?.load_id !== loadId || !loadProgress.done) return;
+    if (loadProgress.status === 'errored') {
+      setError(loadProgress.error ?? 'Failed to load checkpoint');
+      clearLoadState();
+      return;
+    }
+    if (loadProgress.hash_check) {
+      pushNotification({
+        kind: loadProgress.hash_check.ok ? 'info' : 'error',
+        message: loadProgress.hash_check.message,
+      });
+    }
+    const session = pendingSession;
+    clearLoadState();
+    onCreated(session);
+  }, [loadProgress, loadId, pendingSession, mode]);
 
   const fieldClass = 'w-full bg-bg border border-border rounded px-3 py-2 text-sm text-text placeholder-muted/50 focus:outline-none focus:border-accent';
 
