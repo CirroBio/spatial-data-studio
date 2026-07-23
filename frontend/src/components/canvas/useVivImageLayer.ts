@@ -136,8 +136,19 @@ interface Params {
 
 /** Coarse Viv ImageLayer base plus per-tile Viv XRLayers for the current viewport,
  * GPU-compositing the tissue image from the SpatialData multiscale pyramid. `active`
- * is true once the pyramid has loaded without error, signalling the caller to suppress
- * the PNG tile path; while loading or after a failure it stays false so PNG covers. */
+ * signals the caller to suppress the PNG tile path and show Viv instead.
+ *
+ * `active` latches true only once Viv has *fully covered* the viewport at least once
+ * (base decoded AND every detail tile for the current view present) — not merely when
+ * the coarse base decoded. Until then the server-composited PNG/WebP path keeps
+ * covering: its display-WebP tiles are ~10-16x smaller on the wire than Viv's raw
+ * chunks and stream one-request-per-tile, so on a slow/remote store they sharpen the
+ * image long before Viv's raw-chunk fan-out would, and the user never stares at Viv's
+ * coarse base blown up into blocks. Once Viv proves it can cover the view, we hand off
+ * for good (sticky) so its instant shader-uniform recolor takes over; a store too slow
+ * for Viv to ever cover simply never activates and stays on the PNG path, which is the
+ * right behavior there. See SpatialCanvas (vivActive ? vivLayers : imageLayers) and
+ * DESIGN.md 9.4. */
 export function useVivImageLayer(
   { imageInfo, element, channels, viewState, size, show }: Params,
 ): { layers: Layer[]; active: boolean } {
@@ -157,11 +168,17 @@ export function useVivImageLayer(
 
   const [loader, setLoader] = useState<Loader | null>(null);
   const [failed, setFailed] = useState(false);
+  // Sticky: latched true the first time Viv fully covers the viewport (see `covered`
+  // below), and never dropped afterward — so panning/zooming within an activated Viv
+  // doesn't thrash back to the PNG path each time a fresh tile is momentarily missing.
+  // Reset per store (element switch / reload) in the loader effect.
+  const [activated, setActivated] = useState(false);
   const [tick, bump] = useReducer((x: number) => x + 1, 0);
 
   useEffect(() => {
     setLoader(null);
     setFailed(false);
+    setActivated(false);
     if (!storeUrl) return;
     let stale = false;
     loadOmeZarr(storeUrl, { type: 'multiscales' })
@@ -185,7 +202,7 @@ export function useVivImageLayer(
   const tx = target ? target[0] : 0;
   const ty = target ? target[1] : 0;
 
-  const { layers, baseReady } = useMemo(() => {
+  const { layers, covered } = useMemo(() => {
     // Defer all Viv chunk fetching until the canvas has a viewState — i.e. until the
     // coords have loaded and the cells are drawing. Viv's base level fans out into
     // dozens of per-channel chunk requests; firing them at mount (before coords) lets
@@ -193,7 +210,7 @@ export function useVivImageLayer(
     // (measured: coords queued 30s+ behind the image storm on slow-storage deploys).
     if (!enabled || failed || !loader || !imageInfo?.pixel_to_world
         || !imageInfo.levels.length || !viewState || !size) {
-      return { layers: [] as Layer[], baseReady: false };
+      return { layers: [] as Layer[], covered: false };
     }
     const m = imageInfo.pixel_to_world;
     const levels = imageInfo.levels;
@@ -272,6 +289,12 @@ export function useVivImageLayer(
     const { level, sx, sy, col0, col1, row0, row1 } =
       selectTileRange(imageInfo, size, zoom, tx, ty, maxLevel);
 
+    // Detail-tile coverage of the current viewport: `active` (PNG handoff) latches
+    // only once every expected tile has painted, so the swap from PNG to Viv is never
+    // to a partially-blocky frame. When level >= res the base already is the right
+    // resolution, so there are no detail tiles to wait on and the base alone counts.
+    let detailExpected = 0;
+    let detailLoaded = 0;
     if (viewState && size && level < res) {
       const { width: WL, height: HL } = levels[level];
 
@@ -279,6 +302,7 @@ export function useVivImageLayer(
       const dtype = source.dtype;
       for (let row = row0; row <= row1; row++) {
         for (let col = col0; col <= col1; col++) {
+          detailExpected++;
           const key = `${element}|${level}|${col}|${row}`;
           const raster = getTileData(
             key,
@@ -292,6 +316,7 @@ export function useVivImageLayer(
             bump,
           );
           if (!raster) continue;
+          detailLoaded++;
           // tile pixel rect at level L, scaled back to level-0 pixel space. XRLayer
           // bounds are axis-aligned [left, bottom, right, top] and Viv maps data row 0 to
           // `top` (bounds[3]). The app's world/OrthographicView is y-up (a cell at world
@@ -321,14 +346,21 @@ export function useVivImageLayer(
       }
     }
 
-    return { layers: result, baseReady };
+    const covered = baseReady && (detailExpected === 0 || detailLoaded === detailExpected);
+    return { layers: result, covered };
     // bump/tick is a render trigger; tileCache reads are keyed by the deps below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, failed, loader, imageInfo, isRgb, selections, channels, element,
       viewState, size, zoom, tx, ty, size?.width, size?.height, tick]);
 
-  // `active` (caller suppresses the PNG path when true) means Viv is actually
-  // painting the image, not merely that the pyramid metadata loaded — so the
-  // server-composited PNG base keeps covering until the first Viv texture is up.
-  return { layers, active: enabled && !failed && loader !== null && baseReady };
+  // Latch `activated` the first time Viv fully covers the viewport; from then on the
+  // caller shows Viv (and its own coarse-base-then-stream behavior) instead of PNG.
+  useEffect(() => {
+    if (covered) setActivated(true);
+  }, [covered]);
+
+  // `active` (caller suppresses the PNG path when true) means Viv has covered the view
+  // at full detail at least once — so the handoff from the server-composited PNG path
+  // is always to a sharp Viv frame, never to Viv's coarse base blown up into blocks.
+  return { layers, active: enabled && !failed && loader !== null && activated };
 }

@@ -724,8 +724,8 @@ um/px), so it renders nothing. Instead `useVivImageLayer.ts` reuses the exact
 world-coordinate tile selection the WebP tile path uses (`useImageTiles`: pick the pyramid level for
 the current zoom, inverse-affine the viewport to the visible tile bbox) and renders a Viv
 `XRLayer` per visible tile — fetching raw channel data via the pyramid `PixelSource`
-(`loader[level].getTile`) and compositing on the GPU — over a coarse Viv `ImageLayer` base so
-the canvas is never blank while detail streams. Every XRLayer shares one level-0 pixel->world
+(`loader[level].getTile`) and compositing on the GPU — over a coarse Viv `ImageLayer` base.
+Every XRLayer shares one level-0 pixel->world
 `modelMatrix` and expresses its bounds in level-0 pixels, so the scaled/rotated affine
 positions each tile exactly where the points are. Bounds use `[px0, py1, px1, py0]`
 (row-0 side `py0` as `bounds[3]`=top, matching the WebP tile path's `quad`): this app's world /
@@ -736,6 +736,20 @@ WebP tile path. It is **on by default** (`SDS_CLIENT_IMAGE_COMPOSITING`, disable
 verified live across single- and multi-channel fluorescence (additive-on-black), RGB/H&E
 true-color passthrough, deep-zoom streaming, and image<->points alignment. See
 `docs/CONTRACT.md` for the info/route schemas.
+
+**Handoff from the WebP path.** Viv's raw per-channel chunks are larger on the wire than
+the server-composited display-WebP tiles (~10-16x) and fan out into many per-tile browser
+requests, so on a slow/remote store they sharpen the view *later* than the WebP path would.
+To avoid staring at Viv's coarse base blown up into blocks during that window, the canvas
+keeps rendering the WebP path (its own coarse thumbnail + streaming WebP detail tiles) and
+only swaps to Viv once Viv has **fully covered the viewport at least once** — base decoded
+*and* every detail tile for the current view present (`useVivImageLayer`'s `active`, latched
+in `SpatialCanvas` as `vivActive ? vivLayers : imageLayers`). The latch is sticky: once Viv
+has proven it can cover the view, later pans/zooms stay on Viv (its instant shader-uniform
+recolor is the whole point) and tolerate its normal coarse-base-then-stream refresh. A store
+too slow for Viv to ever fully cover simply never activates and stays on the WebP path — the
+correct behavior there, since WebP sharpens faster on a slow link and still recolors (by
+refetch) when channel controls change.
 
 The `raster_store` route reads one compressed chunk file per browser request, so a
 pan back over already-seen tiles would re-read each chunk under the session read lock.
