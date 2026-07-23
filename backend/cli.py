@@ -120,7 +120,16 @@ def _open_session(manager, args, reader):
     """Bootstrap a session from a reader (running the read job) or a saved store."""
     resolved_input = str(Path(args.input).resolve())
     if reader is None:  # zarr / spatialdata sentinel: load an existing store
-        return manager.create_from_load(resolved_input)
+        sess = manager.create_from_load(resolved_input)
+        # Like the read bootstrap below, the load runs async on the worker
+        # (Session._run_load); wait for it before returning, or the first recipe
+        # step gets queued against the placeholder app_state and is silently
+        # dropped when the load's app_state replaces it.
+        load_id = next(j["job_id"] for j in sess.queue_view() if j["kind"] == "load")
+        if _wait(sess, load_id) != "completed":
+            log, _ = sess.get_log(load_id)
+            raise SystemExit(f"load of {resolved_input} failed:\n{log}")
+        return sess
     namespace, function = reader
     params = {"path": resolved_input}
     if args.reader_params:
