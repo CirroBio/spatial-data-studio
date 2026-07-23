@@ -681,44 +681,14 @@ async def run_recipe(sid: str, recipe: dict):
     return {"staged" if mode == "stage" else "queued": n}
 
 
-def _preflight(recipe: dict) -> dict:
-    """Required pre-existing keys = referenced keys − keys produced by role:output
-    params (spec §5.8, using the term dictionary's output terms §1.6). Also validates
-    each step's function exists in the installed registry (§5.2)."""
-    produced: set[str] = set()
-    referenced, unknown = [], []
-    # Widgets whose value names a pre-existing dataset key (the picker facets). The
-    # widget is the source of truth for the binding, so preflight keys off it rather
-    # than bound_to (which is inert except for obs_value_map).
-    _REF_WIDGETS = ("obs_categorical", "obs_key", "obsm_key", "obsp_key", "layer_key")
-    for step in recipe.get("steps", []):
-        e = REGISTRY.get(f"{step['namespace']}.{step['function']}")
-        if e is None:
-            unknown.append(f"{step['namespace']}.{step['function']}")
-            continue
-        by_name = {p.name: p for p in e.params}
-        for name, val in step.get("params", {}).items():
-            spec = by_name.get(name)
-            if spec is None:
-                continue
-            vals = [v for v in (val if isinstance(val, list) else [val]) if isinstance(v, str) and v]
-            if spec.role == "output":
-                produced.update(vals)
-            elif spec.widget in _REF_WIDGETS:
-                for v in vals:
-                    referenced.append({"step": step["function"], "param": name,
-                                       "ref": v, "widget": spec.widget})
-    unresolved = [r for r in referenced if r["ref"] not in produced]
-    return {"produced": sorted(produced), "unresolved": unresolved, "unknown_functions": unknown}
-
-
 @app.post("/api/sessions/{sid}/recipe/preflight")
 async def preflight_recipe(sid: str, recipe: dict):
     """Validate against the installed registry. Recipe params are resolved first
     so referenced-key checks reflect the caller's chosen `param_values`."""
     from . import recipes
     _session(sid)
-    return _preflight({"steps": recipes.resolve_steps(recipe, recipe.get("param_values"))})
+    steps = recipes.resolve_steps(recipe, recipe.get("param_values"))
+    return recipes.preflight({"steps": steps})
 
 
 # ---- Arrow data path -------------------------------------------------------

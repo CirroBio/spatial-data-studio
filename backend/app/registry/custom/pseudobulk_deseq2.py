@@ -10,7 +10,8 @@ reads it back, mirroring the compute-writes/plot-reads split squidpy metrics
 use (e.g. nhood_enrichment)."""
 from __future__ import annotations
 
-from ..base import CallResult, Function, ParamSpec, missing_obs_column, run_compute, run_plot
+from ..base import CallResult, Function, ParamSpec, missing_obs_column, missing_uns_key, \
+    resolve_per_celltype, run_compute, run_plot
 
 _SAMPLE_PARAM = ParamSpec(
     "sample_key", {"type": "string"}, "obs_categorical", None, required=True,
@@ -236,18 +237,13 @@ alpha
         cell_type = (params.get("cell_type") or "").strip()
         alpha = float(params.get("alpha") or 0.05)
         adata = session.active_table()
-        if key_added not in adata.uns:
-            return CallResult(status="failed",
-                              error=f"run 'Pseudobulk DE (DESeq2)' for this key first (uns['{key_added}'] not found)")
-        per_celltype = adata.uns[key_added].get("per_celltype", {})
-        if not per_celltype:
-            return CallResult(status="failed", error=f"uns['{key_added}'] has no per-cell-type results")
-        if not cell_type:
-            cell_type = sorted(per_celltype)[0]
-        if cell_type not in per_celltype:
-            return CallResult(status="failed",
-                              error=f"cell type {cell_type!r} not found in uns['{key_added}']['per_celltype']; "
-                                    f"available: {sorted(per_celltype)}")
+        error = missing_uns_key(adata, key_added, "Pseudobulk DE (DESeq2)")
+        if error:
+            return CallResult(status="failed", error=error)
+        cell_type, error = resolve_per_celltype(adata, key_added, cell_type,
+                                                default=lambda per_celltype: sorted(per_celltype)[0])
+        if error:
+            return CallResult(status="failed", error=error)
 
         def fn(ad):
             import matplotlib.pyplot as plt

@@ -7,8 +7,8 @@ import { XRLayer } from '@vivjs/layers';
 import { ColorPaletteExtension } from '@vivjs/extensions';
 import type { ImageInfo } from '../../types';
 import type { Channel } from './useImageChannels';
-import { worldToPixel } from './imageAffine';
 import { installRasterFetchDedup } from '../../lib/dedupeRasterFetch';
+import { selectTileRange } from './tileLevelOfDetail';
 import { transparentBlackExtension } from './transparentBlackExtension';
 
 // Every channel of a tile shares one chunk file (rasters.py packs (C, TILE, TILE)
@@ -266,37 +266,14 @@ export function useVivImageLayer(
       }) as Layer);
     }
 
-    // Detail tiles for the current viewport, only when finer than the base level.
-    // Pick the coarsest level whose native resolution still matches the screen:
-    // world units per screen pixel = 2^-zoom; per level-0 pixel = worldW / W0.
-    const worldPerScreenPx = Math.pow(2, -zoom);
-    const worldPerPx0 = Math.abs(imageInfo.bounds[2] - imageInfo.bounds[0]) / W0;
-    let level = Math.floor(Math.log2(Math.max(worldPerScreenPx / worldPerPx0, 1e-9)));
-    level = Math.max(0, Math.min(maxLevel, level));
+    // Detail tiles for the current viewport, only when finer than the base level
+    // actually rendered (`res`, not `maxLevel` — the base texture may be coarser
+    // than the pyramid's finest level to stay under MAX_TEXTURE_PX).
+    const { level, sx, sy, col0, col1, row0, row1 } =
+      selectTileRange(imageInfo, size, zoom, tx, ty, maxLevel);
 
     if (viewState && size && level < res) {
       const { width: WL, height: HL } = levels[level];
-      const sx = W0 / WL;
-      const sy = H0 / HL;
-
-      // Viewport world rect -> level-0 pixel bbox (inverse affine on 4 corners, so
-      // rotated images still map correctly).
-      const hw = (size.width / 2) * worldPerScreenPx;
-      const hh = (size.height / 2) * worldPerScreenPx;
-      const corners: [number, number][] = [
-        [tx - hw, ty - hh], [tx + hw, ty - hh], [tx + hw, ty + hh], [tx - hw, ty + hh],
-      ];
-      let pxMin = Infinity, pyMin = Infinity, pxMax = -Infinity, pyMax = -Infinity;
-      for (const [cx, cy] of corners) {
-        const [px, py] = worldToPixel(m, cx, cy);
-        pxMin = Math.min(pxMin, px); pxMax = Math.max(pxMax, px);
-        pyMin = Math.min(pyMin, py); pyMax = Math.max(pyMax, py);
-      }
-      // level-0 pixels -> level-L tile indices, with a one-tile margin.
-      const col0 = Math.max(0, Math.floor(pxMin / sx / T) - 1);
-      const col1 = Math.min(Math.ceil(WL / T) - 1, Math.floor(pxMax / sx / T) + 1);
-      const row0 = Math.max(0, Math.floor(pyMin / sy / T) - 1);
-      const row1 = Math.min(Math.ceil(HL / T) - 1, Math.floor(pyMax / sy / T) + 1);
 
       const source = loader[level];
       const dtype = source.dtype;

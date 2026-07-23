@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..base import (CallResult, Function, ParamSpec, missing_obs_column,
+from ..base import (CallResult, Function, ParamSpec, missing_obs_column, missing_uns_key,
                     resolve_obsm_key, run_compute, run_plot)
 
 _SAMPLE_PARAM = ParamSpec(
@@ -185,10 +185,9 @@ alpha
         key_added = (params.get("key_added") or "milo").strip()
         alpha = float(params.get("alpha") or 0.1)
         adata = session.active_table()
-        if key_added not in adata.uns:
-            return CallResult(status="failed",
-                              error=f"run 'Milo differential abundance' for this key first "
-                                    f"(uns['{key_added}'] not found)")
+        error = missing_uns_key(adata, key_added, "Milo differential abundance")
+        if error:
+            return CallResult(status="failed", error=error)
 
         def fn(ad):
             from ._vendor import milo_da_plot

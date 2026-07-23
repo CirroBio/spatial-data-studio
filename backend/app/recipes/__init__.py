@@ -166,3 +166,39 @@ def apply_recipe(session, name: str, mode: str = "run", param_values: dict | Non
         return {"status": "failed", "error": f"no recipe named '{name}'"}
     n = run_steps(session, resolve_steps(recipe, param_values), mode)
     return {"status": "completed", "staged" if mode == "stage" else "queued": n}
+
+
+# Widgets whose value names a pre-existing dataset key (the picker facets). The
+# widget is the source of truth for the binding, so preflight keys off it rather
+# than bound_to (which is inert except for obs_value_map).
+_REF_WIDGETS = ("obs_categorical", "obs_key", "obsm_key", "obsp_key", "layer_key")
+
+
+def preflight(recipe: dict) -> dict:
+    """Required pre-existing keys = referenced keys − keys produced by role:output
+    params (spec §5.8, using the term dictionary's output terms §1.6). Also validates
+    each step's function exists in the installed registry (§5.2). `recipe` should
+    already have its steps resolved (see resolve_steps) so referenced-key checks
+    reflect the caller's chosen param_values."""
+    from ..registry.introspect import REGISTRY
+    produced: set[str] = set()
+    referenced, unknown = [], []
+    for step in recipe.get("steps", []):
+        e = REGISTRY.get(f"{step['namespace']}.{step['function']}")
+        if e is None:
+            unknown.append(f"{step['namespace']}.{step['function']}")
+            continue
+        by_name = {p.name: p for p in e.params}
+        for name, val in step.get("params", {}).items():
+            spec = by_name.get(name)
+            if spec is None:
+                continue
+            vals = [v for v in (val if isinstance(val, list) else [val]) if isinstance(v, str) and v]
+            if spec.role == "output":
+                produced.update(vals)
+            elif spec.widget in _REF_WIDGETS:
+                for v in vals:
+                    referenced.append({"step": step["function"], "param": name,
+                                       "ref": v, "widget": spec.widget})
+    unresolved = [r for r in referenced if r["ref"] not in produced]
+    return {"produced": sorted(produced), "unresolved": unresolved, "unknown_functions": unknown}

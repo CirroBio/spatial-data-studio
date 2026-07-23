@@ -11,8 +11,8 @@ from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 
-from ..base import CallResult, Function, ParamSpec, missing_obs_column, run_compute, run_plot, \
-    resolve_obsm_key
+from ..base import CallResult, Function, ParamSpec, missing_obs_column, missing_uns_key, run_compute, \
+    run_plot, resolve_obsm_key
 
 _NUMERIC_KWARGS = ("bin_size", "bandwidth", "threshold", "min_area", "radius", "margin_width")
 
@@ -186,10 +186,9 @@ color_by
         key_added = (params.get("key_added") or "boundary").strip()
         color_by = params.get("color_by") or "compartment"
         adata = session.active_table()
-        if key_added not in adata.uns:
-            return CallResult(
-                status="failed",
-                error=f"run 'Region boundary / infiltration distance' for this key first (uns['{key_added}'] not found)")
+        error = missing_uns_key(adata, key_added, "Region boundary / infiltration distance")
+        if error:
+            return CallResult(status="failed", error=error)
         error = missing_obs_column(adata, f"{key_added}_compartment")
         if error:
             return CallResult(status="failed", error=error)
@@ -340,9 +339,9 @@ profile_key
     def execute(self, params: dict, session) -> CallResult:
         profile_key = (params.get("profile_key") or "infiltration_profile").strip()
         adata = session.active_table()
-        if profile_key not in adata.uns:
-            return CallResult(status="failed",
-                              error=f"run 'Infiltration profile' for this key first (uns['{profile_key}'] not found)")
+        error = missing_uns_key(adata, profile_key, "Infiltration profile")
+        if error:
+            return CallResult(status="failed", error=error)
 
         def fn(ad):
             from ._vendor import boundary_plot

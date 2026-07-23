@@ -123,9 +123,13 @@ instead of fetching server-composited WebP tiles:
   `hi` the same upper bound the server tile compositor uses), so client and server brightness match.
 - `is_rgb: bool` — true for a true-color RGB/H&E image (shown as-is, not tinted).
 
-Only rasters that `normalize_rasters` rebuilds into the per-session cache store are
-served (and thus compositable); an already-canonical element has no served store and
-stays on the WebP tile path.
+Every image gets a served store: `normalize_rasters` rebuilds into the per-session
+cache store any image that isn't already tile-chunked, or that is but isn't yet
+known to live under `WORK_DIR` (e.g. a bare `.zarr` directory read in place from a
+mounted path); a canonical image already local (e.g. reopened from one of our own
+checkpoints) is served straight from its own backing store instead. An image with
+no backing path at all (e.g. adopted mid-session with no `sdata.path`, such as a raw
+reader import) has no served store and stays on the WebP tile path.
 
 ### Session source on create
 - read:  `{kind:"read", namespace:"read", function:"visium", params:{path:"..."}}` — any `path`/`input`/`image_path`/`alignment_file` param must resolve under `DATA_DIR`, else 400.

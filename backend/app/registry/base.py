@@ -27,6 +27,14 @@ _TABLE_FACETS = ["obs", "var", "obsm", "obsp", "layers", "uns"]
 _SDATA_FACETS = ["images", "labels", "points", "shapes", "tables"]
 _FACET_TO_ELEMENT = {"obs": "obs", "var": "var", "obsm": "obsm", "obsp": "obsp", "layers": "layers"}
 
+
+def is_table_facet(facet: str) -> bool:
+    """True if `facet` is a table-scoped facet key (see `_TABLE_FACETS`) rather than
+    an sdata-scoped one. Public wrapper for callers outside the registry package
+    (e.g. sessions/session.py's `_mark_dirty`) so they don't reach across the
+    package boundary for the underscore-prefixed list itself."""
+    return facet in _TABLE_FACETS
+
 # Closed vocabularies for a ParamSpec / Function, mirrored from the frontend so the
 # form can't be handed a value it doesn't render. WIDGETS is the exact `UiWidget`
 # union in frontend/src/types.ts; EFFECT_CLASSES / ROLES are `EffectClass` and the
@@ -277,6 +285,34 @@ def missing_obs_column(adata, name: str | None) -> str | None:
     if not name or name not in adata.obs.columns:
         return f"obs column '{name}' does not exist"
     return None
+
+
+def missing_uns_key(adata, key: str, step_label: str) -> str | None:
+    """Failure message if `key` isn't in `adata.uns` yet, else None. Guards a step
+    that consumes another step's uns[...] output; `step_label` names that
+    producing step (e.g. "Milo differential abundance") for the error text."""
+    if key not in adata.uns:
+        return f"run '{step_label}' for this key first (uns['{key}'] not found)"
+    return None
+
+
+def resolve_per_celltype(adata, key_added: str, cell_type: str, *, default) -> tuple[str | None, str | None]:
+    """Resolve `cell_type` against `adata.uns[key_added]['per_celltype']` for a plot
+    step that reads another step's per-cell-type result. Call after confirming
+    `key_added` is present (e.g. via `missing_uns_key`). `default(per_celltype)`
+    picks the cell type when `cell_type` is blank — callers pass their own
+    selection rule. Returns (resolved_cell_type, None) on success, or (None, error)
+    with the failure message the caller wraps in a CallResult — the same
+    convention as `missing_obs_column`."""
+    per_celltype = adata.uns[key_added].get("per_celltype", {})
+    if not per_celltype:
+        return None, f"uns['{key_added}'] has no per-cell-type results"
+    if not cell_type:
+        cell_type = default(per_celltype)
+    if cell_type not in per_celltype:
+        return None, (f"cell type {cell_type!r} not found in uns['{key_added}']['per_celltype']; "
+                       f"available: {sorted(per_celltype)}")
+    return cell_type, None
 
 
 def resolve_obsm_key(adata, params: dict, param: str = "coords", default: str = "spatial") -> str:

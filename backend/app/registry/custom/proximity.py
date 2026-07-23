@@ -6,8 +6,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from ..base import CallResult, Function, ParamSpec, missing_obs_column, run_compute, run_plot, \
-    resolve_obsm_key
+from ..base import CallResult, Function, ParamSpec, missing_obs_column, missing_uns_key, run_compute, \
+    run_plot, resolve_obsm_key
 
 _KEY_ADDED_PARAM = ParamSpec(
     "key_added", {"type": "string", "default": "proximity"}, "text", None,
@@ -137,10 +137,9 @@ key_added
     def execute(self, params: dict, session) -> CallResult:
         key_added = (params.get("key_added") or "proximity").strip()
         adata = session.active_table()
-        if key_added not in adata.uns:
-            return CallResult(
-                status="failed",
-                error=f"run 'Proximity / avoidance test' for this key first (uns['{key_added}'] not found)")
+        error = missing_uns_key(adata, key_added, "Proximity / avoidance test")
+        if error:
+            return CallResult(status="failed", error=error)
 
         def fn(ad):
             from ._vendor import proximity_plot

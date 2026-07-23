@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..base import (CallResult, Function, ParamSpec, missing_obs_column,
+from ..base import (CallResult, Function, ParamSpec, missing_obs_column, missing_uns_key,
                     resolve_obsm_key, run_compute, run_plot)
 from ._docs import custom_doc
 
@@ -127,9 +127,9 @@ key_added
     def execute(self, params: dict, session) -> CallResult:
         key_added = (params.get("key_added") or "lisi").strip()
         adata = session.active_table()
-        if key_added not in adata.uns:
-            return CallResult(status="failed",
-                              error=f"run 'LISI scores' for this key first (uns['{key_added}'] not found)")
+        error = missing_uns_key(adata, key_added, "LISI scores")
+        if error:
+            return CallResult(status="failed", error=error)
 
         def fn(ad):
             from ._vendor import lisi_plot

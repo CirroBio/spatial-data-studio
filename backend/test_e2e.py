@@ -1038,6 +1038,44 @@ def run_raster_survives_reshape_flow(client):
     assert client.delete(f"/api/sessions/{sid}").status_code == 200
 
 
+def run_raster_locality_flow(client):
+    """A canonical (already tile-chunked) image whose backing store is a bare `.zarr`
+    directory read straight from DATA_DIR -- not one of our own WORK_DIR-extracted
+    checkpoints -- must still be copied into WORK_DIR at load rather than served
+    straight from that original path: on a slow/object-store-backed mount, serving it
+    live would mean every tile request reads from that mount for the life of the
+    session (see rasters.py::normalize_rasters's locality gate). visium_hne.zarr is
+    exactly this case (small already-pyramided chunks, loaded as a bare directory
+    under DATA_DIR). Guards that (1) the served store resolves under WORK_DIR after
+    load, and (2) a reshaping compute afterward doesn't re-copy it -- the known_stores
+    gate must recognize the element as already local from the first call, not re-run
+    the locality check and rebuild it again every time."""
+    import numpy as np
+    from pathlib import Path
+    from app.main import MANAGER
+
+    sid = new_session(client, DATA)  # visium_hne: bare .zarr dir directly under DATA_DIR
+    sess = MANAGER.get(sid)
+    assert sess.raster_stores, "visium_hne load produced no raster store"
+    name, store = next(iter(sess.raster_stores.items()))
+    assert Path(store).resolve().is_relative_to(config.WORK_DIR.resolve()), (
+        f"canonical image {name!r} served from outside WORK_DIR: {store} "
+        "(locality gate did not rebuild a canonical-but-remote raster)")
+    print(f"[ok] canonical image {name!r} loaded from DATA_DIR still served from WORK_DIR: {store}")
+
+    per_cell = np.asarray(sess.active_table().X.sum(axis=1)).ravel()
+    min_counts = int(np.quantile(per_cell, 0.25)) + 1
+    client.post(f"/api/sessions/{sid}/jobs", json={
+        "namespace": "sc.pp", "function": "filter_cells", "params": {"min_counts": min_counts}})
+    poll(client, sid, lambda s: hist_status(s, "filter_cells")[0] in ("completed", "failed"))
+    assert hist_status(client.get(f"/api/sessions/{sid}").json(), "filter_cells")[0] == "completed", \
+        "filter_cells did not complete"
+    assert MANAGER.get(sid).raster_stores.get(name) == store, (
+        "raster store path changed after reshape -- element was needlessly re-copied")
+    print("[ok] raster store path unchanged after reshape (no needless re-copy)")
+    assert client.delete(f"/api/sessions/{sid}").status_code == 200
+
+
 def run_filter_rank_genes_save_flow(client):
     """sc.tl.filter_rank_genes_groups marks dropped genes with np.nan (a float) in the
     object `names` record array of uns['rank_genes_groups_filtered']. anndata's zarr
@@ -1295,6 +1333,7 @@ def main():
         run_isolation_flow(client)
         run_filter_reshape_flow(client)
         run_filter_rank_genes_save_flow(client)
+        run_raster_locality_flow(client)
         if have_fixture(XENIUM_TMA, "zarr-import flow"):
             run_zarr_import_flow(client)
         if have_fixture(XENIUM, "segmentation flow"):

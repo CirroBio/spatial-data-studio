@@ -20,6 +20,21 @@ from ..transport.sse import BUS
 # is validated against the allowed data roots before the reader ever runs.
 _READ_PATH_PARAMS = ("path", "input", "image_path", "alignment_file", "store")
 
+# Secondary filename params that readers resolve relative to their own "path"
+# param (squidpy.read.vizgen/nanostring/visium, spatialdata_io.visium/visium_hd/
+# merscope all do `Path(path) / counts_file` or similar internally). None of
+# these have their own top-level widget validation (terms.yaml has no entry for
+# them, so dictionary.py falls back to a free-text widget), and `Path(base) /
+# value` silently DISCARDS `base` when `value` is itself absolute — so without
+# this, an absolute counts_file/meta_file/etc. reads an arbitrary host path
+# regardless of how well `path` itself is sandboxed. Validated below by
+# reproducing the same join against the descriptor's own "path" and running it
+# through the same _resolve_or_raise check, which catches both that discard and
+# a "../.." traversal.
+_READ_AUX_PATH_PARAMS = ("counts_file", "meta_file", "fov_file", "transformation_file",
+                        "source_image_path", "fullres_image_file", "tissue_positions_file",
+                        "scalefactors_file", "vpt_outputs")
+
 
 def _resolve_or_raise(path: str) -> Path:
     """Resolve `path` and ensure it falls within DATA_DIR — the single on-disk root
@@ -88,10 +103,17 @@ class SessionManager:
             pct = self._mem_fraction()
             raise RuntimeError(
                 f"read blocked: memory at {pct*100:.0f}% (>= {config.ADMISSION_PCT*100:.0f}%)")
-        for k, v in descriptor.get("params", {}).items():
+        params = descriptor.get("params", {})
+        for k, v in params.items():
             if k not in _READ_PATH_PARAMS or not isinstance(v, str):
                 continue
             _resolve_or_raise(v)
+        base_path = params.get("path")
+        if isinstance(base_path, str):
+            for k, v in params.items():
+                if k not in _READ_AUX_PATH_PARAMS or not isinstance(v, str) or not v:
+                    continue
+                _resolve_or_raise(str(Path(base_path) / v))
         sid = str(uuid.uuid4())
         sess = Session(sid, name or descriptor.get("function", "session"), None, appstate.fresh(), self)
         self.sessions[sid] = sess

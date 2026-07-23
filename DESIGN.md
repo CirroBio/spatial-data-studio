@@ -666,11 +666,22 @@ small dask pool (`SDS_RASTER_REBUILD_WORKERS`) the peak is the largest single im
 are rebuilt **single-scale, tile-chunked only** — they aren't LOD-rendered, and a
 nearest/mode downsample of integer IDs can't stream (it materializes the whole
 array plus every level at once, ~6 GB for a 1.9 GB label), so a pure lazy rechunk
-is both correct and cheap. The check is idempotent (reloading a normalized store is
-a no-op), element coordinate transforms are preserved so §9.3 reconciliation still
-holds, and because the rebound in-memory elements are tile-chunked, `save` (§13)
-inherits the tile chunking too. The cache dir shares the `extract_dir` lifecycle —
-cleaned on close, ownership transferred to a subset child (§8.3).
+is both correct and cheap. Being already tile-chunked isn't by itself enough to skip
+an image: a `.zarr.zip`/`.zarr.tar.gz` checkpoint is extracted into `WORK_DIR` before
+loading (so its rasters are already local), but a bare `.zarr` directory is read in
+place — possibly a slow network/object-store mount — so an image that's canonically
+shaped but not yet known to live under `WORK_DIR` is rebuilt too (a rechunk-free
+copy, since the shape is already right), converting what would otherwise be a live
+slow read on every tile request into a one-time load-time cost. `normalize_rasters`
+takes the session's own `raster_stores` map from its previous call (`known_stores`)
+to remember which images it already resolved, so this locality check — and any
+rebuild it forces — only ever happens once per element per session: idempotent for
+reload (a store already under `WORK_DIR` is a no-op) and for a reshaping compute that
+adopts a new object carrying the same already-normalized refs forward. Element
+coordinate transforms are preserved so §9.3 reconciliation still holds, and because
+the rebound in-memory elements are tile-chunked, `save` (§13) inherits the tile
+chunking too. The cache dir shares the `extract_dir` lifecycle — cleaned on close,
+ownership transferred to a subset child (§8.3).
 
 Two-tier memory safety for rendering: image compositing is capped by a global
 semaphore (`SDS_IMAGE_RENDER_CONCURRENCY`), and a render requested once RSS is past
@@ -697,8 +708,10 @@ edits are instant with no server round-trip. RGB/H&E images pass through as true
 The server advertises this per image in `/image/{element}/info` (`client_compositing`),
 gated by `SDS_CLIENT_IMAGE_COMPOSITING` (**default on**, opt out with `=0`) and a channel
 cap `SDS_CLIENT_IMAGE_MAX_CHANNELS` (default 6). `normalize_rasters` (§9.3) registers a
-served store for every image — a freshly rebuilt one for a non-canonical image, or
-`sdata.path` itself for a canonical one (e.g. reopened from a checkpoint) — so above the
+served store for every image — a freshly rebuilt one for a non-canonical image or for a
+canonical one whose backing store isn't already under `WORK_DIR` (e.g. a bare `.zarr`
+directory read in place from a mounted/object-store path — see §9.3), or `sdata.path`
+itself for a canonical image already local (e.g. reopened from a checkpoint) — so above the
 channel cap is the only ordinary reason `client_compositing` is false; the client then
 falls back to the **server-composited WebP tiles** (§9.3) — the same additive
 percentile-normalized blend. A dev-only escape hatch

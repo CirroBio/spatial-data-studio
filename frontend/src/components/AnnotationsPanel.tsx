@@ -2,6 +2,7 @@ import { useRef } from 'react';
 import { useAppStore } from '../store/sessionStore';
 import { updateShapeAnnotation, deleteShapeAnnotation } from '../api';
 import { reportError } from '../lib/errors';
+import ColorSwatchPicker from './ColorSwatchPicker';
 import ShapeToolbar from './ShapeToolbar';
 import type { ShapeAnnotation, StrokeStyle, FillStyle } from '../schemas/annotations';
 import { defaultFill } from '../schemas/annotations';
@@ -135,21 +136,11 @@ export default function AnnotationsPanel() {
                 onChange={(e) => patchStroke({ color: e.target.value })}
                 className="w-7 h-6 rounded border border-border bg-bg cursor-pointer"
               />
-              <div className="flex gap-1 flex-wrap">
-                {SHAPE_COLORS.map((c) => (
-                  <button
-                    key={c}
-                    onClick={() => patchStroke({ color: c })}
-                    className="w-4 h-4 rounded-sm border transition-all"
-                    style={{
-                      background: c,
-                      borderColor: selectedShape.stroke.color === c ? 'white' : 'transparent',
-                      outline: selectedShape.stroke.color === c ? `1px solid ${c}` : 'none',
-                    }}
-                    aria-label={`Color ${c}`}
-                  />
-                ))}
-              </div>
+              <ColorSwatchPicker
+                colors={SHAPE_COLORS}
+                selected={selectedShape.stroke.color}
+                onSelect={(c) => patchStroke({ color: c })}
+              />
             </div>
             {selectedShape.geometry.kind !== 'text' && (
               <>
@@ -229,21 +220,11 @@ export default function AnnotationsPanel() {
                   className="w-7 h-6 rounded border border-border bg-bg cursor-pointer"
                   disabled={!selectedShape.fill?.enabled}
                 />
-                <div className="flex gap-1 flex-wrap">
-                  {SHAPE_COLORS.map((c) => (
-                    <button
-                      key={c}
-                      onClick={() => patchFill({ color: c })}
-                      className="w-4 h-4 rounded-sm border transition-all"
-                      style={{
-                        background: c,
-                        borderColor: selectedShape.fill?.color === c ? 'white' : 'transparent',
-                        outline: selectedShape.fill?.color === c ? `1px solid ${c}` : 'none',
-                      }}
-                      aria-label={`Color ${c}`}
-                    />
-                  ))}
-                </div>
+                <ColorSwatchPicker
+                  colors={SHAPE_COLORS}
+                  selected={selectedShape.fill?.color ?? ''}
+                  onSelect={(c) => patchFill({ color: c })}
+                />
               </div>
               <label className="flex items-center gap-2 text-[11px] text-text/80">
                 Alpha

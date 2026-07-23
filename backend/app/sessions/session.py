@@ -469,9 +469,34 @@ class Session:
                 # when a genuinely fresh, non-canonical object is adopted (a reader bootstrap)
                 # does normalize build a new store, orphaning prev_cache; drop it only then.
                 prev_cache = self.raster_cache_dir
-                new_cache, new_stores = rasters.normalize_rasters(self.sdata)
+                # known_stores is keyed by element NAME, not dataset identity, so it's
+                # only trustworthy on a same-object reshape (the case the comment above
+                # describes): a genuine re-import (a read-effect function re-run on an
+                # already-open session, registry/custom/read_spatialdata.py) can hand
+                # back a fresh dataset that happens to reuse a conventional image name,
+                # which would otherwise be wrongly treated as "already known local" and
+                # skipped — leaving raster_stores[name] pointing at the PREVIOUS
+                # dataset's (possibly already-rmtree'd) cache dir. Force a from-scratch
+                # locality check for that case by handing normalize_rasters no prior
+                # knowledge at all.
+                is_reimport = fn is not None and fn.effect_class == "read"
+                known_stores = {} if is_reimport else self.raster_stores
+                # A read bootstrap's rebuild can be lengthy (multi-GB); stream its
+                # progress over the same job.log channel `target` above already taps,
+                # so the import spinner keeps moving instead of going quiet while this
+                # (still write-lock-held) rebuild runs.
+                progress = ((lambda message, pct=None: BUS.publish(
+                    "job.log", {"session_id": self.id, "job_id": job_id, "chunk": f"{message}\n"}))
+                            if is_reimport else None)
+                new_cache, new_stores = rasters.normalize_rasters(
+                    self.sdata, progress, known_stores=known_stores)
+                # Assign the store map unconditionally: normalize_rasters can return
+                # legitimate canonical-and-local entries in `stores` even when it finds
+                # nothing to rebuild (new_cache is None) — only the cache DIR is
+                # conditional on an actual new directory needing ownership/cleanup.
+                self.raster_stores = new_stores
                 if new_cache is not None:
-                    self.raster_cache_dir, self.raster_stores = new_cache, new_stores
+                    self.raster_cache_dir = new_cache
                     self.raster_cache_mb = rasters.cache_size_mb(new_cache)
                     if prev_cache and prev_cache != new_cache:
                         shutil.rmtree(prev_cache, ignore_errors=True)
@@ -493,6 +518,24 @@ class Session:
                 from ..registry import kernel
                 if result.changed_facets:
                     kernel.apply_changed_facets(self.active_table(), self.sdata, result.changed_facets)
+                    if "images" in result.changed_facets or "labels" in result.changed_facets:
+                        # A compute that wrote an images/labels facet in place (mutating
+                        # facets without reshaping the table, so it never reaches the
+                        # new_object branch above) still needs tile-chunking, or it
+                        # reproduces the multi-GB-chunk-per-tile OOM rasters.py exists
+                        # to prevent, and the new element never gets a raster_stores
+                        # entry. This is an ordinary in-session mutation, never a
+                        # re-import, so the existing known_stores map is always trusted.
+                        from .. import rasters
+                        prev_cache = self.raster_cache_dir
+                        new_cache, new_stores = rasters.normalize_rasters(
+                            self.sdata, known_stores=self.raster_stores)
+                        self.raster_stores = new_stores
+                        if new_cache is not None:
+                            self.raster_cache_dir = new_cache
+                            self.raster_cache_mb = rasters.cache_size_mb(new_cache)
+                            if prev_cache and prev_cache != new_cache:
+                                shutil.rmtree(prev_cache, ignore_errors=True)
 
         self.saved = False  # a completed compute/plot changed the object or its cached state
 
@@ -603,13 +646,13 @@ class Session:
         `X`), and the active table is cheap to rewrite regardless. The diff is used to
         catch OTHER changed table elements (`tables` facet) and to force a full save
         when a raster or geometry element changed (those can't be updated in place)."""
-        from ..registry.base import _TABLE_FACETS
+        from ..registry.base import is_table_facet
         if self.active_table_key:
             self.dirty_tables.add(self.active_table_key)
         for facet, keys in structural_diff.items():
             if facet == "tables":
                 self.dirty_tables.update(keys)
-            elif facet not in _TABLE_FACETS:
+            elif not is_table_facet(facet):
                 self.force_full = True
 
     def _clear_dirty(self) -> None:
@@ -725,7 +768,8 @@ class Session:
                 self.hash_check = hash_check
                 # Older stores hold huge-chunked rasters; re-tile them so canvas tiles
                 # stay cheap (a no-op for stores already in canonical form). See rasters.py.
-                self.raster_cache_dir, self.raster_stores = rasters.normalize_rasters(sdata, report)
+                self.raster_cache_dir, self.raster_stores = rasters.normalize_rasters(
+                    sdata, report, known_stores=self.raster_stores)
                 self.raster_cache_mb = rasters.cache_size_mb(self.raster_cache_dir)
                 self.active_table_key = self._default_table_key()
                 report("Building views…")

@@ -7,7 +7,8 @@ heatmap for one cell type — the same compute-writes/plot-reads split the other
 custom metrics use (e.g. pseudobulk_deseq2). numpy/scipy only; no new deps."""
 from __future__ import annotations
 
-from ..base import CallResult, Function, ParamSpec, missing_obs_column, run_compute, run_plot
+from ..base import CallResult, Function, ParamSpec, missing_obs_column, missing_uns_key, \
+    resolve_per_celltype, run_compute, run_plot
 from ._docs import custom_doc
 
 _CELLTYPE_PARAM = ParamSpec(
@@ -223,20 +224,15 @@ n_genes
         cell_type = (params.get("cell_type") or "").strip()
         n_genes = int(params.get("n_genes") or 15)
         adata = session.active_table()
-        if key_added not in adata.uns:
-            return CallResult(status="failed",
-                              error=f"run 'Region feature differences (Kruskal-Wallis)' for this key first "
-                                    f"(uns['{key_added}'] not found)")
-        per_celltype = adata.uns[key_added].get("per_celltype", {})
-        if not per_celltype:
-            return CallResult(status="failed", error=f"uns['{key_added}'] has no per-cell-type results")
-        if cell_type and cell_type not in per_celltype:
-            return CallResult(status="failed",
-                              error=f"cell type {cell_type!r} not found in uns['{key_added}']['per_celltype']; "
-                                    f"available: {sorted(per_celltype)}")
-        if not cell_type:
-            # The cell type whose single most significant gene ranks best.
-            cell_type = min(per_celltype, key=lambda ct: min(per_celltype[ct]["padj"], default=1.0))
+        error = missing_uns_key(adata, key_added, "Region feature differences (Kruskal-Wallis)")
+        if error:
+            return CallResult(status="failed", error=error)
+        # Default: the cell type whose single most significant gene ranks best.
+        cell_type, error = resolve_per_celltype(
+            adata, key_added, cell_type,
+            default=lambda per_celltype: min(per_celltype, key=lambda ct: min(per_celltype[ct]["padj"], default=1.0)))
+        if error:
+            return CallResult(status="failed", error=error)
 
         def fn(ad):
             import matplotlib.pyplot as plt

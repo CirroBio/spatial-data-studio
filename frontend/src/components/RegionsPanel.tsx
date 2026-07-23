@@ -4,6 +4,7 @@ import { annotateSession } from '../api';
 import { reportError } from '../lib/errors';
 import { resolveRegionSetColumn } from '../lib/regions';
 import { useDrawSelection } from '../hooks/useDrawSelection';
+import ColorSwatchPicker from './ColorSwatchPicker';
 import DrawControls from './DrawControls';
 import ObsFieldSelect from './ObsFieldSelect';
 import type { RegionSet } from '../types';
@@ -107,21 +108,11 @@ export default function RegionsPanel() {
               onChange={(e) => setRegionTarget(regionNewSetName, regionCategoryName, e.target.value)}
               className="w-7 h-6 rounded border border-border bg-bg cursor-pointer"
             />
-            <div className="flex gap-1 flex-wrap">
-              {NEW_CAT_COLORS.map((c) => (
-                <button
-                  key={c}
-                  onClick={() => setRegionTarget(regionNewSetName, regionCategoryName, c)}
-                  className="w-4 h-4 rounded-sm border transition-all"
-                  style={{
-                    background: c,
-                    borderColor: regionColor === c ? 'white' : 'transparent',
-                    outline: regionColor === c ? `1px solid ${c}` : 'none',
-                  }}
-                  aria-label={`Color ${c}`}
-                />
-              ))}
-            </div>
+            <ColorSwatchPicker
+              colors={NEW_CAT_COLORS}
+              selected={regionColor}
+              onSelect={(c) => setRegionTarget(regionNewSetName, regionCategoryName, c)}
+            />
           </div>
           <p className="text-[10px] text-muted/60 leading-snug">
             Draw on the canvas, then Apply label.

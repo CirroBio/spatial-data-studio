@@ -3,7 +3,8 @@ import { BitmapLayer } from '@deck.gl/layers';
 import type { Layer, OrthographicViewState } from '@deck.gl/core';
 import type { ImageInfo } from '../../types';
 import { getImageTileUrl, getImageThumbnailUrl } from '../../api';
-import { quad, worldToPixel } from './imageAffine';
+import { quad } from './imageAffine';
+import { selectTileRange } from './tileLevelOfDetail';
 import { transparentBlackExtension } from './transparentBlackExtension';
 
 // Module-level decoded-image cache so pan/zoom reuses tiles and we can track
@@ -95,37 +96,12 @@ export function useImageTiles(
       loading = true;
     }
 
-    // Pick the coarsest level whose native resolution still matches the screen:
-    // world units per screen pixel = 2^-zoom; per level-0 pixel = worldW / W0.
-    const worldPerScreenPx = Math.pow(2, -zoom);
-    const worldPerPx0 = Math.abs(imageInfo.bounds[2] - imageInfo.bounds[0]) / W0;
-    let level = Math.floor(Math.log2(Math.max(worldPerScreenPx / worldPerPx0, 1e-9)));
-    level = Math.max(0, Math.min(maxLevel, level));
+    const { level, sx, sy, col0, col1, row0, row1 } =
+      selectTileRange(imageInfo, size, zoom, tx, ty, maxLevel);
 
     // Only overlay detail tiles when they're finer than the base thumbnail.
     if (level < maxLevel) {
       const { width: WL, height: HL } = levels[level];
-      const sx = W0 / WL;
-      const sy = H0 / HL;
-
-      // Viewport world rect -> level-0 pixel bbox (inverse affine on 4 corners,
-      // so rotated images still map correctly).
-      const hw = (size.width / 2) * worldPerScreenPx;
-      const hh = (size.height / 2) * worldPerScreenPx;
-      const corners: [number, number][] = [
-        [tx - hw, ty - hh], [tx + hw, ty - hh], [tx + hw, ty + hh], [tx - hw, ty + hh],
-      ];
-      let pxMin = Infinity, pyMin = Infinity, pxMax = -Infinity, pyMax = -Infinity;
-      for (const [cx, cy] of corners) {
-        const [px, py] = worldToPixel(m, cx, cy);
-        pxMin = Math.min(pxMin, px); pxMax = Math.max(pxMax, px);
-        pyMin = Math.min(pyMin, py); pyMax = Math.max(pyMax, py);
-      }
-      // level-0 pixels -> level-L tile indices, with a one-tile margin.
-      const col0 = Math.max(0, Math.floor(pxMin / sx / T) - 1);
-      const col1 = Math.min(Math.ceil(WL / T) - 1, Math.floor(pxMax / sx / T) + 1);
-      const row0 = Math.max(0, Math.floor(pyMin / sy / T) - 1);
-      const row1 = Math.min(Math.ceil(HL / T) - 1, Math.floor(pyMax / sy / T) + 1);
 
       for (let row = row0; row <= row1; row++) {
         for (let col = col0; col <= col1; col++) {
