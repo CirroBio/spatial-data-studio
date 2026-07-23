@@ -31,11 +31,11 @@ app/
     tables.py            data-inspector element inventory + paginated dataframe JSON
     sse.py               single multiplexed SSE bus with Last-Event-ID resume (§14.2)
   persistence/
-    store.py             save/load .zarr (dir) and .zarr.zip (browser-readable, sharded, incremental re-save)
+    store.py             save/load .zarr (dir) and .zarr.zip (incremental re-save)
   recipes/               curated analysis recipes (JSON, discovered at startup) + catalog/apply
   imaging.py             tiled image pyramid + channel compositing + coordinate reconciliation (§9.2)
-  rasters.py             ingest-time re-tiling into a tile-chunked sharded pyramid
-  snapshots.py           JSON snapshot-config write/list
+  rasters.py             ingest-time re-tiling into a tile-chunked pyramid
+  snapshots.py           JSON snapshot-config write/list/open (read-only session, no standalone viewer)
   datasets.py            saved-checkpoint scan for the load/upload pickers (prewarmed cache)
   prewarm.py             background queue that warms slow first-open menu lists off the event loop
   cirro.py               Cirro dataset upload (client-credentials auth, symlink bundle)

@@ -60,10 +60,6 @@ RUN uv pip install --system --no-cache -r requirements.txt \
 # Copy backend source
 COPY backend/ ./backend/
 
-# Single source of truth for the snapshot viewer version/base URL. backend/app/config.py
-# reads it from the app root (parents[2] of config.py == /app), so it must sit at /app.
-COPY snapshot-viewer.json ./snapshot-viewer.json
-
 # Copy built SPA from stage 1 into the static dir that uvicorn (and nginx) serves
 COPY --from=spa-builder /build/frontend/dist /app/spa
 

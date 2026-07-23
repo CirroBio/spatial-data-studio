@@ -619,10 +619,10 @@ class Session:
 
     def _write_checkpoint(self, path: str, hash_name: bool) -> str:
         """Persist the object to `path`, incrementally when possible: rewrite only the
-        changed table/transform elements (reusing the on-disk sharded rasters) when the
-        session is still backed by the sharded store it loaded from and no raster
-        changed; otherwise re-serialize the whole object. The caller holds the read
-        lock and updates saved-state after this returns."""
+        changed table/transform elements (reusing the on-disk rasters untouched) when
+        the session is still backed by the writable directory store it loaded from and
+        no raster changed; otherwise re-serialize the whole object. The caller holds
+        the read lock and updates saved-state after this returns."""
         from ..persistence.store import (save_spatialdata, update_checkpoint,
                                           can_update_incrementally)
         with self._save_lock:

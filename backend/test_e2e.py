@@ -406,33 +406,6 @@ def run_recipe_params_flow(client):
     print("[ok] recipe param_values override step params; defaults apply otherwise")
 
 
-def run_sharding_shape_flow():
-    """_reshard_array must produce a shard shape divisible by the inner chunk for
-    ANY raster level, including a pyramid level whose dimension is < the 512 inner
-    chunk (visium's levels are all >512, so its checkpoints never exercised this;
-    a 4-channel image with a small coarsest level does — zarr rejects a shard not
-    divisible by its inner chunk)."""
-    import json
-    import shutil
-    import tempfile
-    import zarr
-    from app.persistence import store as store_mod
-    for shape in [(4, 430, 1411), (1, 700, 500), (3, 11757, 11291), (430, 430)]:
-        d = tempfile.mkdtemp()
-        p = os.path.join(d, "arr")
-        zarr.create_array(store=p, shape=shape, chunks=shape, dtype="uint8")[:] = 3
-        store_mod._reshard_array(p)  # must not raise
-        meta = json.load(open(os.path.join(p, "zarr.json")))
-        shard = meta["chunk_grid"]["configuration"]["chunk_shape"]
-        inner = next(c["configuration"]["chunk_shape"] for c in meta["codecs"]
-                     if c["name"] == "sharding_indexed")
-        assert all(s % i == 0 for s, i in zip(shard, inner)), \
-            f"shard {shard} not divisible by inner {inner} for {shape}"
-        assert int(zarr.open_array(p, mode="r")[tuple(slice(0, min(2, s)) for s in shape)].sum()) > 0
-        shutil.rmtree(d)
-    print("[ok] reshard produces divisible shards for large/small/sub-chunk levels")
-
-
 def run_snapshot_flow(client, sid):
     """A snapshot is a JSON config pointing at an (auto-saved, content-hashed)
     checkpoint plus a baked render manifest. Opening it (POST /snapshots/{name}/open)
@@ -633,8 +606,8 @@ def run_transform_flow(client):
 def run_incremental_save_flow(client, checkpoint_path):
     """Loading a checkpoint we wrote yields an incremental-capable session: a
     table-only compute then saves by rewriting just the table element and reusing the
-    on-disk sharded rasters, so no reshard runs. Asserts the incremental branch is
-    taken, the raster files are left untouched, and the change round-trips."""
+    on-disk rasters untouched. Asserts the incremental branch is taken, the raster
+    files are left untouched, and the change round-trips."""
     from app.main import MANAGER
     from app.persistence import store
     sid = new_session(client, checkpoint_path)
@@ -1256,28 +1229,44 @@ def main():
         assert resp.status_code == 200
         print("[ok] computed obsp survived reload")
 
-        # --- new checkpoint format: sharded rasters, browser-readable, logs relocated ---
+        # --- checkpoint format: plain tile-chunked rasters (no shard repack — the
+        # backend always mediates access to a checkpoint now, so the browser-range-read
+        # optimization sharding existed for no longer applies), logs relocated ---
         import json as _json
         import zipfile as _zip
         name = os.path.basename(out)
         with _zip.ZipFile(out) as zf:
-            root = _json.loads(zf.read("zarr.json"))
-            cm = root["consolidated_metadata"]["metadata"]
-            # a raster array must report the sharding codec THROUGH consolidated metadata
-            # (else zarrita reads the pre-shard byte layout and decodes garbage)
-            raster = next(k for k, v in cm.items()
-                          if k.startswith("images/") and v.get("node_type") == "array")
-            codecs = [c.get("name") for c in cm[raster]["codecs"]]
-            assert "sharding_indexed" in codecs, f"{raster} not sharded in consolidated tree: {codecs}"
+            raster_entry = next(n for n in sorted(zf.namelist())
+                                if n.startswith("images/") and n.endswith("zarr.json")
+                                and _json.loads(zf.read(n)).get("node_type") == "array")
+            raster_meta = _json.loads(zf.read(raster_entry))
+            codecs = [c.get("name") for c in raster_meta.get("codecs", [])]
+            assert "sharding_indexed" not in codecs, f"{raster_entry} unexpectedly sharded: {codecs}"
+            chunk_shape = raster_meta["chunk_grid"]["configuration"]["chunk_shape"]
+            assert chunk_shape[-1] <= 512 and chunk_shape[-2] <= 512, \
+                f"{raster_entry} not tile-chunked: {chunk_shape}"
             # app_state present but with no inline worker logs (relocated to logs/)
+            root = _json.loads(zf.read("zarr.json"))
             saved_state = root["attributes"]["app_state"]
             assert all("_log" not in r for r in
                        saved_state["compute_history"] + saved_state["plots"]), "logs not relocated"
             logfiles = [n for n in zf.namelist() if n.startswith("logs/")]
-        print(f"[ok] sharded checkpoint: {raster} codecs={codecs}; "
-              f"root zarr.json={zf.getinfo('zarr.json').file_size/1024:.0f}KB; logs relocated={len(logfiles)}")
+        print(f"[ok] unsharded tile-chunked checkpoint: {raster_entry} chunks={chunk_shape}; "
+              f"logs relocated={len(logfiles)}")
 
-        # /api/checkpoints serves it with HTTP Range (206) so zarrita can byte-range-read it
+        # Regression check: reopening a saved checkpoint must still advertise the
+        # intended GPU-compositing path, not silently fall back to server-composited
+        # tiles (rasters._is_canonical used to detect this reload as "already
+        # tile-chunked, nothing to rebuild" and leave it with no raster_stores entry
+        # at all, so client_compositing stayed permanently false for every reopened
+        # session — see rasters.py).
+        info2 = client.get(f"/api/sessions/{sid2}/image/hne/info").json()
+        assert info2["client_compositing"] is True, \
+            f"reopened checkpoint lost client_compositing: {info2}"
+        print("[ok] reopened checkpoint still advertises client_compositing")
+
+        # /api/checkpoints serves it with HTTP Range (206) (the checkpoint picker and
+        # any other range-based consumer, e.g. resuming a large download)
         rng = client.get(f"/api/checkpoints/{name}", headers={"Range": "bytes=0-99"})
         assert rng.status_code == 206 and len(rng.content) == 100 and "content-range" in \
             {k.lower() for k in rng.headers}, f"range not honored: {rng.status_code} {len(rng.content)}"
@@ -1293,7 +1282,6 @@ def main():
         run_snapshot_flow(client, sid)
 
         print("\n--- feature flows ---")
-        run_sharding_shape_flow()
         run_staging_flow(client)
         run_recipe_params_flow(client)
         run_regions_flow(client)

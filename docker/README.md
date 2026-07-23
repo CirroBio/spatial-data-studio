@@ -98,11 +98,11 @@ read. The example above passes it just to illustrate the override.
 | `SDS_CONTAINER_MEM_MB`   | auto (cgroup, else host RAM) | Container memory limit in MiB. **Unset: auto-detected from the cgroup** (`--memory` / `mem_limit` / ECS task memory), falling back to the host's total physical RAM when the container has no memory hard-limit (and to `8192` only if physical memory can't be read). Set it to override the detected value. A value of `0` disables the memory percentage (the resource strip shows `0%` and admission control never blocks) rather than being treated as a limit. |
 | `SDS_ADMISSION_PCT`      | `0.80`    | Fraction of container RAM at which new jobs, reads, and image renders are refused. |
 | `SDS_MAX_SESSIONS`       | `8`       | Maximum concurrent in-memory sessions. |
-| `SDS_IMAGE_RENDER_CONCURRENCY` | `2` | Max image tiles/thumbnails composited at once. Caps the transient memory of a zoom/pan tile burst; renders past `SDS_ADMISSION_PCT` return 503 and the canvas keeps its coarse base layer. |
+| `SDS_IMAGE_RENDER_CONCURRENCY` | all cores | Max image tiles/thumbnails composited at once. Caps the transient memory of a zoom/pan tile burst; renders past `SDS_ADMISSION_PCT` return 503 and the canvas keeps its coarse base layer. Scales with available CPUs by default — set lower on a memory-constrained container. |
 | `SDS_CLIENT_IMAGE_COMPOSITING` | `1` | Advertise the client-side (Viv) compositing path in `/image/{element}/info` so the browser reads the raw raster zarr and composites channels on the GPU (instant contrast/color, no server round-trip; streams full-resolution tiles). On by default. Set `0` to force the server-composited PNG tile path (also the automatic fallback for canonical images or channel counts over the cap). |
 | `SDS_CLIENT_IMAGE_MAX_CHANNELS` | `6` | Max channels the browser will composite in one shader pass; an element with more channels falls back to PNG tiles. |
 | `SDS_RASTER_BASE_PX`     | `1024`    | Coarsest image-pyramid level target (longest side) when re-tiling images at ingest. |
-| `SDS_RASTER_REBUILD_WORKERS` | `2`   | dask worker count for the one-time ingest re-tiling; bounds its peak memory. |
+| `SDS_RASTER_REBUILD_WORKERS` | all cores | dask worker count for the one-time ingest re-tiling. Scales with available CPUs by default — set lower on a memory-constrained container. |
 | `SDS_STATIC_DIR`         | `/app/spa`| Path to the compiled SPA (baked into the image). |
 | `SDS_N_THREADS`      | all cores | Default for thread-count form params (`n_jobs`, etc.). |
 | `SDS_RESOURCE_HZ`        | `2`       | Resource-sample broadcast cadence (Hz) for the RAM/CPU strip. |

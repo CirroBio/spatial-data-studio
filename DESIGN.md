@@ -1166,25 +1166,26 @@ structures). Therefore: **monitor closely, expose live, guard at boundaries.**
 ## 18. Persistence
 
 - **Save / export:** write the active `SpatialData` to a `.zarr.zip` (data + `attrs`
-  state blob) — the complete, portable project, and the artifact the in-SPA snapshot
-  viewer byte-range-reads directly. Save is enqueued as a **special queue job** (§24.5) so
-  it captures a consistent snapshot serialized against in-flight compute. Saving blocks the
-  UI behind a spinner; a Stop button cancels it while still queued (a save already writing
-  to disk can't be interrupted).
-- **Incremental save:** a session loaded from a `.zarr.zip` is unpacked into a writable,
-  already-sharded directory store (its `extract_dir`) that backs the live object. Re-saving
-  such a session rewrites only the elements that changed since the last save — a changed
+  state blob) — the complete, portable project. Save is enqueued as a **special queue
+  job** (§24.5) so it captures a consistent snapshot serialized against in-flight
+  compute. Saving blocks the UI behind a spinner; a Stop button cancels it while still
+  queued (a save already writing to disk can't be interrupted).
+- **Incremental save:** a session loaded from a `.zarr.zip` is unpacked into a writable
+  directory store (its `extract_dir`) that backs the live object. Re-saving such a
+  session rewrites only the elements that changed since the last save — a changed
   table element (delete its on-disk dir, then `write_element`, since spatialdata 0.7.3
   refuses to overwrite an element inside its own store), an edited coordinate transform
   (`write_transformations`), and always `attrs` (`write_attrs`) — then re-consolidates
-  metadata and re-zips the directory. Rasters are Dask-backed from these same files and are
-  never touched, so the expensive decompress/recompress/**reshard** pass is skipped
-  entirely. This is gated on the store already being sharded (`can_update_incrementally`);
-  a compute that changes a raster or other non-table element, or a fresh import whose store
-  isn't sharded yet, falls back to the full write (`save_spatialdata`, which reshards). The
-  session tracks which elements are dirty (`dirty_tables`, `dirty_transforms`, `force_full`)
-  from each mutation's `structural_diff`. Save staging happens next to the destination
-  so the final commit is a same-filesystem rename, and the auto-named content hash is
+  metadata and re-zips the directory. Rasters are Dask-backed from these same files and
+  are never touched at all (no repack pass of any kind — checkpoints are no longer
+  independently browser-readable, so there's nothing about their on-disk raster layout
+  a save needs to preserve or rebuild). This is gated on the object still being backed
+  by a writable directory store (`can_update_incrementally`); a compute that changes a
+  raster or other non-table element, or a fresh import with no backing directory store
+  yet, falls back to the full write (`save_spatialdata`). The session tracks which
+  elements are dirty (`dirty_tables`, `dirty_transforms`, `force_full`) from each
+  mutation's `structural_diff`. Save staging happens next to the destination so the
+  final commit is a same-filesystem rename, and the auto-named content hash is
   accumulated during the zip write rather than by re-reading the finished archive.
 - **Load:** open a `.zarr.zip` (or `.zarr`); hydrate the object and restore UI from
   `attrs` (§5). `attrs["app_state"]` runs through a **schema migration** keyed on
