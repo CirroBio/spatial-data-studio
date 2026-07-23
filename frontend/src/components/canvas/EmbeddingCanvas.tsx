@@ -166,6 +166,7 @@ function EmbeddingCanvasView({
 }) {
   const { sessionState, updateDisplay, isolatedCategory, pushNotification, openSnapshots, setSnapshotHandler } = useAppStore();
   const dataVersions = sessionState?.data_versions ?? {};
+  const readOnly = sessionState?.summary.read_only ?? false;
 
   const { is_3d, x_component, y_component, z_component } = display.encoding;
   const coordsPath = `obsm:${display.encoding.obsm_key}`;
@@ -240,9 +241,12 @@ function EmbeddingCanvasView({
 
   // Update the store mirror immediately, then debounce the PUT so a slider drag or a
   // pan/rotate collapses into one write. A ref (not state) holds the timer so back-to-back
-  // viewport events during a drag reliably reset the same debounce.
+  // viewport events during a drag reliably reset the same debounce. A read-only
+  // (snapshot) session keeps the camera interactive locally but never persists — the
+  // backend would 403 the PUT anyway (session.read_only).
   function persistDisplay(updated: EmbeddingDisplaySpec) {
     updateDisplay(updated);
+    if (readOnly) return;
     if (persistTimer.current) clearTimeout(persistTimer.current);
     persistTimer.current = setTimeout(() => {
       putDisplay(sessionId, updated).catch(console.error);

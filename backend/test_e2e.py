@@ -435,13 +435,16 @@ def run_sharding_shape_flow():
 
 def run_snapshot_flow(client, sid):
     """A snapshot is a JSON config pointing at an (auto-saved, content-hashed)
-    checkpoint plus a baked render manifest; the browser viewer reads the checkpoint
-    directly. Verify save -> list -> config shape -> servable checkpoint."""
+    checkpoint plus a baked render manifest. Opening it (POST /snapshots/{name}/open)
+    loads that checkpoint as a read-only session pinned to the saved view — the
+    server-delivered replacement for the old standalone browser viewer. Verify
+    save -> list -> open -> read-only + pinned display -> a mutating call rejected."""
     disp = client.get(f"/api/sessions/{sid}").json()["app_state"]["displays"]
     spatial = next((d for d in disp if d["type"] == "spatial_canvas"), None)
     assert spatial, "no spatial display to snapshot"
+    saved_viewport = {"target": [100, 100], "zoom": -2}
     r = client.post(f"/api/sessions/{sid}/snapshot",
-                    json={"label": "e2e-snap", "viewport": {"target": [100, 100], "zoom": -2},
+                    json={"label": "e2e-snap", "viewport": saved_viewport,
                           "display_id": spatial["id"]})
     assert r.status_code == 200, r.text
     snap = r.json()
@@ -451,34 +454,30 @@ def run_snapshot_flow(client, sid):
     entry = next((s for s in listing if s["name"] == snap["name"]), None)
     assert entry and entry["kind"] == "spatial" and entry["checkpoint_name"], f"not listed: {listing}"
 
-    cfg = client.get(snap["url"]).json()
-    # New envelope (SNAPSHOT_CONTRACT §2): semver `schema_version`, a `data` path
-    # relative to the config's own URL, and `checkpoint.name` (no `checkpoint.url`).
-    assert cfg["schema_version"] == config.SNAPSHOT_VIEWER_VERSION, cfg.get("schema_version")
-    assert cfg["data"].startswith("./") and cfg["data"].endswith(".zarr.zip"), cfg.get("data")
-    checkpoint_name = cfg["checkpoint"]["name"]
-    assert checkpoint_name and "url" not in cfg["checkpoint"], cfg["checkpoint"]
-    assert cfg["render"]["image"] and cfg["render"]["image"]["pixel_to_world"], "missing image manifest"
-    assert cfg["render"]["channels"], "missing per-channel manifest"
+    r2 = client.post(snap["url"], json={"load_id": "e2e-snap-open"})
+    assert r2.status_code == 200, r2.text
+    sid2 = r2.json()["id"]
+    st2 = poll(client, sid2, lambda s: s["summary"]["status"] in ("ready", "errored"))
+    assert st2["summary"]["status"] == "ready", "opened snapshot errored"
+    assert st2["summary"]["read_only"] is True, st2["summary"]
 
-    # Version gate (SNAPSHOT_CONTRACT §8): the real emitted config's structural
-    # signature must equal the immutable golden frozen for the CURRENT version. Same
-    # `schema_signature` helper as test_schema_gate, so the cheap check and this one
-    # enforce one shape.
-    from snapshot_schema import schema_signature, load_golden
-    golden = load_golden(config.SNAPSHOT_VIEWER_VERSION)
-    assert schema_signature(cfg) == golden, (
-        "Snapshot schema changed — bump `version` in snapshot-viewer.json, add "
-        "snapshot_schema/<newversion>.json, and republish the viewer."
-    )
+    disp2 = st2["app_state"]["displays"]
+    assert len(disp2) == 1 and disp2[0]["type"] == "spatial_canvas", disp2
+    assert disp2[0]["viewport"] == saved_viewport, disp2[0]["viewport"]
+    assert disp2[0]["encoding"] == spatial["encoding"], "pinned encoding doesn't match the saved display"
 
-    # The checkpoint is now a sibling of the config under /snapshots/, but the
-    # /api/checkpoints/<name> route still exists (checkpoint picker) — build the URL
-    # from checkpoint.name since `checkpoint.url` is gone.
-    ck = client.get(f"/api/checkpoints/{checkpoint_name}", headers={"Range": "bytes=0-9"})
-    assert ck.status_code == 206, f"referenced checkpoint not servable: {ck.status_code}"
-    print(f"[ok] snapshot {snap['name']} -> checkpoint {checkpoint_name} "
-          f"(schema {cfg['schema_version']}, channels={len(cfg['render']['channels'])})")
+    # Frozen record: a mutating route rejects it even though the reopened checkpoint
+    # serves data (image tiles, obs/obsm) exactly like a normal session.
+    mut = client.post(f"/api/sessions/{sid2}/jobs",
+                      json={"namespace": "sc.pp", "function": "log1p", "params": {}})
+    assert mut.status_code == 403, (mut.status_code, mut.text)
+    upd = client.put(f"/api/sessions/{sid2}/displays/{disp2[0]['id']}",
+                     json={"encoding": disp2[0]["encoding"], "viewport": {"target": [0, 0], "zoom": 0}})
+    assert upd.status_code == 403, (upd.status_code, upd.text)
+
+    print(f"[ok] snapshot {snap['name']} opened read-only as {sid2[:8]} at pinned view "
+          f"(viewport={disp2[0]['viewport']}); mutation rejected")
+    assert client.delete(f"/api/sessions/{sid2}").status_code == 200
 
 
 def run_regions_flow(client):

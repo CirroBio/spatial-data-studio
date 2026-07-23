@@ -8,6 +8,15 @@ import { ColorPaletteExtension } from '@vivjs/extensions';
 import type { ImageInfo } from '../../types';
 import type { Channel } from './useImageChannels';
 import { worldToPixel } from './imageAffine';
+import { installRasterFetchDedup } from '../../lib/dedupeRasterFetch';
+import { transparentBlackExtension } from './transparentBlackExtension';
+
+// Every channel of a tile shares one chunk file (rasters.py packs (C, TILE, TILE)
+// into one chunk), but Viv's per-channel getTile calls below each resolve to that
+// same URL with no caching in between — see dedupeRasterFetch.ts for why this is
+// installed here rather than left to the library. Module-scope so it installs once,
+// the moment this (lazy-loaded) module is first used.
+installRasterFetchDedup();
 
 // Client-side GPU compositing of the tissue image via Viv, an alternative to the
 // server-composited PNG BitmapLayers (useImageTiles). Enabled only when the backend
@@ -195,9 +204,13 @@ export function useVivImageLayer(
     // Fluorescence composites additively from black, so zero-intensity pixels are
     // opaque black and would hide the themed backdrop (PLOT_BACKGROUNDS) behind the
     // image's whole bounding box — making the light/dark background toggle look dead.
-    // Map exact black to alpha 0 so empty areas show the backdrop. A true-color RGB
-    // image keeps black (it is real data, e.g. an H&E stain), so it stays opaque.
-    const useTransparentColor = !isRgb;
+    // transparentBlackExtension maps exact black to alpha 0 so empty areas show the
+    // backdrop. A true-color RGB image keeps black (it is real data, e.g. an H&E
+    // stain), so it stays opaque.
+    const treatBlackAsTransparent = !isRgb;
+    const imageExtensions = treatBlackAsTransparent
+      ? [new ColorPaletteExtension(), transparentBlackExtension]
+      : [new ColorPaletteExtension()];
 
     const channelsVisible = isRgb
       ? selections.map(() => true)
@@ -248,9 +261,7 @@ export function useVivImageLayer(
         modelMatrix: modelMatrix0,
         coordinateSystem: COORDINATE_SYSTEM.CARTESIAN,
         parameters: IMAGE_PARAMS,
-        extensions: [new ColorPaletteExtension()],
-        transparentColor: [0, 0, 0],
-        useTransparentColor,
+        extensions: imageExtensions,
         opacity: 1,
       }) as Layer);
     }
@@ -326,9 +337,7 @@ export function useVivImageLayer(
             modelMatrix: modelMatrix0,
             coordinateSystem: COORDINATE_SYSTEM.CARTESIAN,
             parameters: IMAGE_PARAMS,
-            extensions: [new ColorPaletteExtension()],
-            transparentColor: [0, 0, 0],
-            useTransparentColor,
+            extensions: imageExtensions,
             opacity: 1,
           }) as Layer);
         }

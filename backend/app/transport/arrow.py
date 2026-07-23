@@ -10,6 +10,19 @@ import pyarrow.ipc as ipc
 import pandas as pd
 from scipy import sparse
 
+# Sparse graphs (obsp) are shipped as dense (row, col, data) triplets — 16
+# bytes/edge, never viewport- or row-limited like the other field paths. Nothing in
+# the frontend fetches obsp today, but a future "show neighbor graph" feature could
+# wire it in without noticing the missing bound; cap nnz so it fails loudly instead
+# of streaming hundreds of MB (a k~15 kNN graph on 1M cells is ~15M edges/240MB).
+_MAX_SPARSE_EDGES = 5_000_000
+
+# Screen/world-space coordinates rounded to this many decimals before shipping —
+# far below on-screen resolution, but it zeros enough low mantissa bits that gzip
+# actually compresses the point cloud (raw float32 is near-incompressible).
+# Mirrors the same precision `transport/geometry.py` uses for polygon coordinates.
+_COORD_DECIMALS = 2
+
 
 def _is_categorical(series: pd.Series) -> bool:
     return isinstance(series.dtype, pd.CategoricalDtype) or series.dtype == object
@@ -32,8 +45,8 @@ def resolve_field(adata, field_path: str) -> pa.RecordBatch:
         col = adata.var[key]
         return pa.record_batch({"value": pa.array(np.asarray(col))})
     if element == "obsm":
-        arr = np.asarray(adata.obsm[key])
-        cols = {f"d{i}": pa.array(arr[:, i].astype("float32")) for i in range(arr.shape[1])}
+        arr = np.round(np.asarray(adata.obsm[key]).astype("float32"), _COORD_DECIMALS)
+        cols = {f"d{i}": pa.array(arr[:, i]) for i in range(arr.shape[1])}
         return pa.record_batch(cols)
     if element == "X":
         return _gene_batch(adata, key)
@@ -76,6 +89,9 @@ def _gene_batch(adata, gene: str, layer: str | None = None) -> pa.RecordBatch:
 def _sparse_batch(mat) -> pa.RecordBatch:
     """CSR/COO sparse graph → triplets, never densified (DESIGN §17)."""
     coo = mat.tocoo() if sparse.issparse(mat) else sparse.coo_matrix(mat)
+    if coo.nnz > _MAX_SPARSE_EDGES:
+        raise ValueError(
+            f"sparse field has {coo.nnz:,} edges, over the {_MAX_SPARSE_EDGES:,} transport cap")
     schema = pa.schema(
         [pa.field("row", pa.int32()), pa.field("col", pa.int32()), pa.field("data", pa.float64())],
         metadata={b"shape": json.dumps(list(coo.shape)).encode()},
@@ -93,8 +109,8 @@ def apply_affine_xy(batch: pa.RecordBatch, m: np.ndarray) -> pa.RecordBatch:
     points->global space."""
     d0 = np.asarray(batch.column("d0"))
     d1 = np.asarray(batch.column("d1"))
-    x = (m[0, 0] * d0 + m[0, 1] * d1 + m[0, 2]).astype("float32")
-    y = (m[1, 0] * d0 + m[1, 1] * d1 + m[1, 2]).astype("float32")
+    x = np.round((m[0, 0] * d0 + m[0, 1] * d1 + m[0, 2]).astype("float32"), _COORD_DECIMALS)
+    y = np.round((m[1, 0] * d0 + m[1, 1] * d1 + m[1, 2]).astype("float32"), _COORD_DECIMALS)
     cols = {name: batch.column(name) for name in batch.schema.names}
     cols["d0"] = pa.array(x)
     cols["d1"] = pa.array(y)

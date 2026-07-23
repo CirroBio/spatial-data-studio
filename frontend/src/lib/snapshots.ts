@@ -1,7 +1,6 @@
-import type { SnapshotConfig } from '../types';
-
-// A saved snapshot as returned by GET /api/snapshots. `url` serves the JSON
-// SnapshotConfig; `checkpoint_name` is the immutable .zarr.zip it reads from.
+// A saved snapshot as returned by GET /api/snapshots. `url` is the endpoint that
+// opens it as a read-only, in-app session pinned to the saved view
+// (POST /api/snapshots/{name}/open) — see api.ts::openSnapshot.
 export type Snapshot = {
   name: string;
   url: string;
@@ -10,15 +9,6 @@ export type Snapshot = {
   kind: 'spatial' | 'embedding';
   checkpoint_name: string;
 };
-
-// Fetch a snapshot's JSON config. Plain fetch (not the /api client) so the same
-// SnapshotViewer works both in the app (served /snapshots/*.sview.json) and in the
-// standalone bundle (relative snapshots/*.sview.json).
-export async function fetchSnapshotConfig(url: string): Promise<SnapshotConfig> {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`snapshot config ${url}: ${res.status}`);
-  return res.json() as Promise<SnapshotConfig>;
-}
 
 // Format the ISO `created` timestamp for display; empty string if unparseable.
 export function formatCreated(created: string): string {

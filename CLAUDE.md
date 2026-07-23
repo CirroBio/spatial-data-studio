@@ -12,53 +12,14 @@ stale is incomplete.
   `README.md`. If a UI change materially alters a panel shown in a README screenshot
   (`docs/images/*`), refresh that screenshot too.
 - `DEVELOPMENT.md` is the source of truth for the **developer-facing** detail:
-  architecture, repo layout / where-to-change-what, the local dev environment, the
-  test suite, the offline CLI, and snapshot-viewer hosting. A change to any of those
-  updates `DEVELOPMENT.md` (and `DESIGN.md` / `docs/CONTRACT.md` where the design or
-  API contract also moves) in the same commit.
+  architecture, repo layout / where-to-change-what, the local dev environment, and the
+  test suite / offline CLI. A change to any of those updates `DEVELOPMENT.md` (and
+  `DESIGN.md` / `docs/CONTRACT.md` where the design or API contract also moves) in
+  the same commit.
 
 When in doubt, skim both before committing and fix anything they now misstate. Do
 not fold developer detail back into `README.md`, and do not leave user-facing feature
 changes out of it.
-
-## Version the snapshot viewer schema (always)
-
-The snapshot config (`<name>.sview.json`, emitted by `backend/app/snapshots.py`)
-is versioned by `snapshot-viewer.json` `version` (a semver, mirrored in each
-config's `schema_version` and in the published GitHub Pages viewer path
-`viewer/<version>/`). Old snapshots pin an immutable published viewer, so the
-emitted config SHAPE is frozen per version. ANY change to that shape — adding,
-removing, renaming, or restructuring an envelope/`render`/`encoding`/`viewport`
-key-path — REQUIRES, in the same change: (a) bump `version` in
-`snapshot-viewer.json`; (b) add a new immutable golden
-`backend/snapshot_schema/<version>.json`; and (c) NEVER mutate an
-already-published version's golden or its published `viewer/<version>/` (they
-must keep rendering old snapshots — mirrors immutable GH Pages). The gate is
-enforced mechanically by `backend/test_schema_gate.py` (dataset-free, CI-cheap)
-and `run_snapshot_flow` in `backend/test_e2e.py`, both comparing
-`schema_signature(cfg)` to the frozen golden; a shape change without the version
-bump + new golden fails the tests.
-
-When the gate fails (or you deliberately change the emitted shape), do exactly
-this — it is the ONLY supported way to add a version:
-
-1. Make the shape change in `backend/app/snapshots.py::save_snapshot`.
-2. Mirror the same shape in `reference_config()` in `backend/test_schema_gate.py`
-   (the dataset-free oracle) so it matches what `save_snapshot` now emits.
-3. Bump `version` in `/snapshot-viewer.json` (semver; MAJOR if the viewer can no
-   longer read old configs, else MINOR/PATCH). The frontend viewer must be able to
-   render this new shape — update `frontend/src/components/SnapshotViewer.tsx`
-   /`frontend/src/types.ts` accordingly so the published `viewer/<version>/` bundle
-   matches the schema it is pinned to.
-4. Freeze the golden: `cd backend && PYTHONPATH=. python test_schema_gate.py --write`
-   (writes `snapshot_schema/<newversion>.json`; it REFUSES to overwrite an existing
-   golden, which is what stops a shape change from silently mutating a shipped
-   version — that refusal is the signal you forgot to bump `version`).
-5. Confirm: `PYTHONPATH=. python test_schema_gate.py` prints `[ok]`.
-6. Update README/DESIGN/CONTRACT for any user-visible field change (per the rules
-   above). Do NOT delete or edit older `snapshot_schema/*.json` goldens — they keep
-   old snapshots verifiable. Merging to `main` republishes via the deploy workflow,
-   which itself refuses to overwrite an already-published `viewer/<version>/`.
 
 ## Keep run.sh / stop.sh current (always)
 

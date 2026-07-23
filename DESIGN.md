@@ -624,10 +624,10 @@ native `flipY`) flips the whole scene — points, image, and annotations togethe
 picking, `info.coordinate`, pan, and fit stay consistent with no layer/coordinate changes.
 The backdrop paints the canvas container behind the transparent deck canvas (matching a
 theme's `--color-bg`), defaulting to the app theme until pinned. Both are baked into the
-snapshot config's `render` (`invert_x`/`invert_y`/`background`, schema >= 1.1.0) and applied
-by `SnapshotViewer` through the same `FlipOrthographicView`, so a snapshot preserves the
-plot's orientation and backdrop (baked `background` defaults to `dark` when the user never
-pinned one, since save can't see the live app theme).
+snapshot config's `render` (`invert_x`/`invert_y`/`background`) and applied through the
+same `FlipOrthographicView` when a snapshot's pinned display renders, so a snapshot
+preserves the plot's orientation and backdrop (baked `background` defaults to `dark`
+when the user never pinned one, since save can't see the live app theme).
 
 ### 9.3 Tiled image pyramid + coordinate reconciliation
 
@@ -695,12 +695,14 @@ directly — zarrita over a byte-range route `GET /api/sessions/{id}/raster/{ele
 with per-channel color and contrast as shader uniforms, so contrast/color/visibility
 edits are instant with no server round-trip. RGB/H&E images pass through as true color.
 The server advertises this per image in `/image/{element}/info` (`client_compositing`),
-gated by `SDS_CLIENT_IMAGE_COMPOSITING` (**default off**, opt-in with `=1`) and a channel
-cap `SDS_CLIENT_IMAGE_MAX_CHANNELS` (default 6). Above the cap, or for a canonical image
-with no rebuilt raster store (§9.3), `client_compositing` is false and the client falls
-back to the **server-composited WebP tiles** (§9.3) — the same additive percentile-normalized
-blend. A dev-only escape hatch `localStorage['sds:disableClientCompositing']='1'` also forces
-the WebP tile path.
+gated by `SDS_CLIENT_IMAGE_COMPOSITING` (**default on**, opt out with `=0`) and a channel
+cap `SDS_CLIENT_IMAGE_MAX_CHANNELS` (default 6). `normalize_rasters` (§9.3) registers a
+served store for every image — a freshly rebuilt one for a non-canonical image, or
+`sdata.path` itself for a canonical one (e.g. reopened from a checkpoint) — so above the
+channel cap is the only ordinary reason `client_compositing` is false; the client then
+falls back to the **server-composited WebP tiles** (§9.3) — the same additive
+percentile-normalized blend. A dev-only escape hatch
+`localStorage['sds:disableClientCompositing']='1'` also forces the WebP tile path.
 
 The client path streams full-resolution tiles with a **custom tiled layer** rather than Viv's
 `MultiscaleImageLayer`: that tiled layer's deck.gl `TileLayer` never updates its tileset under
@@ -719,8 +721,8 @@ positions each tile exactly where the points are. Bounds use `[px0, py1, px1, py
 (a ~3x3 grid of level-0 tiles at high zoom), so there is no resolution penalty versus the
 WebP tile path. It is **on by default** (`SDS_CLIENT_IMAGE_COMPOSITING`, disable with `=0`);
 verified live across single- and multi-channel fluorescence (additive-on-black), RGB/H&E
-true-color passthrough, deep-zoom streaming, and image<->points alignment. See `docs/CONTRACT.md` for the info/route schemas. The snapshot viewer and
-its schema are unchanged by this dual path.
+true-color passthrough, deep-zoom streaming, and image<->points alignment. See
+`docs/CONTRACT.md` for the info/route schemas.
 
 The `raster_store` route reads one compressed chunk file per browser request, so a
 pan back over already-seen tiles would re-read each chunk under the session read lock.
@@ -814,9 +816,10 @@ alone) vs `points+shapes` (scatter plus the boundary-fill overlay). The legacy v
 
 Geometry is served in the same world space `/data/obsm:spatial` uses (the region element's
 points→global affine), so outlines, points, and image overlay; the GeoArrow polygons carry
-a `cell_index` back to the active table for color gather. The read-only snapshot viewer,
-which has no backend to fetch polygons, draws the same merged point scatter (no shapes
-overlay) for 2D spatial snapshots. See `docs/CONTRACT.md` for the payload schemas.
+a `cell_index` back to the active table for color gather. A read-only snapshot session
+(§14) renders through this same path — it's a real session with a real backend, just
+one that rejects mutation — so shape overlays behave identically there. See
+`docs/CONTRACT.md` for the payload schemas.
 
 **Known follow-up:** `@geoarrow/deck.gl-layers` (0.3.2) logs a console deprecation — it
 is renamed to `@geoarrow/deck.gl-geoarrow` (0.4.x). Not migrated: 0.3.2 is the verified
@@ -1001,99 +1004,57 @@ directly through the data inspector and the element/table APIs.
 
 ## 14. Snapshots
 
-A snapshot is a small **JSON config** plus a tiny **HTML page**, describing a
-**read-only** view over an immutable checkpoint (`backend/app/snapshots.py`). It ships no
-pixels, data, or viewer code of its own — the HTML loads a shared, version-pinned viewer
-bundle from GitHub Pages, and that bundle opens the referenced checkpoint `.zarr.zip`
-directly (zarrita.js over HTTP range requests) and renders the image + cells from it,
-reusing the live canvas rendering.
+A snapshot is a small **JSON config** describing a **read-only** view over an
+immutable checkpoint (`backend/app/snapshots.py`). It ships no pixels or data of its
+own, and there is no standalone viewer: opening one
+(`POST /api/snapshots/{name}/open`, `SessionManager.create_from_snapshot`) loads the
+referenced checkpoint exactly the way any other checkpoint opens
+(`create_from_load`), except the session is marked **read-only** and its one display
+is built straight from the saved `viewport`/`encoding` instead of the
+auto-generated default (`Session._apply_pinned_view`). The live canvas
+(`SpatialCanvas`/`EmbeddingCanvas`) renders it like any other session — a snapshot
+only ever exists inside this running app, never as an artifact viewable elsewhere.
 
-- **Config envelope:** `{schema_version, kind, label, created, data, checkpoint:{name},
-  table, viewport, encoding, render}`. `schema_version` is a semver string equal to the
-  version in `snapshot-viewer.json`. `data` is a **relative** path to the checkpoint
-  (`./<checkpoint>.zarr.zip`) that the viewer resolves against the config file's own URL
-  (`new URL(cfg.data, configUrl)`) — "paths in the JSON are relative to the JSON" — so the
-  config and its `.zarr.zip` must stay siblings both live and in a bundle. `checkpoint`
-  carries only `name` (used by `list_snapshots` and the Cirro symlink); the old absolute
-  `checkpoint.url` coupling is gone. `render` bakes what the browser can't derive from the
-  raw arrays: the image geometry (`image_info` — bounds, `pixel_to_world`, pyramid levels,
-  channel names) and per-channel `{visible, color, contrast_limit}` (the contrast limit
-  is `imaging._channel_norm`, coarsest-level-derived like the tile server, so the browser
-  compositor `sum(clip(value/limit, 0, 1) * color)` reproduces the live look). The
-  categorical palette / numeric range are **not** baked — the viewer derives them with
-  the same `colorUtils` from the same immutable arrays. `render`/`encoding`/`viewport`
-  internals are unchanged from the pre-refactor schema; only the envelope changed.
-- **HTML page:** a five-line standalone entry point —
-  `<div id="app" data-config="./<name>.sview.json"></div>` plus a classic (non-module)
-  `<script src="${pagesBaseUrl}/viewer/${version}/app.js">`. The classic script tag loads
-  cross-origin from GitHub Pages without CORS headers; `data-config` is relative so the
-  browser resolves it against the HTML's own URL (colocated). See §14.2 for the shared
-  viewer's hosting and versioning.
-- **Immutable target:** saving a snapshot first writes the session to a content-hashed
-  `.zarr.zip` (so the config points at bytes that won't change under it), then bakes the
-  manifest — both under one continuous read lock so no compute can interleave. The
-  checkpoint is served for direct browser reads (HTTP Range) at `GET /api/checkpoints/<name>`
-  (checkpoint picker) and, so the config's relative `data` path resolves live, also as a
-  sibling of the config under the name-validated route `GET /snapshots/<name>`, which
-  serves the `.sview.json` config, the `.html` page, and the `.zarr.zip` checkpoint alike
-  (Range + HEAD).
-- **Files:** `<name>-<hash>.sview.json` + `<name>-<hash>.html` in `DATA_DIR` (same prefix,
-  the config JSON content-hashed), alongside the checkpoints. Both spatial and embedding
-  displays can be snapshotted (`POST /api/sessions/{id}/snapshot` with an optional
-  `display_id`, returning `{status, name, url, html}`).
-- **Invocation:** a **Save snapshot** action (canvas controls).
+- **Config shape:** `{schema_version, kind, label, created, checkpoint:{name},
+  table, viewport, encoding, render}`. `schema_version` is informational only (no
+  compatibility gate reads it — see below). `render` bakes what a from-scratch
+  reader couldn't derive from the raw arrays alone (image geometry, per-channel
+  `{visible, color, contrast_limit}`), kept even though the live app now serves the
+  open session directly, since `render` doubles as a record of exactly what the
+  saved view looked like.
+- **Read-only enforcement:** `Session.read_only` is set at construction
+  (`create_from_snapshot` → `create_from_load(..., read_only=True)`) and checked by
+  every mutating route via `main.py::_writable_session` (403 otherwise) — a real
+  backend guarantee, not just an unwired UI. Viewport/encoding changes stay
+  interactive locally (the frontend skips the `PUT /displays/{id}` debounce for a
+  read-only session) but are never persisted.
+- **Immutable target:** saving a snapshot first writes the session to a
+  content-hashed checkpoint (so the config points at bytes that won't change under
+  it), then bakes the manifest — both under one continuous read lock so no compute
+  can interleave.
+- **Files:** `<name>-<hash>.sview.json` in `DATA_DIR`, alongside the checkpoint it
+  references. Both spatial and embedding displays can be snapshotted
+  (`POST /api/sessions/{id}/snapshot` with an optional `display_id`, returning
+  `{status, name, url}`).
+- **Invocation:** a **Save snapshot** action (canvas controls); **Browse
+  snapshots** opens the list and opens the selected one read-only.
+- **No versioning ceremony:** the shape evolves with the rest of `app_state` —
+  there is no separate schema-version gate, golden file, or published-viewer
+  compatibility promise to maintain (a deliberate tradeoff: a snapshot is only
+  guaranteed to keep opening in a compatible version of this app, not forever
+  independent of it).
 
-### 14.1 Checkpoint on-disk format (browser-readable)
+### 14.1 Checkpoint on-disk format
 
-The same `.zarr.zip` that reloads as a live session is the source the snapshot viewer
-reads. To make a browser read cheap over one HTTP-served file:
-
-- **Zarr v3 + consolidated metadata** (spatialdata's default) + **ZIP_STORED** (each entry
-  is a contiguous byte span a range request maps to directly).
-- **Sharding codec** on the image/label arrays, added on save (`store._shard_rasters`):
-  small inner chunks (`512`) packed into a few shards (`4096`), so a viewport read fetches
-  a tiny shard index plus a handful of small chunks instead of one giant chunk — without
-  exploding the object/zip-entry count. spatialdata 0.7.3 has no write-time sharding
-  option, so each raster level is recreated region-by-region (peak memory ~one shard),
-  then metadata is **re-consolidated** (the consolidated tree the browser reads must
-  report the sharded codec, or zarrita would decode the pre-shard byte layout).
-- **Worker logs relocated** out of `attrs["app_state"]` (inlined into the store's root
-  `zarr.json`, downloaded in full on open) into gzipped `logs/<record_id>.log.gz`, read
-  back lazily by `session.get_log` (the existing `/jobs/{id}/log` endpoint).
-
-### 14.2 Shared viewer hosting and versioning
-
-The viewer bundle is published **once per version** to GitHub Pages, decoupled from any
-individual snapshot; snapshots only point at it. This is what lets a saved snapshot keep
-rendering forever even after the schema evolves.
-
-- **Single source of truth:** `snapshot-viewer.json` at the repo root
-  (`{version, pagesBaseUrl}`). The backend reads it (`config.py`), the viewer's Vite build
-  imports it (`vite.app.config.ts`), and CI reads it — the published URL
-  `${pagesBaseUrl}/viewer/${version}/app.js` is always computed, never hardcoded in pieces.
-- **The bundle:** `npm run build:app` (`vite.app.config.ts`) builds `src/app-entry.tsx`
-  into a **single-file classic IIFE** at `frontend/dist-app/viewer/<version>/app.js` —
-  Tailwind CSS inlined and injected as a `<style>` at runtime, all assets inlined, no
-  `type="module"`. `app-entry.tsx` finds `#app[data-config]`, fetches the config, resolves
-  `data` against the config URL, and renders one snapshot by reusing `SnapshotViewer` (no
-  picker). The bundle bakes in its own schema major and shows a friendly message if a
-  config's `schema_version` major differs.
-- **Immutable per version:** `.github/workflows/deploy-viewer.yml` publishes
-  `viewer/<version>/` to GitHub Pages **accumulatively** (prior version dirs are never
-  deleted; `.nojekyll` at the site root). Because each snapshot HTML pins its exact
-  `app.js` version, older snapshots keep loading the viewer they were built against.
-- **Version governance (test-gated):** the emitted schema is frozen per version as a
-  structural golden in `backend/snapshot_schema/<version>.json`; a test asserts a freshly
-  saved config matches the golden and that its `schema_version` equals the version file.
-  A schema change therefore forces bumping `version` in `snapshot-viewer.json`, adding a
-  new golden, and republishing — an already-published version dir/golden is never mutated
-  (mirroring immutable GitHub Pages). `ci.yml` runs this gate plus the frontend
-  typecheck/build on PRs.
-- **In-app preview vs. published viewer:** the in-app `SnapshotViewer` (used by the
-  snapshot browser) and the published `app.js` share the same rendering and the same
-  `new URL(cfg.data, configUrl)` resolution rule; the removed standalone-picker path
-  (`StandaloneViewer.tsx`, `viewer-main.tsx`, `viewer.html`, `vite.viewer.config.ts`,
-  the `build:viewer` script, `snapshots/index.json`) is gone.
+The checkpoint format is shared by saves, snapshots, and Cirro uploads —
+`.zarr.zip` (Zarr v3 + consolidated metadata, `ZIP_STORED`), write-dir-then-zip /
+unzip-then-read (`backend/app/persistence/store.py`). Raster (image/label) arrays
+are saved as-is: `rasters.normalize_rasters` already tile-chunks them at load time
+(`TILE_SIZE`-sized chunks, §9.3), so a save just persists whatever chunking is
+already live — no repack step. Worker logs are relocated out of `attrs["app_state"]`
+(inlined into the store's root `zarr.json`, downloaded in full on open) into
+gzipped `logs/<record_id>.log.gz`, read back lazily by `session.get_log` (the
+`/jobs/{id}/log` endpoint).
 
 ---
 
@@ -1107,14 +1068,12 @@ dark unless `CIRRO_BASE_URL`, `CIRRO_CLIENT_ID`, and `CIRRO_CLIENT_SECRET` are a
   login**, gated by `config.cirro_enabled()`.
 - **Flow:** the session must be **saved first**. `build_upload_folder()` builds a temp
   folder from **symlinks**: each selected `.zarr.zip` under `sessions/`, and each selected
-  snapshot's three files — its `.sview.json` config, its `.html` page, and the `.zarr.zip`
-  it references — colocated as siblings at the bundle root, so nothing is copied and each
-  config's relative `data` path resolves. **No viewer code is bundled** (the removed
-  `_copy_viewer` / `dist-viewer` path): each HTML loads the shared version-pinned viewer
-  from GitHub Pages (§14.2), so every uploaded `.html` is a standalone read-only entry
-  point. There is no multi-snapshot picker or `snapshots/index.json` manifest anymore.
-  `upload()` calls the Cirro SDK's `project.upload_dataset`. Driven by a `cirro_upload`
-  worker job.
+  snapshot's two files — its `.sview.json` config and the `.zarr.zip` it references —
+  colocated as siblings at the bundle root, so nothing is copied. A snapshot isn't
+  independently viewable in Cirro (§14: it only opens read-only through this running
+  app); its config travels along as a labeled view-pointer for provenance, not a
+  standalone viewer. `upload()` calls the Cirro SDK's `project.upload_dataset`. Driven
+  by a `cirro_upload` worker job.
 - **UI:** a dialog listing Cirro projects, a dataset name, an optional folder (free-text
   with typeahead, see below), and saved snapshots (multi-select). Uploads always use the
   generic "Files" ingest process (`custom_dataset`), so there is no process picker.
@@ -1277,9 +1236,9 @@ Arrow IPC (binary). See `docs/CONTRACT.md` for the full contract.
 | `GET` | `/api/sessions/{id}/table?path=&offset=&limit=` | Data-inspector dataframe page |
 | `GET` | `/api/sessions/{id}/image/{element}/tile/{level}/{col}/{row}?channels=` | Image pyramid tile (WebP) |
 | `GET` | `/api/sessions/{id}/image/{element}/info` | Pyramid levels, tile size, `pixel_to_world` |
-| `POST` | `/api/sessions/{id}/snapshot` | Save a snapshot (writes `.sview.json` + `.html`); returns `{status,name,url,html}` |
-| `GET` | `/api/snapshots` | List saved snapshots (`checkpoint_name`, `schema_version`, `html`, …) |
-| `GET`/`HEAD` | `/snapshots/{name}` | Serve a snapshot's `.sview.json`, `.html`, or sibling `.zarr.zip` (Range) |
+| `POST` | `/api/sessions/{id}/snapshot` | Save a snapshot (writes `.sview.json`); returns `{status,name,url}` |
+| `GET` | `/api/snapshots` | List saved snapshots (`checkpoint_name`, `schema_version`, …) |
+| `POST` | `/api/snapshots/{name}/open` | Open a snapshot as a read-only session pinned to its saved view |
 | `GET`/`HEAD` | `/api/checkpoints/{name}` | Serve a saved checkpoint `.zarr.zip` for direct browser reads (Range) |
 | `POST` | `/api/cirro/upload` | Upload selected checkpoints + snapshots to Cirro (session-independent) |
 | `GET` | `/api/about/licenses` | Third-party licenses (from SBOMs) |

@@ -53,6 +53,7 @@ export interface SessionSummary {
   parent_id: string | null;
   created_at: string;
   saved: boolean;  // in-memory state matches the saved checkpoint (drives the unsaved-changes dot)
+  read_only: boolean;  // opened from a snapshot (create_from_snapshot); every mutating route 403s
 }
 
 export interface ObsField {
@@ -237,53 +238,15 @@ export interface ImageInfo {
   pixel_to_world: [number, number, number, number, number, number];
   levels: ImageLevel[];
   tile_size: number;
-  // Client-side (Viv) GPU compositing fields — present only on the live
-  // /image/{element}/info endpoint, never on a snapshot's embedded render.image
-  // (hence optional here, where ImageInfo is shared with SnapshotRender). When
-  // client_compositing is true the live canvas reads the element's Zarr store
-  // directly at raster_base_url/zarr_group_path and composites channels on the GPU;
-  // false keeps the server-composited PNG tile path.
+  // Client-side (Viv) GPU compositing fields. When client_compositing is true the
+  // live canvas reads the element's Zarr store directly at
+  // raster_base_url/zarr_group_path and composites channels on the GPU; false
+  // keeps the server-composited PNG/WebP tile path.
   client_compositing?: boolean;
   raster_base_url?: string;   // "/api/sessions/{sid}/raster/{element}" (no trailing slash)
   zarr_group_path?: string;   // "images/{element}"
   contrast_limits?: [number, number][];  // per channel, order matches channel_names
   is_rgb?: boolean;           // true-color 3-channel image shown as-is, not tinted
-}
-
-// ---- Snapshots (read-only checkpoint views; see CONTRACT.md) ---------------
-// A snapshot is a JSON config pointing at an immutable checkpoint .zarr.zip that
-// the browser reads directly via zarrita. SnapshotViewer renders render.* against
-// the shared canvas layers.
-export interface SnapshotChannel {
-  visible: boolean;
-  color: string;           // "#rrggbb"
-  contrast_limit: number;  // upper bound; JS clips value/limit to [0,1]
-}
-
-export interface SnapshotRender {
-  coords: string;                             // "obsm:<key>"
-  coords_transform?: number[];                // 6-float points->global affine applied to obsm:spatial
-  color_by: string;                           // "obs:x" | "X:GENE" | "layers:l/gene" | ""
-  image: ImageInfo | null;                    // the element's ImageInfo; null for embeddings / no image
-  channels: Record<string, SnapshotChannel>;  // per-channel color/contrast, keyed by channel index string
-  point_size: number;
-  opacity: number;
-  invert_x?: boolean;             // spatial view: mirror horizontally (schema >= 1.1.0; absent on older snapshots)
-  invert_y?: boolean;             // spatial view: mirror vertically (schema >= 1.1.0)
-  background?: 'light' | 'dark';  // per-plot backdrop (schema >= 1.1.0; defaults dark when absent)
-}
-
-export interface SnapshotConfig {
-  schema_version: string;                     // semver, matches snapshot-viewer.json version
-  kind: 'spatial' | 'embedding';
-  label: string;
-  created: string;
-  data: string;                               // path to the .zarr.zip, relative to this config's URL
-  checkpoint: { name: string };
-  table: string;
-  viewport: { target: number[]; zoom: number; rotationX?: number; rotationOrbit?: number };
-  encoding: DisplayEncoding | EmbeddingEncoding;
-  render: SnapshotRender;
 }
 
 // SSE event payloads

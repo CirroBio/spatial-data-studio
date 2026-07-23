@@ -34,8 +34,8 @@ neighborhood. The left panel is the analysis history that produced this view.*
 - **Annotate.** Draw lasso regions to label cells, or draw shapes and text directly on
   the tissue. Region labels become ordinary metadata columns you can then analyze by.
 - **Subset.** Lasso a region to spin off a child session containing just those cells.
-- **Save and share.** Save a checkpoint you can reopen later, publish a self-contained
-  read-only snapshot page of a view, or (optionally) upload results to
+- **Save and share.** Save a checkpoint you can reopen later, save a snapshot to pin
+  a particular view for read-only browsing later, or (optionally) upload results to
   [Cirro](https://cirro.bio/).
 
 <table>
@@ -104,7 +104,7 @@ To run the app from source for development instead, see
 ## For developers
 
 - **[`DEVELOPMENT.md`](DEVELOPMENT.md)** — architecture, repo layout, where to make a
-  change, local dev setup, tests, the offline CLI, and snapshot-viewer hosting.
+  change, local dev setup, tests, and the offline CLI.
 - **[`DESIGN.md`](DESIGN.md)** — the full design specification and the reasoning
   behind it.
 - **[`docs/CONTRACT.md`](docs/CONTRACT.md)** — the REST / SSE / Arrow API contract.

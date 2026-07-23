@@ -42,7 +42,8 @@ class SessionManager:
 
     # ---- creation ---------------------------------------------------------
     def create_from_load(self, path: str, name: str | None = None,
-                         load_id: str | None = None) -> Session:
+                         load_id: str | None = None, read_only: bool = False,
+                         pinned_view: dict | None = None) -> Session:
         """Open a saved checkpoint. The unzip/read/re-tile is slow (tens of seconds to
         minutes for a large Xenium store), so — like create_from_read — this returns a
         `loading` shell immediately and runs the heavy load as the session's first worker
@@ -50,16 +51,32 @@ class SessionManager:
         progress + a terminal result over the `session.loading` SSE channel keyed by
         `load_id`. Only the cheap admission checks run here, so a bad path / over-capacity
         / over-budget load still fails fast with a clear 400 instead of a background
-        session that never becomes ready."""
+        session that never becomes ready. `read_only`/`pinned_view` open a saved snapshot
+        (see `create_from_snapshot`): the session rejects every mutating route once
+        adopted, and its one display is built straight from `pinned_view` instead of the
+        auto-generated default."""
         self._check_capacity()
         resolved = str(_resolve_or_raise(path))  # validated, resolved path for every fs op below
         self._check_admission(estimate_resident_mb(resolved))
         sid = str(uuid.uuid4())
-        sess = Session(sid, name or _basename(resolved), None, appstate.fresh(), self, store_path=resolved)
+        sess = Session(sid, name or _basename(resolved), None, appstate.fresh(), self,
+                      store_path=resolved, read_only=read_only)
         self.sessions[sid] = sess
-        sess.enqueue_load(resolved, load_id)  # heavy load is the first queue job (§12)
+        sess.enqueue_load(resolved, load_id, pinned_view)  # heavy load is the first queue job (§12)
         BUS.publish("session.created", {"session_id": sid, "summary": self.summary(sess)})
         return sess
+
+    def create_from_snapshot(self, name: str, load_id: str | None = None) -> Session:
+        """Open a saved snapshot (`<name>.sview.json`) as a read-only session pinned to
+        its saved view — the server-delivered replacement for the old standalone,
+        browser-only snapshot viewer. Resolves the snapshot's referenced checkpoint under
+        DATA_DIR and defers to `create_from_load`, exactly like opening any other saved
+        checkpoint, just read-only and with a pinned display."""
+        from .. import snapshots
+        cfg = snapshots.load_config(name)
+        checkpoint_path = snapshots.checkpoint_path(cfg)
+        return self.create_from_load(checkpoint_path, name=cfg.get("label"), load_id=load_id,
+                                     read_only=True, pinned_view=cfg)
 
     def create_from_read(self, descriptor: dict, name: str | None = None) -> Session:
         self._check_capacity()
@@ -128,7 +145,7 @@ class SessionManager:
     def summary(self, sess: Session) -> dict:
         return {"id": sess.id, "name": sess.name, "status": sess.status,
                 "resident_mb": self._resident_mb(sess), "parent_id": sess.parent_id,
-                "created_at": sess.created_at, "saved": sess.saved}
+                "created_at": sess.created_at, "saved": sess.saved, "read_only": sess.read_only}
 
     def list_summaries(self) -> list:
         return [self.summary(s) for s in list(self.sessions.values())]

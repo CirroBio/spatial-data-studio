@@ -86,19 +86,39 @@ def normalize_rasters(sdata, progress=None) -> tuple[str | None, dict[str, str]]
     pyramid, persist them to a fresh cache store under WORK_DIR, and rebind
     `sdata`'s elements to lazy refs into it. Returns (cache_dir, element_stores):
     the cache dir (the caller must rmtree it when the session closes, or None if
-    nothing needed rebuilding) and a map from each rebuilt element's name to the
-    absolute `{i}.zarr` store dir written for it. The raster HTTP route resolves an
-    element to its store via that map (spatialdata element names are globally unique
-    across images/labels, so a single name-keyed map is unambiguous). `progress(message,
-    pct)` (optional) reports per-element rebuild progress; see `create_from_load`."""
+    nothing needed rebuilding) and a map from every image's name to the absolute
+    store dir serving it — the freshly-rebuilt `{i}.zarr` dir for a non-canonical
+    image, or `sdata.path` itself for a canonical one. The raster HTTP route
+    resolves an element to its store via that map (spatialdata element names are
+    globally unique across images/labels, so a single name-keyed map is
+    unambiguous); labels never populate it since only images serve client
+    compositing (see `main.py::image_info`'s `client_compositing` gate).
+    `progress(message, pct)` (optional) reports per-element rebuild progress; see
+    `create_from_load`."""
     report = progress or (lambda *a, **k: None)
     todo = [("images", n) for n, el in getattr(sdata, "images", {}).items() if not _is_canonical(el, False)]
     todo += [("labels", n) for n, el in getattr(sdata, "labels", {}).items() if not _is_canonical(el, True)]
+
+    # A canonical image (already tile-chunked, so no rebuild needed — e.g. reloaded
+    # from one of our own checkpoints) still needs a `stores` entry: the client-
+    # compositing endpoint (main.py::raster_store) serves chunks straight from an
+    # element's own backing store, keyed by this map. Without an entry here, `has_store`
+    # is false and every reopened checkpoint falls back to server-side WebP tiling even
+    # though nothing needed rebuilding. `sdata.path` is the object's own backing root
+    # (set by `sd.read_zarr`; same attribute `can_update_incrementally` reads), valid for
+    # the object's whole lifetime — this doesn't create or own a new directory, just
+    # points at one the session already keeps alive via `extract_dir`.
+    todo_names = {n for _, n in todo}
+    backing_root = str(sdata.path) if getattr(sdata, "path", None) else None
+    stores: dict[str, str] = {
+        name: backing_root for name in getattr(sdata, "images", {})
+        if name not in todo_names and backing_root
+    }
+
     if not todo:
-        return None, {}
+        return None, stores
 
     cache_dir = tempfile.mkdtemp(suffix=".rasters", dir=str(config.WORK_DIR))
-    stores: dict[str, str] = {}
     # Rebuild one element at a time, freeing between: each is a full read, so writing
     # them together sums their footprints (all four Xenium rasters at once peak
     # ~8.8 GB). Per-element with a small dask pool, peak is the largest single

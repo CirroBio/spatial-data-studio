@@ -9,9 +9,8 @@ import { buildCategoricalPalette, buildNumericColormap } from './colorUtils';
 // which the backend serves as a categorical. Past the cap we skip the coloring.
 export const MAX_CATEGORICAL_LEVELS = 100;
 
-// Normalized coloring input, decoupled from the transport (Arrow over HTTP for
-// the live canvases; a checkpoint zarr array for the snapshot viewer). Build it
-// from an Arrow table with arrowToColorSource, or from checkpointStore.readColorSource.
+// Normalized coloring input, decoupled from the transport (Arrow over HTTP). Build
+// it from an Arrow table with arrowToColorSource.
 export type ColorSource =
   | { kind: 'categorical'; codes: Int32Array; categories: string[] }
   | { kind: 'numeric'; values: Float32Array };

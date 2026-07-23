@@ -55,6 +55,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   const { sessionState, updateDisplay, isolatedCategory, pushNotification, openSnapshots, setSnapshotHandler, theme } = useAppStore();
   const fields = sessionState?.fields;
   const dataVersions = sessionState?.data_versions ?? {};
+  const readOnly = sessionState?.summary.read_only ?? false;
 
   const coordsPath = display.encoding.coords;
   const coordsVersion = dataVersions[coordsPath] ?? 0;
@@ -401,8 +402,11 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   // Update the store mirror immediately, then debounce the PUT so rapid changes
   // (a slider drag, a pan) collapse into one write. A ref (not state) holds the timer
   // so back-to-back viewport events during a drag reliably reset the same debounce.
+  // A read-only (snapshot) session keeps the camera/encoding interactive locally but
+  // never persists — the backend would 403 the PUT anyway (session.read_only).
   function persistDisplay(updated: SpatialDisplaySpec) {
     updateDisplay(updated);
+    if (readOnly) return;
     if (persistTimer.current) clearTimeout(persistTimer.current);
     persistTimer.current = setTimeout(() => {
       putDisplay(sessionId, updated).catch(console.error);

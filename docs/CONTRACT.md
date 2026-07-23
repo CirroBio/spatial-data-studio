@@ -73,16 +73,16 @@ ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_cate
 | POST | `/api/sessions/{id}/save` | `{path?}` | `{job_id, path}` (queued save) |
 | GET  | `/api/sessions/{id}/points-transform` | — | `{affine:[a,b,c,d,e,f], element}` (points→global affine of the active table's region element) |
 | POST | `/api/sessions/{id}/points-transform` | `{affine:[a,b,c,d,e,f], path?}` | `{job_id, path}` (sets the affine and persists to disk) |
-| POST | `/api/sessions/{id}/snapshot` | `{label?, viewport?:{target,zoom}, display_id?}` | `{status,name,url,html}` — writes two colocated files sharing a prefix: `<name>-<hash>.sview.json` (config pointing at an auto-saved, content-hashed checkpoint) and `<name>-<hash>.html` (a standalone page loading the shared GitHub Pages viewer) |
-| GET  | `/api/snapshots` | — | `{snapshots:[{name,url,html,label,created,kind,schema_version,checkpoint_name}]}` |
-| GET/HEAD | `/snapshots/{name}` | — | serves a snapshot's three colocated file kinds by name from DATA_DIR — the `.sview.json` config, the `.html` page, or the sibling `.zarr.zip` checkpoint its relative `data` path resolves to (Range → 206 for the `.zarr.zip`); `name` must have no path separators |
+| POST | `/api/sessions/{id}/snapshot` | `{label?, viewport?:{target,zoom}, display_id?}` | `{status,name,url}` — writes `<name>-<hash>.sview.json` (config pointing at an auto-saved, content-hashed checkpoint) alongside it in DATA_DIR |
+| GET  | `/api/snapshots` | — | `{snapshots:[{name,url,label,created,kind,schema_version,checkpoint_name}]}` |
+| POST | `/api/snapshots/{name}/open` | `{load_id?}` | `{...SessionSummary, hash_check}` — opens the snapshot's checkpoint as a read-only session pinned to its saved view (same async-load shape as `POST /api/sessions` with `source.kind:"load"`) |
 | GET/HEAD | `/api/checkpoints/{name}` | — | the checkpoint `.zarr.zip` bytes for direct browser reads (HTTP Range → 206); `name` must be `*.zarr.zip` in DATA_DIR |
 | GET  | `/api/about/licenses` | — | `{python:[...], npm:[...]}` (third-party licenses, in-app Acknowledgements) |
 | GET  | `/api/cirro/status` | — | `{enabled:bool}` |
 | GET  | `/api/cirro/projects` | — | `{projects:[...]}` (503 if Cirro is not configured) |
 | GET  | `/api/cirro/projects/{id}/folders?refresh=` | — | `{folders:[str]}` (known `folder://` tag paths in the project, backend-cached; `refresh=true` forces a rescan) |
 | GET  | `/api/cirro/uploads` | — | `{uploading:int, pending:int}` (upload-queue depth; also broadcast as `cirro.upload.state` over SSE) |
-| POST | `/api/cirro/upload` | `{project_id, dataset_name, session_paths:[str], snapshot_names:[str], folder?}` | `{status:"started"}` (background; announces `cirro.upload.completed`/`failed` over SSE; always uses the generic "Files" ingest process; `folder` → `folder://<path>` dataset tag; each included snapshot contributes its `.sview.json`, `.html`, and referenced `.zarr.zip` colocated as siblings at the dataset root — no viewer code is bundled, each HTML loads the shared version-pinned viewer from GitHub Pages) |
+| POST | `/api/cirro/upload` | `{project_id, dataset_name, session_paths:[str], snapshot_names:[str], folder?}` | `{status:"started"}` (background; announces `cirro.upload.completed`/`failed` over SSE; always uses the generic "Files" ingest process; `folder` → `folder://<path>` dataset tag; each included snapshot contributes its `.sview.json` and referenced `.zarr.zip` colocated as siblings at the dataset root — provenance only, a snapshot isn't independently viewable in Cirro) |
 | GET  | `/api/sessions/{id}/data/{fieldPath}` | fieldPath e.g. `obs:leiden`, `obsm:spatial`, `X:Sox17`, `obsp:spatial_distances` | Arrow IPC stream (application/vnd.apache.arrow.stream) |
 | GET  | `/api/sessions/{id}/shapes/{element}/geoarrow?bbox=minx,miny,maxx,maxy[&limit=N]` | `bbox` in the `obsm:spatial` world space; optional `limit` caps the returned feature count | Arrow IPC stream (`application/vnd.apache.arrow.stream`) of viewport-clipped boundary polygons — `geometry` (GeoArrow) + `cell_index:int32`; 400 on a malformed bbox; 404 if the element is absent or non-polygonal |
 | GET  | `/api/sessions/{id}/elements` | — | `{tables:[{name,n_obs,n_vars,active}], shapes, points, images, labels}` (data inspector inventory) |
@@ -175,37 +175,31 @@ PlotEntry = {id, namespace:"pl", function, params, status:"pending|queued|runnin
 `is_3d` is true.
 
 ### Snapshot config (`<name>-<hash>.sview.json`)
-Written by `POST /api/sessions/{id}/snapshot` and read by the shared viewer.
+Written by `POST /api/sessions/{id}/snapshot`, read server-side by
+`POST /api/snapshots/{name}/open` (there is no client-side reader — a snapshot has
+no standalone viewer, see DESIGN.md §14).
 ```jsonc
-{ "schema_version": "1.1.2",           // semver string, == snapshot-viewer.json `version`
+{ "schema_version": "2.0",             // informational only; no compatibility gate reads it
   "kind": "spatial",                   // "spatial" | "embedding"
   "label": "visium_hne",
   "created": "ISO8601",
-  "data": "./visium_hne-ab12cd34.sdata.zarr.zip",  // path to the checkpoint, RELATIVE to this config's URL
-  "checkpoint": { "name": "visium_hne-ab12cd34.sdata.zarr.zip" },  // `name` only (no `url`)
+  "checkpoint": { "name": "visium_hne-ab12cd34.sdata.zarr.zip" },
   "table": "table",
   "viewport": { "target":[x,y], "zoom":z, "rotationX"?:.., "rotationOrbit"?:.. },
   "encoding": DisplaySpec.encoding,    // unchanged from the source display
   "render": { "coords":"obsm:spatial", "coords_transform":[a,b,c,d,e,f], "color_by":"obs:leiden",
               "point_size":4, "opacity":0.85,
-              "invert_x":false, "invert_y":false, "background":"dark",  // schema >= 1.1.0: spatial view flips + per-plot backdrop ("light"|"dark")
+              "invert_x":false, "invert_y":false, "background":"dark",
               "image": image_info|null,
               "channels": { "<i>": {"visible":bool, "color":"#rrggbb", "contrast_limit":float} } } }
 ```
-- **Path-resolution rule:** paths inside the JSON (`data`) resolve against the **config
-  file's own URL** — `new URL(cfg.data, configUrl)`. Because `data` is `./<checkpoint>`,
-  the config and its `.zarr.zip` must be siblings, both live (`/snapshots/<name>` serves
-  both) and in a Cirro bundle (colocated at the dataset root).
-- **HTML sibling (`<name>-<hash>.html`):** a standalone entry page —
-  `<div id="app" data-config="./<name>.sview.json"></div>` + a classic (non-module)
-  `<script src="${pagesBaseUrl}/viewer/${version}/app.js">` (from `snapshot-viewer.json`).
-  The classic tag loads the viewer cross-origin from GitHub Pages without CORS headers.
-- **Versioning:** `snapshot-viewer.json` (`{version, pagesBaseUrl}`) is the single source
-  of truth; `schema_version` equals its `version`. The viewer bundle is published once per
-  version to an immutable GitHub Pages path (`viewer/<version>/app.js`), so a snapshot
-  keeps rendering with the exact viewer it pinned even after the schema evolves. Any change
-  to the emitted envelope requires bumping `version` and republishing (test-gated by
-  `backend/snapshot_schema/<version>.json`).
+- **Opening it:** `POST /api/snapshots/{name}/open` resolves `checkpoint.name` under
+  DATA_DIR and loads it via the same async checkpoint-load path as
+  `POST /api/sessions` (`source.kind:"load"`), except `read_only:true` and the
+  session's one display is built straight from `table`/`kind`/`encoding`/`viewport`
+  instead of the auto-generated default (`Session._apply_pinned_view`).
+- **Read-only:** every mutating route 403s for a session opened this way
+  (`main.py::_writable_session`) — enforced server-side, not just an unwired UI.
 
 ---
 

@@ -52,6 +52,19 @@ export function useSSE(): void {
   // Last-Event-ID resume — instead of re-baselining and dropping events.
   const cursor = useRef<number | undefined>(undefined);
 
+  // Debounces the full-session refetch that job.completed/job.failed/plot.drawn/
+  // plot.invalidated each trigger to reconcile fields the event itself doesn't carry
+  // (queue view, obs/obsm field list, compute-history detail). Status badges and
+  // data_versions already update instantly from the event payload, so delaying the
+  // catch-up refetch by one tick is invisible to the user — but it collapses a
+  // back-to-back batch (a recipe's N queued steps, or run-all) into one request
+  // instead of N, each of which would otherwise queue behind the next step's write lock.
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  function scheduleRefresh(sessionId: string) {
+    if (refreshTimer.current) clearTimeout(refreshTimer.current);
+    refreshTimer.current = setTimeout(() => { void refreshSessionState(sessionId); }, 250);
+  }
+
   useEffect(() => {
     let lastMemoryWarnAt = 0;
 
@@ -158,7 +171,7 @@ export function useSSE(): void {
         if (d.kind === 'shape_annotate') {
           void refreshShapeAnnotations(d.session_id);
         }
-        void refreshSessionState(d.session_id);
+        scheduleRefresh(d.session_id);
       },
 
       'job.failed': (data) => {
@@ -183,7 +196,7 @@ export function useSSE(): void {
         if (d.kind === 'shape_annotate') {
           void refreshShapeAnnotations(d.session_id);
         }
-        void refreshSessionState(d.session_id);
+        scheduleRefresh(d.session_id);
       },
 
       // Cirro upload isn't tied to a session (it uploads selected checkpoint files),
@@ -208,7 +221,7 @@ export function useSSE(): void {
         const d = data as PlotDrawnEvent;
         if (d.session_id === activeSessionId) {
           setEntryStatus(d.plot_id, 'drawn');
-          void refreshSessionState(d.session_id);
+          scheduleRefresh(d.session_id);
         }
       },
 
@@ -216,7 +229,7 @@ export function useSSE(): void {
         const d = data as PlotInvalidatedEvent;
         if (d.session_id === activeSessionId) {
           d.plot_ids.forEach((id) => setEntryStatus(id, 'invalidated'));
-          void refreshSessionState(d.session_id);
+          scheduleRefresh(d.session_id);
         }
       },
 
@@ -285,6 +298,7 @@ export function useSSE(): void {
       stopped = true;
       es.close();
       if (pollTimer !== undefined) clearTimeout(pollTimer);
+      if (refreshTimer.current) clearTimeout(refreshTimer.current);
     };
   }, [activeSessionId, upsertSession, setResourceSample, updateDataVersions, updateDisplay, addActiveJob, removeActiveJob, addQueuedEntry, setEntryStatus, setSessionState, refreshSessionState, refreshShapeAnnotations, pushNotification, setActiveSessionId, setSessions, removeSession, setCirroUploads, setLoadProgress, appendLoadLog, appendJobLog, clearJobLog]);
 }

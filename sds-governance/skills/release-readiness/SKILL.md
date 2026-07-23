@@ -5,8 +5,8 @@
 ## Steps
 1. Confirm the runtime shape: one uvicorn worker; sessions never span worker
    processes (supervisord `--workers 1`). (R9)
-2. Verify snapshots open standalone (HTML + content-hashed `assets/`) and share the
-   render core. (R13)
+2. Verify a saved snapshot reopens in-app, read-only, at its pinned view, sharing the
+   render core (no standalone viewer — see DESIGN.md §14). (R13)
 3. Run `scan_licenses.py`: no torch/scvi, all copyleft adjudicated in
    `license_allowlist.yaml`, SBOM emitted. **Resolve `clustering_decision_todo`** —
    distribution is blocked while it is `true`. (R15)

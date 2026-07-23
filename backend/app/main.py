@@ -90,6 +90,17 @@ def _session(sid: str):
     return s
 
 
+def _writable_session(sid: str):
+    """Same lookup as `_session`, plus a 403 if the session is read-only (opened
+    from a snapshot — see `SessionManager.create_from_snapshot`). Every mutating
+    route uses this instead of `_session` so a snapshot stays a frozen record even
+    against a buggy or malicious client, not just an unwired UI."""
+    s = _session(sid)
+    if s.read_only:
+        raise HTTPException(403, "session is read-only (opened from a snapshot)")
+    return s
+
+
 async def _in_executor(fn, *a):
     return await asyncio.get_running_loop().run_in_executor(None, fn, *a)
 
@@ -268,6 +279,8 @@ async def obs_values(sid: str, column: str):
 @app.delete("/api/sessions/{sid}")
 async def close_session(sid: str, body: dict | None = None):
     save = bool((body or {}).get("save"))
+    if save:
+        _writable_session(sid)  # closing read-only is fine; overwriting its checkpoint is not
     await _in_executor(_mgr().close, sid, save)
     return {"ok": True}
 
@@ -280,7 +293,7 @@ def _require_known(descriptor: dict):
 
 @app.post("/api/sessions/{sid}/jobs")
 async def enqueue_job(sid: str, descriptor: dict):
-    sess = _session(sid)
+    sess = _writable_session(sid)
     _require_known(descriptor)
     job_id = sess.enqueue_descriptor(descriptor)
     return {"job_id": job_id, "status": "queued"}
@@ -288,7 +301,7 @@ async def enqueue_job(sid: str, descriptor: dict):
 
 @app.delete("/api/sessions/{sid}/jobs/{job_id}")
 async def cancel_job(sid: str, job_id: str):
-    ok = _session(sid).cancel(job_id)
+    ok = _writable_session(sid).cancel(job_id)
     if not ok:
         raise HTTPException(409, "job not cancellable (running or finished)")
     return {"ok": True}
@@ -317,24 +330,24 @@ async def job_log(sid: str, job_id: str):
 @app.post("/api/sessions/{sid}/jobs/stage")
 async def stage_job(sid: str, descriptor: dict):
     _require_known(descriptor)
-    return {"step_id": _session(sid).stage_descriptor(descriptor), "status": "pending"}
+    return {"step_id": _writable_session(sid).stage_descriptor(descriptor), "status": "pending"}
 
 
 @app.post("/api/sessions/{sid}/pending/run-all")
 async def run_all_pending(sid: str):
-    return {"queued": _session(sid).run_all_pending()}
+    return {"queued": _writable_session(sid).run_all_pending()}
 
 
 @app.post("/api/sessions/{sid}/pending/{step_id}/run")
 async def run_pending(sid: str, step_id: str):
-    if not _session(sid).run_pending(step_id):
+    if not _writable_session(sid).run_pending(step_id):
         raise HTTPException(409, "not a pending step")
     return {"ok": True}
 
 
 @app.put("/api/sessions/{sid}/pending/{step_id}")
 async def edit_pending(sid: str, step_id: str, body: dict):
-    if not _session(sid).edit_pending(step_id, body.get("params", {})):
+    if not _writable_session(sid).edit_pending(step_id, body.get("params", {})):
         raise HTTPException(409, "not a pending step")
     return {"ok": True}
 
@@ -343,7 +356,7 @@ async def edit_pending(sid: str, step_id: str, body: dict):
 async def delete_history_entry(sid: str, entry_id: str):
     """Delete a compute/plot history entry the user chose to remove (e.g. a kept
     failure, v3 Part 2). Queued/running entries can't be deleted."""
-    if not _session(sid).delete_entry(entry_id):
+    if not _writable_session(sid).delete_entry(entry_id):
         raise HTTPException(409, "entry not found or still queued/running")
     return {"ok": True}
 
@@ -351,7 +364,7 @@ async def delete_history_entry(sid: str, entry_id: str):
 # ---- plots -----------------------------------------------------------------
 @app.post("/api/sessions/{sid}/plots/{plot_id}/redraw")
 async def redraw(sid: str, plot_id: str):
-    if not _session(sid).redraw_plot(plot_id):
+    if not _writable_session(sid).redraw_plot(plot_id):
         raise HTTPException(409, "plot not redrawable")
     return {"ok": True}
 
@@ -368,7 +381,7 @@ async def figure(sid: str, plot_id: str, fmt: str = "svg"):
 # ---- displays --------------------------------------------------------------
 @app.post("/api/sessions/{sid}/displays")
 async def add_display(sid: str, spec: dict):
-    sess = _session(sid)
+    sess = _writable_session(sid)
     spec["id"] = str(uuid.uuid4())
     with sess.lock.writing():
         sess.app_state["displays"].append(spec)
@@ -378,7 +391,7 @@ async def add_display(sid: str, spec: dict):
 
 @app.put("/api/sessions/{sid}/displays/{display_id}")
 async def update_display(sid: str, display_id: str, spec: dict):
-    sess = _session(sid)
+    sess = _writable_session(sid)
     with sess.lock.writing():
         for i, d in enumerate(sess.app_state["displays"]):
             if d["id"] == display_id:
@@ -397,7 +410,7 @@ async def update_display(sid: str, display_id: str, spec: dict):
 # ---- subset / save ---------------------------------------------------------
 @app.post("/api/sessions/{sid}/subset")
 async def subset(sid: str, body: dict):
-    job_id = _session(sid).enqueue_special("subset", body)
+    job_id = _writable_session(sid).enqueue_special("subset", body)
     return {"job_id": job_id}
 
 
@@ -405,7 +418,7 @@ async def subset(sid: str, body: dict):
 async def annotate(sid: str, body: dict):
     """Label the cells inside the drawn lasso into a region set (a categorical obs
     column), in place (spec §3.1). Body: {polygons, region_set, category, color?}."""
-    job_id = _session(sid).enqueue_special("annotate", body)
+    job_id = _writable_session(sid).enqueue_special("annotate", body)
     return {"job_id": job_id}
 
 
@@ -425,29 +438,29 @@ async def list_shape_annotations(sid: str):
 async def create_shape_annotation(sid: str, body: dict):
     """Create one shape (spec: shape annotations editor). Body: a ShapeAnnotation
     (geometry/stroke/fill?/label?), persisted into `sdata.shapes["annotations"]`."""
-    job_id = _session(sid).enqueue_special("shape_annotate", {"op": "create", "shape": body})
+    job_id = _writable_session(sid).enqueue_special("shape_annotate", {"op": "create", "shape": body})
     return {"job_id": job_id}
 
 
 @app.put("/api/sessions/{sid}/shape-annotations/{shape_id}")
 async def update_shape_annotation(sid: str, shape_id: str, body: dict):
-    job_id = _session(sid).enqueue_special(
+    job_id = _writable_session(sid).enqueue_special(
         "shape_annotate", {"op": "update", "shape_id": shape_id, "shape": body})
     return {"job_id": job_id}
 
 
 @app.delete("/api/sessions/{sid}/shape-annotations/{shape_id}")
 async def delete_shape_annotation(sid: str, shape_id: str):
-    job_id = _session(sid).enqueue_special("shape_annotate", {"op": "delete", "shape_id": shape_id})
+    job_id = _writable_session(sid).enqueue_special("shape_annotate", {"op": "delete", "shape_id": shape_id})
     return {"job_id": job_id}
 
 
 @app.post("/api/sessions/{sid}/snapshot")
 async def save_snapshot_endpoint(sid: str, body: dict | None = None):
     """Save a display as a JSON snapshot config pointing at an (auto-saved,
-    content-hashed) checkpoint the browser viewer reads directly. body:
-    {label?, viewport?: {target, zoom}, display_id?}."""
-    sess = _session(sid)
+    content-hashed) checkpoint — reopened read-only via POST /api/snapshots/{name}/open.
+    body: {label?, viewport?: {target, zoom}, display_id?}."""
+    sess = _writable_session(sid)
     from . import snapshots
     b = body or {}
     result = await _in_executor(snapshots.save_snapshot, sess, b.get("label"),
@@ -463,6 +476,21 @@ async def list_snapshots_endpoint():
     return {"snapshots": snapshots.list_snapshots()}
 
 
+@app.post("/api/snapshots/{name}/open")
+async def open_snapshot(name: str, body: dict | None = None):
+    """Open a saved snapshot as a read-only, in-app session pinned to its saved
+    view — the server-delivered replacement for the old standalone viewer (a
+    snapshot is only viewable through this running app now). Same response shape
+    as POST /api/sessions with source.kind == "load", so the client reuses its
+    existing `session.loading` SSE flow keyed by `load_id`."""
+    b = body or {}
+    try:
+        sess = await _in_executor(_mgr().create_from_snapshot, name, b.get("load_id"))
+    except (ValueError, RuntimeError, FileNotFoundError) as e:
+        raise HTTPException(400, str(e))
+    return {**_mgr().summary(sess), "hash_check": sess.hash_check}
+
+
 @app.api_route("/api/checkpoints/{name}", methods=["GET", "HEAD"])
 async def get_checkpoint(name: str):
     """Serve a saved checkpoint `.zarr.zip` for direct browser reads (zarrita.js
@@ -476,31 +504,6 @@ async def get_checkpoint(name: str):
     if not within_data_dir(target) or not target.is_file():
         raise HTTPException(404, "not found")
     return FileResponse(str(target), media_type="application/zip")
-
-
-_SNAPSHOT_MEDIA = {
-    ".sview.json": "application/json",   # the view config
-    ".html": "text/html",                # the standalone entry page
-    ".zarr.zip": "application/zip",       # the checkpoint the config's relative `data` points at
-}
-
-
-@app.api_route("/snapshots/{name}", methods=["GET", "HEAD"])
-async def get_snapshot(name: str):
-    """Serve a snapshot's three colocated file kinds by name from DATA_DIR: the
-    `.sview.json` config, its `.html` entry page, and the `.zarr.zip` checkpoint its
-    relative `data` path resolves to (a sibling under /snapshots/, so the same path
-    resolves live and in a published bundle). A name-validated route rather than a
-    static mount of the whole folder, so the raw datasets and `.rasters`/`.save-`
-    caches sharing DATA_DIR stay unexposed. FileResponse honors Range (206) and HEAD
-    so the browser (zarrita.js) can size- and range-read the checkpoint."""
-    media_type = next((m for ext, m in _SNAPSHOT_MEDIA.items() if name.endswith(ext)), None)
-    if media_type is None or "/" in name or "\\" in name:
-        raise HTTPException(404, "not found")
-    target = (config.DATA_DIR / name).resolve()
-    if not within_data_dir(target) or not target.is_file():
-        raise HTTPException(404, "not found")
-    return FileResponse(str(target), media_type=media_type)
 
 
 @app.get("/api/about/licenses")
@@ -615,7 +618,7 @@ def _default_save_path(sess) -> str:
 
 @app.post("/api/sessions/{sid}/save")
 async def save(sid: str, body: dict | None = None):
-    sess = _session(sid)
+    sess = _writable_session(sid)
     explicit = (body or {}).get("path")
     path = explicit or _default_save_path(sess)
     job_id = sess.enqueue_special("save", {"path": path, "hash_name": not explicit})
@@ -639,7 +642,7 @@ async def get_points_transform(sid: str):
 @app.post("/api/sessions/{sid}/points-transform")
 async def set_points_transform(sid: str, body: dict):
     """Set the points->global affine and persist to disk. body: {affine: [a,b,c,d,e,f]}."""
-    sess = _session(sid)
+    sess = _writable_session(sid)
     affine = body["affine"]
     if not (isinstance(affine, list) and len(affine) == 6):
         raise HTTPException(400, "affine must be 6 floats [a, b, c, d, e, f]")
@@ -671,7 +674,7 @@ async def run_recipe(sid: str, recipe: dict):
     A recipe carrying declared `params` + caller `param_values` is resolved first
     ($param references filled in); an ad-hoc {steps} import resolves to itself."""
     from . import recipes
-    sess = _session(sid)
+    sess = _writable_session(sid)
     mode = recipe.get("mode") or "run"
     steps = recipes.resolve_steps(recipe, recipe.get("param_values"))
     n = recipes.run_steps(sess, steps, mode)
@@ -828,10 +831,11 @@ async def image_info(sid: str, element: str):
         num_channels = info["channels"]
         # Client (Viv) compositing is possible only when the feature is on, the channel
         # count fits a shader pass (RGB is always <=3), AND we actually have an on-disk
-        # normalized zarr store to serve for this element (only non-canonical rasters are
-        # rebuilt into raster_cache_dir; canonical ones have no served store, so they stay
-        # on the PNG tile path). Without the store the raster_base_url would 404, so gate
-        # on it here — the frontend treats client_compositing=false as "use PNG tiles".
+        # store to serve for this element — normalize_rasters registers one for every
+        # image, whether freshly rebuilt (non-canonical) or already tile-chunked
+        # (canonical, e.g. reopened from a checkpoint: it points at sdata.path). Without
+        # the store the raster_base_url would 404, so gate on it here — the frontend
+        # treats client_compositing=false as "use PNG tiles".
         has_store = element in sess.raster_stores
         client_compositing = bool(
             config.CLIENT_IMAGE_COMPOSITING and has_store
@@ -901,12 +905,17 @@ def _raster_file(store_dir: str, rel: str) -> Path | None:
     return target
 
 
-def _byte_range_response(data: bytes, media: str, range_header: str | None, is_head: bool) -> Response:
+def _byte_range_response(data: bytes, media: str, range_header: str | None, is_head: bool,
+                         etag: str) -> Response:
     """Serve in-memory `data` with HTTP Range/HEAD support. The bytes are read under
     the session read lock (see raster_store) and handed here already in memory, so a
-    concurrent rmtree of the live store can't race a lazily-streamed file read."""
+    concurrent rmtree of the live store can't race a lazily-streamed file read. `etag`
+    is a weak validator computed fresh per request from the backing file's current
+    mtime/size (not a session-lifetime assumption), so a swapped store's new file
+    naturally gets a new ETag — a client that already has this exact file cached can
+    304 (see raster_store), one that doesn't gets a normal 200/206."""
     total = len(data)
-    headers = {"Accept-Ranges": "bytes", "Cache-Control": "no-cache"}  # live store can be swapped
+    headers = {"Accept-Ranges": "bytes", "Cache-Control": "no-cache", "ETag": etag}
     if range_header and range_header.startswith("bytes="):
         spec = range_header[len("bytes="):].split(",")[0].strip()
         start_s, _, end_s = spec.partition("-")
@@ -948,18 +957,22 @@ async def raster_store(sid: str, element: str, path: str, request: Request):
         if target is None or not target.is_file():
             return None
         media = "application/json" if target.name.endswith(".json") else "application/octet-stream"
+        st = target.stat()
+        etag = f'W/"{st.st_mtime_ns:x}-{st.st_size:x}"'
         cached = imaging.raster_chunk_get(sess.sdata, element, path)
         if cached is not None:
-            return cached, media
+            return cached, media, etag
         data = target.read_bytes()
         imaging.raster_chunk_put(sess.sdata, element, path, data)
-        return data, media
+        return data, media, etag
 
     result = await _read_locked(sess, _read)
     if result is None:
         raise HTTPException(404, "not found")
-    data, media = result
-    return _byte_range_response(data, media, range_header, is_head)
+    data, media, etag = result
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "no-cache"})
+    return _byte_range_response(data, media, range_header, is_head, etag)
 
 
 # ---- SSE -------------------------------------------------------------------

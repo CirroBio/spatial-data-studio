@@ -1,9 +1,7 @@
 # Build + test gate for PRs and pushes to main.
 #
-# Backend job runs the full in-process round trip (backend/test_e2e.py), which is
-# where the snapshot schema/version gate lives (SNAPSHOT_CONTRACT.md §8, assertion
-# updated at backend/test_e2e.py). Frontend job typechecks and builds both the app
-# and the version-pinned viewer bundle.
+# Backend job runs the full in-process round trip (backend/test_e2e.py), including
+# the snapshot save/open flow. Frontend job typechecks and builds the app.
 name: ci
 
 on:
@@ -38,17 +36,15 @@ jobs:
           uv pip uninstall --system leidenalg igraph
 
       - name: Prepare test dataset
-        # CI runs the Visium-backed portion of test_e2e.py (including the snapshot
-        # schema gate). The Xenium flows (segmentation/raster/zarr-import/custom
-        # methods) need the larger xenium.zarr + xenium_tma.zarr fixtures and are
-        # skipped when absent; regenerate them locally via scripts/prepare_xenium_*.py
-        # (see DEVELOPMENT.md "Test datasets") to run the full suite.
+        # CI runs the Visium-backed portion of test_e2e.py. The Xenium flows
+        # (segmentation/raster/zarr-import/custom methods) need the larger
+        # xenium.zarr + xenium_tma.zarr fixtures and are skipped when absent;
+        # regenerate them locally via scripts/prepare_xenium_*.py (see
+        # DEVELOPMENT.md "Test datasets") to run the full suite.
         run: python scripts/prepare_test_data.py
 
-      - name: Backend round-trip + schema gate
-        # Script-style test (no pytest collection): the repo's canonical backend
-        # check, and where the snapshot schema-version gate is asserted. A follow-up
-        # may narrow this to a lighter schema-gate-only run once one exists.
+      - name: Backend round-trip
+        # Script-style test (no pytest collection): the repo's canonical backend check.
         run: |
           cd backend
           PYTHONPATH=. python test_e2e.py
@@ -72,4 +68,3 @@ jobs:
           npm ci
           npx tsc --noEmit -p tsconfig.app.json
           npm run build
-          npm run build:app

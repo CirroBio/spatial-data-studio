@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as Tabs from '@radix-ui/react-tabs';
 import { useAppStore } from '../store/sessionStore';
 import { deleteHistoryEntry, getRecipe, importRecipe, getSession, runAllPending } from '../api';
@@ -85,12 +85,14 @@ function HistoryList({
   onSelect,
   onDelete,
   emptyLabel,
+  readOnly,
 }: {
   items: HistoryItem[];
   selectedId: string | null;
   onSelect: (id: string) => void;
   onDelete: (e: React.MouseEvent, id: string) => void;
   emptyLabel: string;
+  readOnly: boolean;
 }) {
   if (items.length === 0) {
     return <div className="px-3 py-4 text-xs text-muted/60 text-center">{emptyLabel}</div>;
@@ -115,7 +117,7 @@ function HistoryList({
               </div>
             )}
           </button>
-          {item.status !== 'queued' && item.status !== 'running' && (
+          {!readOnly && item.status !== 'queued' && item.status !== 'running' && (
             <button
               onClick={(e) => onDelete(e, item.id)}
               title="Delete from history"
@@ -203,6 +205,7 @@ export default function Sidebar() {
     }
   }
 
+  const readOnly = sessionState?.summary.read_only ?? false;
   const computeItems = sessionState?.app_state.compute_history ?? [];
   const plotItems = sessionState?.app_state.plots ?? [];
   const pendingCount =
@@ -211,6 +214,14 @@ export default function Sidebar() {
 
   const isOperationTab = sidebarTab === 'compute' || sidebarTab === 'plots';
   const effectClass = sidebarTab === 'plots' ? 'plot' : 'compute';
+  const MUTATING_TABS: SidebarTab[] = ['regions', 'annotations', 'subsetting'];
+
+  // A mutating tab left active from a previous (editable) session must not stay
+  // selected after switching to a read-only one — its trigger disables, but Radix
+  // Tabs.Content still renders whatever `value` already is.
+  useEffect(() => {
+    if (readOnly && MUTATING_TABS.includes(sidebarTab)) setSidebarTab('compute');
+  }, [readOnly, sidebarTab, setSidebarTab]);
 
   return (
     <aside className={`shrink-0 overflow-hidden border-r border-border bg-surface transition-[width] duration-200 ease-in-out ${leftMenuOpen ? 'w-60' : 'w-0'}`}>
@@ -223,12 +234,14 @@ export default function Sidebar() {
         <Tabs.List data-tour={TourAnchors.SidebarTabs} className="flex items-stretch border-b border-border shrink-0">
           {SIDEBAR_TABS.map(({ id, label, icon }) => {
             const active = sidebarTab === id;
+            const disabled = readOnly && MUTATING_TABS.includes(id);
             return (
               <Tabs.Trigger
                 key={id}
                 value={id}
-                title={label}
-                className={`flex items-center justify-center gap-1.5 py-2 min-w-0 text-muted data-[state=active]:text-text data-[state=active]:border-b-2 data-[state=active]:border-accent transition-colors ${
+                title={disabled ? `${label} (unavailable — viewing a read-only snapshot)` : label}
+                disabled={disabled}
+                className={`flex items-center justify-center gap-1.5 py-2 min-w-0 text-muted data-[state=active]:text-text data-[state=active]:border-b-2 data-[state=active]:border-accent disabled:opacity-30 disabled:cursor-not-allowed transition-colors ${
                   active ? 'flex-1 px-2' : 'px-1.5'
                 }`}
               >
@@ -246,6 +259,7 @@ export default function Sidebar() {
             onSelect={(id) => setSelectedComputeId(selectedComputeId === id ? null : id)}
             onDelete={handleDelete}
             emptyLabel="No compute history"
+            readOnly={readOnly}
           />
         </Tabs.Content>
 
@@ -256,6 +270,7 @@ export default function Sidebar() {
             onSelect={(id) => setSelectedPlotId(selectedPlotId === id ? null : id)}
             onDelete={handleDelete}
             emptyLabel="No plots"
+            readOnly={readOnly}
           />
         </Tabs.Content>
 
@@ -272,8 +287,9 @@ export default function Sidebar() {
         </Tabs.Content>
       </Tabs.Root>
 
-      {/* Add + recipe controls — only for compute/plots operation tabs */}
-      {activeSessionId && isOperationTab && (
+      {/* Add + recipe controls — only for compute/plots operation tabs, and never
+          on a read-only snapshot session (every route here would 403). */}
+      {activeSessionId && isOperationTab && !readOnly && (
         <div className="p-2 border-t border-border shrink-0 flex flex-col gap-1.5">
           {pendingCount > 0 && (
             <button

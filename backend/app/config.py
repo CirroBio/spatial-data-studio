@@ -1,15 +1,6 @@
-import json
 import os
 import tempfile
 from pathlib import Path
-
-# Single source of truth for the shared snapshot viewer: /snapshot-viewer.json at
-# the repo root (parents[2] from backend/app/). `version` pins the published viewer
-# bundle; `pagesBaseUrl` is its GitHub Pages origin. Every saved snapshot's HTML
-# points at `${pagesBaseUrl}/viewer/${version}/app.js`, so old snapshots keep
-# loading their exact viewer version even after the schema evolves.
-_SNAPSHOT_VIEWER_JSON = Path(__file__).resolve().parents[2] / "snapshot-viewer.json"
-_viewer_meta = json.loads(_SNAPSHOT_VIEWER_JSON.read_text())
 
 
 def _cgroup_mem_limit_mb() -> int | None:
@@ -107,7 +98,11 @@ class Config:
     # Max image tiles/thumbnails composited at once. A zoom/pan burst asks for many
     # tiles simultaneously, and each finest-level tile can realize a full multi-MB
     # pyramid chunk; this caps the concurrent transient so the burst can't OOM.
-    IMAGE_RENDER_CONCURRENCY = int(os.environ.get("SDS_IMAGE_RENDER_CONCURRENCY", "2"))
+    # Scales with the box by default (more cores generally means more RAM too, and
+    # compositing is CPU-bound) rather than a fixed small number, so a bigger
+    # deployment actually gets more parallelism without a config change; override
+    # down via the env var on a memory-constrained container.
+    IMAGE_RENDER_CONCURRENCY = int(os.environ.get("SDS_IMAGE_RENDER_CONCURRENCY", str(os.cpu_count() or 4)))
 
     # Client-side (Viv) image compositing. When on, the /image/{element}/info manifest
     # advertises that the browser may read the session's on-disk normalized raster zarr
@@ -132,9 +127,12 @@ class Config:
     # Raster (image/label) tiling normalized at ingest (see rasters.py). Every
     # element is rebuilt into a 2x multiscale pyramid down to a <= RASTER_BASE_PX
     # base, chunked at imaging.TILE_SIZE so one tile realizes one small chunk.
-    # The rebuild reads each element once; a small dask pool bounds its peak RSS.
+    # Rasters rebuild one element at a time (peak RSS bounded by the largest single
+    # element, not by this), so more worker threads just chews through one element's
+    # chunks faster on a bigger box — scales with cores by default, same reasoning
+    # as IMAGE_RENDER_CONCURRENCY above.
     RASTER_BASE_PX = int(os.environ.get("SDS_RASTER_BASE_PX", "1024"))
-    RASTER_REBUILD_WORKERS = int(os.environ.get("SDS_RASTER_REBUILD_WORKERS", "2"))
+    RASTER_REBUILD_WORKERS = int(os.environ.get("SDS_RASTER_REBUILD_WORKERS", str(os.cpu_count() or 2)))
 
     # Server-side LRU (MB) of raw Viv chunk bytes read by the client-compositing path
     # (main.py raster_store). Caps repeat-view reads of the same chunk under the read
@@ -164,13 +162,6 @@ class Config:
     READ_LOCK_TIMEOUT_S = float(os.environ.get("SDS_READ_LOCK_TIMEOUT_S", "25"))
 
     STATIC_DIR = Path(os.environ.get("SDS_STATIC_DIR", "")) or None  # built SPA, optional
-
-    # Shared snapshot viewer, read from /snapshot-viewer.json (see above). Snapshots
-    # embed SNAPSHOT_VIEWER_VERSION in their `schema_version` and load app.js from the
-    # version-pinned GitHub Pages URL; no viewer code is bundled or served locally.
-    SNAPSHOT_VIEWER_VERSION = _viewer_meta["version"]
-    SNAPSHOT_VIEWER_PAGES_URL = _viewer_meta["pagesBaseUrl"]
-    SNAPSHOT_VIEWER_APP_JS = f"{_viewer_meta['pagesBaseUrl']}/viewer/{_viewer_meta['version']}/app.js"
 
     # ---- Cirro upload. Strictly additive; off unless all three vars are set. ----
     CIRRO_BASE_URL = os.environ.get("CIRRO_BASE_URL", "")

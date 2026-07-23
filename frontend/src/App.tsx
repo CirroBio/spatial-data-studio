@@ -119,8 +119,12 @@ export default function App() {
   // whether the canvas or the table inspector is showing.
   const detail = selectedComputeId ? <ComputeDetail /> : selectedPlotId ? <PlotDetail /> : null;
 
-  // Canvas mode is set by which tab is active
-  const canvasMode = sidebarTab === 'regions'
+  // Canvas mode is set by which tab is active — never a drawing mode on a
+  // read-only snapshot session (Sidebar also resets off a mutating tab, but the
+  // canvas checks read_only directly too rather than depending on that timing).
+  const readOnly = sessionState?.summary.read_only ?? false;
+  const canvasMode = readOnly ? null
+    : sidebarTab === 'regions'
     ? 'regions'
     : sidebarTab === 'annotations'
     ? 'shapes'

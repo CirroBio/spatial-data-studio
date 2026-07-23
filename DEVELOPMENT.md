@@ -63,10 +63,10 @@ backend/    FastAPI app
   app/imaging.py  tiled image pyramid + channel compositing + coordinate reconciliation;
                   the /image/{element}/info manifest also advertises the client-compositing
                   path (raster_base_url, zarr_group_path, contrast_limits, is_rgb)
-  app/rasters.py  ingest-time re-tiling into a tile-chunked sharded pyramid; the resulting
+  app/rasters.py  ingest-time re-tiling into a tile-chunked pyramid; the resulting
                   per-session on-disk zarr store is also served raw (see the raster route)
                   for client-side (Viv) GPU compositing, with WebP tiles as the fallback
-  app/snapshots.py JSON snapshot-config write/list
+  app/snapshots.py JSON snapshot-config write/list/open (read-only session, no standalone viewer)
   app/datasets.py saved-checkpoint scan for the load/upload pickers (prewarmed cache)
   app/prewarm.py  background async queue that warms slow first-open menu lists off the event loop
   app/cirro.py    Cirro dataset upload (client-credentials auth, symlink-based upload folder)
@@ -99,7 +99,7 @@ Component-level notes: [`backend/README.md`](backend/README.md),
 | Change the deck.gl canvas / rendering | `frontend/src/components/canvas/` | [frontend/README.md](frontend/README.md) |
 | Change how the browser reads raw image data (client-side Viv compositing) | `backend/app/main.py` raster route + `/image/{element}/info` fields; `rasters.py` `raster_stores` map | [docs/CONTRACT.md](docs/CONTRACT.md) |
 | Change the parameter-form UI | `frontend/src/components/forms/` | — |
-| Change the snapshot viewer or its emitted schema | `backend/app/snapshots.py` + `frontend/src/components/SnapshotViewer.tsx` + `snapshot-viewer.json` | schema rule in [CLAUDE.md](CLAUDE.md) |
+| Change what a snapshot pins or how it opens | `backend/app/snapshots.py` (config shape) + `backend/app/sessions/session.py::_apply_pinned_view` + `frontend/src/components/SnapshotBrowser.tsx` | [DESIGN.md](DESIGN.md) §14 |
 | Change Cirro upload | `backend/app/cirro.py` + `frontend/src/components/CirroUploadDialog.tsx` | — |
 
 ### Live import logging
@@ -132,7 +132,7 @@ these in per-job / per-load buffers (`sessionStore`) and renders them with `Ansi
 ```
 
 `run.sh` launches the backend (`uvicorn`, no `--reload` — see below) and the
-frontend (`npm run dev`; Vite proxies `/api` and `/snapshots` to :8000) together.
+frontend (`npm run dev`; Vite proxies `/api` to :8000) together.
 Stop with Ctrl-C or, from another shell, `./stop.sh` (it reads `.run.pids` and
 kills each process group).
 
@@ -221,19 +221,18 @@ and fails open to the mount-time `size=` otherwise.
   eight spatial/multi-sample custom methods on `xenium_tma.zarr`, the
   cell-segmentation `/shapes/{element}/geoarrow` polygons on `xenium.zarr`, the
   client-compositing raster route + `/info` manifest (raw zarr served with Range
-  206) on `xenium.zarr`, and that an image tile keeps its signal after a reshaping
-  compute (filter_cells) — i.e. the per-session raster store isn't deleted while the
-  adopted object still references it. The five Xenium-backed flows (zarr-import,
-  custom methods, segmentation, raster, raster-survives-reshape) skip with a
-  `[skip]` line when their fixture is absent, so CI runs only the Visium-backed
-  subset (including the schema gate); regenerate the Xenium fixtures locally via
+  206) on `xenium.zarr`, an image tile keeping its signal after a reshaping compute
+  (filter_cells) — i.e. the per-session raster store isn't deleted while the
+  adopted object still references it — and opening a saved snapshot as a read-only
+  session pinned to its saved view (`run_snapshot_flow`). The five Xenium-backed
+  flows (zarr-import, custom methods, segmentation, raster, raster-survives-reshape)
+  skip with a `[skip]` line when their fixture is absent, so CI runs only the
+  Visium-backed subset; regenerate the Xenium fixtures locally via
   `scripts/prepare_xenium_*.py` to exercise them.
 - `cd backend && python test_cli.py` — offline CLI round trip: loads
   `visium_hne.zarr`, runs a compute + plot recipe headlessly, and asserts the output
   `.zarr.zip` and `plots/…/figure.{svg,pdf}` are written and reload with history
   intact.
-- `cd backend && PYTHONPATH=. python test_schema_gate.py` — dataset-free snapshot
-  schema gate (see the schema-versioning rule in [CLAUDE.md](CLAUDE.md)).
 - `cd backend && PYTHONPATH=. python test_compression.py` — dataset-free unit test
   for `SelectiveGZipMiddleware`: which content types compress, round-trip/passthrough
   correctness, and the regression guard that gzip runs off the event loop (a
@@ -304,31 +303,15 @@ nextflow run nextflow/main.nf -profile test,docker
 
 See [`nextflow/README.md`](nextflow/README.md) for the full parameter list.
 
-## Snapshot viewer hosting
+## Snapshots
 
-Saved snapshots don't carry any viewer code — each `.html` page loads a shared,
-version-pinned viewer bundle over the network, built and published once per version
-to GitHub Pages. Snapshots (in the app, in the data folder, and in Cirro bundles)
-just point at it.
-
-- **Single source of truth:** `snapshot-viewer.json` at the repo root
-  (`{ "version", "pagesBaseUrl" }`). The backend reads it (`backend/app/config.py`),
-  the frontend build imports it, and CI reads it with `jq`/node — never hardcode the
-  pieces elsewhere.
-- **Published URL:** `${pagesBaseUrl}/viewer/${version}/app.js`. Every snapshot HTML
-  references this exact versioned path with a classic (non-module) `<script src>`,
-  which loads cross-origin from GitHub Pages without CORS headers.
-- **Immutable per version:** the CI workflow (`.github/workflows/deploy-viewer.yml`)
-  publishes `viewer/<version>/` accumulatively and never deletes prior version dirs,
-  so a snapshot saved against an older viewer keeps rendering forever. Changing the
-  emitted schema means bumping `version` in `snapshot-viewer.json` and publishing a
-  new versioned bundle — the exact, test-gated procedure is the **"Version the
-  snapshot viewer schema"** rule in [`CLAUDE.md`](CLAUDE.md); follow it exactly.
-- **Building it:** `cd frontend && npm run build:app` builds the single-file classic
-  IIFE bundle to `frontend/dist-app/viewer/<version>/app.js`. This is what CI
-  publishes to GitHub Pages — it is **not** bundled into Cirro uploads or served by
-  the backend. `run.sh` does not build it, and local dev/Cirro testing does not
-  require it. Rebuild and republish only when the viewer or schema version changes.
+A snapshot has no standalone viewer: opening one (`POST /api/snapshots/{name}/open`)
+loads its referenced checkpoint the same way any other checkpoint opens
+(`SessionManager.create_from_load`), just read-only (`Session.read_only`) and with
+its display built straight from the saved `viewport`/`encoding` instead of the
+auto-generated default. It only ever renders inside this running app — there is no
+published viewer bundle, no GitHub Pages hosting, and no separate schema-version gate
+to satisfy when the config's shape changes. See [DESIGN.md](DESIGN.md) §14.
 
 ## Contributing
 

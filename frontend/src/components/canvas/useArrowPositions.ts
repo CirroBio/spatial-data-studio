@@ -3,8 +3,7 @@ import * as arrow from 'apache-arrow';
 
 // Flat, stride-2-or-3 point positions plus per-axis bounds, consumed by
 // buildSpotLayer and the fit-to-data view-state helpers. Sourced from an Arrow
-// obsm batch (useArrowPositions) or directly from a checkpoint obsm array
-// (SnapshotViewer).
+// obsm batch.
 export interface ScatterPositions {
   positions: Float32Array;
   numRows: number;

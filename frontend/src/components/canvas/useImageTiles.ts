@@ -4,6 +4,7 @@ import type { Layer, OrthographicViewState } from '@deck.gl/core';
 import type { ImageInfo } from '../../types';
 import { getImageTileUrl, getImageThumbnailUrl } from '../../api';
 import { quad, worldToPixel } from './imageAffine';
+import { transparentBlackExtension } from './transparentBlackExtension';
 
 // Module-level decoded-image cache so pan/zoom reuses tiles and we can track
 // exactly when each tile is ready (deck.gl accepts a decoded Image directly).
@@ -69,6 +70,13 @@ export function useImageTiles(
     const layers: Layer[] = [];
     let loading = false;
 
+    // The server composites fluorescence tiles additively from black (imaging.py
+    // _composite), so a zero-intensity pixel is opaque black — without this it
+    // would paint over the themed backdrop (PLOT_BACKGROUNDS) everywhere the image
+    // has no signal, making the light/dark background toggle look dead inside the
+    // image's bounds. True-color RGB (e.g. H&E) keeps black — it's real tissue.
+    const imageExtensions = imageInfo.is_rgb ? [] : [transparentBlackExtension];
+
     // Always-present coarse base so the canvas is never blank while tiles load.
     const baseUrl = getImageThumbnailUrl(sessionId, element, visibleChannels);
     const baseImg = getImage(baseUrl, bump);
@@ -81,6 +89,7 @@ export function useImageTiles(
         // layers drawn after it (the merged cell scatter writes gl_FragDepth to
         // resolve overlaps, and cells must always sit above the tissue image).
         parameters: { depthWriteEnabled: false, depthCompare: 'always' },
+        extensions: imageExtensions,
       }));
     } else {
       loading = true;
@@ -133,6 +142,7 @@ export function useImageTiles(
             image: img,
             bounds: quad(m, px0, py0, px1, py1),
             parameters: { depthWriteEnabled: false, depthCompare: 'always' },
+            extensions: imageExtensions,
           }));
         }
       }

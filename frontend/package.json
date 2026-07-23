@@ -6,7 +6,6 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "build:app": "vite build --config vite.app.config.ts",
     "preview": "vite preview",
     "check:tours": "node scripts/check-tour-anchors.mjs",
     "test:e2e": "playwright test"

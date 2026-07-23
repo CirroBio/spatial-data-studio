@@ -253,6 +253,18 @@ function TableView({
 
   const path = fieldPath(sel);
 
+  // Scope the refetch trigger to versions relevant to this selection, not every
+  // field in the session: a bare "obs"/"var" path (the whole table) aggregates
+  // every `obs:<col>`/`var:<col>` version, while "shapes:<name>"/"points:<name>"
+  // match their own single key. Without this, any unrelated field changing
+  // anywhere in the session (e.g. a gene column from a compute step) refetched
+  // this 50-row preview too.
+  const relevantVersion = path && dataVersions
+    ? Object.entries(dataVersions)
+        .filter(([k]) => (path.includes(':') ? k === path : k.startsWith(`${path}:`)))
+        .reduce((sum, [, v]) => sum + v, 0)
+    : 0;
+
   // Reset paging when the selected element/field changes.
   useEffect(() => {
     setOffset(0);
@@ -270,8 +282,8 @@ function TableView({
     return () => {
       cancelled = true;
     };
-    // dataVersions bump re-reads the preview so new obs columns from a compute appear.
-  }, [sessionId, path, offset, dataVersions]);
+    // relevantVersion bumping re-reads the preview so a change to this element appears.
+  }, [sessionId, path, offset, relevantVersion]);
 
   const total = preview?.total_rows ?? 0;
   const shown = preview?.rows.length ?? 0;

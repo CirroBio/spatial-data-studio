@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, type RefObject } from 'react';
 
-// Shared camera-fit primitives for the spatial and embedding canvases (and the
-// read-only SnapshotViewer). Kept in one place so the zoom range and fit math
-// can't drift between the views that must frame data identically.
+// Shared camera-fit primitives for the spatial and embedding canvases. Kept in one
+// place so the zoom range and fit math can't drift between the views that must
+// frame data identically.
 export const ZOOM_LIMITS = { minZoom: -8, maxZoom: 8 };
 // Zoom delta per zoom-button click (OrthographicView zoom is log2, so 0.5 ≈ 1.41× per step).
 export const ZOOM_STEP = 0.5;

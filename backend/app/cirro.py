@@ -3,12 +3,12 @@
 Auth is service-account style (OAuth client-credentials): `config.cirro_enabled()`
 gates the feature on three env vars being present, no interactive login. Upload
 builds a temp folder of symlinks — the saved `.zarr.zip` checkpoints under
-`sessions/`, and each selected snapshot's `.sview.json` config, its `.html` entry
-page, and the `.zarr.zip` checkpoint it references colocated at the bundle root — so
-nothing is copied, then hands that folder to the Cirro SDK's own directory uploader.
-No viewer code is bundled: each snapshot HTML loads the shared, version-pinned viewer
-from GitHub Pages and resolves its checkpoint from the sibling config's relative
-`data` path.
+`sessions/`, and each selected snapshot's `.sview.json` config plus the `.zarr.zip`
+checkpoint it references, colocated at the bundle root — so nothing is copied, then
+hands that folder to the Cirro SDK's own directory uploader. A snapshot isn't
+independently viewable in Cirro (it only opens through this running app, read-only —
+see `snapshots.py`); its config travels along as a labeled view-pointer for
+provenance, not as a standalone viewer.
 """
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ import json
 import tempfile
 from pathlib import Path
 
-from . import snapshots
 from .config import config, within_data_dir
 
 # The generic "Files" ingest process (accepts any file) — every upload from this
@@ -139,18 +138,13 @@ def _symlink(dest: Path, src: Path) -> None:
 
 
 def _symlink_snapshot(bundle: Path, name: str) -> None:
-    """Colocate a snapshot's `.sview.json` config, its `.html` entry page, and the
-    `.zarr.zip` checkpoint it references as siblings at the bundle root, so the
-    config's relative `data` path (`./<checkpoint>.zarr.zip`) resolves and the HTML —
-    which loads the shared viewer from GitHub Pages — renders it standalone."""
+    """Colocate a snapshot's `.sview.json` config and the `.zarr.zip` checkpoint it
+    references as siblings at the bundle root — provenance for the uploaded dataset,
+    not a standalone viewer (a snapshot only opens read-only through this app)."""
     src = _snapshot_src(name)
     if not src.is_file():
         raise ValueError(f"snapshot '{name}' not found")
     _symlink(bundle / name, src)
-    html_name = f"{name[:-len(snapshots.SNAPSHOT_EXT)]}.html"
-    html_src = _snapshot_src(html_name)
-    if html_src.is_file():
-        _symlink(bundle / html_name, html_src)
     ckpt = _referenced_checkpoint(src)
     if ckpt:
         ckpt_src = _snapshot_src(ckpt)
@@ -160,12 +154,10 @@ def _symlink_snapshot(bundle: Path, name: str) -> None:
 
 def build_upload_folder(session_paths: list[str], snapshot_names: list[str]) -> Path:
     """A temp folder of symlinks: each selected saved checkpoint under `sessions/`,
-    and each selected snapshot's `.sview.json` config, its `.html` page, and the
-    `.zarr.zip` it references colocated at the bundle root (siblings, so the config's
-    relative `data` path resolves and each HTML is a standalone GH-Pages-backed entry
-    point). Never symlinks a directory itself (most upload walkers skip symlinked
-    dirs' contents) — only real directories of per-file symlinks. No viewer code is
-    bundled."""
+    and each selected snapshot's `.sview.json` config plus the `.zarr.zip` it
+    references, colocated at the bundle root. Never symlinks a directory itself (most
+    upload walkers skip symlinked dirs' contents) — only real directories of
+    per-file symlinks."""
     tmp = Path(tempfile.mkdtemp(prefix="cirro-upload-"))
     session_dir = tmp / "sessions"
     session_dir.mkdir()

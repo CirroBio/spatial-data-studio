@@ -1,17 +1,10 @@
-"""Snapshots: each save writes TWO colocated files under DATA_DIR sharing one
-prefix — `<name>.sview.json` (the view config: viewport + encoding + a baked render
-manifest over an immutable checkpoint) and `<name>.html` (a tiny page that loads the
-shared, version-pinned viewer bundle from GitHub Pages and renders that config). The
-viewer opens the referenced `.zarr.zip` directly (zarrita.js over HTTP range
-requests), so a snapshot ships no pixel/data of its own — only the view config plus
-the render manifest (image geometry + per-channel contrast limits) the browser can't
-derive from the raw arrays alone.
-
-The HTML points at `${pagesBaseUrl}/viewer/${version}/app.js` (config.SNAPSHOT_VIEWER_APP_JS,
-sourced from /snapshot-viewer.json) so a snapshot keeps loading its exact viewer
-version forever, and resolves the `data` path relative to its own URL — hence the
-config + `.zarr.zip` must stay siblings both live (served under /snapshots/) and in a
-Cirro bundle.
+"""Snapshots: a `<name>.sview.json` view config (viewport + encoding + a baked
+render manifest) over an immutable checkpoint, saved alongside it in DATA_DIR.
+Opening a snapshot (`SessionManager.create_from_snapshot`) loads its referenced
+checkpoint as a read-only, in-app session pinned to the saved view — the same way
+any other checkpoint opens, just read-only and with a pinned display instead of the
+auto-generated default. There is no standalone viewer: a snapshot is only viewable
+through this running app, not shipped as an independent static page.
 
 Saving a snapshot first ensures the session is written to a content-hashed
 checkpoint (so the config points at bytes that won't change under it), then bakes
@@ -22,24 +15,55 @@ from __future__ import annotations
 
 import datetime
 import hashlib
-import html
 import json
 import os
 from pathlib import Path
 
-from .config import config
+from .config import config, within_data_dir
 from . import imaging
 from .persistence import store
 
 # Snapshot config extension (Spatial View). Saved as `<name>-<hash>.sview.json`
-# alongside its `.html` and the referenced checkpoint in DATA_DIR.
+# alongside the checkpoint it references, in DATA_DIR.
 SNAPSHOT_EXT = ".sview.json"
+
+# Informational only (no compatibility gate reads this): bumped when the config
+# shape changes, so a raw file on disk shows which version wrote it.
+SNAPSHOT_CONFIG_VERSION = "2.0"
 
 
 def _dir() -> str:
     d = str(config.DATA_DIR)
     os.makedirs(d, exist_ok=True)
     return d
+
+
+def _resolve(name: str) -> Path:
+    """Resolve a client-supplied snapshot name under DATA_DIR, rejecting any that
+    escapes it (a `../`/absolute name)."""
+    path = (config.DATA_DIR / name).resolve()
+    if not within_data_dir(path):
+        raise ValueError(f"invalid snapshot name: {name}")
+    return path
+
+
+def load_config(name: str) -> dict:
+    """Read a saved snapshot's `.sview.json` by name (as returned by
+    `list_snapshots`), raising ValueError if it doesn't exist or escapes DATA_DIR."""
+    path = _resolve(name)
+    if not path.is_file():
+        raise ValueError(f"snapshot not found: {name}")
+    return json.loads(path.read_text())
+
+
+def checkpoint_path(cfg: dict) -> str:
+    """Resolve a snapshot config's referenced checkpoint to an absolute path under
+    DATA_DIR, mirroring `_checkpoint_path`'s naming (both live directly under DATA_DIR,
+    never a subfolder — see `save_snapshot`)."""
+    name = (cfg.get("checkpoint") or {}).get("name")
+    if not name:
+        raise ValueError("snapshot config has no checkpoint name")
+    return str(_resolve(name))
 
 
 def _display(session, display_id: str | None):
@@ -89,9 +113,9 @@ def save_snapshot(session, label: str | None = None, viewport: dict | None = Non
 
     with session.lock.reading():
         # Ensure the referenced checkpoint is an up-to-date, immutable .zarr.zip that
-        # lives directly under DATA_DIR. The config's `data` path is `./<basename>`
-        # and /snapshots/<name> only serves DATA_DIR's root, so reusing a checkpoint
-        # in a subfolder would bake a path the viewer can't fetch — re-save to root.
+        # lives directly under DATA_DIR — checkpoint_path() resolves `checkpoint.name`
+        # against DATA_DIR only (no subfolder), so reusing one from elsewhere would
+        # bake a name create_from_snapshot can't resolve back — re-save to root.
         sp = session.store_path
         direct_child = sp and Path(sp).resolve().parent == config.DATA_DIR.resolve()
         if not (session.saved and sp and sp.endswith(".zarr.zip") and direct_child):
@@ -134,13 +158,10 @@ def save_snapshot(session, label: str | None = None, viewport: dict | None = Non
 
     snap_label = label or session.name
     config_obj = {
-        "schema_version": config.SNAPSHOT_VIEWER_VERSION,
+        "schema_version": SNAPSHOT_CONFIG_VERSION,
         "kind": kind,
         "label": snap_label,
         "created": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        # Resolved by the viewer against this config's own URL (new URL(data, configUrl)),
-        # so the `.zarr.zip` must be a sibling both live and in a bundle.
-        "data": f"./{checkpoint_name}",
         "checkpoint": {"name": checkpoint_name},
         "table": table,
         "viewport": view,
@@ -149,35 +170,14 @@ def save_snapshot(session, label: str | None = None, viewport: dict | None = Non
     }
 
     # <session-name-slug>-<content-hash> — the config JSON (which carries a microsecond
-    # `created` stamp) hashed so each save gets a stable, unique prefix shared by the
-    # `.sview.json` config and its `.html` page.
+    # `created` stamp) hashed so each save gets a stable, unique name.
     slug = "".join(c if c.isalnum() or c in "-_" else "-"
                    for c in store.strip_content_hash(session.name))[:48].strip("-") or "snapshot"
     digest = hashlib.sha256(json.dumps(config_obj).encode()).hexdigest()[:store.HASH_LEN]
-    base = f"{slug}-{digest}"
-    name = f"{base}{SNAPSHOT_EXT}"
-    html_name = f"{base}.html"
-    d = _dir()
-    with open(os.path.join(d, name), "w") as f:
+    name = f"{slug}-{digest}{SNAPSHOT_EXT}"
+    with open(os.path.join(_dir(), name), "w") as f:
         json.dump(config_obj, f)
-    with open(os.path.join(d, html_name), "w") as f:
-        f.write(_html_page(snap_label, name))
-    return {"status": "completed", "name": name, "url": f"/snapshots/{name}",
-            "html": f"/snapshots/{html_name}"}
-
-
-def _html_page(label: str, config_name: str) -> str:
-    """The standalone entry page written next to each snapshot config. A classic
-    (non-module) `<script src>` loads the version-pinned viewer from GitHub Pages —
-    cross-origin without CORS headers — and mounts on `#app`, reading the sibling
-    config from its relative `data-config`."""
-    return (
-        "<!doctype html>\n"
-        '<meta charset="utf-8">\n'
-        f"<title>{html.escape(label)} — Spatial Data Studio</title>\n"
-        f'<div id="app" data-config="./{config_name}"></div>\n'
-        f'<script src="{config.SNAPSHOT_VIEWER_APP_JS}"></script>\n'
-    )
+    return {"status": "completed", "name": name, "url": f"/api/snapshots/{name}/open"}
 
 
 def list_snapshots() -> list[dict]:
@@ -196,8 +196,7 @@ def list_snapshots() -> list[dict]:
             continue
         out.append({
             "name": f,
-            "url": f"/snapshots/{f}",
-            "html": f"/snapshots/{f[:-len(SNAPSHOT_EXT)]}.html",
+            "url": f"/api/snapshots/{f}/open",
             "label": cfg.get("label", f),
             "created": cfg.get("created"),
             "kind": cfg.get("kind", "spatial"),

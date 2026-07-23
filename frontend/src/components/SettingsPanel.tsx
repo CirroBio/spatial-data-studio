@@ -4,8 +4,6 @@ import { saveSession } from '../api';
 import { reportError } from '../lib/errors';
 import AcknowledgementsDialog from './AcknowledgementsDialog';
 import CirroUploadDialog from './CirroUploadDialog';
-// SnapshotBrowser pulls SnapshotViewer's deck.gl + zarrita/blosc/zstd codecs;
-// code-split it so those load only when the snapshot browser is actually opened.
 const SnapshotBrowser = lazy(() => import('./SnapshotBrowser'));
 import { useTour, spatialDataStudioTour } from '../tours';
 
@@ -55,6 +53,7 @@ export default function SettingsPanel({ onNewSession }: Props) {
     snapshotsOpen, snapshotsInitialSelect, openSnapshots, closeSnapshots,
   } = useAppStore();
   const unsaved = !!activeSessionId && sessionState?.summary.saved === false;
+  const readOnly = sessionState?.summary.read_only ?? false;
   const { start: startTour } = useTour(spatialDataStudioTour.id, true);
   const uploadsActive = cirroUploads.uploading + cirroUploads.pending;
   const uploadTitle = uploadsActive > 0
@@ -62,11 +61,19 @@ export default function SettingsPanel({ onNewSession }: Props) {
       + (cirroUploads.pending ? `, ${cirroUploads.pending} pending` : '')
     : 'Upload to Cirro';
 
+  const saveDisabledReason = !activeSessionId
+    ? undefined
+    : readOnly
+    ? 'Viewing a read-only snapshot — save a new session from New Session instead.'
+    : undefined;
+
   // Saving a snapshot requires a live checkpoint — the session must be saved so the
   // snapshot has an immutable .zarr.zip to point at. When it can't be saved, the
   // item is greyed and its title says what to do first.
   const snapshotDisabledReason = !activeSessionId
     ? 'Load a session and save it as a checkpoint to save a snapshot.'
+    : readOnly
+    ? 'Viewing a read-only snapshot — it already pins its own view.'
     : !sessionState || sessionState.summary.saved === false
     ? 'Save the session as a checkpoint first — a snapshot captures a saved checkpoint.'
     : !snapshotHandler
@@ -114,8 +121,8 @@ export default function SettingsPanel({ onNewSession }: Props) {
             <PanelItem
               label="Save session"
               onClick={handleSave}
-              disabled={!activeSessionId || !!savingJobId}
-              title={unsaved ? 'Save session — unsaved changes' : undefined}
+              disabled={!activeSessionId || !!savingJobId || readOnly}
+              title={saveDisabledReason ?? (unsaved ? 'Save session — unsaved changes' : undefined)}
               trailing={unsaved ? <span className="w-1.5 h-1.5 rounded-full bg-warn" title="Unsaved changes" /> : undefined}
               icon={
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

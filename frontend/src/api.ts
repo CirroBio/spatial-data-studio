@@ -167,6 +167,20 @@ export async function getSnapshots(): Promise<{ snapshots: Snapshot[] }> {
   return res.json() as Promise<{ snapshots: Snapshot[] }>;
 }
 
+// Opens a saved snapshot as a read-only, in-app session pinned to its saved view.
+// Same response shape as createSession — the caller follows the same `load_id`
+// session.loading SSE flow to know when it's ready.
+export async function openSnapshot(
+  name: string, loadId?: string,
+): Promise<SessionSummary & { hash_check: HashCheck | null }> {
+  const res = await apiFetch(`/api/snapshots/${name}/open`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ load_id: loadId }),
+  });
+  return res.json() as Promise<SessionSummary & { hash_check: HashCheck | null }>;
+}
+
 export async function getObsValues(
   id: string,
   column: string

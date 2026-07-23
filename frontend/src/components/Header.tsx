@@ -10,6 +10,7 @@ export default function Header() {
     menuOpen, setMenuOpen, leftMenuOpen, setLeftMenuOpen,
   } = useAppStore();
   const runningCount = activeJobIds.size;
+  const readOnly = sessionState?.summary.read_only ?? false;
   const unsaved = !!activeSessionId && sessionState?.summary.saved === false;
   const uploadsActive = cirroUploads.uploading + cirroUploads.pending;
   const fields = sessionState?.fields;
@@ -40,6 +41,14 @@ export default function Header() {
           <span className="text-[11px] text-muted font-mono" style={{ fontVariantNumeric: 'tabular-nums' }}>
             {fields.n_obs.toLocaleString()} cells
             {img && ` · ${img.width.toLocaleString()} × ${img.height.toLocaleString()} px`}
+          </span>
+        )}
+        {readOnly && (
+          <span
+            className="text-[11px] px-1.5 py-0.5 rounded bg-warn/15 text-warn font-medium"
+            title="Opened from a snapshot — pinned view, no compute or edits"
+          >
+            Read-only snapshot
           </span>
         )}
       </div>
