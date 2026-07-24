@@ -39,9 +39,12 @@ neighborhood. The left panel is the analysis history that produced this view.*
   the drawn region.
 - **Subset.** Lasso a region — on the tissue or an embedding — to spin off a child session
   that keeps (or removes) just those cells.
-- **Save and share.** Save a checkpoint you can reopen later, save a snapshot to pin
-  a particular view for read-only browsing later, or (optionally) upload results to
-  [Cirro](https://cirro.bio/).
+- **Save and share.** Save a checkpoint you can reopen later, save a **snapshot** — a
+  high-quality figure of the current view exported as a vector PDF and/or raster PNG,
+  framed and sized in a dialog with a live preview — or (optionally) upload results to
+  [Cirro](https://cirro.bio/). Saved snapshots are collected in a gallery you can
+  browse, download, or delete; each file embeds the provenance (view, settings, and the
+  analysis steps that produced the data).
 
 <table>
 <tr>

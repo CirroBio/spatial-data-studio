@@ -24,13 +24,6 @@ function savedAt(mtime: number): string {
   return mtime ? new Date(mtime * 1000).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '';
 }
 
-// A saved session's `path` ends in its content-hashed checkpoint filename, and a
-// snapshot's `checkpoint_name` is that same filename — so a snapshot belongs to
-// the session whose checkpoint it reads from.
-function checkpointName(pathOrName: string): string {
-  return pathOrName.split('/').pop() ?? '';
-}
-
 export default function CirroUploadDialog({ onClose }: Props) {
   const { pushNotification } = useAppStore();
   const folderListId = useId();
@@ -63,24 +56,12 @@ export default function CirroUploadDialog({ onClose }: Props) {
     getCirroFolders(projectId).then((f) => setFolders(f.folders)).catch((err) => setError(formatError(err)));
   }, [projectId]);
 
-  // Snapshots can only ship with the session they source data from: only those
-  // whose checkpoint belongs to a selected session are offered.
-  const selectedCheckpoints = new Set([...selectedSessions].map(checkpointName));
-  const availableSnapshots = (snapshots ?? []).filter(
-    (s) => s.checkpoint_name && selectedCheckpoints.has(checkpointName(s.checkpoint_name)),
-  );
+  // Snapshot figures are self-contained artifacts — upload them alongside any
+  // session(s), or on their own.
+  const availableSnapshots = snapshots ?? [];
 
   function toggleSession(path: string) {
-    const next = toggle(selectedSessions, path);
-    setSelectedSessions(next);
-    // Deselecting a session drops any of its snapshots that were selected.
-    const checkpoints = new Set([...next].map(checkpointName));
-    setSelectedSnapshots((prev) => new Set(
-      [...prev].filter((name) => {
-        const snap = snapshots?.find((s) => s.name === name);
-        return !!snap?.checkpoint_name && checkpoints.has(checkpointName(snap.checkpoint_name));
-      }),
-    ));
+    setSelectedSessions(toggle(selectedSessions, path));
   }
 
   async function handleSubmit() {
@@ -100,7 +81,8 @@ export default function CirroUploadDialog({ onClose }: Props) {
   }
 
   const loaded = projects && snapshots && sessions;
-  const canSubmit = !!projectId && !!datasetName.trim() && selectedSessions.size > 0 && !submitting;
+  const canSubmit = !!projectId && !!datasetName.trim()
+    && (selectedSessions.size > 0 || selectedSnapshots.size > 0) && !submitting;
 
   const fieldClass = 'w-full bg-bg border border-border rounded px-3 py-2 text-sm text-text placeholder-muted/50 focus:outline-none focus:border-accent';
 
@@ -108,7 +90,7 @@ export default function CirroUploadDialog({ onClose }: Props) {
     <ModalOverlay onClose={onClose} widthClassName="w-[860px] max-w-[94vw] h-[620px] max-h-[90vh]">
       <ModalHeader
         title="Upload to Cirro"
-        subtitle="Upload saved sessions, and any snapshots taken from them, as one dataset."
+        subtitle="Upload saved sessions and/or rendered snapshot figures as one dataset."
         onClose={onClose}
       />
 
@@ -180,15 +162,13 @@ export default function CirroUploadDialog({ onClose }: Props) {
           )}
         </aside>
 
-        {/* Right: sessions drive the available snapshots */}
+        {/* Right: pick any sessions and/or snapshot figures to bundle */}
         {loaded && (
           <section className="flex-1 min-w-0 flex flex-col bg-bg/40">
             <div className="flex-1 min-h-0 flex flex-col border-b border-border">
               <div className="shrink-0 border-b border-border px-3 py-2 flex items-baseline gap-2">
-                <span className="text-xs font-semibold text-text">
-                  Saved sessions <span className="text-danger">*</span>
-                </span>
-                <span className="text-[11px] text-muted/70">select one or more to include</span>
+                <span className="text-xs font-semibold text-text">Saved sessions</span>
+                <span className="text-[11px] text-muted/70">select any to include</span>
               </div>
               <div className="flex-1 overflow-y-auto">
                 {sessions.length === 0 && (
@@ -215,17 +195,13 @@ export default function CirroUploadDialog({ onClose }: Props) {
 
             <div className="flex-1 min-h-0 flex flex-col">
               <div className="shrink-0 border-b border-border px-3 py-2 flex items-baseline gap-2">
-                <span className="text-xs font-semibold text-text">Snapshots</span>
-                <span className="text-[11px] text-muted/70">from the selected sessions</span>
+                <span className="text-xs font-semibold text-text">Snapshot figures</span>
+                <span className="text-[11px] text-muted/70">select any to include</span>
               </div>
               <div className="flex-1 overflow-y-auto">
-                {selectedSessions.size === 0 ? (
+                {availableSnapshots.length === 0 ? (
                   <div className="px-3 py-6 text-center text-xs text-muted/60">
-                    Select a session to see its snapshots.
-                  </div>
-                ) : availableSnapshots.length === 0 ? (
-                  <div className="px-3 py-6 text-center text-xs text-muted/60">
-                    No snapshots from the selected sessions.
+                    No saved snapshots.
                   </div>
                 ) : (
                   <SnapshotList

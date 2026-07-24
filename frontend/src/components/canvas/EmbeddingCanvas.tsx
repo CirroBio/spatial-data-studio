@@ -5,7 +5,7 @@ import { PolygonLayer, PathLayer, ScatterplotLayer } from '@deck.gl/layers';
 import type { Layer, PickingInfo } from '@deck.gl/core';
 import { useAppStore } from '../../store/sessionStore';
 import { useArrowField } from '../../hooks/useArrowField';
-import { putDisplay, addDisplay as postDisplay, saveSnapshot } from '../../api';
+import { putDisplay, addDisplay as postDisplay } from '../../api';
 import { reportError } from '../../lib/errors';
 import { indicesInRings } from '../../lib/pointInPolygon';
 import { isEmbeddingDisplay, type EmbeddingDisplaySpec, type ObsField, type ObsmField } from '../../types';
@@ -177,7 +177,7 @@ function EmbeddingCanvasView({
   annotationTarget: { regionSetId: string; category: string; color: string } | null;
 }) {
   const {
-    sessionState, updateDisplay, isolatedCategory, pushNotification, openSnapshots, setSnapshotHandler,
+    sessionState, updateDisplay, isolatedCategory, openSnapshotExport, setSnapshotHandler,
     drawPolygons, drawRing, addDrawVertex, clearDraw, setRegionCellCount, setRegionCellIndices,
   } = useAppStore();
   const dataVersions = sessionState?.data_versions ?? {};
@@ -214,24 +214,26 @@ function EmbeddingCanvasView({
     isolatedCategory,
   });
 
-  // Snapshot is triggered from the header menu; register a handler that reads the
-  // live camera via a ref so the snapshot opens where the user was looking.
+  // Save Snapshot opens the export modal seeded with the live camera (read via a ref
+  // so it's where the user is looking) and the canvas pixel size (seeds the output
+  // aspect). Registered while this canvas is mounted.
   const viewStateRef = useRef(viewState);
   viewStateRef.current = viewState;
-  const handleSnapshot = useCallback(async () => {
-    try {
-      const vs = viewStateRef.current;
-      const target = vs?.target as number[] | undefined;
-      const viewport = vs && target && typeof vs.zoom === 'number'
-        ? { target: target.slice(0, 2), zoom: vs.zoom }
-        : undefined;
-      const r = await saveSnapshot(sessionId, { viewport, display_id: display.id });
-      openSnapshots(r.name);
-      pushNotification({ kind: 'info', message: 'Snapshot saved.' });
-    } catch (e) {
-      reportError('Snapshot failed', e);
-    }
-  }, [sessionId, display.id, openSnapshots, pushNotification]);
+  const handleSnapshot = useCallback(() => {
+    const vs = viewStateRef.current;
+    const target = vs?.target as number[] | undefined;
+    if (!vs || !target || typeof vs.zoom !== 'number') return;
+    const el = containerRef.current;
+    const size = el ? { width: el.clientWidth, height: el.clientHeight } : { width: 1000, height: 1000 };
+    openSnapshotExport({
+      sessionId,
+      displayId: display.id,
+      kind: 'embedding',
+      viewport: { target: target.slice(0, 2), zoom: vs.zoom },
+      canvasSize: size,
+      label: sessionState?.summary.name ?? 'snapshot',
+    });
+  }, [sessionId, display.id, openSnapshotExport, containerRef, sessionState?.summary.name]);
   useEffect(() => {
     setSnapshotHandler(handleSnapshot);
     return () => setSnapshotHandler(null);

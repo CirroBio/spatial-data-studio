@@ -37,8 +37,7 @@ export function defaultChannelColor(index: number): string {
 }
 
 // Per-plot backdrop colors, matching --color-bg for each theme (index.css). The deck
-// canvas is transparent, so this paints the container behind it. Shared by the live
-// Spatial canvas and the standalone snapshot viewer.
+// canvas is transparent, so this paints the container behind it on the live canvas.
 export const PLOT_BACKGROUNDS: Record<'light' | 'dark', string> = {
   dark: 'rgb(15 17 23)',
   light: 'rgb(243 244 246)',

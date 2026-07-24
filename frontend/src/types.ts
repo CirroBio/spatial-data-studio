@@ -53,7 +53,7 @@ export interface SessionSummary {
   parent_id: string | null;
   created_at: string;
   saved: boolean;  // in-memory state matches the saved checkpoint (drives the unsaved-changes dot)
-  read_only: boolean;  // opened from a snapshot (create_from_snapshot); every mutating route 403s
+  read_only: boolean;  // session opened frozen (create_from_load read_only); every mutating route 403s
 }
 
 export interface ObsField {

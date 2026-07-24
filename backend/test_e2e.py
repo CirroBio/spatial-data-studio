@@ -407,51 +407,51 @@ def run_recipe_params_flow(client):
 
 
 def run_snapshot_flow(client, sid):
-    """A snapshot is a JSON config pointing at an (auto-saved, content-hashed)
-    checkpoint plus the saved display encoding/viewport. Opening it
-    (POST /snapshots/{name}/open) loads that checkpoint as a read-only session pinned
-    to the saved view (rebuilt from the encoding) — the server-delivered replacement
-    for the old standalone browser viewer. Verify save -> list -> open -> read-only +
-    pinned display -> a mutating call rejected."""
+    """A snapshot is now a rendered figure (vector PDF + raster PNG) of a display, with
+    provenance metadata embedded in each file and a sidecar `.figure.json`. Verify
+    preview -> render (both formats) -> list (with thumbnail) -> download PDF/PNG ->
+    embedded metadata -> delete removes every artifact."""
+    import json
     disp = client.get(f"/api/sessions/{sid}").json()["app_state"]["displays"]
     spatial = next((d for d in disp if d["type"] == "spatial_canvas"), None)
     assert spatial, "no spatial display to snapshot"
-    saved_viewport = {"target": [100, 100], "zoom": -2}
-    r = client.post(f"/api/sessions/{sid}/snapshot",
-                    json={"label": "e2e-snap", "viewport": saved_viewport,
-                          "display_id": spatial["id"]})
+    spec = {"label": "e2e-snap", "viewport": {"target": [100, 100], "zoom": -2},
+            "width_px": 800, "height_px": 600, "dpi": 100,
+            "formats": ["pdf", "png"], "display_id": spatial["id"]}
+
+    prev = client.post(f"/api/sessions/{sid}/snapshot/preview", json=spec)
+    assert prev.status_code == 200 and prev.headers["content-type"] == "image/png", prev.text
+    assert prev.content[:8] == b"\x89PNG\r\n\x1a\n", "preview is not a PNG"
+
+    r = client.post(f"/api/sessions/{sid}/snapshot", json=spec)
     assert r.status_code == 200, r.text
     snap = r.json()
-    assert snap["name"].endswith(".sview.json"), snap
+    assert snap["name"].endswith(".figure.json") and snap["formats"] == ["pdf", "png"], snap
 
     listing = client.get("/api/snapshots").json()["snapshots"]
     entry = next((s for s in listing if s["name"] == snap["name"]), None)
-    assert entry and entry["kind"] == "spatial" and entry["checkpoint_name"], f"not listed: {listing}"
+    assert entry and entry["kind"] == "spatial" and entry["label"] == "e2e-snap", f"not listed: {listing}"
+    assert entry["thumbnail_url"] and entry["metadata"]["recipe"] is not None, entry
+    thumb = client.get(entry["thumbnail_url"])
+    assert thumb.status_code == 200 and thumb.content[:8] == b"\x89PNG\r\n\x1a\n", "thumbnail missing"
 
-    r2 = client.post(snap["url"], json={"load_id": "e2e-snap-open"})
-    assert r2.status_code == 200, r2.text
-    sid2 = r2.json()["id"]
-    st2 = poll(client, sid2, lambda s: s["summary"]["status"] in ("ready", "errored"))
-    assert st2["summary"]["status"] == "ready", "opened snapshot errored"
-    assert st2["summary"]["read_only"] is True, st2["summary"]
+    pdf = client.get(f"/api/snapshots/{snap['name']}/file", params={"fmt": "pdf"})
+    assert pdf.status_code == 200 and pdf.content[:5] == b"%PDF-", "PDF download bad"
+    assert b"e2e-snap" in pdf.content, "PDF is missing its embedded metadata"
+    png = client.get(f"/api/snapshots/{snap['name']}/file", params={"fmt": "png"})
+    assert png.status_code == 200 and png.content[:8] == b"\x89PNG\r\n\x1a\n", "PNG download bad"
+    assert b"sds-snapshot" in png.content, "PNG is missing its embedded metadata chunk"
 
-    disp2 = st2["app_state"]["displays"]
-    assert len(disp2) == 1 and disp2[0]["type"] == "spatial_canvas", disp2
-    assert disp2[0]["viewport"] == saved_viewport, disp2[0]["viewport"]
-    assert disp2[0]["encoding"] == spatial["encoding"], "pinned encoding doesn't match the saved display"
+    # Metadata carries the framing + full display encoding for reproducibility.
+    meta = entry["metadata"]
+    assert meta["output"] == {"width_px": 800, "height_px": 600, "dpi": 100}, meta["output"]
+    assert meta["encoding"] == spatial["encoding"], "figure metadata lost the display encoding"
 
-    # Frozen record: a mutating route rejects it even though the reopened checkpoint
-    # serves data (image tiles, obs/obsm) exactly like a normal session.
-    mut = client.post(f"/api/sessions/{sid2}/jobs",
-                      json={"namespace": "sc.pp", "function": "log1p", "params": {}})
-    assert mut.status_code == 403, (mut.status_code, mut.text)
-    upd = client.put(f"/api/sessions/{sid2}/displays/{disp2[0]['id']}",
-                     json={"encoding": disp2[0]["encoding"], "viewport": {"target": [0, 0], "zoom": 0}})
-    assert upd.status_code == 403, (upd.status_code, upd.text)
-
-    print(f"[ok] snapshot {snap['name']} opened read-only as {sid2[:8]} at pinned view "
-          f"(viewport={disp2[0]['viewport']}); mutation rejected")
-    assert client.delete(f"/api/sessions/{sid2}").status_code == 200
+    assert client.delete(f"/api/snapshots/{snap['name']}").status_code == 200
+    listing2 = client.get("/api/snapshots").json()["snapshots"]
+    assert not any(s["name"] == snap["name"] for s in listing2), "delete left the snapshot listed"
+    assert client.get(f"/api/snapshots/{snap['name']}/file", params={"fmt": "pdf"}).status_code == 404
+    print(f"[ok] snapshot {snap['name']} rendered (pdf+png), metadata embedded, deleted cleanly")
 
 
 def run_regions_flow(client):

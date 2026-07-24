@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -94,13 +95,13 @@ def _session(sid: str):
 
 
 def _writable_session(sid: str):
-    """Same lookup as `_session`, plus a 403 if the session is read-only (opened
-    from a snapshot — see `SessionManager.create_from_snapshot`). Every mutating
-    route uses this instead of `_session` so a snapshot stays a frozen record even
-    against a buggy or malicious client, not just an unwired UI."""
+    """Same lookup as `_session`, plus a 403 if the session was opened read-only
+    (`create_from_load(read_only=True)`). Every mutating route uses this instead of
+    `_session` so a frozen session stays frozen even against a buggy or malicious
+    client, not just an unwired UI."""
     s = _session(sid)
     if s.read_only:
-        raise HTTPException(403, "session is read-only (opened from a snapshot)")
+        raise HTTPException(403, "session is read-only")
     return s
 
 
@@ -459,18 +460,29 @@ async def delete_shape_annotation(sid: str, shape_id: str):
 
 
 @app.post("/api/sessions/{sid}/snapshot")
-async def save_snapshot_endpoint(sid: str, body: dict | None = None):
-    """Save a display as a JSON snapshot config pointing at an (auto-saved,
-    content-hashed) checkpoint — reopened read-only via POST /api/snapshots/{name}/open.
-    body: {label?, viewport?: {target, zoom}, display_id?}."""
+async def save_snapshot_endpoint(sid: str, body: dict):
+    """Render and save a high-quality figure snapshot (vector PDF and/or raster PNG)
+    of a display. body: {viewport:{target,zoom}, width_px, height_px, dpi,
+    formats:['pdf'|'png'], label?, display_id?}."""
     sess = _writable_session(sid)
     from . import snapshots
-    b = body or {}
-    result = await _in_executor(snapshots.save_snapshot, sess, b.get("label"),
-                                b.get("viewport"), b.get("display_id"))
+    result = await _in_executor(snapshots.save_snapshot, sess, body)
     if result.get("status") == "failed":
         raise HTTPException(400, result.get("error", "snapshot failed"))
     return result
+
+
+@app.post("/api/sessions/{sid}/snapshot/preview")
+async def snapshot_preview_endpoint(sid: str, body: dict):
+    """A low-cost PNG preview of the snapshot framing for the export modal. Same body
+    as the save endpoint; renders small and returns image bytes, writing nothing."""
+    sess = _session(sid)
+    from . import snapshots
+    try:
+        png = await _in_executor(snapshots.render_preview, sess, body)
+    except (ValueError, KeyError) as e:
+        raise HTTPException(400, str(e))
+    return Response(content=png, media_type="image/png")
 
 
 @app.get("/api/snapshots")
@@ -479,19 +491,44 @@ async def list_snapshots_endpoint():
     return {"snapshots": snapshots.list_snapshots()}
 
 
-@app.post("/api/snapshots/{name}/open")
-async def open_snapshot(name: str, body: dict | None = None):
-    """Open a saved snapshot as a read-only, in-app session pinned to its saved
-    view — the server-delivered replacement for the old standalone viewer (a
-    snapshot is only viewable through this running app now). Same response shape
-    as POST /api/sessions with source.kind == "load", so the client reuses its
-    existing `session.loading` SSE flow keyed by `load_id`."""
-    b = body or {}
+@app.get("/api/snapshots/{name}/file")
+async def get_snapshot_file(name: str, fmt: str = "pdf"):
+    """Serve a snapshot's rendered PDF or PNG for download."""
+    from . import snapshots
+    if fmt not in ("pdf", "png"):
+        raise HTTPException(400, "fmt must be pdf or png")
     try:
-        sess = await _in_executor(_mgr().create_from_snapshot, name, b.get("load_id"))
-    except (ValueError, RuntimeError, FileNotFoundError) as e:
+        path = snapshots.artifact_path(name, fmt)
+    except (ValueError, KeyError):
+        raise HTTPException(404, "not found")
+    if not os.path.isfile(path):
+        raise HTTPException(404, "not found")
+    media = "application/pdf" if fmt == "pdf" else "image/png"
+    return FileResponse(path, media_type=media, filename=os.path.basename(path))
+
+
+@app.get("/api/snapshots/{name}/thumbnail")
+async def get_snapshot_thumbnail(name: str):
+    from . import snapshots
+    try:
+        path = snapshots.artifact_path(name, "thumbnail")
+    except (ValueError, KeyError):
+        raise HTTPException(404, "not found")
+    if not os.path.isfile(path):
+        raise HTTPException(404, "not found")
+    return FileResponse(path, media_type="image/png")
+
+
+@app.delete("/api/snapshots/{name}")
+async def delete_snapshot_endpoint(name: str):
+    from . import snapshots
+    try:
+        removed = await _in_executor(snapshots.delete_snapshot, name)
+    except ValueError as e:
         raise HTTPException(400, str(e))
-    return {**_mgr().summary(sess), "hash_check": sess.hash_check}
+    if not removed:
+        raise HTTPException(404, "not found")
+    return {"status": "deleted"}
 
 
 @app.api_route("/api/checkpoints/{name}", methods=["GET", "HEAD"])
@@ -500,7 +537,7 @@ async def get_checkpoint(name: str):
     over HTTP range). FileResponse honors Range (206) and HEAD (zarrita probes the
     size before range-reading). Scoped to a single `*.zarr.zip` file name inside
     DATA_DIR — the transient `.rasters`/`.save-` caches (directories) and the
-    `.sview.json` snapshot configs are never matched by name here."""
+    `.figure.*` snapshot artifacts are never matched by name here."""
     if not name.endswith(".zarr.zip") or "/" in name or "\\" in name:
         raise HTTPException(404, "not found")
     target = (config.DATA_DIR / name).resolve()
@@ -966,10 +1003,10 @@ async def reject_websocket(websocket: WebSocket, _path: str):
     await websocket.close(code=1000)
 
 
-# Snapshot files (`*.sview.json` configs, `*.html` pages, and the `*.zarr.zip`
-# checkpoints they reference) are served by the name-validated GET /snapshots/{name}
-# route above, not a static mount — DATA_DIR also holds raw datasets that must not be
-# wholesale-exposed.
+# Snapshot figure artifacts (`*.figure.pdf/.png/.thumb.png` + the `.figure.json`
+# sidecar) and `*.zarr.zip` checkpoints are served by the name-validated
+# GET /snapshots/{name}/* and GET /checkpoints/{name} routes above, not a static
+# mount — DATA_DIR also holds raw datasets that must not be wholesale-exposed.
 
 # ---- static SPA (optional; served by edge in prod) -------------------------
 if config.STATIC_DIR and config.STATIC_DIR.exists():

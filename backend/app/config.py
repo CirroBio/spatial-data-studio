@@ -106,7 +106,8 @@ def _container_mem_mb() -> tuple[int, str]:
 class Config:
     # Single data directory (DESIGN §19.9). User-facing artifacts live here,
     # read-write: raw inputs the user imports, saved checkpoints
-    # (<name>-<hash>.sdata.zarr.zip), and snapshot configs (<name>-<hash>.sview.json).
+    # (<name>-<hash>.sdata.zarr.zip), and snapshot figures (<name>-<hash>.figure.pdf/
+    # .png/.thumb.png and the <name>-<hash>.figure.json sidecar).
     # Save-staging tempdirs (`.save-`) are dot-prefixed here and skipped by the
     # dataset scanner; the atomic os.replace of a finished checkpoint stays a
     # same-filesystem rename because staging sits beside the destination. Transient

@@ -14,6 +14,7 @@ import { isSpatialDisplay } from '../types';
 import { putDisplay, getSession, listShapeAnnotations, createShapeAnnotation, ApiError, fetchWhenIdle } from '../api';
 import type { ShapeAnnotation, ShapeGeometry, ShapeKind } from '../schemas/annotations';
 import { defaultStroke, defaultFill } from '../schemas/annotations';
+import type { SnapshotExportParams } from '../lib/snapshots';
 
 // A job's status lands in whichever collection holds it; these narrow the shared
 // status union so setEntryStatus can update the right record type without a cast.
@@ -157,12 +158,18 @@ interface AppStore {
   pushNotification: (n: Omit<AppNotification, 'id'>) => void;
   dismissNotification: (id: number) => void;
 
-  // Snapshot browser modal — opened from the header button and, after saving a
-  // snapshot, from the canvas (preselecting the freshly saved one).
+  // Snapshot gallery modal — opened from the settings panel and, after saving a
+  // snapshot, from the export modal (preselecting the freshly saved one).
   snapshotsOpen: boolean;
   snapshotsInitialSelect: string | null;  // snapshot name to preselect
   openSnapshots: (selectName?: string) => void;
   closeSnapshots: () => void;
+
+  // Snapshot export modal — set by the canvas's snapshot handler with the live framing
+  // (viewport + display) so the modal can seed itself and render previews; null closed.
+  snapshotExport: SnapshotExportParams | null;
+  openSnapshotExport: (params: SnapshotExportParams) => void;
+  closeSnapshotExport: () => void;
 
   // Save Snapshot lives in the settings panel but must capture the active canvas's
   // live viewport, so whichever canvas is mounted registers its handler here
@@ -483,6 +490,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
   openSnapshots: (selectName) =>
     set({ snapshotsOpen: true, snapshotsInitialSelect: selectName ?? null }),
   closeSnapshots: () => set({ snapshotsOpen: false, snapshotsInitialSelect: null }),
+
+  snapshotExport: null,
+  openSnapshotExport: (params) => set({ snapshotExport: params }),
+  closeSnapshotExport: () => set({ snapshotExport: null }),
 
   snapshotHandler: null,
   setSnapshotHandler: (fn) => set({ snapshotHandler: fn }),

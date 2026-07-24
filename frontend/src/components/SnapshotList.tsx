@@ -20,7 +20,7 @@ export default function SnapshotList({ snapshots, isSelected, onSelect, multi }:
         const active = isSelected(s);
         return (
           <button
-            key={s.url}
+            key={s.name}
             onClick={() => onSelect(s)}
             title={s.name}
             className={`w-full text-left px-3 py-2 border-b border-border/50 transition-colors flex items-center gap-2 ${

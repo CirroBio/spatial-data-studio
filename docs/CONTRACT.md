@@ -73,16 +73,19 @@ ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_cate
 | POST | `/api/sessions/{id}/save` | `{path?}` | `{job_id, path}` (queued save) |
 | GET  | `/api/sessions/{id}/points-transform` | — | `{affine:[a,b,c,d,e,f], element}` (points→global affine of the active table's region element) |
 | POST | `/api/sessions/{id}/points-transform` | `{affine:[a,b,c,d,e,f], path?}` | `{job_id, path}` (sets the affine and persists to disk) |
-| POST | `/api/sessions/{id}/snapshot` | `{label?, viewport?:{target,zoom}, display_id?}` | `{status,name,url}` — writes `<name>-<hash>.sview.json` (config pointing at an auto-saved, content-hashed checkpoint) alongside it in DATA_DIR |
-| GET  | `/api/snapshots` | — | `{snapshots:[{name,url,label,created,kind,schema_version,checkpoint_name}]}` |
-| POST | `/api/snapshots/{name}/open` | `{load_id?}` | `{...SessionSummary, hash_check}` — opens the snapshot's checkpoint as a read-only session pinned to its saved view (same async-load shape as `POST /api/sessions` with `source.kind:"load"`) |
+| POST | `/api/sessions/{id}/snapshot` | `{viewport:{target,zoom}, width_px, height_px, dpi, formats:["pdf"\|"png"], label?, display_id?}` | `{status,name,formats,rasterized_points}` — renders + writes `<base>.figure.{pdf,png,thumb.png,json}` in DATA_DIR |
+| POST | `/api/sessions/{id}/snapshot/preview` | same as snapshot | `image/png` bytes — a low-res preview of the framing; writes nothing |
+| GET  | `/api/snapshots` | — | `{snapshots:[{name,base,label,created,kind,dataset,formats,output,thumbnail_url,metadata}]}` |
+| GET  | `/api/snapshots/{name}/file?fmt=pdf\|png` | — | the rendered file (`application/pdf` / `image/png`) |
+| GET  | `/api/snapshots/{name}/thumbnail` | — | gallery thumbnail (`image/png`) |
+| DELETE | `/api/snapshots/{name}` | — | `{status:"deleted"}` — removes every sibling artifact (404 if absent) |
 | GET/HEAD | `/api/checkpoints/{name}` | — | the checkpoint `.zarr.zip` bytes for direct browser reads (HTTP Range → 206); `name` must be `*.zarr.zip` in DATA_DIR |
 | GET  | `/api/about/licenses` | — | `{python:[...], npm:[...]}` (third-party licenses, in-app Acknowledgements) |
 | GET  | `/api/cirro/status` | — | `{enabled:bool}` |
 | GET  | `/api/cirro/projects` | — | `{projects:[...]}` (503 if Cirro is not configured) |
 | GET  | `/api/cirro/projects/{id}/folders?refresh=` | — | `{folders:[str]}` (known `folder://` tag paths in the project, backend-cached; `refresh=true` forces a rescan) |
 | GET  | `/api/cirro/uploads` | — | `{uploading:int, pending:int}` (upload-queue depth; also broadcast as `cirro.upload.state` over SSE) |
-| POST | `/api/cirro/upload` | `{project_id, dataset_name, session_paths:[str], snapshot_names:[str], folder?}` | `{status:"started"}` (background; announces `cirro.upload.completed`/`failed` over SSE; always uses the generic "Files" ingest process; `folder` → `folder://<path>` dataset tag; each included snapshot contributes its `.sview.json` and referenced `.zarr.zip` colocated as siblings at the dataset root — provenance only, a snapshot isn't independently viewable in Cirro) |
+| POST | `/api/cirro/upload` | `{project_id, dataset_name, session_paths:[str], snapshot_names:[str], folder?}` | `{status:"started"}` (background; announces `cirro.upload.completed`/`failed` over SSE; always uses the generic "Files" ingest process; `folder` → `folder://<path>` dataset tag; each included snapshot contributes its `.figure.pdf`/`.png`/`.thumb.png`/`.json` artifacts colocated at the dataset root; needs at least one session or snapshot) |
 | GET  | `/api/sessions/{id}/data/{fieldPath}` | fieldPath e.g. `obs:leiden`, `obsm:spatial`, `X:Sox17`, `obsp:spatial_distances` | Arrow IPC stream (application/vnd.apache.arrow.stream) |
 | GET  | `/api/sessions/{id}/shapes/{element}/geoarrow?bbox=minx,miny,maxx,maxy[&limit=N]` | `bbox` in the `obsm:spatial` world space; optional `limit` caps the returned feature count | Arrow IPC stream (`application/vnd.apache.arrow.stream`) of viewport-clipped boundary polygons — `geometry` (GeoArrow) + `cell_index:int32`; 400 on a malformed bbox; 404 if the element is absent or non-polygonal |
 | GET  | `/api/sessions/{id}/elements` | — | `{tables:[{name,n_obs,n_vars,active}], shapes, points, images, labels}` (data inspector inventory) |
@@ -183,31 +186,31 @@ PlotEntry = {id, namespace:"pl", function, params, status:"pending|queued|runnin
 `obsm:<key>` payload below); `z_component`/`rotationX`/`rotationOrbit` only apply when
 `is_3d` is true.
 
-### Snapshot config (`<name>-<hash>.sview.json`)
-Written by `POST /api/sessions/{id}/snapshot`, read server-side by
-`POST /api/snapshots/{name}/open` (there is no client-side reader — a snapshot has
-no standalone viewer, see DESIGN.md §14).
+### Snapshot metadata sidecar (`<base>.figure.json`)
+Written by `POST /api/sessions/{id}/snapshot` alongside the rendered `<base>.figure.pdf`/
+`.png` deliverables and `<base>.figure.thumb.png`. The gallery (`GET /api/snapshots`)
+lists from these; the same JSON is embedded in every output file (PDF `/Info` `Keywords`,
+PNG `sds-snapshot` `tEXt`). A snapshot is a rendered figure, not a re-openable view (see
+DESIGN.md §14).
 ```jsonc
-{ "schema_version": "2.1",             // informational only; no compatibility gate reads it
-  "kind": "spatial",                   // "spatial" | "embedding"
+{ "schema_version": "3.0",             // informational only; no compatibility gate reads it
   "label": "visium_hne",
   "created": "ISO8601",
-  "checkpoint": { "name": "visium_hne-ab12cd34.sdata.zarr.zip" },
-  "table": "table",
-  "viewport": { "target":[x,y], "zoom":z, "rotationX"?:.., "rotationOrbit"?:.. },
-  "encoding": DisplaySpec.encoding }   // the source display's encoding verbatim — the pinned
-                                       // display is rebuilt from this on open, so every channel
-                                       // setting it carries (visibility/name/color/contrast_limits)
-                                       // reproduces exactly. (2.0 also baked a derived `render`
-                                       // manifest for the old standalone viewer; dropped in 2.1.)
+  "dataset": "visium_hne",             // source session name
+  "kind": "spatial",                   // "spatial" | "embedding"
+  "formats": ["pdf", "png"],           // which deliverables were written
+  "output": { "width_px":800, "height_px":636, "dpi":200 },
+  "viewport": { "target":[x,y], "zoom":z },
+  "encoding": DisplaySpec.encoding,    // the source display's encoding verbatim (how it was styled)
+  "render": { "rasterized_points":bool, "image_element":str|null, "cells_in_view":int },
+  "recipe": [ { "namespace":str, "function":str, "params":{} } ] }  // completed analysis steps
 ```
-- **Opening it:** `POST /api/snapshots/{name}/open` resolves `checkpoint.name` under
-  DATA_DIR and loads it via the same async checkpoint-load path as
-  `POST /api/sessions` (`source.kind:"load"`), except `read_only:true` and the
-  session's one display is built straight from `table`/`kind`/`encoding`/`viewport`
-  instead of the auto-generated default (`Session._apply_pinned_view`).
-- **Read-only:** every mutating route 403s for a session opened this way
-  (`main.py::_writable_session`) — enforced server-side, not just an unwired UI.
+- **Rendering it:** the request body is `{viewport:{target,zoom}, width_px, height_px,
+  dpi, formats:["pdf"|"png"], label?, display_id?}`. Styling is read from the display's
+  persisted `encoding`; the response is `{status, name, formats, rasterized_points}`
+  where `name` is the `<base>.figure.json` handle for the file/thumbnail/delete routes.
+- **Preview:** `POST /api/sessions/{id}/snapshot/preview` takes the same body and returns
+  a small PNG (`image/png` bytes), writing nothing.
 
 ---
 

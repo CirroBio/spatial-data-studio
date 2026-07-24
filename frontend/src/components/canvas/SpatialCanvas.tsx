@@ -6,7 +6,7 @@ import type { Layer, OrthographicViewState, PickingInfo } from '@deck.gl/core';
 import { useAppStore } from '../../store/sessionStore';
 import { useArrowField } from '../../hooks/useArrowField';
 import {
-  getImageInfo, putDisplay, saveSnapshot, getElements,
+  getImageInfo, putDisplay, getElements,
   updateShapeAnnotation, fetchWhenIdle,
 } from '../../api';
 import { reportError } from '../../lib/errors';
@@ -54,7 +54,7 @@ interface Props {
 }
 
 export default function SpatialCanvas({ display, sessionId, canvasMode, annotationTarget }: Props) {
-  const { sessionState, updateDisplay, isolatedCategory, pushNotification, openSnapshots, setSnapshotHandler, theme } = useAppStore();
+  const { sessionState, updateDisplay, isolatedCategory, openSnapshotExport, setSnapshotHandler, theme } = useAppStore();
   const fields = sessionState?.fields;
   const dataVersions = sessionState?.data_versions ?? {};
   const readOnly = sessionState?.summary.read_only ?? false;
@@ -171,24 +171,27 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
     updateDisplay,
   });
 
-  // Snapshot is triggered from the header menu; register a handler that reads the
-  // live viewport via a ref (so the snapshot opens where the user was looking, not
-  // at the possibly-stale persisted viewport) and reports itself while mounted.
+  // Save Snapshot (settings panel) opens the export modal seeded with the live
+  // framing: the current viewport (read via a ref so it's where the user is looking,
+  // not the possibly-stale persisted one) and the canvas pixel size (seeds the output
+  // aspect). Whichever canvas is mounted registers this handler while mounted.
   const viewStateRef = useRef(viewState);
   viewStateRef.current = viewState;
-  const handleSnapshot = useCallback(async () => {
-    try {
-      const vs = viewStateRef.current;
-      const viewport = vs && typeof vs.zoom === 'number'
-        ? { target: (vs.target as number[]).slice(0, 2), zoom: vs.zoom }
-        : undefined;
-      const r = await saveSnapshot(sessionId, { viewport, display_id: display.id });
-      openSnapshots(r.name);
-      pushNotification({ kind: 'info', message: 'Snapshot saved.' });
-    } catch (e) {
-      reportError('Snapshot failed', e);
-    }
-  }, [sessionId, display.id, openSnapshots, pushNotification]);
+  const canvasSizeRef = useRef(canvasSize);
+  canvasSizeRef.current = canvasSize;
+  const handleSnapshot = useCallback(() => {
+    const vs = viewStateRef.current;
+    if (!vs || typeof vs.zoom !== 'number') return;
+    const size = canvasSizeRef.current ?? { width: 1200, height: 900 };
+    openSnapshotExport({
+      sessionId,
+      displayId: display.id,
+      kind: 'spatial',
+      viewport: { target: (vs.target as number[]).slice(0, 2), zoom: vs.zoom },
+      canvasSize: size,
+      label: sessionState?.summary.name ?? 'snapshot',
+    });
+  }, [sessionId, display.id, openSnapshotExport, sessionState?.summary.name]);
   useEffect(() => {
     setSnapshotHandler(handleSnapshot);
     return () => setSnapshotHandler(null);

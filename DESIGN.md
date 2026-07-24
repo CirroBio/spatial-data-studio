@@ -88,7 +88,7 @@ parameter.
                               │ read / write
                               ▼
                    Local folders + SpatialData .zarr / .zarr.zip
-                   + snapshots (JSON config + HTML page) + Cirro (optional)
+                   + snapshots (rendered PDF/PNG figures) + Cirro (optional)
 ```
 
 **Runtime model:** one OS process. Each session owns one in-memory `SpatialData`
@@ -637,11 +637,10 @@ applied at the camera, not per layer: `FlipOrthographicView` (a thin mirror of d
 native `flipY`) flips the whole scene — points, image, and annotations together — so
 picking, `info.coordinate`, pan, and fit stay consistent with no layer/coordinate changes.
 The backdrop paints the canvas container behind the transparent deck canvas (matching a
-theme's `--color-bg`), defaulting to the app theme until pinned. Both are baked into the
-snapshot config's `render` (`invert_x`/`invert_y`/`background`) and applied through the
-same `FlipOrthographicView` when a snapshot's pinned display renders, so a snapshot
-preserves the plot's orientation and backdrop (baked `background` defaults to `dark`
-when the user never pinned one, since save can't see the live app theme).
+theme's `--color-bg`), defaulting to the app theme until pinned. `invert_x`/`invert_y`/
+`background` live in the display `encoding`, so a rendered snapshot (§14) reproduces the
+plot's orientation and backdrop — the matplotlib renderer flips its axes and sets the
+figure facecolor the same way (`background` defaults to `dark` when unset).
 
 ### 9.3 Tiled image pyramid + coordinate reconciliation
 
@@ -857,9 +856,7 @@ alone) vs `points+shapes` (scatter plus the cell-boundary overlay). The legacy v
 
 Geometry is served in the same world space `/data/obsm:spatial` uses (the region element's
 points→global affine), so outlines, points, and image overlay; the GeoArrow polygons carry
-a `cell_index` back to the active table for color gather. A read-only snapshot session
-(§14) renders through this same path — it's a real session with a real backend, just
-one that rejects mutation — so shape overlays behave identically there. See
+a `cell_index` back to the active table for color gather. See
 `docs/CONTRACT.md` for the payload schemas.
 
 **Known follow-up:** `@geoarrow/deck.gl-layers` (0.3.2) logs a console deprecation — it
@@ -1051,46 +1048,52 @@ directly through the data inspector and the element/table APIs.
 
 ## 14. Snapshots
 
-A snapshot is a small **JSON config** describing a **read-only** view over an
-immutable checkpoint (`backend/app/snapshots.py`). It ships no pixels or data of its
-own, and there is no standalone viewer: opening one
-(`POST /api/snapshots/{name}/open`, `SessionManager.create_from_snapshot`) loads the
-referenced checkpoint exactly the way any other checkpoint opens
-(`create_from_load`), except the session is marked **read-only** and its one display
-is built straight from the saved `viewport`/`encoding` instead of the
-auto-generated default (`Session._apply_pinned_view`). The live canvas
-(`SpatialCanvas`/`EmbeddingCanvas`) renders it like any other session — a snapshot
-only ever exists inside this running app, never as an artifact viewable elsewhere.
+A snapshot is a **rendered figure** of a display — a high-quality vector PDF and/or
+raster PNG — produced server-side with matplotlib (`backend/app/snapshots.py`). It is a
+standalone artifact the user downloads, not a re-openable view: there is no read-only
+session, no pinned view, and no live re-render. The figure reproduces the display as it
+looked on the canvas at the chosen framing.
 
-- **Config shape:** `{schema_version, kind, label, created, checkpoint:{name},
-  table, viewport, encoding}`. `schema_version` is informational only (no
-  compatibility gate reads it — see below). The pinned display is rebuilt from
-  `encoding` verbatim, so every per-channel setting it carries — visibility, name,
-  custom color, and `contrast_limits` (`[min,max]`) — reproduces exactly as it looked
-  live. (Schema 2.0 also baked a derived `render` manifest with a scalar
-  `contrast_limit` for the old standalone browser viewer; that viewer is gone and
-  nothing read `render`, so 2.1 dropped it.)
-- **Read-only enforcement:** `Session.read_only` is set at construction
-  (`create_from_snapshot` → `create_from_load(..., read_only=True)`) and checked by
-  every mutating route via `main.py::_writable_session` (403 otherwise) — a real
-  backend guarantee, not just an unwired UI. Viewport/encoding changes stay
-  interactive locally (the frontend skips the `PUT /displays/{id}` debounce for a
-  read-only session) but are never persisted.
-- **Immutable target:** saving a snapshot first writes the session to a
-  content-hashed checkpoint (so the config points at bytes that won't change under
-  it), then captures the view — both under one continuous read lock so no compute
-  can interleave.
-- **Files:** `<name>-<hash>.sview.json` in `DATA_DIR`, alongside the checkpoint it
-  references. Both spatial and embedding displays can be snapshotted
-  (`POST /api/sessions/{id}/snapshot` with an optional `display_id`, returning
-  `{status, name, url}`).
-- **Invocation:** a **Save snapshot** action (canvas controls); **Browse
-  snapshots** opens the list and opens the selected one read-only.
-- **No versioning ceremony:** the shape evolves with the rest of `app_state` —
-  there is no separate schema-version gate, golden file, or published-viewer
-  compatibility promise to maintain (a deliberate tradeoff: a snapshot is only
-  guaranteed to keep opening in a compatible version of this app, not forever
-  independent of it).
+- **What's rendered:** the microscopy image (when shown) is rasterized as an image
+  layer, composited the same way the live canvas composites channels (per-channel
+  color + `[min,max]` contrast window; RGB passthrough for H&E). Cell **points** are
+  emitted as **vector** markers (circle/square/hexagon), colored by the same
+  deterministic palette (categorical: 15-color CB-friendly palette over the sorted
+  categories) / colormap (numeric: viridis over the data range) the frontend uses —
+  the palette/LUT are ported into `snapshots.py`, so a figure matches the canvas
+  without the client shipping a per-cell color buffer. Cell boundaries/masks
+  (`render_mode` `points+shapes`) are rasterized as an image layer. Above
+  `POINT_VECTOR_CAP` cells in view the point layer is rasterized too, to keep the PDF
+  small and fast to open (recorded in the metadata when it happens).
+- **Coordinate regime:** with an image the figure is drawn in level-0 pixel space
+  (points mapped world→pixel via `imaging.pixel_to_world`, the image at identity),
+  matching the live canvas; otherwise pure world/spot space. `invert_x`/`invert_y`
+  flip the axes as in the live `FlipOrthographicView`, and `background` sets the
+  figure backdrop.
+- **Framing + output come from the request; styling from the display:** the render
+  request carries only `{viewport:{target,zoom}, width_px, height_px, dpi, formats}`
+  (+ optional `label`/`display_id`). Everything visual — channels, colors, contrast,
+  color-by, point size, marker, render mode — is read from the display's persisted
+  `encoding`. The window is `target ± (output_px/2)/2**zoom`.
+- **Files:** a set of siblings under `DATA_DIR` sharing a `<base>` name:
+  `<base>.figure.pdf`/`.png` (the chosen deliverables), `<base>.figure.thumb.png`
+  (gallery thumbnail), and `<base>.figure.json` (the provenance sidecar the gallery
+  lists from). Both spatial and embedding displays can be snapshotted.
+- **Embedded provenance:** dataset, viewport, output settings, the full display
+  encoding, and the analysis recipe (completed compute steps) are embedded in every
+  output file — PDF `/Info` (`Keywords` carries the JSON) and PNG `tEXt`
+  (`sds-snapshot`) — as well as the sidecar. This is the "how it was generated"
+  record; the figure needs no checkpoint to be reproducible-by-description.
+- **Endpoints:** `POST /api/sessions/{id}/snapshot` (render + save →
+  `{status, name, formats, rasterized_points}`), `POST …/snapshot/preview` (low-res
+  PNG for the export modal), `GET /api/snapshots` (gallery list),
+  `GET /api/snapshots/{name}/file?fmt=pdf|png`, `GET …/thumbnail`,
+  `DELETE /api/snapshots/{name}`.
+- **Invocation:** **Save snapshot** (settings panel) opens the export modal
+  (`SnapshotExportModal`) seeded with the live viewport — the user sets zoom, output
+  size, DPI, and format(s) against a live server-rendered preview. **Browse
+  snapshots** opens the gallery (`SnapshotBrowser`): a thumbnail grid with a detail
+  panel for download/delete and the embedded provenance.
 
 ### 14.1 Checkpoint on-disk format
 
@@ -1108,23 +1111,25 @@ gzipped `logs/<record_id>.log.gz`, read back lazily by `session.get_log` (the
 
 ## 15. Cirro upload
 
-Optionally upload the saved session plus selected snapshots to
+Optionally upload saved sessions and/or rendered snapshot figures to
 [Cirro](https://cirro.bio/) as a dataset (`backend/app/cirro.py`). Strictly additive:
 dark unless `CIRRO_BASE_URL`, `CIRRO_CLIENT_ID`, and `CIRRO_CLIENT_SECRET` are all set.
 
 - **Auth:** a service-account (OAuth client-credentials) identity — **no interactive
   login**, gated by `config.cirro_enabled()`.
-- **Flow:** the session must be **saved first**. `build_upload_folder()` builds a temp
-  folder from **symlinks**: each selected `.zarr.zip` under `sessions/`, and each selected
-  snapshot's two files — its `.sview.json` config and the `.zarr.zip` it references —
-  colocated as siblings at the bundle root, so nothing is copied. A snapshot isn't
-  independently viewable in Cirro (§14: it only opens read-only through this running
-  app); its config travels along as a labeled view-pointer for provenance, not a
-  standalone viewer. `upload()` calls the Cirro SDK's `project.upload_dataset`. Driven
-  by a `cirro_upload` worker job.
+- **Flow:** at least one session or snapshot must be selected (a session must be
+  **saved first** to appear). `build_upload_folder()` builds a temp folder from
+  **symlinks**: each selected `.zarr.zip` under `sessions/`, and each selected
+  snapshot's figure artifacts — the `.figure.pdf`/`.png` deliverables, the
+  `.figure.thumb.png` thumbnail, and the `.figure.json` provenance sidecar — colocated
+  as siblings at the bundle root, so nothing is copied. Figures are self-contained
+  (each embeds the same provenance as the sidecar), so a snapshot can travel with any
+  session or on its own. `upload()` calls the Cirro SDK's `project.upload_dataset`.
+  Driven by a `cirro_upload` worker job.
 - **UI:** a dialog listing Cirro projects, a dataset name, an optional folder (free-text
-  with typeahead, see below), and saved snapshots (multi-select). Uploads always use the
-  generic "Files" ingest process (`custom_dataset`), so there is no process picker.
+  with typeahead, see below), saved sessions (multi-select), and snapshot figures
+  (multi-select). Uploads always use the generic "Files" ingest process
+  (`custom_dataset`), so there is no process picker.
 - **Folder:** Cirro's portal groups datasets into folders via a plain dataset tag whose
   value is `folder://<path>` (nested paths use `/`) — there's no dedicated folder API, so
   `list_folders()` derives the known folder list for a project by scanning
@@ -1285,9 +1290,12 @@ Arrow IPC (binary). See `docs/CONTRACT.md` for the full contract.
 | `GET` | `/api/sessions/{id}/table?path=&offset=&limit=` | Data-inspector dataframe page |
 | `GET` | `/api/sessions/{id}/image/{element}/tile/{level}/{col}/{row}?channels=` | Image pyramid tile (WebP) |
 | `GET` | `/api/sessions/{id}/image/{element}/info` | Pyramid levels, tile size, `pixel_to_world` |
-| `POST` | `/api/sessions/{id}/snapshot` | Save a snapshot (writes `.sview.json`); returns `{status,name,url}` |
-| `GET` | `/api/snapshots` | List saved snapshots (`checkpoint_name`, `schema_version`, …) |
-| `POST` | `/api/snapshots/{name}/open` | Open a snapshot as a read-only session pinned to its saved view |
+| `POST` | `/api/sessions/{id}/snapshot` | Render + save a snapshot figure (PDF/PNG); returns `{status,name,formats,rasterized_points}` |
+| `POST` | `/api/sessions/{id}/snapshot/preview` | Low-res PNG preview of the framing for the export modal |
+| `GET` | `/api/snapshots` | List saved snapshot figures (label, kind, output, thumbnail, embedded metadata) |
+| `GET` | `/api/snapshots/{name}/file?fmt=pdf\|png` | Download a rendered figure |
+| `GET` | `/api/snapshots/{name}/thumbnail` | Gallery thumbnail (PNG) |
+| `DELETE` | `/api/snapshots/{name}` | Delete a snapshot and all its sibling artifacts |
 | `GET`/`HEAD` | `/api/checkpoints/{name}` | Serve a saved checkpoint `.zarr.zip` for direct browser reads (Range) |
 | `POST` | `/api/cirro/upload` | Upload selected checkpoints + snapshots to Cirro (session-independent) |
 | `GET` | `/api/about/licenses` | Third-party licenses (from SBOMs) |
@@ -1393,8 +1401,8 @@ closed (a 406 does not auto-reconnect), so SSE remains the path wherever it work
     memory reaches `ADMISSION_PCT` of the container limit. An in-flight spike past that is
     bounded only by the cgroup OOM killer (followed by a supervised restart).
 13. uvicorn runs exactly one worker; sessions are never spread across worker processes.
-14. Snapshots are read-only and share point coloring with the live canvas; assets are
-    content-hashed.
+14. Snapshots are rendered figures (vector PDF / raster PNG) that reproduce the live
+    canvas server-side, with provenance embedded in every file.
 15. Dependencies are permissive or explicitly adjudicated (§25).
 
 ---

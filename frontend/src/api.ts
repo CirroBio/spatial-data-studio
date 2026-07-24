@@ -11,7 +11,7 @@ import type {
   UiFieldInfo,
   HashCheck,
 } from './types';
-import type { Snapshot } from './lib/snapshots';
+import type { Snapshot, SnapshotFormat } from './lib/snapshots';
 import type { ShapeAnnotation } from './schemas/annotations';
 
 // Carries the HTTP status so callers can distinguish a transient 503 (a read
@@ -151,15 +151,39 @@ export async function subsetSession(
   return res.json() as Promise<{ job_id: string }>;
 }
 
+// The framing + output settings a snapshot render takes. Styling (colors, contrast,
+// channels) is read server-side from the display's persisted encoding.
+export interface SnapshotRenderSpec {
+  viewport: { target: number[]; zoom: number };
+  width_px: number;
+  height_px: number;
+  dpi: number;
+  formats: SnapshotFormat[];
+  label?: string;
+  display_id?: string;
+}
+
+// Render and save a high-quality figure snapshot (vector PDF and/or raster PNG).
 export async function saveSnapshot(
-  sessionId: string,
-  opts?: { label?: string; viewport?: { target: number[]; zoom: number }; display_id?: string }
-): Promise<{ name: string; url: string }> {
+  sessionId: string, spec: SnapshotRenderSpec,
+): Promise<{ name: string; formats: SnapshotFormat[]; rasterized_points: boolean }> {
   const res = await apiFetch(`/api/sessions/${sessionId}/snapshot`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(opts ?? {}),
+    body: JSON.stringify(spec),
   });
-  return res.json() as Promise<{ name: string; url: string }>;
+  return res.json() as Promise<{ name: string; formats: SnapshotFormat[]; rasterized_points: boolean }>;
+}
+
+// A low-cost PNG preview of the framing for the export modal. Returns a Blob so the
+// caller can hand it straight to an object URL. `signal` supersedes a stale request.
+export async function snapshotPreview(
+  sessionId: string, spec: SnapshotRenderSpec, signal?: AbortSignal,
+): Promise<Blob> {
+  const res = await apiFetch(`/api/sessions/${sessionId}/snapshot/preview`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(spec), signal,
+  });
+  return res.blob();
 }
 
 export async function getSnapshots(): Promise<{ snapshots: Snapshot[] }> {
@@ -167,18 +191,16 @@ export async function getSnapshots(): Promise<{ snapshots: Snapshot[] }> {
   return res.json() as Promise<{ snapshots: Snapshot[] }>;
 }
 
-// Opens a saved snapshot as a read-only, in-app session pinned to its saved view.
-// Same response shape as createSession — the caller follows the same `load_id`
-// session.loading SSE flow to know when it's ready.
-export async function openSnapshot(
-  name: string, loadId?: string,
-): Promise<SessionSummary & { hash_check: HashCheck | null }> {
-  const res = await apiFetch(`/api/snapshots/${name}/open`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ load_id: loadId }),
-  });
-  return res.json() as Promise<SessionSummary & { hash_check: HashCheck | null }>;
+export async function deleteSnapshot(name: string): Promise<void> {
+  await apiFetch(`/api/snapshots/${encodeURIComponent(name)}`, { method: 'DELETE' });
+}
+
+export function snapshotFileUrl(name: string, fmt: SnapshotFormat): string {
+  return `/api/snapshots/${encodeURIComponent(name)}/file?fmt=${fmt}`;
+}
+
+export function snapshotThumbnailUrl(name: string): string {
+  return `/api/snapshots/${encodeURIComponent(name)}/thumbnail`;
 }
 
 export async function getObsValues(

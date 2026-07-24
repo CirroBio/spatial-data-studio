@@ -5,6 +5,7 @@ import { reportError } from '../lib/errors';
 import AcknowledgementsDialog from './AcknowledgementsDialog';
 import CirroUploadDialog from './CirroUploadDialog';
 const SnapshotBrowser = lazy(() => import('./SnapshotBrowser'));
+const SnapshotExportModal = lazy(() => import('./SnapshotExportModal'));
 import { useTour, spatialDataStudioTour } from '../tours';
 
 interface Props {
@@ -51,6 +52,7 @@ export default function SettingsPanel({ onNewSession }: Props) {
     activeSessionId, sessionState, theme, setTheme, blockingJob,
     cirroEnabled, cirroUploads, snapshotHandler, menuOpen, setMenuOpen,
     snapshotsOpen, snapshotsInitialSelect, openSnapshots, closeSnapshots,
+    snapshotExport, closeSnapshotExport,
   } = useAppStore();
   const unsaved = !!activeSessionId && sessionState?.summary.saved === false;
   const readOnly = sessionState?.summary.read_only ?? false;
@@ -67,15 +69,13 @@ export default function SettingsPanel({ onNewSession }: Props) {
     ? 'Viewing a read-only snapshot — save a new session from New Session instead.'
     : undefined;
 
-  // Saving a snapshot requires a live checkpoint — the session must be saved so the
-  // snapshot has an immutable .zarr.zip to point at. When it can't be saved, the
-  // item is greyed and its title says what to do first.
+  // A snapshot renders whatever's on the active canvas — it needs a session with a
+  // Spatial or Embeddings view open, but no saved checkpoint (the figure is a
+  // standalone artifact with embedded provenance, not a pointer to stored data).
   const snapshotDisabledReason = !activeSessionId
-    ? 'Load a session and save it as a checkpoint to save a snapshot.'
+    ? 'Load a session to save a snapshot.'
     : readOnly
-    ? 'Viewing a read-only snapshot — it already pins its own view.'
-    : !sessionState || sessionState.summary.saved === false
-    ? 'Save the session as a checkpoint first — a snapshot captures a saved checkpoint.'
+    ? 'Viewing a read-only session.'
     : !snapshotHandler
     ? 'Open the Spatial or Embeddings view to save a snapshot.'
     : null;
@@ -214,6 +214,11 @@ export default function SettingsPanel({ onNewSession }: Props) {
       </aside>
 
       {showAbout && <AcknowledgementsDialog onClose={() => setShowAbout(false)} />}
+      {snapshotExport && (
+        <Suspense fallback={null}>
+          <SnapshotExportModal params={snapshotExport} onClose={closeSnapshotExport} />
+        </Suspense>
+      )}
       {snapshotsOpen && (
         <Suspense fallback={null}>
           <SnapshotBrowser onClose={closeSnapshots} initialSelect={snapshotsInitialSelect} />

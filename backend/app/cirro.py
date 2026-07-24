@@ -1,22 +1,21 @@
-"""Upload a saved session (plus selected snapshots) to Cirro.
+"""Upload saved sessions and/or rendered snapshot figures to Cirro.
 
 Auth is service-account style (OAuth client-credentials): `config.cirro_enabled()`
 gates the feature on three env vars being present, no interactive login. Upload
 builds a temp folder of symlinks — the saved `.zarr.zip` checkpoints under
-`sessions/`, and each selected snapshot's `.sview.json` config plus the `.zarr.zip`
-checkpoint it references, colocated at the bundle root — so nothing is copied, then
-hands that folder to the Cirro SDK's own directory uploader. A snapshot isn't
-independently viewable in Cirro (it only opens through this running app, read-only —
-see `snapshots.py`); its config travels along as a labeled view-pointer for
-provenance, not as a standalone viewer.
+`sessions/`, and each selected snapshot's figure artifacts (the `.figure.pdf`/`.png`
+deliverables, the `.figure.thumb.png` thumbnail, and the `.figure.json` provenance
+sidecar) colocated at the bundle root — so nothing is copied, then hands that folder
+to the Cirro SDK's own directory uploader. The figure files are self-contained
+deliverables (each embeds the same provenance metadata as the sidecar).
 """
 from __future__ import annotations
 
-import json
 import tempfile
 from pathlib import Path
 
 from .config import config, within_data_dir
+from .snapshots import FIGURE_EXT, THUMB_SUFFIX
 
 # The generic "Files" ingest process (accepts any file) — every upload from this
 # app uses it, since a saved session/snapshot isn't a bioinformatics file type any
@@ -111,15 +110,6 @@ def upload(*, project_id: str, dataset_name: str, upload_folder: Path, folder: s
     return {"dataset_id": dataset.id, "dataset_name": dataset.name}
 
 
-def _referenced_checkpoint(config_path: Path) -> str | None:
-    """The checkpoint `.zarr.zip` filename a JSON snapshot config points at."""
-    try:
-        cfg = json.loads(config_path.read_text())
-    except (OSError, ValueError):
-        return None
-    return (cfg.get("checkpoint") or {}).get("name")
-
-
 def _snapshot_src(name: str) -> Path:
     """Resolve a client-supplied snapshot name under DATA_DIR, rejecting any that
     escapes it (a `../`/absolute name) so an upload can't symlink or read an arbitrary
@@ -138,26 +128,24 @@ def _symlink(dest: Path, src: Path) -> None:
 
 
 def _symlink_snapshot(bundle: Path, name: str) -> None:
-    """Colocate a snapshot's `.sview.json` config and the `.zarr.zip` checkpoint it
-    references as siblings at the bundle root — provenance for the uploaded dataset,
-    not a standalone viewer (a snapshot only opens read-only through this app)."""
+    """Colocate a snapshot's figure artifacts (`.figure.pdf`/`.png` deliverables, the
+    `.figure.thumb.png` thumbnail, and the `.figure.json` provenance sidecar) as
+    siblings at the bundle root. `name` is the sidecar filename (`<base>.figure.json`)."""
     src = _snapshot_src(name)
     if not src.is_file():
         raise ValueError(f"snapshot '{name}' not found")
-    _symlink(bundle / name, src)
-    ckpt = _referenced_checkpoint(src)
-    if ckpt:
-        ckpt_src = _snapshot_src(ckpt)
-        if ckpt_src.is_file():
-            _symlink(bundle / ckpt, ckpt_src)
+    base = name[: -len(FIGURE_EXT)]
+    for suffix in (FIGURE_EXT, ".figure.pdf", ".figure.png", THUMB_SUFFIX):
+        artifact = _snapshot_src(base + suffix)
+        if artifact.is_file():
+            _symlink(bundle / artifact.name, artifact)
 
 
 def build_upload_folder(session_paths: list[str], snapshot_names: list[str]) -> Path:
     """A temp folder of symlinks: each selected saved checkpoint under `sessions/`,
-    and each selected snapshot's `.sview.json` config plus the `.zarr.zip` it
-    references, colocated at the bundle root. Never symlinks a directory itself (most
-    upload walkers skip symlinked dirs' contents) — only real directories of
-    per-file symlinks."""
+    and each selected snapshot's figure artifacts colocated at the bundle root. Never
+    symlinks a directory itself (most upload walkers skip symlinked dirs' contents) —
+    only real directories of per-file symlinks."""
     tmp = Path(tempfile.mkdtemp(prefix="cirro-upload-"))
     session_dir = tmp / "sessions"
     session_dir.mkdir()

@@ -66,7 +66,7 @@ backend/    FastAPI app
   app/rasters.py  ingest-time re-tiling into a tile-chunked pyramid; the resulting
                   per-session on-disk zarr store is also served raw (see the raster route)
                   for client-side (Viv) GPU compositing, with WebP tiles as the fallback
-  app/snapshots.py JSON snapshot-config write/list/open (read-only session, no standalone viewer)
+  app/snapshots.py matplotlib figure render (vector PDF/raster PNG) + gallery list/delete
   app/datasets.py saved-checkpoint scan for the load/upload pickers (prewarmed cache)
   app/prewarm.py  background async queue that warms slow first-open menu lists off the event loop
   app/cirro.py    Cirro dataset upload (client-credentials auth, symlink-based upload folder)
@@ -99,7 +99,7 @@ Component-level notes: [`backend/README.md`](backend/README.md),
 | Change the deck.gl canvas / rendering | `frontend/src/components/canvas/` | [frontend/README.md](frontend/README.md) |
 | Change how the browser reads raw image data (client-side Viv compositing) | `backend/app/main.py` raster route + `/image/{element}/info` fields; `rasters.py` `raster_stores` map | [docs/CONTRACT.md](docs/CONTRACT.md) |
 | Change the parameter-form UI | `frontend/src/components/forms/` | — |
-| Change what a snapshot pins or how it opens | `backend/app/snapshots.py` (config shape) + `backend/app/sessions/session.py::_apply_pinned_view` + `frontend/src/components/SnapshotBrowser.tsx` | [DESIGN.md](DESIGN.md) §14 |
+| Change how a snapshot figure renders or what it embeds | `backend/app/snapshots.py` (render + metadata) + `frontend/src/components/SnapshotExportModal.tsx` (framing/output) + `frontend/src/components/SnapshotBrowser.tsx` (gallery) | [DESIGN.md](DESIGN.md) §14 |
 | Change Cirro upload | `backend/app/cirro.py` + `frontend/src/components/CirroUploadDialog.tsx` | — |
 
 ### Live import logging
@@ -227,8 +227,9 @@ and fails open to the mount-time `size=` otherwise.
   client-compositing raster route + `/info` manifest (raw zarr served with Range
   206) on `xenium.zarr`, an image tile keeping its signal after a reshaping compute
   (filter_cells) — i.e. the per-session raster store isn't deleted while the
-  adopted object still references it — and opening a saved snapshot as a read-only
-  session pinned to its saved view (`run_snapshot_flow`). The five Xenium-backed
+  adopted object still references it — and rendering a snapshot figure end to end
+  (preview, PDF+PNG render, gallery list, download, embedded metadata, delete —
+  `run_snapshot_flow`). The five Xenium-backed
   flows (zarr-import, custom methods, segmentation, raster, raster-survives-reshape)
   skip with a `[skip]` line when their fixture is absent, so CI runs only the
   Visium-backed subset; regenerate the Xenium fixtures locally via
@@ -309,13 +310,29 @@ See [`nextflow/README.md`](nextflow/README.md) for the full parameter list.
 
 ## Snapshots
 
-A snapshot has no standalone viewer: opening one (`POST /api/snapshots/{name}/open`)
-loads its referenced checkpoint the same way any other checkpoint opens
-(`SessionManager.create_from_load`), just read-only (`Session.read_only`) and with
-its display built straight from the saved `viewport`/`encoding` instead of the
-auto-generated default. It only ever renders inside this running app — there is no
-published viewer bundle, no GitHub Pages hosting, and no separate schema-version gate
-to satisfy when the config's shape changes. See [DESIGN.md](DESIGN.md) §14.
+A snapshot is a **rendered figure**, not a re-openable view. `backend/app/snapshots.py`
+renders a display server-side with matplotlib into a vector PDF and/or raster PNG:
+the microscopy image (when shown) is rasterized as an image layer (reusing
+`imaging`'s per-channel compositing), cell points are emitted as vector markers
+colored by the same palette/colormap the frontend uses (ported in `snapshots.py` so a
+figure matches the canvas without shipping a per-cell buffer), and cell boundaries/masks
+are rasterized. Above `POINT_VECTOR_CAP` cells in view the point layer is rasterized to
+keep the PDF small. Colors/styling come from the display's persisted encoding; the
+render request carries only framing (`viewport`) + output settings (`width_px`,
+`height_px`, `dpi`, `formats`).
+
+Each snapshot is a set of sibling files under `DATA_DIR` sharing a `<base>` name:
+`<base>.figure.pdf`/`.png` (the deliverables), `<base>.figure.thumb.png` (gallery
+thumbnail), and `<base>.figure.json` (the provenance sidecar the gallery lists from).
+Provenance — dataset, viewport, output settings, full display encoding, and the analysis
+recipe — is embedded in every output file (PDF `/Info` + PNG `tEXt`) as well as the
+sidecar. Endpoints: `POST /api/sessions/{sid}/snapshot` (render + save),
+`POST /api/sessions/{sid}/snapshot/preview` (low-res PNG for the export modal),
+`GET /api/snapshots` (gallery list), `GET /api/snapshots/{name}/file?fmt=pdf|png`,
+`GET /api/snapshots/{name}/thumbnail`, `DELETE /api/snapshots/{name}`. Frontend:
+`SnapshotExportModal.tsx` (framing + output + preview) and `SnapshotBrowser.tsx` (the
+gallery); the active canvas registers the handler that seeds the modal with the live
+viewport. See [DESIGN.md](DESIGN.md) §14.
 
 ## Contributing
 

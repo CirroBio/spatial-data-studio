@@ -156,9 +156,9 @@ class Session:
         self.manager = manager
         self.parent_id = parent_id
         self.store_path = store_path
-        # True for a session opened read-only from a snapshot (create_from_snapshot):
-        # every mutating route rejects it (main.py::_writable_session) so a snapshot
-        # stays a frozen record of its checkpoint at the pinned view.
+        # True for a session opened frozen (create_from_load(read_only=True)): every
+        # mutating route rejects it (main.py::_writable_session) so it stays a
+        # read-only view of its checkpoint.
         self.read_only = read_only
         # True when the in-memory object matches its saved checkpoint: set on load
         # (matches the file it came from) and after every save; cleared by any
@@ -322,17 +322,12 @@ class Session:
                                    "descriptor": {"kind": kind}, "position": self._queue.qsize()})
         return job_id
 
-    def enqueue_load(self, path: str, load_id: str | None = None,
-                     pinned_view: dict | None = None) -> str:
+    def enqueue_load(self, path: str, load_id: str | None = None) -> str:
         """Open a saved checkpoint as this session's first job (create_from_load). The
         unzip/read/re-tile is too slow to run inside the POST — a large store blows past a
         fronting proxy's origin timeout (a 504) — so it runs here on the worker and adopts
-        the object under the write lock, exactly like a read bootstrap. `pinned_view`
-        (a saved snapshot's table/kind/encoding/viewport) makes `_run_load` build the
-        session's one display straight from it instead of the auto-generated default —
-        see `SessionManager.create_from_snapshot`."""
-        return self.enqueue_special("load", {"path": path, "load_id": load_id,
-                                             "pinned_view": pinned_view})
+        the object under the write lock, exactly like a read bootstrap."""
+        return self.enqueue_special("load", {"path": path, "load_id": load_id})
 
     def cancel(self, job_id: str) -> bool:
         """Cancel a QUEUED job only (RUNNING is non-interruptible, §6.1). Claims the
@@ -722,28 +717,6 @@ class Session:
         BUS.publish("job.completed", {"session_id": self.id, "job_id": job_id, "kind": "subset",
                                       "child_id": child.id, "data_versions": self.app_state["data_versions"]})
 
-    def _apply_pinned_view(self, view: dict) -> None:
-        """Build this session's sole display straight from a snapshot's saved view
-        (table/kind/encoding/viewport) instead of the auto-generated default — used
-        by `_run_load` when opening a read-only snapshot session
-        (SessionManager.create_from_snapshot). `view` is a snapshot config: the same
-        shape `snapshots.save_snapshot` writes."""
-        table = view.get("table")
-        if table and table in getattr(self.sdata, "tables", {}):
-            self.active_table_key = table
-        display_type = "embedding_canvas" if view.get("kind") == "embedding" else "spatial_canvas"
-        # Replace, not append: the checkpoint's own app_state (loaded moments ago by
-        # load_spatialdata) already carries whatever displays were live when it was
-        # saved. Appending would leave those in place ahead of this one in the list,
-        # so the frontend's `displays.find(isSpatialDisplay)` would keep matching the
-        # OLD display and render its (unrelated, possibly stale) viewport instead of
-        # the pinned one this snapshot actually saved.
-        self.app_state["displays"] = [{
-            "id": str(uuid.uuid4()), "type": display_type,
-            "encoding": view.get("encoding") or {},
-            "viewport": view.get("viewport") or None,
-        }]
-
     def _run_load(self, job_id, payload):
         """Open a saved checkpoint on the worker: unzip/read the archive and re-tile its
         rasters (both slow for a large Xenium store), then adopt the object under the
@@ -754,7 +727,6 @@ class Session:
         from ..persistence.store import load_spatialdata
         from .. import rasters
         load_id = payload.get("load_id")
-        pinned_view = payload.get("pinned_view")
 
         def report(message, pct=None):
             if load_id:
@@ -775,9 +747,7 @@ class Session:
                 self.raster_cache_mb = rasters.cache_size_mb(self.raster_cache_dir)
                 self.active_table_key = self._default_table_key()
                 report("Building views…")
-                if pinned_view is not None:
-                    self._apply_pinned_view(pinned_view)
-                elif not self.app_state["displays"]:
+                if not self.app_state["displays"]:
                     self.manager.auto_displays(self)
                 self.status = "ready"
                 self._publish_summary()

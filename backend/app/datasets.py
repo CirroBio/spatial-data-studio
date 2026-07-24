@@ -2,7 +2,7 @@
 writes) under DATA_DIR for the New Session load picker and the Cirro upload source
 picker (`GET /api/fs/datasets`). Raw `.zarr` stores and foreign `.zarr.zip` bundles
 are deliberately excluded — those are opened via Import Data's SpatialData reader,
-not loaded as a session. Snapshot configs (`.sview.json`) and internal working
+not loaded as a session. Snapshot figure artifacts (`.figure.*`) and internal working
 stores (`.rasters` caches, `.save-` staging) sharing DATA_DIR are skipped too.
 
 The full recursive scan is cached and prewarmed at startup (see `prewarm.py`) so
