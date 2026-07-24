@@ -213,14 +213,36 @@ class Session:
 
     def _table_field_paths(self) -> list[str]:
         """Every versioned field path of the active table (`obs:`, `obsm:`, `obsp:`,
-        `layers:`) — the set to bump when the whole table is replaced at once."""
+        `layers:`, plus the coarse `X:` gene-expression marker) — the set to bump when
+        the whole table is replaced at once (e.g. a reshaping compute like filter_cells,
+        which also changes X for every remaining cell)."""
         ad = self.active_table()
         return ([f"obs:{c}" for c in ad.obs.columns] + [f"obsm:{k}" for k in ad.obsm]
-                + [f"obsp:{k}" for k in ad.obsp] + [f"layers:{k}" for k in ad.layers])
+                + [f"obsp:{k}" for k in ad.obsp] + [f"layers:{k}" for k in ad.layers] + ["X:"])
 
     def active_image(self):
         imgs = list(getattr(self.sdata, "images", {}).keys())
         return self.sdata.images[imgs[0]] if imgs else None
+
+    def add_display(self, spec: dict) -> dict:
+        """Append a display spec (assigning it an id) under the write lock, so displays
+        are mutated on the same footing as every other app_state change rather than
+        being spliced from the HTTP handler."""
+        spec["id"] = str(uuid.uuid4())
+        with self.lock.writing():
+            self.app_state["displays"].append(spec)
+        return spec
+
+    def update_display(self, display_id: str, spec: dict) -> bool:
+        """Replace the display identified by `display_id` under the write lock. Returns
+        False if no such display exists."""
+        with self.lock.writing():
+            for i, d in enumerate(self.app_state["displays"]):
+                if d["id"] == display_id:
+                    spec["id"] = display_id
+                    self.app_state["displays"][i] = spec
+                    return True
+        return False
 
     # ---- enqueue / staging (PENDING lifecycle, spec §5.4) -----------------
     def _collection(self, ec: str) -> list:
@@ -382,7 +404,6 @@ class Session:
         # _run (the atomic point vs cancel); here just mirror it to the durable record.
         self._set_status(job_id, kind, "running")
         BUS.publish("job.started", {"session_id": self.id, "job_id": job_id})
-        started = time.time()
         try:
             if kind in ("compute", "plot"):
                 self._run_call(job_id, kind, payload)
@@ -418,6 +439,33 @@ class Session:
         for jid in terminal[:-self._TERMINAL_JOB_CAP]:  # all but the most recent CAP
             self._jobs.pop(jid, None)
             self._failed_logs.pop(jid, None)
+
+    def _adopt_rasters(self, known_stores, progress=None) -> None:
+        """Re-tile the live object's images/labels and take ownership of the resulting
+        cache dir. Shared by the three commit paths that can introduce or replace
+        rasters: whole-object adoption, in-place images/labels facet merge, and
+        checkpoint load.
+
+        A reshaping op (e.g. filter_cells) returns a new object carrying the SAME
+        already-tiled refs forward, so normalize_rasters finds them canonical and
+        rebuilds nothing (new_cache is None). Those refs still stream lazily from the
+        previous cache, so it must be KEPT — deleting it would leave every image a
+        dangling ref that zarr fills with 0 (a black canvas, no error). Only when a
+        genuinely fresh, non-canonical object is adopted does normalize build a new
+        store, orphaning the previous cache; drop it only then. The store map is
+        assigned unconditionally — normalize_rasters can return canonical-and-local
+        entries even when it builds no new dir. `known_stores` is the element-name->
+        store map trusted as already-local (callers empty it when identity can't be
+        trusted); `progress` streams a lengthy rebuild's log when set."""
+        from .. import rasters
+        prev_cache = self.raster_cache_dir
+        new_cache, new_stores = rasters.normalize_rasters(self.sdata, progress, known_stores=known_stores)
+        self.raster_stores = new_stores
+        if new_cache is not None:
+            self.raster_cache_dir = new_cache
+            self.raster_cache_mb = rasters.cache_size_mb(new_cache)
+            if prev_cache and prev_cache != new_cache:
+                shutil.rmtree(prev_cache, ignore_errors=True)
 
     def _run_call(self, job_id, kind, descriptor):
         # kind is always "compute" or "plot" here (the only two _dispatch routes here).
@@ -456,46 +504,23 @@ class Session:
                 self.force_full = True  # a freshly adopted object must be written whole once
                 # A reader's images/labels can be single-scale or huge-chunked; tile
                 # them now so the canvas never realizes a multi-GB chunk per tile.
-                from .. import rasters
-                # A reshaping op (e.g. filter_cells) returns a new object that carries the
-                # SAME already-tiled image/label refs forward, so normalize_rasters finds
-                # them canonical and rebuilds nothing (returns None). Those refs still stream
-                # lazily from prev_cache, so it must be KEPT — deleting it would leave every
-                # image a dangling ref that zarr fills with 0 (a black canvas, no error). Only
-                # when a genuinely fresh, non-canonical object is adopted (a reader bootstrap)
-                # does normalize build a new store, orphaning prev_cache; drop it only then.
-                prev_cache = self.raster_cache_dir
                 # known_stores is keyed by element NAME, not dataset identity, so it's
-                # only trustworthy on a same-object reshape (the case the comment above
-                # describes): a genuine re-import (a read-effect function re-run on an
-                # already-open session, registry/custom/read_spatialdata.py) can hand
-                # back a fresh dataset that happens to reuse a conventional image name,
-                # which would otherwise be wrongly treated as "already known local" and
-                # skipped — leaving raster_stores[name] pointing at the PREVIOUS
-                # dataset's (possibly already-rmtree'd) cache dir. Force a from-scratch
-                # locality check for that case by handing normalize_rasters no prior
-                # knowledge at all.
+                # only trustworthy on a same-object reshape: a genuine re-import (a
+                # read-effect function re-run on an already-open session,
+                # registry/custom/read_spatialdata.py) can hand back a fresh dataset
+                # that happens to reuse a conventional image name, which would otherwise
+                # be wrongly treated as "already known local" — leaving raster_stores[name]
+                # pointing at the PREVIOUS dataset's cache dir. Force a from-scratch
+                # locality check for that case by passing no prior knowledge at all.
                 is_reimport = fn is not None and fn.effect_class == "read"
                 known_stores = {} if is_reimport else self.raster_stores
                 # A read bootstrap's rebuild can be lengthy (multi-GB); stream its
                 # progress over the same job.log channel `target` above already taps,
-                # so the import spinner keeps moving instead of going quiet while this
-                # (still write-lock-held) rebuild runs.
+                # so the import spinner keeps moving during this (write-lock-held) rebuild.
                 progress = ((lambda message, pct=None: BUS.publish(
                     "job.log", {"session_id": self.id, "job_id": job_id, "chunk": f"{message}\n"}))
                             if is_reimport else None)
-                new_cache, new_stores = rasters.normalize_rasters(
-                    self.sdata, progress, known_stores=known_stores)
-                # Assign the store map unconditionally: normalize_rasters can return
-                # legitimate canonical-and-local entries in `stores` even when it finds
-                # nothing to rebuild (new_cache is None) — only the cache DIR is
-                # conditional on an actual new directory needing ownership/cleanup.
-                self.raster_stores = new_stores
-                if new_cache is not None:
-                    self.raster_cache_dir = new_cache
-                    self.raster_cache_mb = rasters.cache_size_mb(new_cache)
-                    if prev_cache and prev_cache != new_cache:
-                        shutil.rmtree(prev_cache, ignore_errors=True)
+                self._adopt_rasters(known_stores, progress)
                 self.active_table_key = self._default_table_key()
                 if not self.app_state["displays"]:
                     self.manager.auto_displays(self)
@@ -521,18 +546,9 @@ class Session:
                         # new_object branch above) still needs tile-chunking, or it
                         # reproduces the multi-GB-chunk-per-tile OOM rasters.py exists
                         # to prevent, and the new element never gets a raster_stores
-                        # entry. This is an ordinary in-session mutation, never a
-                        # re-import, so the existing known_stores map is always trusted.
-                        from .. import rasters
-                        prev_cache = self.raster_cache_dir
-                        new_cache, new_stores = rasters.normalize_rasters(
-                            self.sdata, known_stores=self.raster_stores)
-                        self.raster_stores = new_stores
-                        if new_cache is not None:
-                            self.raster_cache_dir = new_cache
-                            self.raster_cache_mb = rasters.cache_size_mb(new_cache)
-                            if prev_cache and prev_cache != new_cache:
-                                shutil.rmtree(prev_cache, ignore_errors=True)
+                        # entry. An ordinary in-session mutation, never a re-import, so
+                        # the existing known_stores map is always trusted.
+                        self._adopt_rasters(self.raster_stores)
 
         self.saved = False  # a completed compute/plot changed the object or its cached state
 
@@ -589,11 +605,10 @@ class Session:
         finally:
             self._prune_jobs()
 
-    def _run_annotate(self, job_id, payload):
-        """Region labeling: mutate obs/shapes in place under the write lock (§3.1)."""
-        from . import regions
-        with self.lock.writing():
-            changed = regions.assign(self, payload)
+    def _commit_field_changes(self, job_id, kind, changed, *, invalidate: bool = False) -> None:
+        """Shared post-write bookkeeping for the annotate handlers: group changed field
+        paths (`elem:key`) into a structural diff, mark dirty, bump versions, optionally
+        invalidate dependent plots, and publish `job.completed`."""
         self.saved = False
         self._jobs[job_id]["status"] = "completed"
         diff: dict = {}
@@ -602,12 +617,19 @@ class Session:
             diff.setdefault(elem, []).append(key)
         self._mark_dirty(diff)
         appstate.bump_versions(self.app_state, changed)
-        invalidated = self._invalidate_plots(changed)
-        BUS.publish("job.completed", {"session_id": self.id, "job_id": job_id, "kind": "annotate",
+        invalidated = self._invalidate_plots(changed) if invalidate else []
+        BUS.publish("job.completed", {"session_id": self.id, "job_id": job_id, "kind": kind,
                                       "structural_diff": diff,
                                       "data_versions": self.app_state["data_versions"]})
         if invalidated:
             BUS.publish("plot.invalidated", {"session_id": self.id, "plot_ids": invalidated})
+
+    def _run_annotate(self, job_id, payload):
+        """Region labeling: mutate obs/shapes in place under the write lock (§3.1)."""
+        from . import regions
+        with self.lock.writing():
+            changed = regions.assign(self, payload)
+        self._commit_field_changes(job_id, "annotate", changed, invalidate=True)
 
     def _run_shape_annotate(self, job_id, payload):
         """Shape-annotation editor: create/update/delete one shape in
@@ -621,26 +643,17 @@ class Session:
                 changed = shape_annotations.delete(self, payload["shape_id"])
             else:
                 changed = shape_annotations.create(self, payload["shape"])
-        self.saved = False
-        self._jobs[job_id]["status"] = "completed"
-        diff: dict = {}
-        for f in changed:
-            elem, key = f.split(":", 1)
-            diff.setdefault(elem, []).append(key)
-        # A shapes element can't be updated incrementally (see _mark_dirty below),
-        # so this always forces a full save — acceptable since annotation counts
-        # are small relative to a full checkpoint.
-        self._mark_dirty(diff)
-        appstate.bump_versions(self.app_state, changed)
-        BUS.publish("job.completed", {"session_id": self.id, "job_id": job_id, "kind": "shape_annotate",
-                                      "structural_diff": diff,
-                                      "data_versions": self.app_state["data_versions"]})
+        # A shapes element can't be updated incrementally (see _mark_dirty), so this
+        # always forces a full save — fine since annotation counts are small relative
+        # to a full checkpoint. Shape edits drive no plots, so no invalidation pass.
+        self._commit_field_changes(job_id, "shape_annotate", changed)
 
     def _mark_dirty(self, structural_diff: dict) -> None:
         """Record which elements a data mutation touched so the next save rewrites only
-        those. The mutation ran on the active table, so mark it unconditionally — the
-        structural diff can't see an in-place `X`-only change (`keyset` doesn't track
-        `X`), and the active table is cheap to rewrite regardless. The diff is used to
+        those. The mutation ran on the active table, so mark it unconditionally — an
+        in-place `X`-only change is tracked only coarsely (`keyset` snapshots `X` by
+        whole-matrix identity and `diff` deliberately keeps it out of the structural
+        diff), and the active table is cheap to rewrite regardless. The diff is used to
         catch OTHER changed table elements (`tables` facet) and to force a full save
         when a raster or geometry element changed (those can't be updated in place)."""
         from ..registry.base import is_table_facet
@@ -725,7 +738,6 @@ class Session:
         the terminal result stream over `session.loading`, keyed by the client-minted
         `load_id`; the checkpoint's own app_state replaces the shell's fresh one."""
         from ..persistence.store import load_spatialdata
-        from .. import rasters
         load_id = payload.get("load_id")
 
         def report(message, pct=None):
@@ -742,9 +754,7 @@ class Session:
                 self.hash_check = hash_check
                 # Older stores hold huge-chunked rasters; re-tile them so canvas tiles
                 # stay cheap (a no-op for stores already in canonical form). See rasters.py.
-                self.raster_cache_dir, self.raster_stores = rasters.normalize_rasters(
-                    sdata, report, known_stores=self.raster_stores)
-                self.raster_cache_mb = rasters.cache_size_mb(self.raster_cache_dir)
+                self._adopt_rasters(self.raster_stores, report)
                 self.active_table_key = self._default_table_key()
                 report("Building views…")
                 if not self.app_state["displays"]:

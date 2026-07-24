@@ -7,7 +7,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from ..base import CallResult, Function, ParamSpec, missing_obs_column, missing_uns_key, run_compute, \
-    run_plot, resolve_obsm_key
+    run_plot, resolve_obsm_or_result
 
 _KEY_ADDED_PARAM = ParamSpec(
     "key_added", {"type": "string", "default": "proximity"}, "text", None,
@@ -88,10 +88,9 @@ key_added
             (missing_obs_column(adata, library_key) if library_key else None)
         if error:
             return CallResult(status="failed", error=error)
-        try:
-            coords = resolve_obsm_key(adata, params)
-        except KeyError as e:
-            return CallResult(status="failed", error=f"obsm['{e.args[0]}'] does not exist")
+        coords, err = resolve_obsm_or_result(adata, params)
+        if err:
+            return err
 
         def mutate(ad):
             from ._vendor import proximity_compute

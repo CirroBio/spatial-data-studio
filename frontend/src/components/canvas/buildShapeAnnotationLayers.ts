@@ -5,17 +5,13 @@ import type { Layer } from '@deck.gl/core';
 import type { Matrix4 } from '@math.gl/core';
 import type { ShapeAnnotation, ShapeGeometry } from '../../schemas/annotations';
 import { shapeOutline, shapeHandles, shapeCentroid, arrowheadTriangle, ROTATE_HANDLE_ID } from '../../lib/shapeAnnotations';
+import { hexToRgb } from './colorUtils';
 
 type Point = [number, number];
 
 // UI overlays must render on top regardless of the cell scatter's depth trick
 // (same OVERLAY_PARAMS used by the lasso selection layers in SpatialCanvas).
 const OVERLAY_PARAMS = { depthCompare: 'always' as const, depthWriteEnabled: false };
-
-function hexToRgb(hex: string): [number, number, number] {
-  const n = parseInt(hex.replace('#', ''), 16);
-  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
-}
 
 function dashArray(dash: ShapeAnnotation['stroke']['dash']): [number, number] {
   if (dash === 'dashed') return [4, 3];

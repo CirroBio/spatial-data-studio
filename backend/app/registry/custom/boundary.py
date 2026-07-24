@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 
 from ..base import CallResult, Function, ParamSpec, missing_obs_column, missing_uns_key, run_compute, \
-    run_plot, resolve_obsm_key
+    run_plot, resolve_obsm_or_result
 
 _NUMERIC_KWARGS = ("bin_size", "bandwidth", "threshold", "min_area", "radius", "margin_width")
 
@@ -118,10 +118,9 @@ key_added
             return CallResult(status="failed", error=error)
         if not interior_labels:
             return CallResult(status="failed", error="interior_labels is required")
-        try:
-            coords = resolve_obsm_key(adata, params)
-        except KeyError as e:
-            return CallResult(status="failed", error=f"obsm['{e.args[0]}'] does not exist")
+        coords, err = resolve_obsm_or_result(adata, params)
+        if err:
+            return err
 
         bad = _bad_labels(adata, cell_type_key, interior_labels)
         if bad:

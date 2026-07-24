@@ -91,8 +91,6 @@ class CellularNeighborhoods(Function):
     label = "Cellular Neighborhoods"
     summary = "Cluster cells into recurring multicellular niches by window composition."
     doc = _COMPUTE_DOC
-    partially_supported = False
-    unsupported_params: list = []
 
     params = [
         ParamSpec("cell_type_key", {"type": "string"}, "obs_categorical", None,

@@ -24,7 +24,7 @@ import { LayerExtension } from '@deck.gl/core';
 // True-color RGB images (e.g. H&E) must NOT use this — black there is real
 // tissue, not "no signal" — callers only add this extension when the image isn't
 // RGB (see `!isRgb` at each call site).
-export class TransparentBlackExtension extends LayerExtension {
+class TransparentBlackExtension extends LayerExtension {
   static extensionName = 'TransparentBlackExtension';
   getShaders() {
     return {

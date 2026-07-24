@@ -2,7 +2,7 @@
 cell with the core it falls in."""
 from __future__ import annotations
 
-from ..base import Function, ParamSpec, CallResult, run_compute, resolve_obsm_key
+from ..base import Function, ParamSpec, CallResult, run_compute, resolve_obsm_or_result
 from .tma_detect import assign_cores, NAMING_SCHEMES
 
 _HELP = """Identify TMAs
@@ -46,8 +46,6 @@ class IdentifyTMAs(Function):
     label = "Identify TMAs"
     summary = "Auto-detect tissue-microarray cores and label each cell."
     doc = _HELP
-    partially_supported = False
-    unsupported_params: list = []
 
     params = [
         ParamSpec("coords", {"type": "string", "default": "spatial"}, "obsm_key", None,
@@ -76,10 +74,9 @@ class IdentifyTMAs(Function):
         key_added = (params.get("key_added") or "tma_core").strip()
 
         adata = session.active_table()
-        try:
-            coords_key = resolve_obsm_key(adata, params)
-        except KeyError as e:
-            return CallResult(status="failed", error=f"obsm['{e.args[0]}'] does not exist")
+        coords_key, err = resolve_obsm_or_result(adata, params)
+        if err:
+            return err
 
         xy = adata.obsm[coords_key]
         coords = pd.DataFrame({"x": xy[:, 0], "y": xy[:, 1]}, index=adata.obs_names)

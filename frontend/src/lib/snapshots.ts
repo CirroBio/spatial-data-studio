@@ -4,7 +4,7 @@
 // each file (see backend/app/snapshots.py).
 export type SnapshotFormat = 'pdf' | 'png';
 
-export interface SnapshotMetadata {
+interface SnapshotMetadata {
   label: string;
   created: string;
   dataset?: string;

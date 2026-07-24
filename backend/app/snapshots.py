@@ -126,8 +126,7 @@ def _point_coords(session, enc: dict, kind: str) -> np.ndarray:
     if coords == "obsm:spatial":
         affine6 = transform.get_affine6(session.sdata, table)
         if not transform.is_identity(affine6):
-            m = transform.matrix3x3(affine6)
-            xy = (m[:2, :2] @ xy.T).T + m[:2, 2]
+            xy = transform.apply_affine6_xy(affine6, xy)
     return xy
 
 
@@ -173,11 +172,14 @@ def _cell_rgba(session, enc: dict, n: int) -> np.ndarray:
         order = {cat: i for i, cat in enumerate(sorted(categories))}
         palette = np.array([CATEGORY_COLORS[order[c] % len(CATEGORY_COLORS)] for c in categories],
                            dtype=np.float64) / 255.0
+        missing = codes < 0  # pandas' code for cells with no category value
         safe = np.clip(codes, 0, len(categories) - 1)
         rgba[:, :3] = palette[safe]
+        rgba[missing, :3] = 0.5  # unlabeled cells render neutral grey, matching the live canvas
         isolated = enc.get("isolated_category")
         if isolated is not None:
             dim = np.array([categories[c] != isolated for c in safe])
+            dim |= missing  # an unlabeled cell is never the isolated category
             rgba[dim, 3] = DIM_ALPHA / 255.0
     else:
         vals = np.asarray(batch.column("value"), dtype=np.float64)

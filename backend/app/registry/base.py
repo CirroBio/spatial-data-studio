@@ -25,7 +25,7 @@ _PLOT_LOCK = threading.Lock()
 
 _TABLE_FACETS = ["obs", "var", "obsm", "obsp", "layers", "uns"]
 _SDATA_FACETS = ["images", "labels", "points", "shapes", "tables"]
-_FACET_TO_ELEMENT = {"obs": "obs", "var": "var", "obsm": "obsm", "obsp": "obsp", "layers": "layers"}
+_FACET_TO_ELEMENT = {"obs": "obs", "var": "var", "obsm": "obsm", "obsp": "obsp", "layers": "layers", "X": "X"}
 
 
 def is_table_facet(facet: str) -> bool:
@@ -325,6 +325,18 @@ def resolve_obsm_key(adata, params: dict, param: str = "coords", default: str = 
     return key
 
 
+def resolve_obsm_or_result(adata, params: dict, param: str = "coords",
+                           default: str = "spatial") -> tuple:
+    """`resolve_obsm_key` wrapped for the common custom-function shape: return
+    `(key, None)` on success or `(None, CallResult(failed))` with the standard
+    "does not exist" message on a missing key, so a caller can write
+    `key, err = resolve_obsm_or_result(...); if err: return err`."""
+    try:
+        return resolve_obsm_key(adata, params, param=param, default=default), None
+    except KeyError as e:
+        return None, CallResult(status="failed", error=f"obsm['{e.args[0]}'] does not exist")
+
+
 def keyset(adata, sdata) -> dict:
     """Per-key identity snapshot. `id()` of the stored object lets the diff catch
     keys that were *overwritten in place* (e.g. re-running clustering replaces
@@ -337,6 +349,13 @@ def keyset(adata, sdata) -> dict:
             snap[f] = {k: id(m[k].values) for k in m.columns}
         else:
             snap[f] = {k: id(v) for k, v in m.items()}
+    # `X` is a single matrix, not a key→value mapping, so it can't be tracked per key.
+    # Snapshot its whole-array identity under a sentinel empty key: a compute that
+    # rewrites the expression matrix (normalize_total, log1p, scale) rebinds `adata.X`,
+    # so id() changes and `diff` emits the coarse field path `X:` — enough for a
+    # gene-colored canvas (colorByPath `X:<gene>`) to invalidate. Per-gene granularity
+    # isn't recoverable from one array id.
+    snap["X"] = {"": id(adata.X)}
     if sdata is not None:
         for f in _SDATA_FACETS:
             snap[f] = {k: id(v) for k, v in getattr(sdata, f, {}).items()}
@@ -349,10 +368,16 @@ def diff(before: dict, after: dict) -> tuple[dict, list]:
         bmap = before.get(facet, {})
         changed = sorted(k for k, v in after_map.items() if bmap.get(k) != v)
         if changed:
-            out[facet] = changed
             elem = _FACET_TO_ELEMENT.get(facet)
             if elem:
                 fields.extend(f"{elem}:{k}" for k in changed)
+            # `X` is a coarse, keyless signal (see keyset): it belongs in `fields` (to
+            # bump the gene-coloring version) but not in the element-level diff that
+            # drives save/dirty — the active table is marked dirty regardless, and an
+            # X-only change must not force a full rewrite (`_facet_values` also can't
+            # read a non-mapping facet).
+            if facet != "X":
+                out[facet] = changed
     return out, fields
 
 

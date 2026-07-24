@@ -5,11 +5,12 @@ import { PolygonLayer, PathLayer, ScatterplotLayer } from '@deck.gl/layers';
 import type { Layer, PickingInfo } from '@deck.gl/core';
 import { useAppStore } from '../../store/sessionStore';
 import { useArrowField } from '../../hooks/useArrowField';
-import { putDisplay, addDisplay as postDisplay } from '../../api';
+import { addDisplay as postDisplay } from '../../api';
 import { reportError } from '../../lib/errors';
 import { indicesInRings } from '../../lib/pointInPolygon';
 import { isEmbeddingDisplay, type EmbeddingDisplaySpec, type ObsField, type ObsmField } from '../../types';
 import { useArrowPositions } from './useArrowPositions';
+import { useDisplayPersistence } from './useDisplayPersistence';
 import { useEmbeddingViewState, type EmbeddingViewState } from './useEmbeddingViewState';
 import { useSpotColors, arrowToColorSource } from './useSpotColors';
 import { buildSpotLayer } from './buildSpotLayer';
@@ -177,7 +178,7 @@ function EmbeddingCanvasView({
   annotationTarget: { regionSetId: string; category: string; color: string } | null;
 }) {
   const {
-    sessionState, updateDisplay, isolatedCategory, openSnapshotExport, setSnapshotHandler,
+    sessionState, isolatedCategory, openSnapshotExport, setSnapshotHandler,
     drawPolygons, drawRing, addDrawVertex, clearDraw, setRegionCellCount, setRegionCellIndices,
   } = useAppStore();
   const dataVersions = sessionState?.data_versions ?? {};
@@ -187,13 +188,16 @@ function EmbeddingCanvasView({
   const coordsPath = `obsm:${display.encoding.obsm_key}`;
   const coordsVersion = dataVersions[coordsPath] ?? 0;
   const colorByPath = display.encoding.color_by;
-  const colorVersion = dataVersions[colorByPath] ?? 0;
+  // Gene colorings (`X:<gene>`) can't be versioned per gene — the backend tracks the
+  // expression matrix by whole-array identity and bumps the coarse `X:` path — so fold
+  // that in, else a normalize/log1p/scale/filter compute leaves the canvas on stale colors.
+  const colorVersion = (dataVersions[colorByPath] ?? 0)
+    + (colorByPath.startsWith('X:') ? (dataVersions['X:'] ?? 0) : 0);
 
   const { table: coordsTable, loading: coordsLoading } = useArrowField(sessionId, coordsPath, coordsVersion);
   const { table: colorTable, loading: colorLoading } = useArrowField(sessionId, colorByPath, colorVersion);
 
   const [panelCollapsed, setPanelCollapsed] = useState(false);
-  const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const positions = useArrowPositions(coordsTable, {
     xIndex: x_component,
@@ -348,31 +352,8 @@ function EmbeddingCanvasView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lassoMode, is_3d, drawPolygons, drawRing, canvasMode]);
 
-  // Update the store mirror immediately, then debounce the PUT so a slider drag or a
-  // pan/rotate collapses into one write. A ref (not state) holds the timer so back-to-back
-  // viewport events during a drag reliably reset the same debounce. A read-only
-  // (snapshot) session keeps the camera interactive locally but never persists — the
-  // backend would 403 the PUT anyway (session.read_only).
-  function persistDisplay(updated: EmbeddingDisplaySpec) {
-    updateDisplay(updated);
-    if (readOnly) return;
-    if (persistTimer.current) clearTimeout(persistTimer.current);
-    persistTimer.current = setTimeout(() => {
-      putDisplay(sessionId, updated).catch(console.error);
-    }, 500);
-  }
-
-  // Build from the latest store spec, not the possibly-stale prop, so an encoding edit
-  // and a camera move in the same debounce window don't clobber each other.
-  function currentSpec(): EmbeddingDisplaySpec {
-    const stored = useAppStore.getState().sessionState?.app_state.displays.find((d) => d.id === display.id);
-    return stored && isEmbeddingDisplay(stored) ? stored : display;
-  }
-
-  function updateEncoding(patch: Partial<EmbeddingDisplaySpec['encoding']>) {
-    const base = currentSpec();
-    persistDisplay({ ...base, encoding: { ...base.encoding, ...patch } });
-  }
+  const { persistDisplay, currentSpec, updateEncoding } = useDisplayPersistence(
+    display, sessionId, readOnly, isEmbeddingDisplay);
 
   // Persist a camera move as the display's viewport; 3D keeps the orbit angles,
   // 2D just target + zoom.

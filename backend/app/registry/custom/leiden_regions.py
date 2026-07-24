@@ -2,7 +2,7 @@
 write the cluster index to a user-named obs column."""
 from __future__ import annotations
 
-from ..base import Function, ParamSpec, CallResult, run_compute, resolve_obsm_key
+from ..base import Function, ParamSpec, CallResult, run_compute, resolve_obsm_or_result
 from ._leiden import leiden_labels, resolve_connectivities
 
 _HELP = """Identify Regions (Leiden)
@@ -44,8 +44,6 @@ class IdentifyRegionsLeiden(Function):
     label = "Identify Regions (Leiden)"
     summary = "Leiden clustering on spatial coordinates into a new obs column."
     doc = _HELP
-    partially_supported = False
-    unsupported_params: list = []
 
     params = [
         ParamSpec("coords", {"type": "string", "default": "spatial"}, "obsm_key", None,
@@ -69,10 +67,9 @@ class IdentifyRegionsLeiden(Function):
         random_state = int(params.get("random_state") or 0)
 
         adata = session.active_table()
-        try:
-            coords = resolve_obsm_key(adata, params)
-        except KeyError as e:
-            return CallResult(status="failed", error=f"obsm['{e.args[0]}'] does not exist")
+        coords, err = resolve_obsm_or_result(adata, params)
+        if err:
+            return err
 
         neighbors_key = f"_{key_added}_neighbors"
 

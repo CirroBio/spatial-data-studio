@@ -10,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 
 from ..base import (CallResult, Function, ParamSpec, missing_obs_column, missing_uns_key,
-                    resolve_obsm_key, run_compute, run_plot)
+                    resolve_obsm_or_result, run_compute, run_plot)
 from ._docs import custom_doc
 
 _CITATION = ("Korsunsky, I. et al. Fast, sensitive and accurate integration of single-cell "
@@ -81,10 +81,9 @@ key_added
                  or (missing_obs_column(adata, label_key) if label_key else None))
         if error:
             return CallResult(status="failed", error=error)
-        try:
-            use_rep = resolve_obsm_key(adata, params, param="use_rep", default="X_pca")
-        except KeyError as e:
-            return CallResult(status="failed", error=f"obsm['{e.args[0]}'] does not exist")
+        use_rep, err = resolve_obsm_or_result(adata, params, param="use_rep", default="X_pca")
+        if err:
+            return err
 
         def mutate(ad):
             from ._vendor import lisi_compute

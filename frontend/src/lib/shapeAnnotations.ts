@@ -52,7 +52,7 @@ export function polygonFromClicks(vertices: Point[]): ShapeGeometry | null {
 
 // ---- rendering outline ------------------------------------------------------
 
-export function ellipseToPolygon(
+function ellipseToPolygon(
   center: Point, radiusX: number, radiusY: number, rotation: number, segments = ELLIPSE_SEGMENTS
 ): Point[] {
   const cosR = Math.cos(rotation), sinR = Math.sin(rotation);
@@ -143,7 +143,7 @@ function rotateHandlePosition(geometry: ShapeGeometry): Point {
 
 // ---- edit handles ------------------------------------------------------------
 
-export interface ShapeHandle {
+interface ShapeHandle {
   id: string;
   position: Point;
 }

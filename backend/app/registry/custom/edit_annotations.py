@@ -3,7 +3,9 @@ from __future__ import annotations
 
 from ..base import Function, ParamSpec, CallResult, run_compute, missing_obs_column
 
-_DOC = """Edit Annotations
+from ._docs import custom_doc
+
+_HELP = """Edit Annotations
 
 Pick a categorical obs column, review its unique values, and type a replacement
 for any of them. Blank replacements leave a value unchanged; mapping two values
@@ -16,9 +18,6 @@ obs_column
 mapping
     A {old value: new value} object; only changed values need an entry.
 """
-
-
-from ._docs import custom_doc
 
 _CITATION = ("Original utility implemented in this repository (rename/merge the values of a "
              "categorical obs column).")
@@ -35,9 +34,7 @@ class EditAnnotations(Function):
     effect_class = "compute"
     label = "Edit Annotations"
     summary = "Rename or merge the values of a categorical obs column."
-    doc = _DOC
-    partially_supported = False
-    unsupported_params: list = []
+    doc = _HELP
 
     params = [
         ParamSpec("obs_column", {"type": "string"}, "obs_categorical", None,

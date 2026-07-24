@@ -54,7 +54,6 @@ interface AppStore {
   ) => void;
   setEntryStatus: (id: string, status: HistEntry['status'] | PlotEntry['status']) => void;
 
-  // functions list
   functions: FunctionEntry[];
   libraryVersions: Record<string, string>;
   setFunctions: (fns: FunctionEntry[], versions: Record<string, string>) => void;

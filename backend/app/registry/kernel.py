@@ -125,6 +125,30 @@ def _child_plot(fn, injected, bound, adata, sdata):
             "changed_facets": _facet_values(adata, sdata, changed), "changed_fields": fields}
 
 
+def _failure_envelope(buf, e) -> dict:
+    """The child-worker failure result: the captured log plus the traceback, and a
+    short single-line error. Shared by the library-call and mutate child paths."""
+    return {"status": "failed", "log": buf.getvalue() + "\n" + traceback.format_exc(),
+            "error": short_error(e)}
+
+
+def _compute_result(log, before, shape_before, adata, sdata, ret=None) -> dict:
+    """Terminal result for an in-place compute child: adopt the whole object when the
+    table was reshaped (or a library call returned a fresh AnnData/SpatialData with no
+    facet diff), else return the facet diff for the parent to merge. Shared by
+    `_child_library_call` and `_child_mutate`; `ret` is None for the mutate shape."""
+    if _table_reshaped(shape_before, adata) and sdata is not None:
+        return {"status": "completed", "log": log, "new_object": sdata,
+                "element_transforms": _capture_transforms(sdata)}
+    after = keyset(adata, sdata)
+    changed, fields = diff(before, after)
+    if ret is not None and not changed and ret.__class__.__name__ in ("AnnData", "SpatialData"):
+        return {"status": "completed", "log": log, "new_object": ret,
+                "element_transforms": _capture_transforms(ret)}
+    return {"status": "completed", "log": log,
+            "changed_facets": _facet_values(adata, sdata, changed), "changed_fields": fields}
+
+
 def _child_library_call(library, path, effect_class, injected_order, bound, adata, sdata, image,
                         log_queue=None):
     fn = _resolve_callable(library, path)
@@ -143,8 +167,7 @@ def _child_library_call(library, path, effect_class, injected_order, bound, adat
             before = keyset(adata, sdata) if effect_class == "compute" else None
             ret = fn(*injected, **bound)
         except Exception as e:
-            return {"status": "failed", "log": buf.getvalue() + "\n" + traceback.format_exc(),
-                    "error": short_error(e)}
+            return _failure_envelope(buf, e)
         log = buf.getvalue()
 
     if effect_class == "read":
@@ -155,17 +178,7 @@ def _child_library_call(library, path, effect_class, injected_order, bound, adat
         # persisted — the value is not carried past the worker (DESIGN §4.6).
         return {"status": "completed", "log": log}
 
-    # compute
-    if _table_reshaped(shape_before, adata) and sdata is not None:
-        return {"status": "completed", "log": log, "new_object": sdata,
-                "element_transforms": _capture_transforms(sdata)}
-    after = keyset(adata, sdata)
-    changed, fields = diff(before, after)
-    if ret is not None and not changed and ret.__class__.__name__ in ("AnnData", "SpatialData"):
-        return {"status": "completed", "log": log, "new_object": ret,
-                "element_transforms": _capture_transforms(ret)}
-    return {"status": "completed", "log": log,
-            "changed_facets": _facet_values(adata, sdata, changed), "changed_fields": fields}
+    return _compute_result(log, before, shape_before, adata, sdata, ret=ret)
 
 
 def _child_mutate(mutate, adata, sdata):
@@ -177,16 +190,9 @@ def _child_mutate(mutate, adata, sdata):
         try:
             mutate(adata)
         except Exception as e:
-            return {"status": "failed", "log": buf.getvalue() + "\n" + traceback.format_exc(),
-                    "error": short_error(e)}
+            return _failure_envelope(buf, e)
         log = buf.getvalue()
-    if _table_reshaped(shape_before, adata) and sdata is not None:
-        return {"status": "completed", "log": log, "new_object": sdata,
-                "element_transforms": _capture_transforms(sdata)}
-    after = keyset(adata, sdata)
-    changed, fields = diff(before, after)
-    return {"status": "completed", "log": log,
-            "changed_facets": _facet_values(adata, sdata, changed), "changed_fields": fields}
+    return _compute_result(log, before, shape_before, adata, sdata)
 
 
 # ---- submission from the parent (blocks the calling worker thread, not the

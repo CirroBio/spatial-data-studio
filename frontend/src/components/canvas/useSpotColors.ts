@@ -7,11 +7,11 @@ import { buildCategoricalPalette, buildNumericColormap } from './colorUtils';
 // palette only has 15 colors) and rendering one legend row per level can hang or
 // crash the browser — e.g. an object-dtype obs column of per-cell IDs/barcodes,
 // which the backend serves as a categorical. Past the cap we skip the coloring.
-export const MAX_CATEGORICAL_LEVELS = 100;
+const MAX_CATEGORICAL_LEVELS = 100;
 
 // Normalized coloring input, decoupled from the transport (Arrow over HTTP). Build
 // it from an Arrow table with arrowToColorSource.
-export type ColorSource =
+type ColorSource =
   | { kind: 'categorical'; codes: Int32Array; categories: string[] }
   | { kind: 'numeric'; values: Float32Array };
 

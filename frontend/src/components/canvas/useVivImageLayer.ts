@@ -7,6 +7,7 @@ import type { ImageInfo } from '../../types';
 import { MAX_VISIBLE_CHANNELS, type Channel } from './useImageChannels';
 import { transparentBlackExtension } from './transparentBlackExtension';
 import { useImageTilePrefetch } from './useImageTilePrefetch';
+import { hexToRgb } from './colorUtils';
 
 // Client-side GPU compositing of the tissue image via Viv's own `MultiscaleImageLayer`
 // — the sole canvas image path. When an image is shown, the canvas view is in the
@@ -25,13 +26,6 @@ function clientCompositingDisabled(): boolean {
   } catch {
     return false;
   }
-}
-
-function hexToRgb(hex: string): [number, number, number] {
-  const h = hex.replace('#', '');
-  const n = Number.parseInt(h, 16);
-  if (h.length !== 6 || Number.isNaN(n)) return [255, 255, 255];
-  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 
 // The image must never occlude the points drawn after it: the merged point scatter writes

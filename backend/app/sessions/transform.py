@@ -54,6 +54,14 @@ def matrix3x3(affine6: list[float]) -> np.ndarray:
     return np.array([[a, b, c], [d, e, f], [0.0, 0.0, 1.0]], dtype=float)
 
 
+def apply_affine6_xy(affine6: list[float], xy: np.ndarray) -> np.ndarray:
+    """Apply the 6-float affine to an (N, 2) array of xy points, returning a new
+    (N, 2) array: ``x' = a*x + b*y + c``, ``y' = d*x + e*y + f``."""
+    a, b, c, d, e, f = affine6
+    return np.column_stack([a * xy[:, 0] + b * xy[:, 1] + c,
+                            d * xy[:, 0] + e * xy[:, 1] + f])
+
+
 def is_identity(affine6: list[float]) -> bool:
     return np.allclose(matrix3x3(affine6), np.eye(3))
 

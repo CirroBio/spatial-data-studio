@@ -25,7 +25,7 @@ float markerHexGauge(vec2 p) {
 
 const ANCHOR = 'float distToCenter = length(unitPosition) * outerRadiusPixels;';
 
-export type MarkerScatterplotLayerProps<DataT = unknown> = ScatterplotLayerProps<DataT> & {
+type MarkerScatterplotLayerProps<DataT = unknown> = ScatterplotLayerProps<DataT> & {
   markerShape?: PointMarker;
 };
 

@@ -51,9 +51,7 @@ def _membership(adata, payload: dict, affine6: list[float]) -> np.ndarray:
     if "spatial" not in adata.obsm:
         raise ValueError("table has no obsm['spatial']; cannot compute membership")
     xy = np.asarray(adata.obsm["spatial"])[:, :2]
-    a, b, c, d, e, f = affine6
-    coords = np.column_stack([a * xy[:, 0] + b * xy[:, 1] + c,
-                              d * xy[:, 0] + e * xy[:, 1] + f])
+    coords = transform.apply_affine6_xy(affine6, xy)
     inside = np.zeros(len(coords), dtype=bool)
     for ring in rings:
         inside |= MplPath(np.asarray(ring)).contains_points(coords)

@@ -6,13 +6,14 @@ import type { Layer, OrthographicViewState, PickingInfo } from '@deck.gl/core';
 import { useAppStore } from '../../store/sessionStore';
 import { useArrowField } from '../../hooks/useArrowField';
 import {
-  getImageInfo, putDisplay, getElements,
+  getImageInfo, getElements,
   updateShapeAnnotation, fetchWhenIdle,
 } from '../../api';
 import { reportError } from '../../lib/errors';
 import { countPointsInRings } from '../../lib/pointInPolygon';
 import TransformEditor from '../TransformEditor';
 import { isSpatialDisplay, type SpatialDisplaySpec, type ImageInfo } from '../../types';
+import { useDisplayPersistence } from './useDisplayPersistence';
 import type { ShapeAnnotation, ShapeGeometry, ShapeKind } from '../../schemas/annotations';
 import { textGeometryAt } from '../../schemas/annotations';
 import { geometryFromDrag, applyHandleDrag, translateGeometry } from '../../lib/shapeAnnotations';
@@ -62,7 +63,11 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   const coordsPath = display.encoding.coords;
   const coordsVersion = dataVersions[coordsPath] ?? 0;
   const colorByPath = display.encoding.color_by;
-  const colorVersion = dataVersions[colorByPath] ?? 0;
+  // Gene colorings (`X:<gene>`) can't be versioned per gene — the backend tracks the
+  // expression matrix by whole-array identity and bumps the coarse `X:` path — so fold
+  // that in, else a normalize/log1p/scale/filter compute leaves the canvas on stale colors.
+  const colorVersion = (dataVersions[colorByPath] ?? 0)
+    + (colorByPath.startsWith('X:') ? (dataVersions['X:'] ?? 0) : 0);
 
   const { table: coordsTable, loading: coordsLoading } = useArrowField(sessionId, coordsPath, coordsVersion);
   const { table: colorTable, loading: colorLoading } = useArrowField(sessionId, colorByPath, colorVersion);
@@ -435,33 +440,8 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   }, [vivLayers, positions, colors, showPoints, shapesOverlay, polygonLayer,
       display.encoding.point_size, display.encoding.opacity, marker, worldToPixelMat, radiusScale]);
 
-  const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Update the store mirror immediately, then debounce the PUT so rapid changes
-  // (a slider drag, a pan) collapse into one write. A ref (not state) holds the timer
-  // so back-to-back viewport events during a drag reliably reset the same debounce.
-  // A read-only (snapshot) session keeps the camera/encoding interactive locally but
-  // never persists — the backend would 403 the PUT anyway (session.read_only).
-  function persistDisplay(updated: SpatialDisplaySpec) {
-    updateDisplay(updated);
-    if (readOnly) return;
-    if (persistTimer.current) clearTimeout(persistTimer.current);
-    persistTimer.current = setTimeout(() => {
-      putDisplay(sessionId, updated).catch(console.error);
-    }, 500);
-  }
-
-  // Build from the latest store spec, not the possibly-stale prop, so an encoding
-  // edit and a viewport pan in the same debounce window don't clobber each other.
-  function currentSpec(): SpatialDisplaySpec {
-    const stored = useAppStore.getState().sessionState?.app_state.displays.find((d) => d.id === display.id);
-    return stored && isSpatialDisplay(stored) ? stored : display;
-  }
-
-  function updateEncoding(patch: Partial<typeof display.encoding>) {
-    const base = currentSpec();
-    persistDisplay({ ...base, encoding: { ...base.encoding, ...patch } });
-  }
+  const { persistDisplay, currentSpec, updateEncoding } = useDisplayPersistence(
+    display, sessionId, readOnly, isSpatialDisplay);
 
   const SEL = canvasMode === 'regions'
     ? [72, 187, 120] as [number, number, number]  // green for region labeling

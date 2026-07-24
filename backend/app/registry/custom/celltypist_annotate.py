@@ -108,8 +108,6 @@ class CellTypistAnnotate(Function):
     label = "Annotate Cells (CellTypist)"
     summary = "Predict a cell-type label per cell with a pre-trained CellTypist model."
     doc = _HELP
-    partially_supported = False
-    unsupported_params: list = []
 
     params = [
         ParamSpec("model", {"type": "string", "default": _DEFAULT_MODEL},

@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import os
-import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -385,27 +384,14 @@ async def figure(sid: str, plot_id: str, fmt: str = "svg"):
 # ---- displays --------------------------------------------------------------
 @app.post("/api/sessions/{sid}/displays")
 async def add_display(sid: str, spec: dict):
-    sess = _writable_session(sid)
-    spec["id"] = str(uuid.uuid4())
-    with sess.lock.writing():
-        sess.app_state["displays"].append(spec)
+    spec = _writable_session(sid).add_display(spec)
     BUS.publish("display.updated", {"session_id": sid, "display_id": spec["id"], "spec": spec})
     return spec
 
 
 @app.put("/api/sessions/{sid}/displays/{display_id}")
 async def update_display(sid: str, display_id: str, spec: dict):
-    sess = _writable_session(sid)
-    with sess.lock.writing():
-        for i, d in enumerate(sess.app_state["displays"]):
-            if d["id"] == display_id:
-                spec["id"] = display_id
-                sess.app_state["displays"][i] = spec
-                found = True
-                break
-        else:
-            found = False
-    if not found:
+    if not _writable_session(sid).update_display(display_id, spec):
         raise HTTPException(404, "display not found")
     BUS.publish("display.updated", {"session_id": sid, "display_id": display_id, "spec": spec})
     return {"ok": True}
@@ -743,7 +729,7 @@ async def data(sid: str, field_path: str):
             from .sessions import transform
             affine6 = transform.get_affine6(sess.sdata, sess.active_table())
             if not transform.is_identity(affine6):
-                batch = arrow.apply_affine_xy(batch, transform.matrix3x3(affine6))
+                batch = arrow.apply_affine_xy(batch, affine6)
         return arrow.to_ipc_bytes(batch)
 
     try:

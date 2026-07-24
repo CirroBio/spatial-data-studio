@@ -103,17 +103,16 @@ def _sparse_batch(mat) -> pa.RecordBatch:
     )
 
 
-def apply_affine_xy(batch: pa.RecordBatch, m: np.ndarray) -> pa.RecordBatch:
-    """Apply a 3x3 affine to the (d0, d1) columns of a coordinate batch, leaving
+def apply_affine_xy(batch: pa.RecordBatch, affine6: list[float]) -> pa.RecordBatch:
+    """Apply the 6-float affine to the (d0, d1) columns of a coordinate batch, leaving
     any further dimensions (d2) untouched. Used to serve points in the edited
     points->global space."""
-    d0 = np.asarray(batch.column("d0"))
-    d1 = np.asarray(batch.column("d1"))
-    x = np.round((m[0, 0] * d0 + m[0, 1] * d1 + m[0, 2]).astype("float32"), _COORD_DECIMALS)
-    y = np.round((m[1, 0] * d0 + m[1, 1] * d1 + m[1, 2]).astype("float32"), _COORD_DECIMALS)
+    from ..sessions import transform
+    xy = np.column_stack([np.asarray(batch.column("d0")), np.asarray(batch.column("d1"))])
+    out = transform.apply_affine6_xy(affine6, xy)
     cols = {name: batch.column(name) for name in batch.schema.names}
-    cols["d0"] = pa.array(x)
-    cols["d1"] = pa.array(y)
+    cols["d0"] = pa.array(np.round(out[:, 0].astype("float32"), _COORD_DECIMALS))
+    cols["d1"] = pa.array(np.round(out[:, 1].astype("float32"), _COORD_DECIMALS))
     return pa.record_batch(cols)
 
 

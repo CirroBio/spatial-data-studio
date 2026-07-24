@@ -36,6 +36,16 @@ export function defaultChannelColor(index: number): string {
   return CHANNEL_COLORS[index % CHANNEL_COLORS.length];
 }
 
+// Parse a `#rrggbb` string to an RGB triple, falling back to white on a malformed
+// value. Shared by every canvas layer that reads a persisted hex color (channel
+// tints, shape-annotation strokes/fills).
+export function hexToRgb(hex: string): [number, number, number] {
+  const h = hex.replace('#', '');
+  const n = Number.parseInt(h, 16);
+  if (h.length !== 6 || Number.isNaN(n)) return [255, 255, 255];
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
 // Per-plot backdrop colors, matching --color-bg for each theme (index.css). The deck
 // canvas is transparent, so this paints the container behind it on the live canvas.
 export const PLOT_BACKGROUNDS: Record<'light' | 'dark', string> = {

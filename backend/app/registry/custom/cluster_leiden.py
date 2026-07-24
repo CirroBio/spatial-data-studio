@@ -50,8 +50,6 @@ class ClusterLeiden(Function):
     label = "Leiden clustering"
     summary = "Leiden community detection on the neighbours graph into a new obs column."
     doc = _HELP
-    partially_supported = False
-    unsupported_params: list = []
 
     params = [
         ParamSpec.number("resolution", default=1.0, tooltip="higher = more, smaller clusters"),

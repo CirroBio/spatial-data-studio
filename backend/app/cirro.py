@@ -56,9 +56,9 @@ def _client():
     return _client_cache
 
 
-def list_projects(force_refresh: bool = False) -> list[dict]:
+def list_projects() -> list[dict]:
     global _projects_cache
-    if force_refresh or _projects_cache is None:
+    if _projects_cache is None:
         _projects_cache = [{"id": p.id, "name": p.name} for p in _client().list_projects()]
     return _projects_cache
 

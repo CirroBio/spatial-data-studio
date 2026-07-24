@@ -11,7 +11,3 @@ export function completedVersion(tourId: string): number {
 export function markCompleted(tourId: string, version: number): void {
   localStorage.setItem(KEY_PREFIX + tourId, String(version));
 }
-
-export function resetTour(tourId: string): void {
-  localStorage.removeItem(KEY_PREFIX + tourId);
-}

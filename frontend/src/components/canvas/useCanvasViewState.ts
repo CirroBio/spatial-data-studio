@@ -8,7 +8,7 @@ import { ZOOM_LIMITS, fitZoom, useCanvasSize } from './viewFit';
 // on screen (d * 2**zoom px = px ⇒ zoom = log2(px / d)). Below this the cells are too
 // small to warrant their polygon outlines, so the shapes fetch is deferred — the
 // viewport would hold more cells than the backend ships anyway. Points cover the view.
-export const SHAPES_MIN_CELL_PX = 6;
+const SHAPES_MIN_CELL_PX = 6;
 export function shapesFetchZoomThreshold(meanSpacingWorld: number): number {
   return Math.log2(SHAPES_MIN_CELL_PX / Math.max(meanSpacingWorld, 1e-9));
 }

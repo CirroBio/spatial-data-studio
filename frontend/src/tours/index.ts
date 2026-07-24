@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { createTourController, type TourController } from './controller';
 import { spatialDataStudioTour } from './spatial-data-studio.tour';
-import { completedVersion, resetTour } from './persistence';
+import { completedVersion } from './persistence';
 import type { Tour } from './schema';
 
 export { TourAnchors, type TourAnchor } from './anchors';
@@ -11,15 +11,6 @@ export { spatialDataStudioTour } from './spatial-data-studio.tour';
 const TOURS: Record<string, Tour> = {
   [spatialDataStudioTour.id]: spatialDataStudioTour,
 };
-
-/** Imperatively start a tour (e.g. from a "Take the tour" button). */
-export function startTour(tourId: string): void {
-  const tour = TOURS[tourId];
-  if (!tour) throw new Error(`Unknown tour: ${tourId}`);
-  createTourController(tour).start();
-}
-
-export { resetTour };
 
 /** React glue: returns a `start` callback and auto-starts a `first-visit` tour
  *  once per version when `enabled` becomes true. */

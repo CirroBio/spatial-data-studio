@@ -80,7 +80,7 @@ export const SHAPE_KINDS: ShapeKind[] = ['line', 'box', 'polygon', 'ellipse', 't
 // Nominal on-screen height (px) a new label gets at the zoom it is placed. It is
 // converted to the stored world-space fontSize via unitsPerPixel so the label
 // looks the same at creation regardless of the dataset's coordinate scale.
-export const DEFAULT_TEXT_FONT_SIZE = 16;
+const DEFAULT_TEXT_FONT_SIZE = 16;
 
 /** Geometry for a new text label placed by a single click at `position`.
  * `unitsPerPixel` (world units per screen pixel at the current zoom) converts the

@@ -78,9 +78,9 @@ def _scan(roots: list[Path]) -> list[dict]:
     return sorted(found.values(), key=lambda e: e["mtime"], reverse=True)
 
 
-def list_datasets(roots: list[Path], force_refresh: bool = False) -> list[dict]:
+def list_datasets(roots: list[Path]) -> list[dict]:
     key = tuple(str(r) for r in roots)
-    if force_refresh or key not in _cache:
+    if key not in _cache:
         _cache[key] = _scan(roots)
     return _cache[key]
 
