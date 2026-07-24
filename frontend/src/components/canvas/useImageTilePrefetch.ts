@@ -30,11 +30,35 @@ interface Params {
 // Wait for the camera to settle before prefetching, so a continuous gesture doesn't fire
 // (and immediately abort) a prefetch on every frame, and deck gets the connections first.
 const PREFETCH_SETTLE_MS = 350;
-// Cap tiles warmed per pass so a zoomed-out view of a huge pyramid can't enqueue hundreds
-// of fetches; the finer-level set is filled first (the primary zoom-in win).
+// Cap tile positions warmed per pass so a zoomed-out view of a huge pyramid doesn't queue an
+// unbounded look-ahead set; the finer-level set is filled first (the primary zoom-in win).
 const MAX_PREFETCH_TILES = 24;
+// Ceiling on prefetch fetches in flight at once. Each warmed position expands to one fetch per
+// channel, so `MAX_PREFETCH_TILES` positions x up to MAX_VISIBLE_CHANNELS channels is >100
+// chunk requests — firing them all synchronously (they bypass deck's own maxRequests throttle,
+// since prefetch calls loader.getTile directly) exhausts the browser's pending-request pool
+// (ERR_INSUFFICIENT_RESOURCES / ERR_QUIC_PROTOCOL_ERROR). Drain them a few at a time instead.
+const PREFETCH_CONCURRENCY = 4;
 // Bound on the warmed-tile memo so it can't grow without limit over a long session.
 const SEEN_LIMIT = 4000;
+
+// Run jobs with at most `concurrency` in flight, stopping early once `signal` aborts (the
+// camera moved). In-flight getTile calls carry the same signal and abort themselves.
+async function drainWithLimit(
+  jobs: Array<() => Promise<void>>,
+  concurrency: number,
+  signal: AbortSignal,
+): Promise<void> {
+  let next = 0;
+  const worker = async () => {
+    while (next < jobs.length && !signal.aborted) {
+      await jobs[next++]();
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, jobs.length) }, worker),
+  );
+}
 
 function scheduleIdle(cb: () => void): () => void {
   const ric = (globalThis as { requestIdleCallback?: (cb: () => void) => number }).requestIdleCallback;
@@ -106,6 +130,7 @@ export function useImageTilePrefetch(
         }
 
         let budget = MAX_PREFETCH_TILES;
+        const jobs: Array<() => Promise<void>> = [];
         for (const { level, x, y } of tiles) {
           if (budget <= 0) break;
           const key = `${level}:${x}:${y}`;
@@ -113,8 +138,10 @@ export function useImageTilePrefetch(
           seen.add(key);
           budget -= 1;
           for (const selection of selections) {
-            loader[level].getTile({ x, y, selection, signal: controller.signal })
-              .catch(() => { /* aborted, 404 fill chunk, or transient — deck will refetch */ });
+            jobs.push(() =>
+              loader[level].getTile({ x, y, selection, signal: controller.signal })
+                .then(() => { /* discard the decoded tile; the point is the browser cache entry */ })
+                .catch(() => { /* aborted, 404 fill chunk, or transient — deck will refetch */ }));
           }
         }
         // Bound the memo: drop the oldest keys once it overflows (Set preserves insert order).
@@ -123,6 +150,7 @@ export function useImageTilePrefetch(
           const it = seen.values();
           for (let i = 0; i < excess; i++) seen.delete(it.next().value as string);
         }
+        void drainWithLimit(jobs, PREFETCH_CONCURRENCY, controller.signal);
       });
     }, PREFETCH_SETTLE_MS);
 

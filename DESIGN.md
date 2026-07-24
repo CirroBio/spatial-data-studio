@@ -791,8 +791,10 @@ The level a zoom-in will load is `-ceil(zoom)` clamped to `[-(levels-1), 0]` (de
 `getTileIndices` math for a non-geospatial `OrthographicView`), so the finer level to warm is
 that minus one. It runs in a camera-keyed effect (never the layer memo, so the image layer is
 never rebuilt), aborts in flight the instant the camera moves again, skips tiles already warmed
-(a bounded LRU set, reset when the store URL changes), and caps tiles per pass so a zoomed-out
-view of a deep pyramid can't enqueue hundreds of fetches. This also softens the level-transition
+(a bounded LRU set, reset when the store URL changes), caps tile positions per pass, and — since
+each position expands to one fetch per channel and these bypass deck's own `maxRequests` throttle
+— drains them at most `PREFETCH_CONCURRENCY` in flight, so a multi-channel image can't flood the
+browser's request pool (`ERR_INSUFFICIENT_RESOURCES`). This also softens the level-transition
 "pop": the finer level is already resident when the switch happens, so it sharpens in place
 immediately instead of after a network round-trip.
 
