@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import * as Tabs from '@radix-ui/react-tabs';
+import PanelTabs, { type PanelTab } from './PanelTabs';
 import { useAppStore } from '../store/sessionStore';
 import { deleteHistoryEntry, getRecipe, importRecipe, getSession, runAllPending } from '../api';
 import { reportError } from '../lib/errors';
@@ -13,9 +14,10 @@ import { TourAnchors } from '../tours';
 
 type SidebarTab = 'compute' | 'plots' | 'regions' | 'annotations' | 'subsetting';
 
-// The left-nav tabs render icon-only; the active one expands to icon + label.
-// Icons follow the app's inline-SVG convention (24×24, stroke=currentColor).
-const SIDEBAR_TABS: { id: SidebarTab; label: string; icon: React.ReactNode }[] = [
+// The left-nav tabs render icon-only; the active one expands to icon + label
+// (collapseInactive). Icons follow the app's inline-SVG convention (24×24,
+// stroke=currentColor).
+const SIDEBAR_TABS: PanelTab<SidebarTab>[] = [
   {
     id: 'compute',
     label: 'Compute',
@@ -231,26 +233,19 @@ export default function Sidebar() {
         onValueChange={(v) => setSidebarTab(v as SidebarTab)}
         className="flex flex-col flex-1 overflow-hidden"
       >
-        <Tabs.List data-tour={TourAnchors.SidebarTabs} className="flex items-stretch border-b border-border shrink-0">
-          {SIDEBAR_TABS.map(({ id, label, icon }) => {
-            const active = sidebarTab === id;
-            const disabled = readOnly && MUTATING_TABS.includes(id);
-            return (
-              <Tabs.Trigger
-                key={id}
-                value={id}
-                title={disabled ? `${label} (unavailable — viewing a read-only snapshot)` : label}
-                disabled={disabled}
-                className={`flex items-center justify-center gap-1.5 py-2 min-w-0 text-muted data-[state=active]:text-text data-[state=active]:border-b-2 data-[state=active]:border-accent disabled:opacity-30 disabled:cursor-not-allowed transition-colors ${
-                  active ? 'flex-1 px-2' : 'px-1.5'
-                }`}
-              >
-                <span className="shrink-0">{icon}</span>
-                {active && <span className="text-[11px] font-medium truncate">{label}</span>}
-              </Tabs.Trigger>
-            );
+        <PanelTabs
+          tabs={SIDEBAR_TABS.map((t) => {
+            const disabled = readOnly && MUTATING_TABS.includes(t.id);
+            return {
+              ...t,
+              disabled,
+              title: disabled ? `${t.label} (unavailable — viewing a read-only snapshot)` : t.label,
+            };
           })}
-        </Tabs.List>
+          value={sidebarTab}
+          collapseInactive
+          dataTour={TourAnchors.SidebarTabs}
+        />
 
         <Tabs.Content value="compute" className="flex-1 overflow-y-auto">
           <HistoryList

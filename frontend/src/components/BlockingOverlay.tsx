@@ -1,23 +1,24 @@
 import { useAppStore } from '../store/sessionStore';
 import { cancelJob } from '../api';
 
-// Blocks the whole UI while a "save session" job is in flight. The queue only
-// supports cancelling a QUEUED job (RUNNING is non-interruptible, DESIGN §6.1),
-// so Stop either cancels cleanly or reports that the write already started.
-export default function SavingOverlay() {
-  const { activeSessionId, savingJobId, setSavingJobId, removeActiveJob, pushNotification } = useAppStore();
+// Blocks the whole UI while a long, session-mutating special job is in flight
+// (save / transform / subset), showing the job's own label. The queue only supports
+// cancelling a QUEUED job (RUNNING is non-interruptible, DESIGN §6.1), so Stop either
+// cancels cleanly or reports that the write already started.
+export default function BlockingOverlay() {
+  const { activeSessionId, blockingJob, setBlockingJob, removeActiveJob, pushNotification } = useAppStore();
 
-  if (!activeSessionId || !savingJobId) return null;
+  if (!activeSessionId || !blockingJob) return null;
 
   function handleStop() {
-    cancelJob(activeSessionId!, savingJobId!)
+    cancelJob(activeSessionId!, blockingJob!.id)
       .then(() => {
-        removeActiveJob(savingJobId!);
-        setSavingJobId(null);
-        pushNotification({ kind: 'info', message: 'Save cancelled.' });
+        removeActiveJob(blockingJob!.id);
+        setBlockingJob(null);
+        pushNotification({ kind: 'info', message: 'Operation cancelled.' });
       })
       .catch(() => {
-        pushNotification({ kind: 'info', message: "Save is already writing to disk and can't be stopped." });
+        pushNotification({ kind: 'info', message: "The operation already started and can't be stopped." });
       });
   }
 
@@ -25,13 +26,13 @@ export default function SavingOverlay() {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-[1px]">
       <div className="flex flex-col items-center gap-3">
         <div className="w-8 h-8 rounded-full border-2 border-border border-t-accent animate-spin" />
-        <span className="text-sm text-white">Saving session…</span>
+        <span className="text-sm text-white">{blockingJob.label}</span>
       </div>
 
       <button
         type="button"
         onClick={handleStop}
-        title="Stop saving"
+        title="Stop"
         className="absolute bottom-4 right-4 flex items-center gap-1 px-2.5 py-1 rounded border border-border/70 bg-surface/80 text-[11px] text-muted hover:text-text hover:border-accent transition-colors"
       >
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">

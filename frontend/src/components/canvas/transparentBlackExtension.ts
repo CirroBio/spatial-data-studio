@@ -17,10 +17,7 @@ import { LayerExtension } from '@deck.gl/core';
 // once any channel saturates) while fading smoothly to the backdrop color as
 // intensity drops toward zero, on ANY backdrop color.
 //
-// Neither deck.gl's BitmapLayer (WebP tile path, useImageTiles.ts) nor Viv's
-// XRLayer (useVivImageLayer.ts) has a built-in mechanism for this (BitmapLayer's
-// own `transparentColor` prop blends a semi-transparent *source* image with a
-// background color — not applicable to an always-opaque composited image), but
+// Viv's XRLayer (useVivImageLayer.ts) has no built-in mechanism for this, but
 // both call DECKGL_FILTER_COLOR(color, geometry) near the end of their fragment
 // shader, so one shared extension injected there works for either layer.
 //

@@ -109,6 +109,7 @@ export interface ChannelState {
   visible: boolean;
   name: string;
   color?: string;
+  contrast_limits?: [number, number];  // per-channel [min,max] override; unset = server default
 }
 
 export interface DisplayEncoding {
@@ -132,6 +133,11 @@ export interface DisplayEncoding {
   // fills from `shapes_layer` once zoomed in far enough that the viewport-culled set
   // fits. The legacy value 'shapes' is read as 'points+shapes'.
   render_mode?: 'points' | 'points+shapes' | 'shapes';
+  // Cell-boundary overlay style (render_mode 'points+shapes'). 'filled' (default)
+  // fills each polygon with the cell's color; 'outline' draws only the boundary
+  // stroke at `boundary_line_width` screen pixels.
+  boundary_style?: 'filled' | 'outline';
+  boundary_line_width?: number;         // outline stroke width in pixels; defaults to 1
   point_marker?: 'circle' | 'square' | 'hexagon';  // point glyph shape; defaults to circle
   invert_x?: boolean;                   // mirror the plot horizontally; defaults off
   invert_y?: boolean;                   // mirror the plot vertically; defaults off
@@ -245,7 +251,8 @@ export interface ImageInfo {
   client_compositing?: boolean;
   raster_base_url?: string;   // "/api/sessions/{sid}/raster/{element}" (no trailing slash)
   zarr_group_path?: string;   // "images/{element}"
-  contrast_limits?: [number, number][];  // per channel, order matches channel_names
+  contrast_limits?: [number, number][];  // per channel default [min,max], order matches channel_names
+  contrast_range?: [number, number][];   // per channel [min,max] data range — the domain for contrast sliders
   is_rgb?: boolean;           // true-color 3-channel image shown as-is, not tinted
 }
 

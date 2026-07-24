@@ -39,6 +39,17 @@ export SDS_DATA_DIR="${SDS_DATA_DIR:-$PWD/$DATA_SUBDIR}"
 export SDS_CONTAINER_MEM_MB="${SDS_CONTAINER_MEM_MB:-16384}"
 mkdir -p "$SDS_DATA_DIR"
 
+# Transient working set (unpacked archives + per-session raster caches, each up to a
+# few hundred MB) lives under WORK_DIR. The backend defaults it to the system temp dir,
+# where killed/exited sessions used to leave the dirs behind and pile up into many GB.
+# So own a dedicated WORK_DIR for this run and delete it on exit (see the cleanup trap).
+# If SDS_WORK_DIR is preset (e.g. a sized tmpfs mount), respect it and don't touch it.
+if [[ -z "${SDS_WORK_DIR:-}" ]]; then
+  SDS_WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/sds-work.XXXXXX")"
+  OWN_WORK_DIR=1
+fi
+export SDS_WORK_DIR
+
 # --reload is unusable here: the long-lived SSE stream (/api/events) never
 # closes, so the reloader hangs on "Waiting for connections to close" on any
 # backend edit. Restart this script manually after backend changes.
@@ -49,5 +60,12 @@ BACKEND_PID=$!
 FRONTEND_PID=$!
 
 echo "$BACKEND_PID $FRONTEND_PID" > "$PIDFILE"
-trap 'rm -f "$PIDFILE"; kill -- "-$BACKEND_PID" "-$FRONTEND_PID" 2>/dev/null' EXIT INT TERM
+# On exit (normal, Ctrl-C, or stop.sh's TERM to the process group): stop both servers
+# and, if we own the WORK_DIR, delete it so a session's multi-GB temp dirs never leak.
+cleanup() {
+  rm -f "$PIDFILE"
+  kill -- "-$BACKEND_PID" "-$FRONTEND_PID" 2>/dev/null || true
+  if [[ -n "${OWN_WORK_DIR:-}" ]]; then rm -rf "$SDS_WORK_DIR"; fi
+}
+trap cleanup EXIT INT TERM
 wait "$BACKEND_PID" "$FRONTEND_PID"

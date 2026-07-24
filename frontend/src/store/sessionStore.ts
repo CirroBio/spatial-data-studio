@@ -90,6 +90,18 @@ interface AppStore {
   // the in-progress ring being clicked out.
   drawPolygons: [number, number][][];
   drawRing: [number, number][];
+  // Count of cells inside the current drawn region (union of committed rings + the
+  // closeable in-progress ring), computed by the active canvas from its plotted
+  // positions and surfaced on the Regions/Subset action buttons. 0 when nothing drawn.
+  regionCellCount: number;
+  setRegionCellCount: (n: number) => void;
+  // Explicit table-row indices of the cells inside the drawn region, set by the
+  // embedding canvas (whose lasso is in embedding/screen space, resolved to cells on
+  // the client). null on the spatial canvas, where the backend resolves the lasso via
+  // polygon_query — so a non-null value tells the Regions/Subset panels to send
+  // cell_indices instead of polygons.
+  regionCellIndices: number[] | null;
+  setRegionCellIndices: (idx: number[] | null) => void;
   addDrawVertex: (pt: [number, number]) => void;
   commitDrawRing: () => void;
   clearDraw: () => void;
@@ -135,9 +147,10 @@ interface AppStore {
   appendJobLog: (jobId: string, chunk: string) => void;
   clearJobLog: (jobId: string) => void;
 
-  // the in-flight "save session" job, if any — drives the blocking save overlay
-  savingJobId: string | null;
-  setSavingJobId: (jobId: string | null) => void;
+  // the in-flight UI-blocking job (save / transform / subset), if any — drives the
+  // full-screen blocking overlay, whose spinner shows `label` until the job lands
+  blockingJob: { id: string; label: string } | null;
+  setBlockingJob: (job: { id: string; label: string } | null) => void;
 
   // transient notifications (e.g. a compute job that failed and vanished from history)
   notifications: AppNotification[];
@@ -367,6 +380,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   drawPolygons: [],
   drawRing: [],
+  regionCellCount: 0,
+  setRegionCellCount: (n) => set({ regionCellCount: n }),
+  regionCellIndices: null,
+  setRegionCellIndices: (idx) => set({ regionCellIndices: idx }),
   addDrawVertex: (pt) => set((s) => ({ drawRing: [...s.drawRing, pt] })),
   commitDrawRing: () =>
     set((s) => (s.drawRing.length >= 3
@@ -452,8 +469,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       return { jobLogs: next };
     }),
 
-  savingJobId: null,
-  setSavingJobId: (jobId) => set({ savingJobId: jobId }),
+  blockingJob: null,
+  setBlockingJob: (job) => set({ blockingJob: job }),
 
   notifications: [],
   pushNotification: (n) =>

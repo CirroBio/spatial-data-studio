@@ -22,22 +22,20 @@ import numpy as np
 from .config import config
 
 TILE_SIZE = 512
-_TILE_CACHE_MAX = 512  # composited tile images kept in memory (LRU)
 
-# Composited display tiles ship as WebP, not PNG: these are already a lossy
-# display render (contrast-clipped uint8 RGB), so lossy encoding costs no source
-# fidelity and is ~10-16x smaller on the wire than PNG. Browsers decode WebP
-# natively via the <img> tile path, so the frontend needs no change.
+# The DataInspector element preview is a server-composited WebP thumbnail (the canvas
+# itself composites client-side via Viv). WebP over PNG: already a lossy display render
+# (contrast-clipped uint8 RGB), so lossy encoding costs no source fidelity and is
+# ~10-16x smaller on the wire; browsers decode it natively via <img>.
 TILE_IMAGE_FORMAT = "WEBP"
 TILE_IMAGE_MEDIA_TYPE = "image/webp"
 TILE_WEBP_QUALITY = 80
 
-# element pixels -> composited tile image bytes, and element -> per-channel norm.
+# element -> per-channel percentile norm (shared by the thumbnail compositor).
 # Keyed by (id(sdata), ...). id() is only unique among *live* objects, so entries
 # MUST be evicted when a session closes (see evict_caches): otherwise they leak, and
 # a later session whose sdata is allocated at the same address would read another
-# image's stale norm/tiles for a same-named element.
-_tile_cache: "OrderedDict[tuple, bytes]" = OrderedDict()
+# image's stale norm for a same-named element.
 _norm_cache: "OrderedDict[tuple, np.ndarray]" = OrderedDict()
 _NORM_CACHE_MAX = 256  # per-channel norm arrays kept in memory (LRU)
 
@@ -59,9 +57,8 @@ def evict_caches(sdata) -> None:
     released so a reused id() can't serve another image's cached norm/tiles/chunks."""
     global _raster_chunk_bytes
     sid = id(sdata)
-    for cache in (_tile_cache, _norm_cache):
-        for key in [k for k in cache if k[0] == sid]:
-            cache.pop(key, None)
+    for key in [k for k in _norm_cache if k[0] == sid]:
+        _norm_cache.pop(key, None)
     with _raster_chunk_lock:
         for key in [k for k in _raster_chunk_cache if k[0] == sid]:
             _raster_chunk_bytes -= len(_raster_chunk_cache.pop(key))
@@ -226,6 +223,17 @@ def channel_contrast_limits(sdata, element) -> list[float]:
     return [float(x) for x in _channel_norm(sdata, element)]
 
 
+def channel_value_range(sdata, element) -> list[tuple[float, float]]:
+    """Per-channel [min, max] intensity over the coarsest level — the domain the client
+    uses for its contrast sliders. The default upper bound (channel_contrast_limits)
+    normally sits inside this range; the client widens the domain to include it."""
+    arr = _image_array(sdata, element)
+    data = np.asarray(arr.data if hasattr(arr, "data") else arr)
+    if data.ndim == 2:
+        data = data[None, :, :]
+    return [(float(data[c].min()), float(data[c].max())) for c in range(data.shape[0])]
+
+
 def _is_rgb(sdata, element) -> bool:
     """True for a true-color RGB image that must be shown as-is, not tinted like a
     fluorescence stack. Heuristic: 3 uint8 channels whose labels are the RGB triple
@@ -387,37 +395,6 @@ def image_info(sdata, element, table=None) -> dict:
             "tile_size": TILE_SIZE}
 
 
-def tile_image(sdata, element, level: int, col: int, row: int,
-               channel_colors: dict[int, tuple[int, int, int]] | None = None) -> bytes:
-    """One TILE_SIZE tile at pyramid `level`, tile grid (col, row), WebP-encoded. Cached."""
-    chanspec = tuple(sorted(channel_colors.items())) if channel_colors else None
-    key = (id(sdata), element, level, col, row, chanspec)
-    cached = _tile_cache.get(key)
-    if cached is not None:
-        _tile_cache.move_to_end(key)
-        return cached
-
-    from PIL import Image
-    arr = _level_array(sdata.images[element], level)
-    h, w = arr.shape[-2], arr.shape[-1]
-    x0, x1 = col * TILE_SIZE, min((col + 1) * TILE_SIZE, w)
-    y0, y1 = row * TILE_SIZE, min((row + 1) * TILE_SIZE, h)
-    if x0 >= x1 or y0 >= y1:
-        raise KeyError(f"tile out of range: level={level} col={col} row={row}")
-
-    region = arr[..., y0:y1, x0:x1]
-    data = np.asarray(region.data if hasattr(region, "data") else region)
-    hwc = _composite(data, _channel_norm(sdata, element), channel_colors, rgb=_is_rgb(sdata, element))
-    buf = io.BytesIO()
-    Image.fromarray(hwc).save(buf, format=TILE_IMAGE_FORMAT, quality=TILE_WEBP_QUALITY)
-    encoded = buf.getvalue()
-
-    _tile_cache[key] = encoded
-    if len(_tile_cache) > _TILE_CACHE_MAX:
-        _tile_cache.popitem(last=False)
-    return encoded
-
-
 def thumbnail_image(
     sdata, element, max_px: int = 2048, channel_colors: dict[int, tuple[int, int, int]] | None = None
 ) -> bytes:
@@ -433,54 +410,3 @@ def thumbnail_image(
     return buf.getvalue()
 
 
-def region_png(sdata, element, world_bbox, table=None, out_px: int = 2048,
-               channel_colors: dict[int, tuple[int, int, int]] | None = None) -> tuple[bytes, list[float]]:
-    """Composite a world-space rectangle at higher resolution than the whole-image
-    thumbnail: clamp the requested bbox to the image extent, pick the coarsest
-    pyramid level whose crop is still >= `out_px` on its long side (then downscale
-    to out_px), and return (png, world bounds actually covered). Used for snapshots
-    of the current viewport. Assumes an axis-aligned pixel->world mapping (the
-    scale+translate common to Visium/Xenium); rotation is approximated by the
-    axis-aligned pixel crop."""
-    from PIL import Image
-    info = image_info(sdata, element, table)
-    a, b, c, d, e, f = info["pixel_to_world"]
-    m = np.array([[a, b, c], [d, e, f], [0, 0, 1]])
-    minv = np.linalg.inv(m)
-
-    # World rect -> level-0 pixel AABB, clamped to the image.
-    wx0, wy0, wx1, wy1 = world_bbox
-    px_bbox = _apply_bbox(minv, [wx0, wy0, wx1, wy1])
-    w0, h0 = info["width"], info["height"]
-    px0 = max(0, int(np.floor(min(px_bbox[0], px_bbox[2]))))
-    py0 = max(0, int(np.floor(min(px_bbox[1], px_bbox[3]))))
-    px1 = min(w0, int(np.ceil(max(px_bbox[0], px_bbox[2]))))
-    py1 = min(h0, int(np.ceil(max(px_bbox[1], px_bbox[3]))))
-    if px0 >= px1 or py0 >= py1:
-        raise ValueError("viewport does not overlap the image")
-
-    # Coarsest level whose crop still has >= out_px on its long side (finest first).
-    levels = info["levels"]
-    chosen = 0
-    for i, lv in enumerate(levels):
-        s = lv["width"] / w0
-        if max((px1 - px0) * s, (py1 - py0) * s) >= out_px:
-            chosen = i
-        else:
-            break
-
-    sL = levels[chosen]["width"] / w0
-    lx0, lx1 = int(px0 * sL), max(int(px0 * sL) + 1, int(round(px1 * sL)))
-    ly0, ly1 = int(py0 * sL), max(int(py0 * sL) + 1, int(round(py1 * sL)))
-    arr = _level_array(sdata.images[element], chosen)
-    region = arr[..., ly0:ly1, lx0:lx1]
-    data = np.asarray(region.data if hasattr(region, "data") else region)
-    hwc = _composite(data, _channel_norm(sdata, element), channel_colors, rgb=_is_rgb(sdata, element))
-    img = Image.fromarray(hwc)
-    if max(img.size) > out_px:
-        img.thumbnail((out_px, out_px))
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    # World bounds actually covered = clamped level-0 pixel box mapped back through m.
-    bounds = _apply_bbox(m, [px0, py0, px1, py1])
-    return buf.getvalue(), bounds

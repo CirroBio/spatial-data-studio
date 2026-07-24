@@ -35,3 +35,8 @@ __pycache__/
 .nextflow/
 .nextflow.log*
 work/
+
+# worktree-local symlinks to the shared venv/data dirs (not the tracked dirs above)
+/.venv-introspect
+/data
+/test-data

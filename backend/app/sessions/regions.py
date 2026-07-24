@@ -22,6 +22,20 @@ PALETTE = ["#c1432b", "#2b6cc1", "#3a9e54", "#d4972b", "#8e5bc4", "#39a6a6",
            "#c44e9b", "#7a8b3a", "#b5b5b5"]
 
 
+def _membership_from_indices(adata, cell_indices: list[int]) -> np.ndarray:
+    """Boolean mask from explicit table-row indices — the selection made on the
+    embedding view (2D point-in-polygon, or 3D projected-into-region), where the drawn
+    region lives in embedding/screen space, not the spatial coordinate system, so the
+    frontend resolves the cells and sends their row indices instead of a lasso."""
+    inside = np.zeros(adata.n_obs, dtype=bool)
+    idx = np.asarray(cell_indices, dtype=int)
+    idx = idx[(idx >= 0) & (idx < adata.n_obs)]
+    if idx.size == 0:
+        raise ValueError("selection contains zero cells")
+    inside[idx] = True
+    return inside
+
+
 def _membership(adata, payload: dict, affine6: list[float]) -> np.ndarray:
     """Boolean mask of cells whose spatial coords fall inside any drawn ring. The
     lasso rings arrive in *world* space (the canvas draws obsm['spatial'] after the
@@ -68,7 +82,9 @@ def assign(session, payload: dict) -> list:
             and set_name not in region_cols):
         raise ValueError(f"'{set_name}' is an existing non-categorical column; choose a different region set name")
 
-    inside = _membership(adata, payload, transform.get_affine6(session.sdata, adata))
+    cell_indices = payload.get("cell_indices")
+    inside = (_membership_from_indices(adata, cell_indices) if cell_indices is not None
+              else _membership(adata, payload, transform.get_affine6(session.sdata, adata)))
 
     # obs categorical column, "unassigned" by default (single-label partition, §2)
     col = adata.obs.get(set_name)

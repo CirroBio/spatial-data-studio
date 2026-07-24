@@ -552,14 +552,26 @@ as the child's immutable base — **not** as a compute-history step.
 1. With the **Subsetting** tab active, the canvas selection mode arms a fork.
 2. User draws box / lasso / circle via editable-layers, producing polygon vertices in
    the display's coordinate system. Multiple regions allowed (union).
-3. User clicks **"Subset to selection."**
-4. Frontend POSTs polygon vertices + target coordinate system to the backend.
+3. Once the region is **finished** (committed, no partially-drawn ring open), the user
+   clicks either **"Only keep cells in region"** or **"Remove cells in region."**
+4. Frontend POSTs polygon vertices + target coordinate system to the backend, with
+   `invert:true` for the remove-in-region variant.
 5. Backend builds a `shapely` polygon and calls `spatialdata.polygon_query(sdata,
-   polygon, target_coordinate_system=...)`.
+   polygon, target_coordinate_system=...)`. For `invert`, it queries the complement
+   (the object's padded extent box with the selection cut out), keeping cells outside.
 6. A **new child session** is created from the query result.
 
 ### 8.2 Backend notes
 
+- **Embedding-view selection.** Region labeling and subset are also available from the
+  embedding canvas. Its lasso lives in embedding space (2D) or, in 3D, screen space —
+  neither is a spatial coordinate system, so `polygon_query` doesn't apply. The frontend
+  resolves the enclosed cells to **table-row indices** (2D point-in-polygon on the obsm
+  coords; 3D projects each cell through the live camera and tests the screen-space ring —
+  so it catches every cell *visible* within the region) and sends `cell_indices` instead
+  of `polygons`. Labeling then masks obs directly; subset filters the table by the mask
+  and matches the linked elements with `spatialdata.match_sdata_to_table` (a table with no
+  linked elements becomes a table-only child). `invert` keeps the complement of the mask.
 - `polygon_query` selects elements that **intersect** the polygon; `bounding_box_query`
   selects by **center containment**. Use `polygon_query` for lasso/freeform.
 - Performance caveat: if the object has a large `points` element, `polygon_query` can be
@@ -600,6 +612,8 @@ library calls but with a signature **defined by the application**:
 | `opacity` | number (0–1) | — |
 | `channels` | per-index list | image channel visibility / name / color |
 | `render_mode` | `points` \| `points+shapes` | cell render (§9.10); `points` is default (legacy `shapes` == `points+shapes`) |
+| `boundary_style` | `filled` \| `outline` | cell-boundary overlay style (§9.10); `filled` is default, `outline` strokes the boundary only |
+| `boundary_line_width` | number (pixels) | outline stroke width when `boundary_style: outline`; defaults to 1 |
 | `invert_x` / `invert_y` | bool | Spatial-only; mirror the plot horizontally / vertically (camera-level, see §9.2) |
 | `background` | `light` \| `dark` | Spatial-only per-plot backdrop; unset follows the app theme |
 
@@ -613,7 +627,7 @@ so datasets with tens of thousands of genes stay responsive.
 
 - Cell centroids → `ScatterplotLayer` with **binary attributes** (position Float32Array
   from Arrow; color from a category-index + palette, or continuous value + colormap).
-- Cell boundaries → the points + boundary-fill overlay segmentation display (§9.10).
+- Cell boundaries → the points + boundary overlay segmentation display (§9.10).
 - Tissue image → `BitmapLayer`(s) fed from the multiscale pyramid (§9.3).
 - Selection → editable-layers overlay (Polygon/Path/Scatterplot draw modes).
 
@@ -698,58 +712,54 @@ color. State lives in the display spec, so it persists to `.zarr.zip`, is restor
 load, and is captured in snapshots (§14). A togglable legend overlays a swatch + label
 for every visible channel.
 
-**Two compositing paths.** The controls above drive one of two compositing back-ends,
-chosen per image and transparent to the user. When the image qualifies, the browser
-composites on the **GPU**: it reads the session's normalized raster **Zarr v3** store
-directly — zarrita over a byte-range route `GET /api/sessions/{id}/raster/{element}/{key}`
-(Range/HEAD) — and **Viv**'s `MultiscaleImageLayer` blends channels additively on black,
-with per-channel color and contrast as shader uniforms, so contrast/color/visibility
-edits are instant with no server round-trip. RGB/H&E images pass through as true color.
-The server advertises this per image in `/image/{element}/info` (`client_compositing`),
-gated by `SDS_CLIENT_IMAGE_COMPOSITING` (**default on**, opt out with `=0`) and a channel
-cap `SDS_CLIENT_IMAGE_MAX_CHANNELS` (default 6). `normalize_rasters` (§9.3) registers a
-served store for every image — a freshly rebuilt one for a non-canonical image or for a
-canonical one whose backing store isn't already under `WORK_DIR` (e.g. a bare `.zarr`
-directory read in place from a mounted/object-store path — see §9.3), or `sdata.path`
-itself for a canonical image already local (e.g. reopened from a checkpoint) — so above the
-channel cap is the only ordinary reason `client_compositing` is false; the client then
-falls back to the **server-composited WebP tiles** (§9.3) — the same additive
-percentile-normalized blend. A dev-only escape hatch
-`localStorage['sds:disableClientCompositing']='1'` also forces the WebP tile path.
+**Client-side (Viv) compositing — the only canvas image path.** The browser composites the
+image on the **GPU** with Viv's own `MultiscaleImageLayer`: it reads the session's normalized
+raster **Zarr v3** store directly — zarrita over a byte-range route
+`GET /api/sessions/{id}/raster/{element}/{key}` (Range/HEAD) — and blends channels additively
+on black, with per-channel color and contrast as shader uniforms, so contrast/color/visibility
+edits are instant with no server round-trip. An RGB/H&E image is composited the same way, its
+three channels just defaulting to red/green/blue (so the additive blend reproduces true color)
+and keeping black opaque (`is_rgb` skips the transparent-black extension, since black is real
+data); those channels are editable like any other, not a fixed passthrough. The
+server advertises the store per image in `/image/{element}/info` (`client_compositing`), true
+whenever `SDS_CLIENT_IMAGE_COMPOSITING` (**default on**) is set and `normalize_rasters` (§9.3)
+registered a served store for the element — which it does for every image (a freshly rebuilt
+store, or `sdata.path` for a canonical-and-local one; §9.3). There is **no server-composited
+canvas fallback**; disabling the flag turns the canvas image off entirely.
 
-The client path streams full-resolution tiles with a **custom tiled layer** rather than Viv's
-`MultiscaleImageLayer`: that tiled layer's deck.gl `TileLayer` never updates its tileset under
-our world-coordinate `OrthographicView` + non-unit `pixel_to_world` scale (Xenium ~0.2125
-um/px), so it renders nothing. Instead `useVivImageLayer.ts` reuses the exact
-world-coordinate tile selection the WebP tile path uses (`useImageTiles`: pick the pyramid level for
-the current zoom, inverse-affine the viewport to the visible tile bbox) and renders a Viv
-`XRLayer` per visible tile — fetching raw channel data via the pyramid `PixelSource`
-(`loader[level].getTile`) and compositing on the GPU — over a coarse Viv `ImageLayer` base.
-Every XRLayer shares one level-0 pixel->world
-`modelMatrix` and expresses its bounds in level-0 pixels, so the scaled/rotated affine
-positions each tile exactly where the points are. Bounds use `[px0, py1, px1, py0]`
-(row-0 side `py0` as `bounds[3]`=top, matching the WebP tile path's `quad`): this app's world /
-`OrthographicView` is y-up (a cell at world y=0 sits at the screen bottom), so image row 0
-(pixel py=0 → world y=0 via the affine) must land at the bottom to align with the points. Deep zoom fetches only the visible finest-level tiles
-(a ~3x3 grid of level-0 tiles at high zoom), so there is no resolution penalty versus the
-WebP tile path. It is **on by default** (`SDS_CLIENT_IMAGE_COMPOSITING`, disable with `=0`);
-verified live across single- and multi-channel fluorescence (additive-on-black), RGB/H&E
-true-color passthrough, deep-zoom streaming, and image<->points alignment. See
-`docs/CONTRACT.md` for the info/route schemas.
+**At most 6 channels at once.** Viv composites up to 6 channels in one shader pass, so the
+channel picker caps *visible* channels at 6: a >6-channel image shows a user-chosen subset
+(toggle which ≤6 to display, plus per-channel rename, **any** color via a native color input
+alongside the preset palette, and an independent **contrast min/max** window). Names, colors,
+and per-channel `contrast_limits` (`[min,max]`) live in the display spec, so they persist to
+`.zarr.zip`, restore on load, and are captured in snapshots (§14). The contrast sliders span
+`/image/info`'s `contrast_range` (per-channel data min/max) and default to `contrast_limits`;
+an unset per-channel `contrast_limits` means "use the server default". The frontend sends only
+the visible channels' selections (and their effective contrast) to Viv.
 
-**Handoff from the WebP path.** Viv's raw per-channel chunks are larger on the wire than
-the server-composited display-WebP tiles (~10-16x) and fan out into many per-tile browser
-requests, so on a slow/remote store they sharpen the view *later* than the WebP path would.
-To avoid staring at Viv's coarse base blown up into blocks during that window, the canvas
-keeps rendering the WebP path (its own coarse thumbnail + streaming WebP detail tiles) and
-only swaps to Viv once Viv has **fully covered the viewport at least once** — base decoded
-*and* every detail tile for the current view present (`useVivImageLayer`'s `active`, latched
-in `SpatialCanvas` as `vivActive ? vivLayers : imageLayers`). The latch is sticky: once Viv
-has proven it can cover the view, later pans/zooms stay on Viv (its instant shader-uniform
-recolor is the whole point) and tolerate its normal coarse-base-then-stream refresh. A store
-too slow for Viv to ever fully cover simply never activates and stays on the WebP path — the
-correct behavior there, since WebP sharpens faster on a slow link and still recolors (by
-refetch) when channel controls change.
+The Spatial display-settings panel is organised into three icon tabs — **View** (layer
+visibility, axis inversion, background, zoom, and the Fit-to-data / Edit-points-transform
+actions), **Cells** (render mode, point size/geometry, boundary style, color-by, legend,
+opacity), and **Image** (channel legend + the per-channel picker above) — rendered with the
+same `PanelTabs` component as the left sidebar's tabs (one-word labels, sidebar-style icons,
+collapsing to icon-only when unselected).
+
+**Image-pixel coordinate space.** When a display has an image, the canvas's `OrthographicView`
+works in that image's own level-0 pixel space, so `MultiscaleImageLayer` sits at its native
+extent `[0,0,W,H]` with no modelMatrix and deck.gl's `TileLayer` selects/streams pyramid tiles
+natively (the case Viv is built for) — keeping the best-available coarser tile visible and
+dropping it as finer tiles arrive, so loading sharpens in place with no bespoke coarse-base
+bookkeeping. The cell points and every other world-space overlay (shapes, lasso, regions)
+instead carry a `world→pixel` modelMatrix (`imageAffine.worldToPixelAffine` — the inverse of
+`pixel_to_world`), and picked/drawn coordinates are mapped back to world at capture, so the
+stored geometry and the backend contract stay in world coordinates. Point radii (world units)
+are rescaled by `1/affineScale` into the pixel frame. A display with no image stays in world
+space (identity). On a slow/remote store the coarse tiles show until finer ones arrive; the
+mitigation is a RAM-backed `WORK_DIR` (§23.4), not a second compositing path.
+
+A server-composited WebP **thumbnail** endpoint (`/image/{element}/thumbnail`) remains, used
+only by the DataInspector element preview — not by the canvas. See `docs/CONTRACT.md` for the
+info/route schemas.
 
 The `raster_store` route reads one compressed chunk file per browser request, so a
 pan back over already-seen tiles would re-read each chunk under the session read lock.
@@ -818,7 +828,7 @@ structural diff). The view never silently shows data that no longer matches the 
 The point scatter always draws; cell-boundary fills optionally overlay on top of it. This
 is a **display** of existing segmentation — it never resegments or recomputes boundaries. A
 **Render mode** control persists on the display encoding (`render_mode`): `points` (scatter
-alone) vs `points+shapes` (scatter plus the boundary-fill overlay). The legacy value
+alone) vs `points+shapes` (scatter plus the cell-boundary overlay). The legacy value
 `shapes` maps to `points+shapes`.
 
 - **Point scatter (always on).** The instanced `MarkerScatterplotLayer` (size slider +
@@ -828,11 +838,15 @@ alone) vs `points+shapes` (scatter plus the boundary-fill overlay). The legacy v
   wins each pixel — touching same-color cells read as one contiguous region and overlaps
   don't darken at opacity < 1 (this replaced the separate nearest-cell "field" layer).
 - **Cell-boundary overlay (`render_mode: points+shapes`).** When the session has boundary
-  polygons, their real outlines filled by the per-cell color stack on top of the points,
-  from a `GeoArrowSolidPolygonLayer` fed by viewport-clipped GeoArrow fetched from `GET
+  polygons, their real outlines stack on top of the points, from a `GeoArrowPolygonLayer`
+  fed by viewport-clipped GeoArrow fetched from `GET
   /api/sessions/{id}/shapes/{element}/geoarrow?bbox=…` (`usePolygonBbox.ts`, LRU-cached per
-  viewport bbox + data_version). The fills use the same per-cell colors as the points, so
-  the overlap is seamless and the points fill the gaps between cells.
+  viewport bbox + data_version). A **Boundary style** control (`boundary_style`, default
+  `filled`) chooses between filling each polygon with the per-cell color and drawing only
+  its boundary stroke at `boundary_line_width` screen pixels (`outline`); either way the
+  color is the same per-cell stack as the points, so the overlap is seamless and the points
+  fill the gaps between cells. The composite layer's fill sublayer triangulates on the main
+  thread (`_subLayerProps.fill.earcutWorkerUrl = null`) so nothing is fetched from a CDN.
 - **The fetch gate.** The overlay fetch fires only once a cell is a few pixels across —
   `zoom ≥ shapesFetchZoomThreshold(meanSpacing) = log2(6 / meanSpacing)`
   (`useCanvasViewState.ts`; `meanSpacing = estimateMeanSpacing(positions) ≈ √(bbox_area/n)`).
@@ -899,6 +913,12 @@ lock — identical lifecycle to subset):
    `matplotlib.path.Path.contains_points` over `obsm["spatial"]`, writes
    `obs["<set>"]`, updates the `attrs.regions` registry, and emits a structural diff
    (`obs:<set>`). The polygon is discarded once membership is computed.
+
+An **Annotate region** checkbox (spatial canvas only — shape annotations are tissue
+coordinates) additionally persists the drawn region *as geometry*: one filled-outline
+polygon shape annotation per ring plus a text annotation of the category label at the
+region's centroid (its world-space fontSize scaled to the region's extent). Unlike the
+label itself, these are ordinary shape annotations in `sdata.shapes["annotations"]`.
 
 Three sources land in the same geometry-free representation:
 - **Hand-drawn** (lasso).
@@ -1043,12 +1063,13 @@ auto-generated default (`Session._apply_pinned_view`). The live canvas
 only ever exists inside this running app, never as an artifact viewable elsewhere.
 
 - **Config shape:** `{schema_version, kind, label, created, checkpoint:{name},
-  table, viewport, encoding, render}`. `schema_version` is informational only (no
-  compatibility gate reads it — see below). `render` bakes what a from-scratch
-  reader couldn't derive from the raw arrays alone (image geometry, per-channel
-  `{visible, color, contrast_limit}`), kept even though the live app now serves the
-  open session directly, since `render` doubles as a record of exactly what the
-  saved view looked like.
+  table, viewport, encoding}`. `schema_version` is informational only (no
+  compatibility gate reads it — see below). The pinned display is rebuilt from
+  `encoding` verbatim, so every per-channel setting it carries — visibility, name,
+  custom color, and `contrast_limits` (`[min,max]`) — reproduces exactly as it looked
+  live. (Schema 2.0 also baked a derived `render` manifest with a scalar
+  `contrast_limit` for the old standalone browser viewer; that viewer is gone and
+  nothing read `render`, so 2.1 dropped it.)
 - **Read-only enforcement:** `Session.read_only` is set at construction
   (`create_from_snapshot` → `create_from_load(..., read_only=True)`) and checked by
   every mutating route via `main.py::_writable_session` (403 otherwise) — a real
@@ -1057,7 +1078,7 @@ only ever exists inside this running app, never as an artifact viewable elsewher
   read-only session) but are never persisted.
 - **Immutable target:** saving a snapshot first writes the session to a
   content-hashed checkpoint (so the config points at bytes that won't change under
-  it), then bakes the manifest — both under one continuous read lock so no compute
+  it), then captures the view — both under one continuous read lock so no compute
   can interleave.
 - **Files:** `<name>-<hash>.sview.json` in `DATA_DIR`, alongside the checkpoint it
   references. Both spatial and embedding displays can be snapshotted

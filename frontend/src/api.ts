@@ -141,7 +141,7 @@ export async function browsePath(path?: string, includeFiles = false): Promise<F
 
 export async function subsetSession(
   id: string,
-  body: { polygons: number[][][]; coordinate_system?: string; name?: string }
+  body: { polygons?: number[][][]; cell_indices?: number[]; coordinate_system?: string; name?: string; invert?: boolean }
 ): Promise<{ job_id: string }> {
   const res = await apiFetch(`/api/sessions/${id}/subset`, {
     method: 'POST',
@@ -254,15 +254,11 @@ export async function getImageInfo(sessionId: string, element: string): Promise<
   return res.json() as Promise<ImageInfo>;
 }
 
+// Server-rendered thumbnail of an image element, used by DataInspector's element
+// preview (the canvas itself composites client-side via Viv, not this endpoint).
 export function getImageThumbnailUrl(sessionId: string, element: string, channels?: string): string {
   const q = channels !== undefined ? `?channels=${channels}` : '';
   return `/api/sessions/${sessionId}/image/${element}/thumbnail${q}`;
-}
-
-export function getImageTileUrl(
-  sessionId: string, element: string, level: number, col: number, row: number, channels: string,
-): string {
-  return `/api/sessions/${sessionId}/image/${element}/tile/${level}/${col}/${row}?channels=${channels}`;
 }
 
 export async function searchVarNames(
@@ -511,7 +507,8 @@ export async function saveSession(sessionId: string, path?: string): Promise<{ j
 export async function annotateSession(
   id: string,
   body: {
-    polygons: number[][][];
+    polygons?: number[][][];
+    cell_indices?: number[];  // embedding-view selection (in place of a spatial lasso)
     region_set: string;
     category: string;
     color?: string;

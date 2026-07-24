@@ -210,21 +210,26 @@ class SessionManager:
 
     # ---- subset → child (DESIGN §8) --------------------------------------
     def perform_subset(self, parent: Session, payload: dict) -> Session:
+        import numpy as np
         import spatialdata as sd
-        from shapely.geometry import Polygon, MultiPolygon
-        rings = payload["polygons"]
+        # The embedding view selects by explicit table-row indices (its lasso lives in
+        # embedding/screen space, not a spatial coordinate system); the spatial view
+        # sends lasso rings resolved with polygon_query. Parse rings only for the latter.
+        cell_indices = payload.get("cell_indices")
         polys = []
-        for r in rings:
-            if len(r) < 3:
-                continue
-            p = Polygon(r)
-            if not p.is_valid:           # repair self-intersecting / degenerate lassos
-                p = p.buffer(0)
-            if not p.is_empty:
-                polys.append(p)
-        if not polys:
-            raise ValueError("no valid polygon in selection")
-        geom = polys[0] if len(polys) == 1 else MultiPolygon(polys)
+        if cell_indices is None:
+            from shapely.geometry import Polygon, MultiPolygon
+            for r in payload["polygons"]:
+                if len(r) < 3:
+                    continue
+                p = Polygon(r)
+                if not p.is_valid:           # repair self-intersecting / degenerate lassos
+                    p = p.buffer(0)
+                if not p.is_empty:
+                    polys.append(p)
+            if not polys:
+                raise ValueError("no valid polygon in selection")
+            geom = polys[0] if len(polys) == 1 else MultiPolygon(polys)
 
         # Everything that reads parent.sdata (the query itself and the image/label
         # re-attach) happens under parent's own read lock. close() below acquires
@@ -234,16 +239,58 @@ class SessionManager:
         # isn't reentrant: holding either lock across the close() call would
         # self-deadlock.
         with parent.lock.reading():
-            systems = parent.sdata.coordinate_systems
-            if not (payload.get("coordinate_system") or systems):
-                raise ValueError("object has no coordinate system to subset in")
-            cs = payload.get("coordinate_system") or systems[0]
-            try:
-                result = sd.polygon_query(parent.sdata, geom, target_coordinate_system=cs, filter_table=True)
-            except Exception:
-                # MultiPolygon rejected by this version: per-polygon query + concat (§8.1)
-                parts = [sd.polygon_query(parent.sdata, p, target_coordinate_system=cs, filter_table=True) for p in polys]
-                result = sd.concatenate(parts) if len(parts) > 1 else parts[0]
+            if cell_indices is not None:
+                # Index-based selection (embedding view): mask the active table's rows and
+                # let spatialdata filter the linked elements to match. `invert` (remove)
+                # keeps the complement. A table with no linked elements (no spatialdata_attrs)
+                # has nothing to match, so becomes a table-only child.
+                from spatialdata.models import get_table_keys
+                tkey = parent.active_table_key or (list(getattr(parent.sdata, "tables", {})) or [None])[0]
+                if tkey is None:
+                    raise ValueError("no table to subset")
+                adata = parent.sdata.tables[tkey]
+                idx = np.asarray(cell_indices, dtype=int)
+                idx = idx[(idx >= 0) & (idx < adata.n_obs)]
+                keep = not payload.get("invert")
+                mask = np.zeros(adata.n_obs, dtype=bool) if keep else np.ones(adata.n_obs, dtype=bool)
+                mask[idx] = keep
+                if not mask.any():
+                    raise ValueError("selection contains zero observations; no child created")
+                sub = adata[mask].copy()
+                try:
+                    get_table_keys(sub)  # linked to elements -> filter them to match the subset
+                    result = sd.match_sdata_to_table(parent.sdata, table=sub, table_name=tkey)
+                except (ValueError, KeyError):
+                    result = sd.SpatialData(tables={tkey: sub})
+            else:
+                systems = parent.sdata.coordinate_systems
+                if not (payload.get("coordinate_system") or systems):
+                    raise ValueError("object has no coordinate system to subset in")
+                cs = payload.get("coordinate_system") or systems[0]
+                # "remove" mode (invert) keeps the cells OUTSIDE the drawn region: query the
+                # data extent with the selection cut out of it (box-minus-selection). The box
+                # must contain every cell, so use the whole object's extent, padded slightly
+                # so cells sitting exactly on the extent edge aren't dropped.
+                if payload.get("invert"):
+                    from spatialdata import get_extent
+                    from shapely.geometry import box
+                    ext = get_extent(parent.sdata, coordinate_system=cs)
+                    x0, y0, x1, y1 = float(ext["x"][0]), float(ext["y"][0]), float(ext["x"][1]), float(ext["y"][1])
+                    padx = (x1 - x0) * 0.01 or 1.0
+                    pady = (y1 - y0) * 0.01 or 1.0
+                    comp = box(x0 - padx, y0 - pady, x1 + padx, y1 + pady).difference(geom)
+                    if comp.is_empty:
+                        raise ValueError("the selection covers the whole section; nothing left to keep")
+                    query_geom = comp
+                    query_polys = list(comp.geoms) if comp.geom_type == "MultiPolygon" else [comp]
+                else:
+                    query_geom, query_polys = geom, polys
+                try:
+                    result = sd.polygon_query(parent.sdata, query_geom, target_coordinate_system=cs, filter_table=True)
+                except Exception:
+                    # MultiPolygon rejected by this version: per-polygon query + concat (§8.1)
+                    parts = [sd.polygon_query(parent.sdata, p, target_coordinate_system=cs, filter_table=True) for p in query_polys]
+                    result = sd.concatenate(parts) if len(parts) > 1 else parts[0]
 
             tkeys = list(getattr(result, "tables", {}).keys())
             if not tkeys or result.tables[tkeys[0]].n_obs == 0:

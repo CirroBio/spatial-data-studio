@@ -64,8 +64,8 @@ ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_cate
 | GET  | `/api/sessions/{id}/plots/{plotId}/figure?fmt=svg\|pdf` | — | figure bytes (image/svg+xml or application/pdf) |
 | PUT  | `/api/sessions/{id}/displays/{displayId}` | `DisplaySpec` | `{ok:true}` |
 | POST | `/api/sessions/{id}/displays` | `DisplaySpec` (no id) | `DisplaySpec` (with id) — lazily add a display (e.g. an `embedding_canvas` for a dataset/obsm gained after session creation) |
-| POST | `/api/sessions/{id}/subset` | `{polygons:[[[x,y]...]], coordinate_system, save_parent:bool, name?}` | `{job_id}` (queued; the child session arrives via a `session.created` SSE event) |
-| POST | `/api/sessions/{id}/annotate` | `{polygons, region_set, category, color?}` | `{job_id}` (label lassoed cells into a region set) |
+| POST | `/api/sessions/{id}/subset` | `{polygons:[[[x,y]...]] \| cell_indices:[int], coordinate_system, save_parent:bool, name?, invert?:bool}` | `{job_id}` (queued; the child session arrives via a `session.created` SSE event). `invert:true` keeps the cells OUTSIDE the region. `cell_indices` (in place of `polygons`) subsets by explicit table rows — the embedding view's client-resolved selection, filtered via `match_sdata_to_table` |
+| POST | `/api/sessions/{id}/annotate` | `{polygons \| cell_indices:[int], region_set, category, color?}` | `{job_id}` (label the lassoed cells — spatial `polygons`, or the embedding view's `cell_indices` — into a region set) |
 | GET  | `/api/sessions/{id}/shape-annotations` | — | `{shapes:[ShapeAnnotation]}` (arrows/lines/boxes/polygons/ellipses/text from `sdata.shapes["annotations"]`) |
 | POST | `/api/sessions/{id}/shape-annotations` | `ShapeAnnotation` (no id) | `{job_id}` (create one shape) |
 | PUT  | `/api/sessions/{id}/shape-annotations/{shapeId}` | `ShapeAnnotation` | `{job_id}` (replace one shape's geometry/style) |
@@ -87,7 +87,7 @@ ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_cate
 | GET  | `/api/sessions/{id}/shapes/{element}/geoarrow?bbox=minx,miny,maxx,maxy[&limit=N]` | `bbox` in the `obsm:spatial` world space; optional `limit` caps the returned feature count | Arrow IPC stream (`application/vnd.apache.arrow.stream`) of viewport-clipped boundary polygons — `geometry` (GeoArrow) + `cell_index:int32`; 400 on a malformed bbox; 404 if the element is absent or non-polygonal |
 | GET  | `/api/sessions/{id}/elements` | — | `{tables:[{name,n_obs,n_vars,active}], shapes, points, images, labels}` (data inspector inventory) |
 | GET  | `/api/sessions/{id}/table?path=&offset=&limit=` | path = `obs`, `var`, `shapes:<name>`, `points:<name>` | `{total_rows, offset, limit, index_name, index, columns:[{name,dtype}], rows}` (JSON page) |
-| GET  | `/api/sessions/{id}/image/{element}/info` | — | `{levels:[{level,width,height}], channels, channel_names, bounds, pixel_to_world, tile_size, client_compositing, raster_base_url, zarr_group_path, contrast_limits, is_rgb}` (see below) |
+| GET  | `/api/sessions/{id}/image/{element}/info` | — | `{levels:[{level,width,height}], channels, channel_names, bounds, pixel_to_world, tile_size, client_compositing, raster_base_url, zarr_group_path, contrast_limits, contrast_range, is_rgb}` (see below) |
 | GET  | `/api/sessions/{id}/image/{element}/thumbnail?max_px=&channels=` | — | composited WebP (`image/webp`, LRU-cached) |
 | GET  | `/api/sessions/{id}/image/{element}/tile/{level}/{col}/{row}?channels=` | — | composited WebP tile (`image/webp`, LRU-cached) |
 | GET/HEAD | `/api/sessions/{id}/raster/{element}/{key}` | `key` is a zarr store path (e.g. `zarr.json`, `images/{element}/zarr.json`, a chunk key `images/{element}/s0/c/0/0/0`) | raw bytes from the session's on-disk normalized raster zarr store (`application/octet-stream`, or `application/json` for `*.json`); `Accept-Ranges: bytes`, `Cache-Control: no-cache`; honors `Range` (206) and `HEAD`; 404 for a missing chunk (zarr fill value), unknown element, or gone store |
@@ -108,28 +108,32 @@ SSE channel are deliberately left untouched so Range semantics and live streamin
 are preserved.
 
 ### Image info & client-side (Viv) compositing
-`/image/{element}/info` returns the tile-server metadata (`levels`, `channels`,
-`channel_names`, `bounds`, `pixel_to_world`, `tile_size`) plus fields that let the
-browser composite channels on the GPU by reading the raw raster zarr directly,
-instead of fetching server-composited WebP tiles:
-- `client_compositing: bool` — true only when the server flag `CLIENT_IMAGE_COMPOSITING`
-  is on, the element has a served on-disk normalized store, and its channel count is
-  `<= CLIENT_IMAGE_MAX_CHANNELS` (or it is RGB). When false the frontend uses the WebP
-  tile/thumbnail path (always available as the fallback).
+The browser composites the tissue image on the GPU (via Viv), reading the raw raster
+zarr directly — there is no server-composited *canvas* tile route. `/image/{element}/info`
+returns the metadata (`levels`, `channels`, `channel_names`, `bounds`, `pixel_to_world`,
+`tile_size`) plus:
+- `client_compositing: bool` — true when the server flag `CLIENT_IMAGE_COMPOSITING` is on
+  and the element has a served on-disk normalized store. Channel count does **not** gate it:
+  the frontend displays up to 6 channels at once (Viv's shader-pass limit; the channel picker
+  caps it) and lets the user pick which of a >6-channel image's channels to show.
 - `raster_base_url: str` — `/api/sessions/{id}/raster/{element}` (no trailing slash);
   the root a zarrita `FetchStore` opens the store at.
 - `zarr_group_path: str` — `images/{element}`, the multiscale group to open inside the store.
-- `contrast_limits: [[lo, hi], ...]` — per channel in `channel_names` order (`lo` is 0.0,
-  `hi` the same upper bound the server tile compositor uses), so client and server brightness match.
+- `contrast_limits: [[lo, hi], ...]` — per channel in `channel_names` order (`lo` is 0.0); the
+  **default** window. A user's per-channel override lives in the display encoding
+  (`channels.<i>.contrast_limits`) and, when set, supersedes this in the client compositor.
+- `contrast_range: [[min, max], ...]` — per channel data min/max (coarsest level); the **domain**
+  the client's contrast sliders span (widened client-side to include the default window).
 - `is_rgb: bool` — true for a true-color RGB/H&E image (shown as-is, not tinted).
 
-Every image gets a served store: `normalize_rasters` rebuilds into the per-session
-cache store any image that isn't already tile-chunked, or that is but isn't yet
-known to live under `WORK_DIR` (e.g. a bare `.zarr` directory read in place from a
-mounted path); a canonical image already local (e.g. reopened from one of our own
-checkpoints) is served straight from its own backing store instead. An image with
-no backing path at all (e.g. adopted mid-session with no `sdata.path`, such as a raw
-reader import) has no served store and stays on the WebP tile path.
+Every image gets a served store: `normalize_rasters` rebuilds into the per-session cache
+store any image that isn't already tile-chunked (one channel per chunk), or that is but
+isn't yet known to live under `WORK_DIR` (e.g. a bare `.zarr` directory read in place from a
+mounted path); a canonical-and-local image (e.g. reopened from one of our own checkpoints)
+is served straight from its own backing store instead.
+
+The only server-side WebP route that remains is `/image/{element}/thumbnail` — a whole-image
+composited preview used by the DataInspector element view, not by the canvas.
 
 ### Session source on create
 - read:  `{kind:"read", namespace:"read", function:"visium", params:{path:"..."}}` — any `path`/`input`/`image_path`/`alignment_file` param must resolve under `DATA_DIR`, else 400.
@@ -163,7 +167,8 @@ PlotEntry = {id, namespace:"pl", function, params, status:"pending|queued|runnin
 { "id":"uuid", "type":"spatial_canvas",
   "encoding": { "coords":"obsm:spatial", "color_by":"obs:leiden", "image_layer":"hne",
                 "shapes_layer":null, "point_size":3, "opacity":0.8, "colormap":"viridis",
-                "render_mode":"points",   // "points" (scatter alone) | "points+shapes" (scatter + boundary-fill overlay once zoomed in); legacy "shapes" == "points+shapes"
+                "render_mode":"points",   // "points" (scatter alone) | "points+shapes" (scatter + boundary overlay once zoomed in); legacy "shapes" == "points+shapes"
+                "boundary_style":"filled", "boundary_line_width":1,   // points+shapes overlay: "filled" (default) fills each boundary | "outline" strokes it at boundary_line_width pixels
                 "invert_x":false, "invert_y":false, "background":"dark" },   // optional Spatial-only view controls: mirror the plot horizontally/vertically; per-plot backdrop "light"|"dark" (unset follows the app theme)
   "viewport": { "target":[x,y], "zoom":z } }
 ```
@@ -183,19 +188,18 @@ Written by `POST /api/sessions/{id}/snapshot`, read server-side by
 `POST /api/snapshots/{name}/open` (there is no client-side reader — a snapshot has
 no standalone viewer, see DESIGN.md §14).
 ```jsonc
-{ "schema_version": "2.0",             // informational only; no compatibility gate reads it
+{ "schema_version": "2.1",             // informational only; no compatibility gate reads it
   "kind": "spatial",                   // "spatial" | "embedding"
   "label": "visium_hne",
   "created": "ISO8601",
   "checkpoint": { "name": "visium_hne-ab12cd34.sdata.zarr.zip" },
   "table": "table",
   "viewport": { "target":[x,y], "zoom":z, "rotationX"?:.., "rotationOrbit"?:.. },
-  "encoding": DisplaySpec.encoding,    // unchanged from the source display
-  "render": { "coords":"obsm:spatial", "coords_transform":[a,b,c,d,e,f], "color_by":"obs:leiden",
-              "point_size":4, "opacity":0.85,
-              "invert_x":false, "invert_y":false, "background":"dark",
-              "image": image_info|null,
-              "channels": { "<i>": {"visible":bool, "color":"#rrggbb", "contrast_limit":float} } } }
+  "encoding": DisplaySpec.encoding }   // the source display's encoding verbatim — the pinned
+                                       // display is rebuilt from this on open, so every channel
+                                       // setting it carries (visibility/name/color/contrast_limits)
+                                       // reproduces exactly. (2.0 also baked a derived `render`
+                                       // manifest for the old standalone viewer; dropped in 2.1.)
 ```
 - **Opening it:** `POST /api/snapshots/{name}/open` resolves `checkpoint.name` under
   DATA_DIR and loads it via the same async checkpoint-load path as
@@ -259,6 +263,7 @@ Each event: `event: <type>`, `data: <json>`, every payload carries `session_id` 
 | `display.updated` | `{session_id, display_id, spec}` |
 | `session.loading` | `{load_id, message, pct:float|null, log?, done?, status?, hash_check?, error?}` (checkpoint-load progress + completion; a milestone event carries `message` (+ `pct` for the byte-fraction extraction step); a live-log event carries `log` (a reader log chunk) with `message`/`pct` null; the single terminal event carries `done:true` with `status:"ready"|"errored"` and, on success, the `hash_check` (`{ok,message}` for a hash-named checkpoint, else null), else `error`) |
 | `session.created` | `{session_id, summary}` |
+| `session.updated` | `{session_id, summary}` (a session's summary changed after creation — chiefly `status` flipping `loading`→`ready`/`errored` once an async load/read bootstrap finishes; clients replace the list row by id) |
 | `session.removed` | `{session_id, reason:"closed"|"subset"}` (closed or lasso-evicted; clients prune it from the session list) |
 | `session.errored` | `{session_id, error}` |
 | `resource.sample` | `{global:{rss_mb, work_dir_mb, rss_pct, cpu_pct, rasters_mb}, per_session:{<id>:rss_mb}}` (`rss_pct`: effective memory = RSS + RAM-backed working set, as % of the limit — the fraction the admission boundary gates on; `work_dir_mb`: WORK_DIR usage when RAM-backed, else 0; `rasters_mb`: total size of all sessions' normalized-raster caches) |

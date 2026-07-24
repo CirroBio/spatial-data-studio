@@ -48,7 +48,7 @@ export default function SettingsPanel({ onNewSession }: Props) {
   const [showAbout, setShowAbout] = useState(false);
   const [showCirroUpload, setShowCirroUpload] = useState(false);
   const {
-    activeSessionId, sessionState, theme, setTheme, savingJobId,
+    activeSessionId, sessionState, theme, setTheme, blockingJob,
     cirroEnabled, cirroUploads, snapshotHandler, menuOpen, setMenuOpen,
     snapshotsOpen, snapshotsInitialSelect, openSnapshots, closeSnapshots,
   } = useAppStore();
@@ -83,7 +83,7 @@ export default function SettingsPanel({ onNewSession }: Props) {
   function handleSave() {
     if (!activeSessionId) return;
     saveSession(activeSessionId)
-      .then(({ job_id }) => useAppStore.getState().setSavingJobId(job_id))
+      .then(({ job_id }) => useAppStore.getState().setBlockingJob({ id: job_id, label: 'Saving session…' }))
       .catch((err) => reportError('Save failed', err));
   }
 
@@ -121,7 +121,7 @@ export default function SettingsPanel({ onNewSession }: Props) {
             <PanelItem
               label="Save session"
               onClick={handleSave}
-              disabled={!activeSessionId || !!savingJobId || readOnly}
+              disabled={!activeSessionId || !!blockingJob || readOnly}
               title={saveDisabledReason ?? (unsaved ? 'Save session — unsaved changes' : undefined)}
               trailing={unsaved ? <span className="w-1.5 h-1.5 rounded-full bg-warn" title="Unsaved changes" /> : undefined}
               icon={

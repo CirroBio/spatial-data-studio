@@ -10,17 +10,19 @@ import {
   updateShapeAnnotation, fetchWhenIdle,
 } from '../../api';
 import { reportError } from '../../lib/errors';
+import { countPointsInRings } from '../../lib/pointInPolygon';
 import TransformEditor from '../TransformEditor';
 import { isSpatialDisplay, type SpatialDisplaySpec, type ImageInfo } from '../../types';
 import type { ShapeAnnotation, ShapeGeometry, ShapeKind } from '../../schemas/annotations';
 import { textGeometryAt } from '../../schemas/annotations';
 import { geometryFromDrag, applyHandleDrag, translateGeometry } from '../../lib/shapeAnnotations';
 import { useArrowPositions } from './useArrowPositions';
-import { useImageTiles } from './useImageTiles';
 import { useVivImageLayer } from './useVivImageLayer';
 import { useCanvasViewState, shapesFetchZoomThreshold } from './useCanvasViewState';
 import { ZOOM_LIMITS, ZOOM_STEP } from './viewFit';
 import { useSpotColors, arrowToColorSource } from './useSpotColors';
+import { Matrix4 } from '@math.gl/core';
+import { worldToPixelAffine, affineScale, wx, wy } from './imageAffine';
 import { buildSpotLayer, estimateMeanSpacing } from './buildSpotLayer';
 import { PLOT_BACKGROUNDS } from './colorUtils';
 import { buildShapeAnnotationLayers, buildShapeHandleLayer, buildDragPreviewLayers } from './buildShapeAnnotationLayers';
@@ -66,6 +68,31 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   const { table: colorTable, loading: colorLoading } = useArrowField(sessionId, colorByPath, colorVersion);
 
   const [imageInfo, setImageInfo] = useState<ImageInfo | null>(null);
+
+  // When the display has an image, the canvas works in that image's pixel coordinate
+  // space so Viv's MultiscaleImageLayer renders natively (the image sits at its own
+  // [0,0,W,H] extent, no modelMatrix). The cell points and every other world-space
+  // overlay (shapes, lasso, regions) get this world->pixel modelMatrix instead, and
+  // picked coordinates are mapped back to world via `toWorld`. `pixelAffine` is null
+  // when there is no image → the canvas stays in world space and all this is identity.
+  // Keyed on the image's presence (not `showImage`) so toggling image visibility never
+  // reframes the scene. Note: point radii are in world units, so `radiusScale`
+  // (= px per world unit) rescales them into the pixel frame.
+  const pixelAffine = (display.encoding.image_layer && imageInfo?.pixel_to_world) || null;
+  const worldToPixelMat = useMemo(() => {
+    if (!pixelAffine) return undefined;
+    const [A, B, C, D, E, F] = worldToPixelAffine(pixelAffine);
+    return new Matrix4([A, D, 0, 0, B, E, 0, 0, 0, 0, 1, 0, C, F, 0, 1]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pixelAffine?.join(',')]);
+  const radiusScale = pixelAffine ? 1 / affineScale(pixelAffine) : 1;
+  const toWorld = useCallback(
+    (c: number[]): [number, number] =>
+      (pixelAffine ? [wx(pixelAffine, c[0], c[1]), wy(pixelAffine, c[0], c[1])] : [c[0], c[1]]),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [pixelAffine?.join(',')],
+  );
+
   // Layer-visibility toggles are persisted in the display encoding (fall back to the
   // historical defaults when a checkpoint predates these fields).
   const showPoints = display.encoding.show_points ?? true;
@@ -82,12 +109,11 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
     [invertX, invertY],
   );
   const [transformOpen, setTransformOpen] = useState(false);
-  const [openColorPicker, setOpenColorPicker] = useState<number | null>(null);
   const [panelCollapsed, setPanelCollapsed] = useState(false);
 
   // Polygon draw state lives in the store so the active tab's left panel owns the
   // commit / apply / clear actions; the canvas is purely the drawing surface.
-  const { drawPolygons: polygons, drawRing: currentRing, addDrawVertex, clearDraw } = useAppStore();
+  const { drawPolygons: polygons, drawRing: currentRing, addDrawVertex, clearDraw, setRegionCellCount, setRegionCellIndices } = useAppStore();
 
   // Shape-annotation editor state — the fetched list persists/renders regardless
   // of the active tab; the tool/selection/draft state only matters in 'shapes' mode.
@@ -122,6 +148,15 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
 
   const positions = useArrowPositions(coordsTable);
 
+  // Count cells inside the drawn region (union of committed rings + the closeable
+  // in-progress ring) so the Regions/Subset action buttons can show n=…. Points and
+  // rings are both in world coords (draw captures apply toWorld), so the test is direct.
+  useEffect(() => {
+    const rings = currentRing.length >= 3 ? [...polygons, currentRing] : polygons;
+    setRegionCellCount(positions ? countPointsInRings(positions.positions, positions.numRows, rings) : 0);
+    setRegionCellIndices(null);  // spatial resolves the lasso server-side via polygon_query
+  }, [positions, polygons, currentRing, setRegionCellCount, setRegionCellIndices]);
+
   const { containerRef, canvasSize, viewState, setViewState, fitToData } = useCanvasViewState({
     positions,
     imageInfo,
@@ -129,7 +164,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
     display,
   });
 
-  const { channels, visibleChannels, setChannel } = useImageChannels({
+  const { channels, setChannel, maxVisibleReached } = useImageChannels({
     imageInfo,
     display,
     sessionId,
@@ -170,11 +205,11 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
 
   const handleClick = useCallback((info: PickingInfo) => {
     if (lassoMode && info.coordinate) {
-      addDrawVertex([info.coordinate[0], info.coordinate[1]]);
+      addDrawVertex(toWorld(info.coordinate));
       return;
     }
     if (!shapesMode || !info.coordinate) return;
-    const pt: Point = [info.coordinate[0], info.coordinate[1]];
+    const pt: Point = toWorld(info.coordinate);
 
     if (activeShapeTool === 'polygon') {
       // Each click drops a vertex; the shape is committed by the panel's Close
@@ -198,7 +233,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
       setSelectedShapeId(hit ?? null);
     }
   }, [lassoMode, shapesMode, activeShapeTool, addDrawVertex, addDraftVertex,
-      commitNewShape, setSelectedShapeId]);
+      commitNewShape, setSelectedShapeId, toWorld]);
 
   // True when the pick hits the currently selected shape's body (its fill,
   // stroke, or text glyph) — the surface a drag translates.
@@ -211,7 +246,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
 
   const handleShapeDragStart = useCallback((info: PickingInfo) => {
     if (!shapesMode || !info.coordinate) return;
-    const pt: Point = [info.coordinate[0], info.coordinate[1]];
+    const pt: Point = toWorld(info.coordinate);
     // Polygon and text are click-placed (see handleClick), not drag-created.
     if (activeShapeTool && activeShapeTool !== 'polygon' && activeShapeTool !== 'text') {
       setShapeDragTarget({ kind: 'create', tool: activeShapeTool, start: pt });
@@ -233,7 +268,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
       setShapeDragTarget({ kind: 'translate', shapeId: shape.id, start: pt, origin: shape.geometry });
       setShapeDragPreview(shape.geometry);
     }
-  }, [shapesMode, activeShapeTool, shapeAnnotations, selectedShapeId, isSelectedBody]);
+  }, [shapesMode, activeShapeTool, shapeAnnotations, selectedShapeId, isSelectedBody, toWorld]);
 
   const handleHover = useCallback((info: PickingInfo) => {
     setOverHandle(info.layer?.id === 'shape-handles');
@@ -242,7 +277,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
 
   const handleShapeDrag = useCallback((info: PickingInfo) => {
     if (!shapeDragTarget || !info.coordinate) return;
-    const pt: Point = [info.coordinate[0], info.coordinate[1]];
+    const pt: Point = toWorld(info.coordinate);
     if (shapeDragTarget.kind === 'create') {
       setShapeDragPreview(geometryFromDrag(shapeDragTarget.tool, shapeDragTarget.start, pt));
     } else if (shapeDragTarget.kind === 'translate') {
@@ -250,7 +285,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
     } else {
       setShapeDragPreview((prev) => (prev ? applyHandleDrag(prev, shapeDragTarget.handleId, pt) : prev));
     }
-  }, [shapeDragTarget]);
+  }, [shapeDragTarget, toWorld]);
 
   const handleShapeDragEnd = useCallback(() => {
     if (!shapeDragTarget || !shapeDragPreview) { setShapeDragTarget(null); setShapeDragPreview(null); return; }
@@ -294,26 +329,15 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   const legendVisible = display.encoding.legend_visible !== false;
   const legendTitle = display.encoding.legend_title || colorByLabel(colorByPath);
 
-  // GPU-composited image via Viv, when the backend manifest allows it. While the
-  // pyramid loads (or after a Viv error) `vivActive` is false and the PNG tile path
-  // below covers, so the image never blanks and failures fall back safely.
-  const { layers: vivLayers, active: vivActive } = useVivImageLayer({
+  // GPU-composited image via Viv (the sole image path). While the pyramid loads,
+  // Viv renders its own coarse low-res background and streams detail as tiles arrive.
+  const { layers: vivLayers } = useVivImageLayer({
     imageInfo,
     element: display.encoding.image_layer,
     channels,
     viewState,
     size: canvasSize,
     show: showImage,
-  });
-
-  const { layers: imageLayers, loading: tilesLoading } = useImageTiles({
-    imageInfo,
-    sessionId,
-    element: display.encoding.image_layer,
-    viewState,
-    size: canvasSize,
-    visibleChannels,
-    show: showImage && !vivActive,
   });
 
   // How the Cells layer renders. Points always draw; 'points+shapes' additionally
@@ -324,6 +348,9 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
     display.encoding.render_mode === 'points+shapes' || display.encoding.render_mode === 'shapes'
       ? 'points+shapes' : 'points';
   const marker = display.encoding.point_marker ?? 'circle';
+  // Cell-boundary overlay style: filled polygons (default) or boundary-only strokes.
+  const boundaryOutline = (display.encoding.boundary_style ?? 'filled') === 'outline';
+  const boundaryLineWidth = display.encoding.boundary_line_width ?? 1;
 
   // Polygon shape sets available for this session (elements inventory filtered to
   // polygonal geom types). Empty → the whole shapes path stays dormant.
@@ -360,7 +387,10 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   // holds more than it can ship, so the fetch is deferred until a cell is big enough
   // on screen (shapesFetchZoomThreshold); below that the points are the whole view.
   const meanSpacing = useMemo(() => (positions ? estimateMeanSpacing(positions) : 0), [positions]);
-  const zoomedInForShapes = meanSpacing > 0 && zoom >= shapesFetchZoomThreshold(meanSpacing);
+  // `zoom` is in the canvas coordinate space (image-pixel when an image is shown), so
+  // scale the world-unit mean spacing into that space (radiusScale = px per world unit;
+  // 1 in world space) before deciding when cells are big enough on screen to fetch shapes.
+  const zoomedInForShapes = meanSpacing > 0 && zoom >= shapesFetchZoomThreshold(meanSpacing * radiusScale);
   const shapesOverlay = renderMode === 'points+shapes' && shapesElement !== null;
   const { layer: polygonLayer, loading: polygonsLoading } = usePolygonBbox({
     sessionId,
@@ -370,13 +400,16 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
     size: canvasSize,
     colors,
     opacity: display.encoding.opacity,
+    outline: boundaryOutline,
+    lineWidth: boundaryLineWidth,
     enabled: shapesOverlay && showPoints && zoomedInForShapes,
+    modelMatrix: worldToPixelMat,
+    pixelToWorld: pixelAffine ?? undefined,
   });
 
   const layers = useMemo(() => {
-    // Viv (GPU-composited) replaces the PNG BitmapLayers when active; both keep the
-    // same no-depth params so points always draw over the image.
-    const result: Layer[] = vivActive ? [...vivLayers] : [...imageLayers];
+    // Viv GPU-composites the image (no-depth params so points always draw over it).
+    const result: Layer[] = [...vivLayers];
 
     if (showPoints && positions && colors) {
       // In 'points+shapes', the cell-boundary fills replace the points once loaded;
@@ -389,13 +422,15 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
           pointSize: display.encoding.point_size,
           opacity: display.encoding.opacity,
           marker,
+          modelMatrix: worldToPixelMat,
+          radiusScale,
         }));
       }
     }
 
     return result;
-  }, [imageLayers, vivActive, vivLayers, positions, colors, showPoints, shapesOverlay, polygonLayer,
-      display.encoding.point_size, display.encoding.opacity, marker]);
+  }, [vivLayers, positions, colors, showPoints, shapesOverlay, polygonLayer,
+      display.encoding.point_size, display.encoding.opacity, marker, worldToPixelMat, radiusScale]);
 
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -439,21 +474,21 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
         id: 'sel-polygons', data: polygons, getPolygon: (d) => d,
         filled: true, getFillColor: [...SEL, 50], stroked: true,
         getLineColor: [...SEL, 220], getLineWidth: 2, lineWidthUnits: 'pixels', pickable: false,
-        parameters: OVERLAY_PARAMS,
+        parameters: OVERLAY_PARAMS, modelMatrix: worldToPixelMat,
       }));
     }
     if (currentRing.length >= 2) {
       drawLayers.push(new PathLayer<[number, number][]>({
         id: 'sel-path', data: [currentRing], getPath: (d) => d,
         getColor: [...SEL, 220], getWidth: 2, widthUnits: 'pixels',
-        parameters: OVERLAY_PARAMS,
+        parameters: OVERLAY_PARAMS, modelMatrix: worldToPixelMat,
       }));
     }
     if (currentRing.length >= 1) {
       drawLayers.push(new ScatterplotLayer<[number, number]>({
         id: 'sel-verts', data: currentRing, getPosition: (d) => d,
         getFillColor: [...SEL, 255], getRadius: 4, radiusUnits: 'pixels',
-        parameters: OVERLAY_PARAMS,
+        parameters: OVERLAY_PARAMS, modelMatrix: worldToPixelMat,
       }));
     }
   }
@@ -464,29 +499,32 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   const shapeOverrides = (shapeDragTarget?.kind === 'handle' || shapeDragTarget?.kind === 'translate') && shapeDragPreview
     ? { [shapeDragTarget.shapeId]: shapeDragPreview }
     : {};
-  // OrthographicView scale = 2^zoom, so one screen pixel spans 2^-zoom world units.
-  const shapeLayers = buildShapeAnnotationLayers(shapeAnnotations, shapeOverrides, Math.pow(2, -zoom));
+  // OrthographicView scale = 2^zoom, so one screen pixel spans 2^-zoom canvas units.
+  // In image-pixel space those are pixel units; divide by radiusScale (px per world
+  // unit) to get world units per screen pixel for the arrowhead's world-space geometry.
+  const worldPerScreenPixel = Math.pow(2, -zoom) / radiusScale;
+  const shapeLayers = buildShapeAnnotationLayers(shapeAnnotations, shapeOverrides, worldPerScreenPixel, worldToPixelMat, radiusScale);
 
   if (shapesMode) {
     const selectedShape = shapeAnnotations.find((s) => s.id === selectedShapeId);
     const handleGeometry = (shapeDragTarget?.kind === 'handle' || shapeDragTarget?.kind === 'translate')
       ? shapeDragPreview : selectedShape?.geometry;
     if (selectedShape && handleGeometry) {
-      shapeLayers.push(...buildShapeHandleLayer(handleGeometry));
+      shapeLayers.push(...buildShapeHandleLayer(handleGeometry, worldToPixelMat));
     }
     if (shapeDragTarget?.kind === 'create' && shapeDragPreview) {
-      shapeLayers.push(...buildDragPreviewLayers(shapeDragPreview));
+      shapeLayers.push(...buildDragPreviewLayers(shapeDragPreview, worldToPixelMat));
     }
     if (activeShapeTool === 'polygon' && draftVertices.length >= 1) {
       if (draftVertices.length >= 2) {
         shapeLayers.push(new PathLayer<Point[]>({
           id: 'shape-draft-path', data: [draftVertices], getPath: (d) => d,
-          getColor: [51, 136, 255, 220], getWidth: 2, widthUnits: 'pixels', parameters: OVERLAY_PARAMS,
+          getColor: [51, 136, 255, 220], getWidth: 2, widthUnits: 'pixels', parameters: OVERLAY_PARAMS, modelMatrix: worldToPixelMat,
         }));
       }
       shapeLayers.push(new ScatterplotLayer<Point>({
         id: 'shape-draft-verts', data: draftVertices, getPosition: (d) => d,
-        getFillColor: [51, 136, 255, 255], getRadius: 4, radiusUnits: 'pixels', parameters: OVERLAY_PARAMS,
+        getFillColor: [51, 136, 255, 255], getRadius: 4, radiusUnits: 'pixels', parameters: OVERLAY_PARAMS, modelMatrix: worldToPixelMat,
       }));
     }
   }
@@ -529,7 +567,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
         }
       />
 
-      <LoadingCue coordsLoading={coordsLoading} colorLoading={colorLoading} tilesLoading={tilesLoading || polygonsLoading} />
+      <LoadingCue coordsLoading={coordsLoading} colorLoading={colorLoading} tilesLoading={polygonsLoading} />
 
       <ChannelLegend show={showImage} showLegend={showLegend} channels={channels} />
 
@@ -564,8 +602,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
         setShapesElement={(v) => updateEncoding({ shapes_layer: v })}
         channels={channels}
         setChannel={setChannel}
-        openColorPicker={openColorPicker}
-        setOpenColorPicker={setOpenColorPicker}
+        maxVisibleReached={maxVisibleReached}
         panelCollapsed={panelCollapsed}
         setPanelCollapsed={setPanelCollapsed}
         zoom={zoom}

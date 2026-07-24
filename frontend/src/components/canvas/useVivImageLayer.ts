@@ -1,47 +1,22 @@
-import { useEffect, useMemo, useReducer, useState } from 'react';
-import { COORDINATE_SYSTEM } from '@deck.gl/core';
+import { useEffect, useMemo, useState } from 'react';
 import type { Layer, OrthographicViewState } from '@deck.gl/core';
-import { Matrix4 } from '@math.gl/core';
 import { loadOmeZarr } from '@vivjs/loaders';
-import { XRLayer } from '@vivjs/layers';
+import { MultiscaleImageLayer } from '@vivjs/layers';
 import { ColorPaletteExtension } from '@vivjs/extensions';
 import type { ImageInfo } from '../../types';
-import type { Channel } from './useImageChannels';
-import { installRasterFetchDedup } from '../../lib/dedupeRasterFetch';
-import { selectTileRange } from './tileLevelOfDetail';
+import { MAX_VISIBLE_CHANNELS, type Channel } from './useImageChannels';
 import { transparentBlackExtension } from './transparentBlackExtension';
 
-// Every channel of a tile shares one chunk file (rasters.py packs (C, TILE, TILE)
-// into one chunk), but Viv's per-channel getTile calls below each resolve to that
-// same URL with no caching in between — see dedupeRasterFetch.ts for why this is
-// installed here rather than left to the library. Module-scope so it installs once,
-// the moment this (lazy-loaded) module is first used.
-installRasterFetchDedup();
+// Client-side GPU compositing of the tissue image via Viv's own `MultiscaleImageLayer`
+// — the sole canvas image path. When an image is shown, the canvas view is in the
+// image's own pixel coordinate space (SpatialCanvas gives the cell points a world->pixel
+// modelMatrix; the image needs none), so MultiscaleImageLayer's deck.gl TileLayer selects
+// and streams pyramid tiles natively — no hand-rolled per-tile scheme, no coarse-base
+// bookkeeping (deck keeps the best-available parent tile visible and drops it as finer
+// tiles arrive). Channel color/visibility/contrast are shader uniforms (instant, no
+// refetch). Disabled by the localStorage escape hatch below (turns the canvas image off;
+// there is no server-composited fallback).
 
-// Client-side GPU compositing of the tissue image via Viv, an alternative to the
-// server-composited PNG BitmapLayers (useImageTiles). Enabled only when the backend
-// manifest reports `client_compositing` (which already gates channel count and the
-// presence of a served Zarr store), and disabled outright by the localStorage escape
-// hatch below. Channel color / visibility / contrast are shader uniforms, so toggling
-// them updates instantly with no chunk refetch.
-//
-// We do NOT use Viv's `MultiscaleImageLayer` (a deck.gl TileLayer whose tile-index math
-// fetches zero tiles — silently — under our world-coordinate OrthographicView with a
-// non-unit-scale `pixel_to_world` modelMatrix, e.g. Xenium ~0.2125 um/px). Instead we
-// build our own tiled path: the same world-coordinate tile selection the PNG path uses
-// (useImageTiles), rendering a Viv `XRLayer` per visible tile, over a coarse Viv
-// `ImageLayer` base so the canvas is never blank while detail streams. Every XRLayer
-// shares one level-0 pixel->world modelMatrix and expresses its bounds in level-0
-// pixels, so the scaled/rotated affine positions each tile exactly as the working
-// single ImageLayer did, matching the points.
-
-// Max single-texture dimension we will upload for the base level; the finest pyramid
-// level whose longest side is within this is chosen. luma/WebGL2 guarantees at least
-// 2048 and virtually all GPUs do 4096+; Viv documents 4096 as the non-pyramidal ceiling.
-const MAX_TEXTURE_PX = 4096;
-
-// Dev/QA escape hatch: `localStorage.setItem('sds:disableClientCompositing', '1')`
-// forces the PNG tile path even when the server offers client compositing.
 const DISABLE_KEY = 'sds:disableClientCompositing';
 function clientCompositingDisabled(): boolean {
   try {
@@ -58,72 +33,13 @@ function hexToRgb(hex: string): [number, number, number] {
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 
-// True-color 3-channel image: draw R/G/B straight through rather than tinting each
-// channel with a palette color (mirrors backend imaging._is_rgb passthrough).
-const RGB_COLORS: [number, number, number][] = [[255, 0, 0], [0, 255, 0], [0, 0, 255]];
-
-// The image must never occlude the points drawn after it: the merged point scatter
-// writes gl_FragDepth to resolve overlaps and relies on the image writing no depth
-// (see buildSpotLayer). Same no-depth parameters the PNG BitmapLayers use.
+// The image must never occlude the points drawn after it: the merged point scatter writes
+// gl_FragDepth to resolve overlaps and relies on the image writing no depth (see
+// buildSpotLayer). deck.gl forwards `parameters` to a CompositeLayer's sublayers, so this
+// reaches MultiscaleImageLayer's tiled XRLayers and its low-res background alike.
 const IMAGE_PARAMS = { depthWriteEnabled: false, depthCompare: 'always' as const };
 
 type Loader = Awaited<ReturnType<typeof loadOmeZarr>>['data'];
-// A resolved tile / raster from a single-channel getTile: { data, width, height }.
-type PixelData = Awaited<ReturnType<Loader[number]['getTile']>>;
-// One decoded tile across all channels: the per-channel typed arrays XRLayer's
-// `channelData` expects, plus the shared width/height.
-interface ChannelRaster {
-  data: PixelData['data'][];
-  width: number;
-  height: number;
-}
-
-// Module-level decoded-tile cache so pan/zoom reuses tiles and we can track exactly
-// when each tile is ready. Keyed by (element, level, col, row) only — the raw pixels
-// don't depend on color/contrast/visibility, which are XRLayer uniforms applied at
-// construction, so layers rebuild cheaply each render from cached rasters.
-const CACHE_MAX = 240;
-const tileCache = new Map<string, ChannelRaster>();
-const tilePending = new Set<string>();
-// Last-failure time per key. The layers memo re-runs on every render, so without
-// this a tile whose fetch rejected (e.g. a slow-storage read that 503'd) would be
-// re-issued every frame — a request storm that saturates the browser's per-host
-// connection pool and starves the coords/colors reads. Back off before retrying.
-const tileFailedAt = new Map<string, number>();
-const RETRY_COOLDOWN_MS = 5000;
-
-function getTileData(
-  key: string,
-  fetchTile: () => Promise<ChannelRaster>,
-  onLoad: () => void,
-): ChannelRaster | null {
-  const hit = tileCache.get(key);
-  if (hit) {
-    tileCache.delete(key);
-    tileCache.set(key, hit); // LRU bump
-    return hit;
-  }
-  if (tilePending.has(key)) return null;
-  const failedAt = tileFailedAt.get(key);
-  if (failedAt !== undefined && Date.now() - failedAt < RETRY_COOLDOWN_MS) return null;
-  tilePending.add(key);
-  fetchTile()
-    .then((raster) => {
-      tilePending.delete(key);
-      tileFailedAt.delete(key);
-      tileCache.set(key, raster);
-      if (tileCache.size > CACHE_MAX) tileCache.delete(tileCache.keys().next().value as string);
-      onLoad();
-    })
-    .catch(() => {
-      tilePending.delete(key);
-      tileFailedAt.set(key, Date.now());
-      // Re-render once the cooldown lapses so the tile retries instead of staying
-      // blank forever after a transient failure.
-      setTimeout(() => { tileFailedAt.delete(key); onLoad(); }, RETRY_COOLDOWN_MS);
-    });
-  return null;
-}
 
 interface Params {
   imageInfo: ImageInfo | null;
@@ -134,21 +50,11 @@ interface Params {
   show: boolean;
 }
 
-/** Coarse Viv ImageLayer base plus per-tile Viv XRLayers for the current viewport,
- * GPU-compositing the tissue image from the SpatialData multiscale pyramid. `active`
- * signals the caller to suppress the PNG tile path and show Viv instead.
- *
- * `active` latches true only once Viv has *fully covered* the viewport at least once
- * (base decoded AND every detail tile for the current view present) — not merely when
- * the coarse base decoded. Until then the server-composited PNG/WebP path keeps
- * covering: its display-WebP tiles are ~10-16x smaller on the wire than Viv's raw
- * chunks and stream one-request-per-tile, so on a slow/remote store they sharpen the
- * image long before Viv's raw-chunk fan-out would, and the user never stares at Viv's
- * coarse base blown up into blocks. Once Viv proves it can cover the view, we hand off
- * for good (sticky) so its instant shader-uniform recolor takes over; a store too slow
- * for Viv to ever cover simply never activates and stays on the PNG path, which is the
- * right behavior there. See SpatialCanvas (vivActive ? vivLayers : imageLayers) and
- * DESIGN.md 9.4. */
+/** GPU-composites the tissue image from the SpatialData multiscale pyramid via Viv's
+ * `MultiscaleImageLayer`. `active` is true once the pyramid loader is ready (the layer
+ * renders its own low-res background immediately and streams detail tiles as deck's
+ * TileLayer selects them). While loading or after a failure it is false and the canvas
+ * simply shows no image. See DESIGN.md 9.4. */
 export function useVivImageLayer(
   { imageInfo, element, channels, viewState, size, show }: Params,
 ): { layers: Layer[]; active: boolean } {
@@ -168,17 +74,10 @@ export function useVivImageLayer(
 
   const [loader, setLoader] = useState<Loader | null>(null);
   const [failed, setFailed] = useState(false);
-  // Sticky: latched true the first time Viv fully covers the viewport (see `covered`
-  // below), and never dropped afterward — so panning/zooming within an activated Viv
-  // doesn't thrash back to the PNG path each time a fresh tile is momentarily missing.
-  // Reset per store (element switch / reload) in the loader effect.
-  const [activated, setActivated] = useState(false);
-  const [tick, bump] = useReducer((x: number) => x + 1, 0);
 
   useEffect(() => {
     setLoader(null);
     setFailed(false);
-    setActivated(false);
     if (!storeUrl) return;
     let stale = false;
     loadOmeZarr(storeUrl, { type: 'multiscales' })
@@ -190,177 +89,74 @@ export function useVivImageLayer(
   const numChannels = imageInfo?.channels ?? 0;
   const isRgb = !!imageInfo?.is_rgb;
 
-  // Stable across renders while the channel count holds; a fresh array each render would
-  // reload the channel textures. Visibility/color/contrast are separate uniform props.
-  const selections = useMemo(
+  const allSelections = useMemo(
     () => Array.from({ length: numChannels }, (_, c) => ({ c })),
     [numChannels],
   );
 
-  const zoom = viewState ? (Array.isArray(viewState.zoom) ? viewState.zoom[0] : viewState.zoom) ?? 0 : 0;
-  const target = viewState?.target;
-  const tx = target ? target[0] : 0;
-  const ty = target ? target[1] : 0;
+  // Viv composites at most MAX_VISIBLE_CHANNELS in one shader pass. At/below that count
+  // we pass every channel and toggle visibility via the channelsVisible uniform (instant,
+  // no refetch); above it we pass only the (<= MAX) visible channels. Memoized on its own
+  // so a pan/zoom never mints a new `selections` array — a changed selections reference
+  // makes Viv treat it as a channel-set change and refetch tiles (only the visible set,
+  // not the camera, should trigger that).
+  const activeSelections = useMemo(
+    () => (numChannels <= MAX_VISIBLE_CHANNELS
+      ? allSelections
+      : allSelections.filter((s) => channels[s.c]?.visible).slice(0, MAX_VISIBLE_CHANNELS)),
+    [allSelections, numChannels, channels],
+  );
 
-  const { layers, covered } = useMemo(() => {
-    // Defer all Viv chunk fetching until the canvas has a viewState — i.e. until the
-    // coords have loaded and the cells are drawing. Viv's base level fans out into
-    // dozens of per-channel chunk requests; firing them at mount (before coords) lets
-    // them monopolize the browser's per-host connections and starve the coords read
-    // (measured: coords queued 30s+ behind the image storm on slow-storage deploys).
-    if (!enabled || failed || !loader || !imageInfo?.pixel_to_world
-        || !imageInfo.levels.length || !viewState || !size) {
-      return { layers: [] as Layer[], covered: false };
-    }
-    const m = imageInfo.pixel_to_world;
-    const levels = imageInfo.levels;
-    const maxLevel = Math.min(levels.length, loader.length) - 1;
-    const T = imageInfo.tile_size;
-    const [W0, H0] = [levels[0].width, levels[0].height];
+  // Presence-only gate: the layer needs the view *framed* before fetching (so image
+  // chunks don't monopolize the browser's per-host connections and starve the coords
+  // read), but MultiscaleImageLayer's TileLayer reads the live viewport from deck's
+  // render context, not props — so depend on a boolean, never the viewState object,
+  // or the layer (and its channel arrays) would be rebuilt on every camera move.
+  const viewReady = !!viewState && !!size;
 
-    // Fluorescence composites additively from black, so zero-intensity pixels are
-    // opaque black and would hide the themed backdrop (PLOT_BACKGROUNDS) behind the
-    // image's whole bounding box — making the light/dark background toggle look dead.
-    // transparentBlackExtension maps exact black to alpha 0 so empty areas show the
-    // backdrop. A true-color RGB image keeps black (it is real data, e.g. an H&E
-    // stain), so it stays opaque.
-    const treatBlackAsTransparent = !isRgb;
-    const imageExtensions = treatBlackAsTransparent
-      ? [new ColorPaletteExtension(), transparentBlackExtension]
-      : [new ColorPaletteExtension()];
+  const layers = useMemo(() => {
+    if (!enabled || failed || !loader || !viewReady) return [] as Layer[];
 
-    const channelsVisible = isRgb
-      ? selections.map(() => true)
-      : selections.map((_, i) => channels[i]?.visible ?? true);
-    const colors = isRgb
-      ? selections.map((_, i) => RGB_COLORS[i] ?? [255, 255, 255])
-      : selections.map((_, i) => hexToRgb(channels[i]?.color ?? '#ffffff'));
-    const limits = imageInfo.contrast_limits ?? [];
-    const contrastLimits = selections.map((_, i) => limits[i] ?? [0, 255]);
+    // Color/visibility come from the (editable) channel state for every image, RGB
+    // included: an H&E's channels default to red/green/blue (useImageChannels), so the
+    // additive tint reproduces true color out of the box, but the user can now recolor,
+    // hide, or contrast-adjust them like any fluorescence channel.
+    const channelsVisible = activeSelections.map((s) => channels[s.c]?.visible ?? true);
+    const colors = activeSelections.map((s) => hexToRgb(channels[s.c]?.color ?? '#ffffff'));
+    // Per-channel [min,max]: the channel's effective contrastLimits (user override or
+    // the server default, resolved in useImageChannels), falling back to the raw
+    // server default then [0,255] for any channel not in the derived list.
+    const limits = imageInfo?.contrast_limits ?? [];
+    const contrastLimits = activeSelections.map((s) => channels[s.c]?.contrastLimits ?? limits[s.c] ?? [0, 255]);
 
-    // Level-0 pixel -> world affine [a,b,c,d,e,f], one Matrix4 shared by every tile:
-    // maps [px,py,0,1] -> [wx,wy,0,1] (column-major). Tile bounds are in level-0 pixels.
-    const [a, b, c, d, e, f] = m;
-    const modelMatrix0 = new Matrix4([a, d, 0, 0, b, e, 0, 0, 0, 0, 1, 0, c, f, 0, 1]);
+    // Fluorescence composites additively from black; zero-intensity pixels are opaque black
+    // and would hide the themed backdrop. transparentBlackExtension maps exact black to
+    // alpha 0 so empty areas show the backdrop, forwarded to the tile sublayers via deck's
+    // `extensions` prop (Viv's own transparentColor prop is not forwarded through
+    // MultiscaleImageLayer's TileLayer). A true-color RGB image keeps black (real data).
+    const imageExtensions = isRgb
+      ? [new ColorPaletteExtension()]
+      : [new ColorPaletteExtension(), transparentBlackExtension];
 
-    const result: Layer[] = [];
-    // True once the coarse whole-image texture has decoded: the signal the caller
-    // uses to hand off from the PNG fallback to Viv, so the canvas is never blank
-    // during the (slow-storage) window before the first Viv tile paints.
-    let baseReady = false;
+    // No modelMatrix: the canvas view is already in this image's pixel space (see
+    // SpatialCanvas), so the image sits at its own extent [0,0,W,H] and deck's TileLayer
+    // selects tiles natively — the case Viv is designed for.
+    const props = {
+      id: `viv-image-${element}`,
+      loader,
+      selections: activeSelections,
+      channelsVisible,
+      colors,
+      contrastLimits,
+      parameters: IMAGE_PARAMS,
+      extensions: imageExtensions,
+    };
+    // Viv's published props type both requires `dtype` (read from loader[0] at runtime,
+    // not props) and omits `colors` (forwarded to the ColorPaletteExtension); it types the
+    // instance as `any`. Assert through `unknown` rather than widen every usage.
+    const vivProps = props as unknown as ConstructorParameters<typeof MultiscaleImageLayer>[0];
+    return [new MultiscaleImageLayer(vivProps) as unknown as Layer];
+  }, [enabled, failed, loader, imageInfo, isRgb, activeSelections, channels, element, viewReady]);
 
-    // Coarse whole-image base so the canvas is never blank while detail tiles load.
-    // Finest pyramid level that fits a single texture (the coarsest always qualifies).
-    // Rendered as an XRLayer (not Viv's ImageLayer) so it uses the SAME bounds/y
-    // convention as the detail tiles: the coarse texture is stretched over the whole
-    // image in level-0 pixels and positioned by the shared level-0 modelMatrix.
-    let res = levels.findIndex((l) => l.width <= MAX_TEXTURE_PX && l.height <= MAX_TEXTURE_PX);
-    if (res < 0) res = levels.length - 1;
-    res = Math.min(res, loader.length - 1);
-    const baseRaster = getTileData(
-      `${element}|base|${res}`,
-      () => Promise.all(
-        selections.map((selection) => loader[res].getRaster({ selection })),
-      ).then((chs) => ({ data: chs.map((t) => t.data), width: chs[0].width, height: chs[0].height })),
-      bump,
-    );
-    if (baseRaster) {
-      baseReady = true;
-      result.push(new XRLayer({
-        id: `viv-image-base-${element}`,
-        channelData: baseRaster,
-        bounds: [0, H0, W0, 0],
-        dtype: loader[res].dtype,
-        selections,
-        channelsVisible,
-        colors,
-        contrastLimits,
-        modelMatrix: modelMatrix0,
-        coordinateSystem: COORDINATE_SYSTEM.CARTESIAN,
-        parameters: IMAGE_PARAMS,
-        extensions: imageExtensions,
-        opacity: 1,
-      }) as Layer);
-    }
-
-    // Detail tiles for the current viewport, only when finer than the base level
-    // actually rendered (`res`, not `maxLevel` — the base texture may be coarser
-    // than the pyramid's finest level to stay under MAX_TEXTURE_PX).
-    const { level, sx, sy, col0, col1, row0, row1 } =
-      selectTileRange(imageInfo, size, zoom, tx, ty, maxLevel);
-
-    // Detail-tile coverage of the current viewport: `active` (PNG handoff) latches
-    // only once every expected tile has painted, so the swap from PNG to Viv is never
-    // to a partially-blocky frame. When level >= res the base already is the right
-    // resolution, so there are no detail tiles to wait on and the base alone counts.
-    let detailExpected = 0;
-    let detailLoaded = 0;
-    if (viewState && size && level < res) {
-      const { width: WL, height: HL } = levels[level];
-
-      const source = loader[level];
-      const dtype = source.dtype;
-      for (let row = row0; row <= row1; row++) {
-        for (let col = col0; col <= col1; col++) {
-          detailExpected++;
-          const key = `${element}|${level}|${col}|${row}`;
-          const raster = getTileData(
-            key,
-            () => Promise.all(
-              selections.map((selection) => source.getTile({ x: col, y: row, selection })),
-            ).then((tiles) => ({
-              data: tiles.map((t) => t.data),
-              width: tiles[0].width,
-              height: tiles[0].height,
-            })),
-            bump,
-          );
-          if (!raster) continue;
-          detailLoaded++;
-          // tile pixel rect at level L, scaled back to level-0 pixel space. XRLayer
-          // bounds are axis-aligned [left, bottom, right, top] and Viv maps data row 0 to
-          // `top` (bounds[3]). The app's world/OrthographicView is y-up (a cell at world
-          // y=0 sits at screen bottom), so image row 0 (pixel py=0, world y=0 via the
-          // affine) must also land at the bottom: put py0 (row-0 side) as bounds[3]=top and
-          // py1 as bounds[1]=bottom — bounds [px0, py1, px1, py0], matching the PNG quad.
-          const px0 = col * T * sx;
-          const px1 = Math.min((col + 1) * T, WL) * sx;
-          const py0 = row * T * sy;
-          const py1 = Math.min((row + 1) * T, HL) * sy;
-          result.push(new XRLayer({
-            id: `viv-tile-${element}-${level}-${col}-${row}`,
-            channelData: raster,
-            bounds: [px0, py1, px1, py0],
-            dtype,
-            selections,
-            channelsVisible,
-            colors,
-            contrastLimits,
-            modelMatrix: modelMatrix0,
-            coordinateSystem: COORDINATE_SYSTEM.CARTESIAN,
-            parameters: IMAGE_PARAMS,
-            extensions: imageExtensions,
-            opacity: 1,
-          }) as Layer);
-        }
-      }
-    }
-
-    const covered = baseReady && (detailExpected === 0 || detailLoaded === detailExpected);
-    return { layers: result, covered };
-    // bump/tick is a render trigger; tileCache reads are keyed by the deps below.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, failed, loader, imageInfo, isRgb, selections, channels, element,
-      viewState, size, zoom, tx, ty, size?.width, size?.height, tick]);
-
-  // Latch `activated` the first time Viv fully covers the viewport; from then on the
-  // caller shows Viv (and its own coarse-base-then-stream behavior) instead of PNG.
-  useEffect(() => {
-    if (covered) setActivated(true);
-  }, [covered]);
-
-  // `active` (caller suppresses the PNG path when true) means Viv has covered the view
-  // at full detail at least once — so the handoff from the server-composited PNG path
-  // is always to a sharp Viv frame, never to Viv's coarse base blown up into blocks.
-  return { layers, active: enabled && !failed && loader !== null && activated };
+  return { layers, active: enabled && !failed && loader !== null && layers.length > 0 };
 }

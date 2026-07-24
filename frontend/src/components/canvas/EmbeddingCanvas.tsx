@@ -1,11 +1,13 @@
 import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import DeckGL from '@deck.gl/react';
 import { OrthographicView, OrbitView } from '@deck.gl/core';
-import type { Layer } from '@deck.gl/core';
+import { PolygonLayer, PathLayer, ScatterplotLayer } from '@deck.gl/layers';
+import type { Layer, PickingInfo } from '@deck.gl/core';
 import { useAppStore } from '../../store/sessionStore';
 import { useArrowField } from '../../hooks/useArrowField';
 import { putDisplay, addDisplay as postDisplay, saveSnapshot } from '../../api';
 import { reportError } from '../../lib/errors';
+import { indicesInRings } from '../../lib/pointInPolygon';
 import { isEmbeddingDisplay, type EmbeddingDisplaySpec, type ObsField, type ObsmField } from '../../types';
 import { useArrowPositions } from './useArrowPositions';
 import { useEmbeddingViewState, type EmbeddingViewState } from './useEmbeddingViewState';
@@ -14,7 +16,7 @@ import { buildSpotLayer } from './buildSpotLayer';
 import EmbeddingControls from './EmbeddingControls';
 import ColorBySelect from './ColorBySelect';
 import { colorByLabel } from './colorBy';
-import { LoadingCue, CellColorLegend } from './CanvasOverlays';
+import { LoadingCue, CellColorLegend, DrawHint } from './CanvasOverlays';
 
 interface Props {
   display: EmbeddingDisplaySpec | null;
@@ -22,9 +24,13 @@ interface Props {
   obsmFields: ObsmField[];
   obsFields: ObsField[];
   layerNames: string[];
+  // Set by the active sidebar tab (see App); 'regions'/'subset' arm the lasso here,
+  // 'shapes'/null leave the embedding view-only. Same contract as SpatialCanvas.
+  canvasMode: 'regions' | 'shapes' | 'subset' | null;
+  annotationTarget: { regionSetId: string; category: string; color: string } | null;
 }
 
-export default function EmbeddingCanvas({ display, sessionId, obsmFields, obsFields, layerNames }: Props) {
+export default function EmbeddingCanvas({ display, sessionId, obsmFields, obsFields, layerNames, canvasMode, annotationTarget }: Props) {
   const { addDisplay } = useAppStore();
 
   if (!display) {
@@ -46,6 +52,8 @@ export default function EmbeddingCanvas({ display, sessionId, obsmFields, obsFie
       obsFields={obsFields}
       layerNames={layerNames}
       obsmFields={obsmFields}
+      canvasMode={canvasMode}
+      annotationTarget={annotationTarget}
     />
   );
 }
@@ -157,14 +165,21 @@ function EmbeddingCanvasView({
   obsFields,
   layerNames,
   obsmFields,
+  canvasMode,
+  annotationTarget,
 }: {
   display: EmbeddingDisplaySpec;
   sessionId: string;
   obsFields: ObsField[];
   layerNames: string[];
   obsmFields: ObsmField[];
+  canvasMode: 'regions' | 'shapes' | 'subset' | null;
+  annotationTarget: { regionSetId: string; category: string; color: string } | null;
 }) {
-  const { sessionState, updateDisplay, isolatedCategory, pushNotification, openSnapshots, setSnapshotHandler } = useAppStore();
+  const {
+    sessionState, updateDisplay, isolatedCategory, pushNotification, openSnapshots, setSnapshotHandler,
+    drawPolygons, drawRing, addDrawVertex, clearDraw, setRegionCellCount, setRegionCellIndices,
+  } = useAppStore();
   const dataVersions = sessionState?.data_versions ?? {};
   const readOnly = sessionState?.summary.read_only ?? false;
 
@@ -239,6 +254,98 @@ function EmbeddingCanvasView({
     });
   }, [positions, colors, is_3d, display.encoding.point_size, display.encoding.opacity]);
 
+  // ---- Region lasso (region labeling / subset from the embedding) ----
+  // Shape annotations aren't offered here (they're tissue-coordinate decorations), so
+  // only the cell-selecting modes arm drawing.
+  const lassoMode = canvasMode === 'regions' || canvasMode === 'subset';
+  const selColor: [number, number, number] = canvasMode === 'regions' ? [72, 187, 120] : [124, 108, 246];
+
+  // A click adds a lasso vertex. In 2D the vertex is an embedding coordinate; in 3D the
+  // orbit camera makes an unprojected world point meaningless, so we capture the screen
+  // pixel and select by projecting cells back to screen (see the effect below).
+  const handleClick = useCallback((info: PickingInfo) => {
+    if (!lassoMode) return;
+    if (is_3d) {
+      if (info.x != null && info.y != null) addDrawVertex([info.x, info.y]);
+    } else if (info.coordinate) {
+      addDrawVertex([info.coordinate[0], info.coordinate[1]]);
+    }
+  }, [lassoMode, is_3d, addDrawVertex]);
+
+  // Clear any in-progress drawing when the lasso disarms or the view unmounts, so a
+  // half-drawn embedding region never leaks into the spatial canvas (shared draw state).
+  useEffect(() => {
+    if (!lassoMode) clearDraw();
+    return () => clearDraw();
+  }, [lassoMode, clearDraw]);
+
+  // Resolve the drawn region to table-row indices. The embedding view is always
+  // index-based (the backend can't polygon_query embedding/screen space). 2D tests the
+  // lasso against embedding coords directly; 3D projects each cell through the live
+  // camera and tests screen coords, so it selects every cell *visible* within the region.
+  useEffect(() => {
+    const rings = drawRing.length >= 3 ? [...drawPolygons, drawRing] : drawPolygons;
+    if (!positions || !rings.length) {
+      setRegionCellCount(0);
+      setRegionCellIndices(lassoMode ? [] : null);
+      return;
+    }
+    let indices: number[];
+    if (is_3d) {
+      const el = containerRef.current;
+      const width = el?.clientWidth ?? 0;
+      const height = el?.clientHeight ?? 0;
+      if (!(width > 0 && height > 0) || !viewState) { setRegionCellCount(0); setRegionCellIndices([]); return; }
+      const viewport = views[0].makeViewport({
+        width, height,
+        viewState: viewState as unknown as { target: [number, number, number]; zoom: number },
+      });
+      if (!viewport) { setRegionCellCount(0); setRegionCellIndices([]); return; }
+      const n = positions.numRows;
+      const stride = positions.positions.length / n;
+      const screen = new Float32Array(n * 2);
+      for (let i = 0; i < n; i++) {
+        const p = viewport.project([
+          positions.positions[i * stride],
+          positions.positions[i * stride + 1],
+          stride >= 3 ? positions.positions[i * stride + 2] : 0,
+        ]);
+        screen[i * 2] = p[0];
+        screen[i * 2 + 1] = p[1];
+      }
+      indices = indicesInRings(screen, n, rings);
+    } else {
+      indices = indicesInRings(positions.positions, positions.numRows, rings);
+    }
+    setRegionCellCount(indices.length);
+    setRegionCellIndices(indices);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [positions, drawPolygons, drawRing, is_3d, viewState, lassoMode]);
+
+  const drawLayers = useMemo<Layer[]>(() => {
+    if (!lassoMode || is_3d) return [];  // 3D draws a screen-space SVG overlay instead
+    const out: Layer[] = [];
+    if (drawPolygons.length) {
+      out.push(new PolygonLayer<[number, number][]>({
+        id: 'embed-draw-polys', data: drawPolygons, getPolygon: (d) => d,
+        filled: true, getFillColor: [...selColor, 50], stroked: true,
+        getLineColor: [...selColor, 220], getLineWidth: 2, lineWidthUnits: 'pixels', pickable: false,
+      }));
+    }
+    if (drawRing.length) {
+      out.push(new PathLayer<[number, number][]>({
+        id: 'embed-draw-ring', data: [drawRing], getPath: (d) => d,
+        getColor: [...selColor, 220], getWidth: 2, widthUnits: 'pixels', pickable: false,
+      }));
+      out.push(new ScatterplotLayer<[number, number]>({
+        id: 'embed-draw-verts', data: drawRing, getPosition: (d) => d,
+        getFillColor: [...selColor, 255], getRadius: 4, radiusUnits: 'pixels', pickable: false,
+      }));
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lassoMode, is_3d, drawPolygons, drawRing, canvasMode]);
+
   // Update the store mirror immediately, then debounce the PUT so a slider drag or a
   // pan/rotate collapses into one write. A ref (not state) holds the timer so back-to-back
   // viewport events during a drag reliably reset the same debounce. A read-only
@@ -303,11 +410,36 @@ function EmbeddingCanvasView({
         onViewStateChange={({ viewState: vs }) => {
           setViewState(vs as EmbeddingViewState);
           commitViewState(vs as EmbeddingViewState);
+          // A 3D lasso is captured in screen space (see handleClick); once the camera
+          // moves the frozen ring no longer matches the scene, so drop the in-progress
+          // /committed region rather than let it select the wrong cells.
+          if (is_3d && lassoMode && (drawRing.length > 0 || drawPolygons.length > 0)) clearDraw();
         }}
-        layers={layers}
-        controller={true}
-        getCursor={({ isDragging }) => (isDragging ? 'grabbing' : 'grab')}
+        onClick={handleClick}
+        layers={[...layers, ...drawLayers]}
+        controller={lassoMode ? { doubleClickZoom: false } : true}
+        getCursor={lassoMode ? () => 'crosshair' : ({ isDragging }) => (isDragging ? 'grabbing' : 'grab')}
       />
+
+      {/* 3D lasso overlay: the ring lives in screen pixels (see handleClick), which the
+          canvas-sized SVG draws in directly. 2D rings render as deck layers instead. */}
+      {is_3d && lassoMode && (drawPolygons.length > 0 || drawRing.length > 0) && (
+        <svg className="absolute inset-0 w-full h-full pointer-events-none">
+          {drawPolygons.map((ring, i) => (
+            <polygon key={i} points={ring.map((p) => p.join(',')).join(' ')}
+              fill={`rgba(${selColor.join(',')},0.15)`} stroke={`rgba(${selColor.join(',')},0.85)`} strokeWidth={2} />
+          ))}
+          {drawRing.length > 0 && (
+            <polyline points={drawRing.map((p) => p.join(',')).join(' ')}
+              fill="none" stroke={`rgba(${selColor.join(',')},0.9)`} strokeWidth={2} />
+          )}
+          {drawRing.map((p, i) => (
+            <circle key={i} cx={p[0]} cy={p[1]} r={3} fill={`rgba(${selColor.join(',')},1)`} />
+          ))}
+        </svg>
+      )}
+
+      <DrawHint drawMode={lassoMode} canvasMode={canvasMode} annotationTarget={annotationTarget} />
 
       <LoadingCue coordsLoading={coordsLoading} colorLoading={colorLoading} tilesLoading={false} />
 

@@ -8,9 +8,10 @@ per request, but dask must realize every *store* chunk that window touches, so a
 that into an OOM.
 
 `normalize_rasters` rebuilds every image/label into a canonical form once, up
-front, chunked at TILE_SIZE so one tile == one ~2 MB chunk: images become a 2x
-pyramid down to a <= RASTER_BASE_PX base; labels are rebuilt single-scale (they
-aren't LOD-rendered, and a nearest downsample of integer IDs doesn't stream). The
+front, chunked at TILE_SIZE as one channel-tile per store chunk (1, TILE, TILE):
+images become a 2x pyramid down to a <= RASTER_BASE_PX base; labels are rebuilt
+single-scale (they aren't LOD-rendered, and a nearest downsample of integer IDs
+doesn't stream). One channel per chunk is the standard OME-NGFF layout Viv reads. The
 rebuilt elements are written to a per-session cache store (so the tiny-window reads
 actually hit tile-sized store chunks, which an in-memory rechunk alone can't
 achieve) and the live SpatialData is rebound to lazy refs into it. The caller owns
@@ -47,6 +48,11 @@ def _is_canonical(el, is_label: bool) -> bool:
         return False
     if chunksize[-2] > TILE or chunksize[-1] > TILE:
         return False
+    # Images must be chunked one channel per store chunk (see `_rebuild`): a packed
+    # (C, tile, tile) chunk would make Viv's per-channel getTile fetch the same chunk
+    # N times. A 3D image array is (c, y, x); a store packing channels is not canonical.
+    if not is_label and arr.ndim >= 3 and chunksize[0] != 1:
+        return False
     if is_label or imaging._is_multiscale(el):
         return True
     return max(arr.shape[-1], arr.shape[-2]) <= config.RASTER_BASE_PX
@@ -80,9 +86,13 @@ def _rebuild(el, is_label: bool):
         c_coords = ["0"]
     else:
         c_coords = [str(c) for c in arr.coords["c"].values] if "c" in arr.coords else None
+    # Chunk one channel per chunk (1, TILE, TILE), not all channels together
+    # (C, TILE, TILE): this is the standard OME-NGFF layout, and it makes Viv's
+    # per-channel getTile fetch a distinct chunk URL per channel — so no client-side
+    # fetch-dedup shim is needed to collapse N identical requests for one packed chunk.
     return Image2DModel.parse(data, dims=dims, c_coords=c_coords,
                               scale_factors=_scale_factors(max(arr.shape[-1], arr.shape[-2])),
-                              chunks=(data.shape[0], TILE, TILE), transformations=transforms)
+                              chunks=(1, TILE, TILE), transformations=transforms)
 
 
 def normalize_rasters(sdata, progress=None,

@@ -1,6 +1,7 @@
 import { PointCloudLayer } from '@deck.gl/layers';
 import { LayerExtension } from '@deck.gl/core';
 import type { Layer, BinaryAttribute } from '@deck.gl/core';
+import type { Matrix4 } from '@math.gl/core';
 import type { ScatterPositions } from './useArrowPositions';
 import { MarkerScatterplotLayer, type PointMarker } from './markerScatterplot';
 
@@ -9,6 +10,12 @@ interface SpotStyle {
   opacity: number;
   is3d?: boolean;
   marker?: PointMarker;  // 2D glyph shape; defaults to circle (ignored in 3D)
+  // World->pixel transform when the canvas is in image-pixel space (see SpatialCanvas);
+  // undefined = world space (identity). Positions stay in world coords; deck applies this.
+  modelMatrix?: Matrix4;
+  // Multiplier turning the world-unit point radius into the layer's common frame. In
+  // pixel space that's px-per-world-unit; 1 in world space. (2D only; 3D size is in px.)
+  radiusScale?: number;
 }
 
 // Mean inter-point spacing sqrt(area / n) — the characteristic cell diameter,
@@ -67,7 +74,7 @@ const overlapDepth = new OverlapDepthExtension();
 export function buildSpotLayer(
   positions: ScatterPositions,
   colors: Uint8Array,
-  { pointSize, opacity, is3d, marker = 'circle' }: SpotStyle,
+  { pointSize, opacity, is3d, marker = 'circle', modelMatrix, radiusScale = 1 }: SpotStyle,
 ): Layer[] {
   if (is3d) {
     return [new PointCloudLayer({
@@ -81,11 +88,12 @@ export function buildSpotLayer(
       },
       pointSize: Math.max(1, pointSize),
       opacity,
+      modelMatrix,
       updateTriggers: { getColor: colors, getPosition: positions.positions },
     })];
   }
 
-  const worldRadius = pointWorldRadius(positions, pointSize);
+  const worldRadius = pointWorldRadius(positions, pointSize) * radiusScale;
   // getFillColor is a Uint8 buffer; ScatterplotLayer's instanceFillColors is a
   // 'unorm8' attribute, so it is normalized to 0..1 automatically.
   const attributes: Record<string, BinaryAttribute> = {
@@ -101,6 +109,7 @@ export function buildSpotLayer(
     radiusUnits: 'common' as const,
     radiusMinPixels: 0.5,
     pickable: false,
+    modelMatrix,
     extensions: [overlapDepth],
     updateTriggers: { getFillColor: colors, getPosition: positions.positions, getRadius: worldRadius },
   };

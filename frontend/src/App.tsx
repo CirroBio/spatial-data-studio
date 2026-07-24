@@ -21,7 +21,7 @@ import DataInspector from './components/DataInspector';
 import DetailModal from './components/DetailModal';
 import NewSessionDialog from './components/NewSessionDialog';
 import Toaster from './components/Toaster';
-import SavingOverlay from './components/SavingOverlay';
+import BlockingOverlay from './components/BlockingOverlay';
 import StartupSplash from './components/StartupSplash';
 import { TourAnchors } from './tours';
 
@@ -216,6 +216,8 @@ export default function App() {
           obsmFields={sessionState.fields.obsm}
           obsFields={sessionState.fields.obs}
           layerNames={sessionState.fields.layers}
+          canvasMode={canvasMode}
+          annotationTarget={annotationTarget}
         />
       );
     }
@@ -278,7 +280,7 @@ export default function App() {
       </div>
       <ResourceStrip />
       <Toaster />
-      <SavingOverlay />
+      <BlockingOverlay />
       {detail && (
         <DetailModal onClose={() => { setSelectedComputeId(null); setSelectedPlotId(null); }}>
           {detail}

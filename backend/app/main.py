@@ -792,29 +792,27 @@ async def image_info(sid: str, element: str):
 
     def _info():
         table = sess.active_table() if sess.active_table_key else None
-        # Base manifest (dims/levels/pixel_to_world/channels). Kept exactly as-is —
-        # snapshots.py embeds this dict verbatim as render.image, whose shape is frozen
-        # by the snapshot schema gate, so the client-compositing fields below are added
-        # only on this live endpoint, never inside imaging.image_info.
+        # Base manifest (dims/levels/pixel_to_world/channels) from imaging.image_info;
+        # the client-compositing fields below are layered on only at this live endpoint.
         info = imaging.image_info(sess.sdata, element, table)
         is_rgb = imaging._is_rgb(sess.sdata, element)
-        num_channels = info["channels"]
-        # Client (Viv) compositing is possible only when the feature is on, the channel
-        # count fits a shader pass (RGB is always <=3), AND we actually have an on-disk
-        # store to serve for this element — normalize_rasters registers one for every
-        # image, whether freshly rebuilt (non-canonical) or already tile-chunked
+        # Client (Viv) compositing is possible when the feature is on AND we have an
+        # on-disk store to serve for this element — normalize_rasters registers one for
+        # every image, whether freshly rebuilt (non-canonical) or already tile-chunked
         # (canonical, e.g. reopened from a checkpoint: it points at sdata.path). Without
-        # the store the raster_base_url would 404, so gate on it here — the frontend
-        # treats client_compositing=false as "use PNG tiles".
+        # the store the raster_base_url would 404, so gate on it here. Channel count is
+        # NOT gated: the frontend displays up to MAX_VISIBLE_CHANNELS of the image's
+        # channels at once (the picker caps it), so an image with more channels still
+        # composites client-side — the user just chooses which ones to show.
         has_store = element in sess.raster_stores
-        client_compositing = bool(
-            config.CLIENT_IMAGE_COMPOSITING and has_store
-            and (num_channels <= config.CLIENT_IMAGE_MAX_CHANNELS or is_rgb))
+        client_compositing = bool(config.CLIENT_IMAGE_COMPOSITING and has_store)
         info["client_compositing"] = client_compositing
         info["raster_base_url"] = f"/api/sessions/{sid}/raster/{element}"
         info["zarr_group_path"] = f"images/{element}"
         info["contrast_limits"] = [[0.0, hi] for hi in
                                    imaging.channel_contrast_limits(sess.sdata, element)]
+        info["contrast_range"] = [[lo, hi] for lo, hi in
+                                  imaging.channel_value_range(sess.sdata, element)]
         info["is_rgb"] = is_rgb
         return info
 
@@ -831,23 +829,6 @@ async def image_thumbnail(sid: str, element: str, max_px: int = 2048, channels: 
 
     def _render():
         return imaging.thumbnail_image(sess.sdata, element, max_px, channel_colors)
-
-    try:
-        image = await _render_image(sess, _render)
-    except KeyError as e:
-        raise HTTPException(404, str(e))
-    return Response(content=image, media_type=imaging.TILE_IMAGE_MEDIA_TYPE,
-                    headers={"Cache-Control": "public, max-age=3600"})
-
-
-@app.get("/api/sessions/{sid}/image/{element}/tile/{level}/{col}/{row}")
-async def image_tile(sid: str, element: str, level: int, col: int, row: int,
-                     channels: str | None = None):
-    sess = _session(sid)
-    channel_colors = imaging.parse_channel_colors(channels)
-
-    def _render():
-        return imaging.tile_image(sess.sdata, element, level, col, row, channel_colors)
 
     try:
         image = await _render_image(sess, _render)

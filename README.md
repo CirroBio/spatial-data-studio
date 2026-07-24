@@ -28,12 +28,17 @@ neighborhood. The left panel is the analysis history that produced this view.*
   and a link to its documentation.
 - **Apply curated recipes.** Multi-step workflows (preprocess → cluster → annotate →
   neighborhood analysis) you can run in one click or stage and edit step by step.
-- **Visualize interactively.** Color cells by any gene or metadata column, toggle and
-  tint the tissue-image channels, switch between point and cell-boundary rendering,
-  and view non-spatial embeddings (UMAP/PCA) in 2D or 3D — all on the same GPU canvas.
+- **Visualize interactively.** Color cells by any gene or metadata column, choose which
+  tissue-image channels to display (up to 6 at once) and how they're named, colored (any
+  color, not just presets), and contrast-adjusted (min/max per channel), switch between
+  point and cell-boundary rendering, and view non-spatial embeddings (UMAP/PCA) in 2D or
+  3D — all on the same GPU canvas.
 - **Annotate.** Draw lasso regions to label cells, or draw shapes and text directly on
   the tissue. Region labels become ordinary metadata columns you can then analyze by.
-- **Subset.** Lasso a region to spin off a child session containing just those cells.
+  Labeling works on the embedding view too — in 3D it labels every cell visible within
+  the drawn region.
+- **Subset.** Lasso a region — on the tissue or an embedding — to spin off a child session
+  that keeps (or removes) just those cells.
 - **Save and share.** Save a checkpoint you can reopen later, save a snapshot to pin
   a particular view for read-only browsing later, or (optionally) upload results to
   [Cirro](https://cirro.bio/).
@@ -49,18 +54,20 @@ neighborhood. The left panel is the analysis history that produced this view.*
 </tr>
 </table>
 
-![The display settings panel: color by, render mode, point size, plot orientation, zoom, background, image channel colors, and legends.](docs/images/display.jpg)
+![The display settings panel, organised into View, Cells, and Image icon tabs: layer visibility, color by, render mode, point size, plot orientation, zoom, background, and per-channel image color/contrast.](docs/images/display.jpg)
 
-*Customize the display — choose what colors the cells, how they render, how the plot is
-oriented (flip the horizontal/vertical axes), the zoom level (buttons plus scroll/pinch)
-and its background (light or dark), how the tissue-image channels are tinted and
-blended, and add text/shape annotations that persist with the dataset.*
+*Customize the display, organised into **View**, **Cells**, and **Image** icon tabs —
+choose what colors the cells, how they render, how the plot is oriented (flip the
+horizontal/vertical axes), the zoom level (buttons plus scroll/pinch) and its background
+(light or dark), how each tissue-image channel is colored and contrast-adjusted, and add
+text/shape annotations that persist with the dataset.*
 
 ![A Xenium section zoomed in, each cell drawn as its true segmentation outline and colored by Leiden cluster, over the morphology image.](docs/images/cell-outlines.jpg)
 
 *Switch to cell-boundary rendering to draw each cell as its actual segmentation
-shape rather than a point — pick the shape set (here `cell_boundaries`) and the app
-fills each outline with the cell's color.*
+shape rather than a point — pick the shape set (here `cell_boundaries`) and choose
+whether each boundary is a filled shape or an outline (with an adjustable line
+width), colored by the cell's value either way.*
 
 ## Analyses available
 

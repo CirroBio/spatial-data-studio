@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import * as arrow from 'apache-arrow';
 import type { Layer, OrthographicViewState } from '@deck.gl/core';
+import type { Matrix4 } from '@math.gl/core';
 // Follow-up: 0.3.2 warns it is renamed to @geoarrow/deck.gl-geoarrow (0.4.x).
 // Pinned here because 0.4.x may drift the API and needs re-testing; not migrated.
-import { GeoArrowSolidPolygonLayer } from '@geoarrow/deck.gl-layers';
-import type { GeoArrowSolidPolygonLayerProps } from '@geoarrow/deck.gl-layers';
+import { GeoArrowPolygonLayer } from '@geoarrow/deck.gl-layers';
+import type { GeoArrowPolygonLayerProps } from '@geoarrow/deck.gl-layers';
 import { getShapesGeoArrow } from '../../api';
+import { wx, wy, type Affine } from './imageAffine';
 
 // Cap features per viewport request so the main-thread earcut triangulation can't
 // stall on a pathological bbox. The backend returns an EMPTY table when the
@@ -75,10 +77,25 @@ function buildFillColors(table: arrow.Table, colors: Uint8Array): arrow.Vector {
 function viewportBbox(vs: OrthographicViewState, size: { width: number; height: number }): Bbox {
   const zoom = Array.isArray(vs.zoom) ? vs.zoom[0] : vs.zoom ?? 0;
   const target = vs.target as number[];
-  const worldPerPx = Math.pow(2, -zoom);
-  const hw = (size.width / 2) * worldPerPx * (1 + BBOX_PAD);
-  const hh = (size.height / 2) * worldPerPx * (1 + BBOX_PAD);
+  const unitsPerPx = Math.pow(2, -zoom);
+  const hw = (size.width / 2) * unitsPerPx * (1 + BBOX_PAD);
+  const hh = (size.height / 2) * unitsPerPx * (1 + BBOX_PAD);
   return [target[0] - hw, target[1] - hh, target[0] + hw, target[1] + hh];
+}
+
+// The viewport bbox is in the canvas coordinate space, which is image-pixel space when
+// an image is shown (SpatialCanvas). The backend queries SpatialData polygons in world
+// coordinates, so convert the pixel bbox to a world-space AABB (all four corners through
+// pixel_to_world, since the affine may rotate) before sending it. Identity when there's
+// no image (pixelToWorld undefined → the bbox is already world coordinates).
+function bboxToWorld(b: Bbox, pixelToWorld?: Affine): Bbox {
+  if (!pixelToWorld) return b;
+  const [x0, y0, x1, y1] = b;
+  const pts: [number, number][] = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+    .map(([px, py]) => [wx(pixelToWorld, px, py), wy(pixelToWorld, px, py)]);
+  const xs = pts.map((p) => p[0]);
+  const ys = pts.map((p) => p[1]);
+  return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
 }
 
 interface Params {
@@ -89,16 +106,24 @@ interface Params {
   size: { width: number; height: number } | null;
   colors: Uint8Array | null;
   opacity: number;
+  outline: boolean;   // draw only the boundary stroke (vs. a filled polygon)
+  lineWidth: number;  // outline stroke width in screen pixels
   enabled: boolean;  // shapes render mode active AND a polygon element is available
+  // World->pixel transform when the canvas is in image-pixel space (undefined = world).
+  modelMatrix?: Matrix4;
+  // The pixel_to_world affine (present iff modelMatrix is), used to convert the
+  // pixel-space viewport bbox back to the world coords the backend query expects.
+  pixelToWorld?: Affine;
 }
 
 // Fetches the cell polygons intersecting the current viewport (debounced,
-// LRU-cached, versioned by data_version) and returns a GeoArrowSolidPolygonLayer
-// filled by each cell's mapped color. Mirrors useImageTiles: a module cache + a
-// bump reducer so a settled fetch re-renders. Not enabled (points mode) / no
+// LRU-cached, versioned by data_version) and returns a GeoArrowPolygonLayer
+// colored by each cell's mapped color — filled, or as a boundary-only stroke of
+// `lineWidth` pixels when `outline`. A module cache + a bump reducer so a settled
+// fetch re-renders. Not enabled (points mode) / no
 // polygon element → { layer: null }, so the points path is a no-op.
 export function usePolygonBbox(
-  { sessionId, element, version, viewState, size, colors, opacity, enabled }: Params,
+  { sessionId, element, version, viewState, size, colors, opacity, outline, lineWidth, enabled, modelMatrix, pixelToWorld }: Params,
 ): { layer: Layer | null; loading: boolean } {
   const [tick, bump] = useReducer((x: number) => x + 1, 0);
   const [settled, setSettled] = useState<Bbox | null>(null);
@@ -130,8 +155,8 @@ export function usePolygonBbox(
     if (!enabled || !element || !colors) { lastLayer.current = null; return { layer: null, loading: false }; }
     // While the next bbox is settling or fetching, keep the previous polygons up.
     if (!settled) return { layer: lastLayer.current, loading: false };
-    // Round the bbox to integers so sub-unit jitter doesn't churn the cache key.
-    const b = settled.map(Math.round) as Bbox;
+    // Round the (world-space) bbox to integers so sub-unit jitter doesn't churn the key.
+    const b = bboxToWorld(settled, pixelToWorld).map(Math.round) as Bbox;
     const key = `${sessionId}:${element}:${version}:${b.join(',')}`;
     const table = getTable(key, sessionId, element, b, bump);
     if (!table) return { layer: lastLayer.current, loading: true };
@@ -141,18 +166,30 @@ export function usePolygonBbox(
     // denser-but-fitting neighbour bbox don't linger.
     if (table.numRows === 0) { lastLayer.current = null; return { layer: null, loading: false }; }
 
-    const layer = new GeoArrowSolidPolygonLayer({
+    // One color Vector drives the fill (filled style) or the boundary stroke
+    // (outline style) — the other channel is off, so only the active one shows.
+    const cellColors = buildFillColors(table, colors) as GeoArrowPolygonLayerProps['getFillColor'];
+    const layer = new GeoArrowPolygonLayer({
       id: `cell-polygons-${element}`,
       data: table,
-      getFillColor: buildFillColors(table, colors) as GeoArrowSolidPolygonLayerProps['getFillColor'],
+      filled: !outline,
+      stroked: outline,
+      getFillColor: cellColors,
+      getLineColor: cellColors,
+      getLineWidth: lineWidth,
+      lineWidthUnits: 'pixels',
       opacity,
       pickable: false,
       _validate: false,
-      earcutWorkerUrl: null,  // triangulate on the main thread — no CDN worker fetch
+      modelMatrix,
+      // The composite instantiates a GeoArrowSolidPolygonLayer for the fill (even in
+      // outline style it triangulates the geometry); force its earcut onto the main
+      // thread so no CDN worker is fetched, matching the points/shapes path elsewhere.
+      _subLayerProps: { fill: { earcutWorkerUrl: null, _validate: false } },
     });
     lastLayer.current = layer;
     lastIdentity.current = identity;
     return { layer, loading: false };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, element, settled, colors, version, sessionId, opacity, tick]);
+  }, [enabled, element, settled, colors, version, sessionId, opacity, outline, lineWidth, tick, modelMatrix, pixelToWorld]);
 }

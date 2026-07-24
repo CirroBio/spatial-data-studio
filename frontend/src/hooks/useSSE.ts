@@ -76,6 +76,14 @@ export function useSSE(): void {
         upsertSession((data as SessionCreatedEvent).summary);
       },
 
+      // A session's summary changed after creation — most importantly its status
+      // flipping loading -> ready/errored once an async load / read bootstrap
+      // finishes. upsertSession replaces the row by id, so the picker's status
+      // updates live without a page reload. Same payload shape as session.created.
+      'session.updated': (data) => {
+        upsertSession((data as SessionCreatedEvent).summary);
+      },
+
       // Progress of a synchronous checkpoint load, before any session id exists. The
       // New Session dialog mints the load_id, subscribes via the store, and clears it.
       // A `log` chunk is the reader's live output (appended); a milestone event (no
@@ -138,11 +146,11 @@ export function useSSE(): void {
         removeActiveJob(d.job_id);
         // The full log is now fetchable from the store; drop the live buffer.
         clearJobLog(d.job_id);
-        // Save and the persisted transform edit both block the UI behind the saving
-        // overlay; clear it once the matching job lands (this is always the viewer's
-        // own job, keyed by job_id, so it's not session-gated).
-        if (useAppStore.getState().savingJobId === d.job_id) {
-          useAppStore.getState().setSavingJobId(null);
+        // Save, the persisted transform edit, and lasso subset all block the UI behind
+        // the blocking overlay; clear it once the matching job lands (this is always the
+        // viewer's own job, keyed by job_id, so it's not session-gated).
+        if (useAppStore.getState().blockingJob?.id === d.job_id) {
+          useAppStore.getState().setBlockingJob(null);
         }
         // Everything below reflects a change to a specific session; only apply it to a
         // viewer who is actually looking at that session so another user's work never
@@ -178,8 +186,8 @@ export function useSSE(): void {
         const d = data as JobFailedEvent;
         removeActiveJob(d.job_id);
         clearJobLog(d.job_id);
-        if (useAppStore.getState().savingJobId === d.job_id) {
-          useAppStore.getState().setSavingJobId(null);
+        if (useAppStore.getState().blockingJob?.id === d.job_id) {
+          useAppStore.getState().setBlockingJob(null);
         }
         // Failed compute jobs vanish from history (DESIGN §6.1); surface the error so
         // the user isn't left with a silently-closed form and no feedback — but only to

@@ -104,25 +104,15 @@ class Config:
     # down via the env var on a memory-constrained container.
     IMAGE_RENDER_CONCURRENCY = int(os.environ.get("SDS_IMAGE_RENDER_CONCURRENCY", str(os.cpu_count() or 4)))
 
-    # Client-side (Viv) image compositing. When on, the /image/{element}/info manifest
-    # advertises that the browser may read the session's on-disk normalized raster zarr
-    # directly (via /api/sessions/{sid}/raster/...) and composite channels on the GPU,
-    # instead of fetching server-composited PNG tiles. The PNG tile path stays intact as
-    # the fallback (used whenever this is off, the element has no served store, or its
-    # channel count exceeds the cap). Viv composites up to 6 channels per shader pass;
-    # above that the frontend falls back to PNG.
-    #
-    # Default ON (disable with SDS_CLIENT_IMAGE_COMPOSITING=0). The client path streams
-    # full-resolution tiles: the frontend (useVivImageLayer.ts) reuses the PNG path's
-    # world-coordinate tile selection and renders a Viv XRLayer per visible tile over a
-    # coarse base, so deep zoom shows full detail. Verified live: single- and multi-channel
-    # fluorescence (additive-on-black), RGB/H&E true-color passthrough, deep-zoom streaming,
-    # and image<->points alignment. It does NOT use Viv's tiled MultiscaleImageLayer, whose
-    # deck.gl TileLayer silently fetches no tiles under a non-unit pixel->world modelMatrix
-    # scale. The PNG tile path stays intact as the fallback (this flag off, an element with
-    # no served store, or channel count over the cap below). See DESIGN.md 9.4.
+    # Client-side (Viv) image compositing — the only canvas image path. When on, the
+    # /image/{element}/info manifest advertises that the browser reads the session's
+    # on-disk normalized raster zarr directly (via /api/sessions/{sid}/raster/...) and
+    # composites channels on the GPU. The frontend displays up to 6 channels at once
+    # (Viv's shader-pass limit; the channel picker caps it) and lets the user pick which
+    # of a >6-channel image's channels to show. Default ON; disable with
+    # SDS_CLIENT_IMAGE_COMPOSITING=0 only to turn the canvas image off entirely (there is
+    # no server-composited canvas fallback anymore). See DESIGN.md 9.4.
     CLIENT_IMAGE_COMPOSITING = os.environ.get("SDS_CLIENT_IMAGE_COMPOSITING", "1") not in ("0", "false", "False")
-    CLIENT_IMAGE_MAX_CHANNELS = int(os.environ.get("SDS_CLIENT_IMAGE_MAX_CHANNELS", "6"))
 
     # Raster (image/label) tiling normalized at ingest (see rasters.py). Every
     # element is rebuilt into a 2x multiscale pyramid down to a <= RASTER_BASE_PX

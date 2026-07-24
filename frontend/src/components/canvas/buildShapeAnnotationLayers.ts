@@ -2,6 +2,7 @@ import { PolygonLayer, PathLayer, ScatterplotLayer, TextLayer } from '@deck.gl/l
 import { PathStyleExtension } from '@deck.gl/extensions';
 import type { PathStyleExtensionProps } from '@deck.gl/extensions';
 import type { Layer } from '@deck.gl/core';
+import type { Matrix4 } from '@math.gl/core';
 import type { ShapeAnnotation, ShapeGeometry } from '../../schemas/annotations';
 import { shapeOutline, shapeHandles, shapeCentroid, arrowheadTriangle, ROTATE_HANDLE_ID } from '../../lib/shapeAnnotations';
 
@@ -28,12 +29,19 @@ function dashArray(dash: ShapeAnnotation['stroke']['dash']): [number, number] {
  * debounced API round trip. `unitsPerPixel` (world units per screen pixel at the
  * current zoom) converts each arrow's pixel size into the world-space triangle
  * geometry, so the arrowhead stays a constant on-screen size like the stroke
- * width. Rendered whenever shapes exist, independent of whether the Annotations
- * tab (and its edit interactions) is active. */
+ * width — the triangle is world-space geometry that goes through `modelMatrix`.
+ * `radiusScale` (common units per world unit, = 1 without an image) converts the
+ * world-space text size into the pixel-space common frame, since `sizeUnits:
+ * 'common'` is applied post-projection and bypasses `modelMatrix` (mirrors the
+ * point-radius conversion in buildSpotLayer). Rendered whenever shapes exist,
+ * independent of whether the Annotations tab (and its edit interactions) is active. */
 export function buildShapeAnnotationLayers(
   shapes: ShapeAnnotation[],
   overrides: Record<string, ShapeGeometry> = {},
   unitsPerPixel = 1,
+  // World->pixel transform when the canvas is in image-pixel space (undefined = world).
+  modelMatrix?: Matrix4,
+  radiusScale = 1,
 ): Layer[] {
   if (!shapes.length) return [];
 
@@ -50,7 +58,7 @@ export function buildShapeAnnotationLayers(
       filled: true,
       stroked: false,
       pickable: true,
-      parameters: OVERLAY_PARAMS,
+      parameters: OVERLAY_PARAMS, modelMatrix,
     }));
   }
 
@@ -65,7 +73,7 @@ export function buildShapeAnnotationLayers(
     getDashArray: (d) => dashArray(d.stroke.dash),
     widthUnits: 'pixels',
     pickable: true,
-    parameters: OVERLAY_PARAMS,
+    parameters: OVERLAY_PARAMS, modelMatrix,
     extensions: [new PathStyleExtension({ dash: true })],
   }));
 
@@ -87,7 +95,7 @@ export function buildShapeAnnotationLayers(
       filled: true,
       stroked: false,
       pickable: false,
-      parameters: OVERLAY_PARAMS,
+      parameters: OVERLAY_PARAMS, modelMatrix,
     }));
   }
 
@@ -98,20 +106,20 @@ export function buildShapeAnnotationLayers(
       data: texts,
       getPosition: (d) => (d.geometry.kind === 'text' ? d.geometry.position : [0, 0]),
       getText: (d) => (d.geometry.kind === 'text' ? d.geometry.text : ''),
-      getSize: (d) => (d.geometry.kind === 'text' ? d.geometry.fontSize : 16),
+      getSize: (d) => (d.geometry.kind === 'text' ? d.geometry.fontSize * radiusScale : 16),
       // Stored rotation is radians CW about the anchor (world/screen y is down here);
       // TextLayer getAngle is degrees CCW, hence the negation.
       getAngle: (d) => (d.geometry.kind === 'text' ? -(d.geometry.rotation * 180) / Math.PI : 0),
       getColor: (d) => [...hexToRgb(d.stroke.color), 255],
-      // World-space size (fontSize is stored in world units): the label keeps a
-      // constant span relative to the image and scales with zoom, unlike the
-      // pixel-constant stroke/arrowheads above.
+      // World-space size (fontSize is stored in world units, scaled to the common
+      // frame by radiusScale): the label keeps a constant span relative to the image
+      // and scales with zoom, unlike the pixel-constant stroke/arrowheads above.
       sizeUnits: 'common',
       getTextAnchor: 'middle',
       getAlignmentBaseline: 'center',
       characterSet: 'auto', // render whatever characters the user typed
       pickable: true,
-      parameters: OVERLAY_PARAMS,
+      parameters: OVERLAY_PARAMS, modelMatrix,
     }));
   }
 
@@ -121,7 +129,7 @@ export function buildShapeAnnotationLayers(
 /** Edit-handle overlay for the selected shape, shown only while the shape
  * annotation editor is active: a connector arm from the centroid out to the
  * green rotate handle, then the round vertex/radius/rotate handles on top. */
-export function buildShapeHandleLayer(geometry: ShapeGeometry): Layer[] {
+export function buildShapeHandleLayer(geometry: ShapeGeometry, modelMatrix?: Matrix4): Layer[] {
   const handles = shapeHandles(geometry);
   if (!handles.length) return [];
   const layers: Layer[] = [];
@@ -136,7 +144,7 @@ export function buildShapeHandleLayer(geometry: ShapeGeometry): Layer[] {
       getWidth: 1.5,
       widthUnits: 'pixels',
       pickable: false,
-      parameters: OVERLAY_PARAMS,
+      parameters: OVERLAY_PARAMS, modelMatrix,
     }));
   }
 
@@ -152,7 +160,7 @@ export function buildShapeHandleLayer(geometry: ShapeGeometry): Layer[] {
     getRadius: 5,
     radiusUnits: 'pixels',
     pickable: true,
-    parameters: OVERLAY_PARAMS,
+    parameters: OVERLAY_PARAMS, modelMatrix,
   }));
 
   return layers;
@@ -161,7 +169,7 @@ export function buildShapeHandleLayer(geometry: ShapeGeometry): Layer[] {
 /** Live preview layers for an in-progress drag (creating a shape, or dragging an
  * existing shape's handle) — rendered from local component state, never
  * persisted directly. */
-export function buildDragPreviewLayers(geometry: ShapeGeometry): Layer[] {
+export function buildDragPreviewLayers(geometry: ShapeGeometry, modelMatrix?: Matrix4): Layer[] {
   const outline = shapeOutline(geometry);
   const closed = geometry.kind === 'line' ? outline : [...outline, outline[0]];
   return [
@@ -172,7 +180,7 @@ export function buildDragPreviewLayers(geometry: ShapeGeometry): Layer[] {
       getColor: [51, 136, 255, 220],
       getWidth: 2,
       widthUnits: 'pixels',
-      parameters: OVERLAY_PARAMS,
+      parameters: OVERLAY_PARAMS, modelMatrix,
     }),
   ];
 }

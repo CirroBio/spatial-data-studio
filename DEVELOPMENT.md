@@ -143,11 +143,15 @@ defaults to `$HOME` (the container image relies on this, running from `$HOME`
 where the deployment environment mounts datasets, e.g. `$HOME/datasets`).
 
 The *working set* — the unpacked `.zarr.zip` extract dir and per-session normalized
-raster caches — lives separately under `SDS_WORK_DIR` (default the system temp dir; kept
-out of `DATA_DIR` so a transient `*.zarr` extract never shows up in the dataset picker).
-`run.sh` needs no change for local dev (the temp-dir default is on disk, as before). In
-Docker it is a `/work` tmpfs with `SDS_WORK_DIR_IN_RAM=1`, so the working set is held in
-RAM and its usage is folded into the admission accounting (see DESIGN §23.4). If a `.env` file
+raster caches (each up to a few hundred MB) — lives separately under `SDS_WORK_DIR`,
+kept out of `DATA_DIR` so a transient `*.zarr` extract never shows up in the dataset
+picker. For local dev, `run.sh` creates a dedicated `sds-work.XXXXXX` dir under the
+system temp dir and **deletes it on exit** (its cleanup trap fires on normal exit,
+Ctrl-C, or `stop.sh`'s TERM) — so a killed/exited dev server never leaves multi-GB
+raster temp dirs piling up in the system temp dir. Preset `SDS_WORK_DIR` yourself
+(e.g. at a sized tmpfs mount) and `run.sh` respects it and won't delete it. In Docker
+it is a `/work` tmpfs with `SDS_WORK_DIR_IN_RAM=1`, so the working set is held in RAM
+and its usage is folded into the admission accounting (see DESIGN §23.4). If a `.env` file
 exists at the repo root, `run.sh` sources it before launching uvicorn, so `CIRRO_*`
 config set there reaches the backend the same way docker compose's auto-loaded
 `.env` does.

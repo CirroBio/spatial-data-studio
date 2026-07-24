@@ -445,6 +445,7 @@ class Session:
             # A failed read bootstrap (no object ever adopted) leaves the session unusable.
             if self.sdata is None:
                 self.status = "errored"
+                self._publish_summary()
             self._fail(job_id, kind, result.error or "failed", log=result.log)
             return
 
@@ -504,6 +505,7 @@ class Session:
                 if not self.app_state["displays"]:
                     self.manager.auto_displays(self)
                 self.status = "ready"  # the read bootstrap adopted the object
+                self._publish_summary()
                 # Replacing the live object mid-session (e.g. sc.pp.filter_cells adopted
                 # whole, §4.6) changed every field: the row-count differs, so any cached
                 # canvas array is now stale. The facet diff can't express a wholesale
@@ -778,11 +780,13 @@ class Session:
                 elif not self.app_state["displays"]:
                     self.manager.auto_displays(self)
                 self.status = "ready"
+                self._publish_summary()
         except Exception as e:
             # Handle the failure here rather than letting it propagate to _dispatch: the
             # New Session dialog follows the load over `session.loading` (keyed by load_id),
             # not job.failed, so it needs the terminal event to surface the error.
             self.status = "errored"
+            self._publish_summary()
             self._fail(job_id, "load", str(e))
             if load_id:
                 BUS.publish("session.loading", {"load_id": load_id, "done": True,
@@ -798,6 +802,13 @@ class Session:
                                             "hash_check": hash_check, "message": "Ready"})
 
     # ---- status bookkeeping ----------------------------------------------
+    def _publish_summary(self) -> None:
+        """Re-publish this session's list summary after a status transition
+        (loading -> ready/errored). The sessions list (GET /api/sessions) has no
+        other live refresh path — it is not polled — so without this its row stays
+        stuck on the initial loading status until a manual page reload."""
+        BUS.publish("session.updated", {"session_id": self.id, "summary": self.manager.summary(self)})
+
     def _set_status(self, job_id, kind, status, structural_diff=None, log=None):
         self._jobs[job_id]["status"] = status
         rec = self._find_record(job_id, kind)

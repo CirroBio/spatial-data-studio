@@ -408,10 +408,11 @@ def run_recipe_params_flow(client):
 
 def run_snapshot_flow(client, sid):
     """A snapshot is a JSON config pointing at an (auto-saved, content-hashed)
-    checkpoint plus a baked render manifest. Opening it (POST /snapshots/{name}/open)
-    loads that checkpoint as a read-only session pinned to the saved view — the
-    server-delivered replacement for the old standalone browser viewer. Verify
-    save -> list -> open -> read-only + pinned display -> a mutating call rejected."""
+    checkpoint plus the saved display encoding/viewport. Opening it
+    (POST /snapshots/{name}/open) loads that checkpoint as a read-only session pinned
+    to the saved view (rebuilt from the encoding) — the server-delivered replacement
+    for the old standalone browser viewer. Verify save -> list -> open -> read-only +
+    pinned display -> a mutating call rejected."""
     disp = client.get(f"/api/sessions/{sid}").json()["app_state"]["displays"]
     spatial = next((d for d in disp if d["type"] == "spatial_canvas"), None)
     assert spatial, "no spatial display to snapshot"
@@ -1002,8 +1003,9 @@ def run_raster_survives_reshape_flow(client):
     rebuilds nothing. The per-session raster store built at load must then be KEPT: the
     old code rmtree'd it whenever the re-normalize returned no new store, leaving every
     image a dangling zarr ref that reads back all-zero -- a black canvas, with contrast
-    collapsing to [0,1] and no error raised. Guards that an image tile carries real
-    signal both before AND after the filter, and the store stays mapped."""
+    collapsing to [0,1] and no error raised. Guards that the image carries real signal
+    both BEFORE AND after the filter (via the server thumbnail, which composites the
+    same store the canvas reads), and the store stays mapped."""
     import numpy as np
     from PIL import Image
     from app.main import MANAGER
@@ -1012,15 +1014,14 @@ def run_raster_survives_reshape_flow(client):
     sess = MANAGER.get(sid)
     assert sess.raster_stores, "xenium load rebuilt no raster store; flow needs a rebuilt image"
     name = next(iter(sess.raster_stores))
-    coarse = len(client.get(f"/api/sessions/{sid}/image/{name}/info").json()["levels"]) - 1
 
-    def tile_max():
-        r = client.get(f"/api/sessions/{sid}/image/{name}/tile/{coarse}/0/0")
+    def image_max():
+        r = client.get(f"/api/sessions/{sid}/image/{name}/thumbnail?max_px=512")
         assert r.status_code == 200 and r.content, (r.status_code, len(r.content))
         return int(np.asarray(Image.open(io.BytesIO(r.content))).max())
 
-    before = tile_max()
-    assert before > 0, f"image tile is black before any reshape (max={before}); fixture issue"
+    before = image_max()
+    assert before > 0, f"image is black before any reshape (max={before}); fixture issue"
 
     per_cell = np.asarray(sess.active_table().X.sum(axis=1)).ravel()
     min_counts = int(np.quantile(per_cell, 0.25)) + 1
@@ -1030,11 +1031,11 @@ def run_raster_survives_reshape_flow(client):
     assert hist_status(client.get(f"/api/sessions/{sid}").json(), "filter_cells")[0] == "completed", \
         "filter_cells did not complete"
 
-    after = tile_max()
-    assert after > 0, (f"image tile went black after filter_cells (max={after}): the "
+    after = image_max()
+    assert after > 0, (f"image went black after filter_cells (max={after}): the "
                        "per-session raster store was deleted while still referenced")
     assert name in MANAGER.get(sid).raster_stores, "raster store dropped from map after reshape"
-    print(f"[ok] image tile survived reshape (max {before} -> {after}); raster store kept")
+    print(f"[ok] image survived reshape (max {before} -> {after}); raster store kept")
     assert client.delete(f"/api/sessions/{sid}").status_code == 200
 
 
@@ -1203,10 +1204,8 @@ def main():
         assert meta["levels"] and "pixel_to_world" in meta, "image_info missing pyramid metadata"
         print(f"[ok] image info: {meta}")
         thumb = client.get(f"/api/sessions/{sid}/image/hne/thumbnail?max_px=512")
+        assert thumb.status_code == 200 and thumb.content, f"thumbnail fetch failed: {thumb.status_code}"
         print(f"[ok] image thumbnail: status={thumb.status_code} bytes={len(thumb.content)}")
-        tile = client.get(f"/api/sessions/{sid}/image/hne/tile/0/0/0?channels=0:ff0000,1:00ff00,2:0000ff")
-        assert tile.status_code == 200 and tile.content, f"tile fetch failed: {tile.status_code}"
-        print(f"[ok] image tile 0/0/0: status={tile.status_code} bytes={len(tile.content)}")
 
         # plot
         client.post(f"/api/sessions/{sid}/jobs", json={

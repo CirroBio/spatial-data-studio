@@ -23,7 +23,7 @@ function compose(sx: number, sy: number, rotDeg: number, tx: number, ty: number)
 const NUM = 'w-full bg-bg border border-border rounded px-2 py-1 text-xs text-text focus:outline-none focus:border-accent';
 
 export default function TransformEditor({ sessionId, onClose }: Props) {
-  const setSavingJobId = useAppStore((s) => s.setSavingJobId);
+  const setBlockingJob = useAppStore((s) => s.setBlockingJob);
   const [mode, setMode] = useState<'simple' | 'matrix'>('simple');
   const [matrix, setMatrix] = useState<number[]>(IDENTITY);
   const [element, setElement] = useState<string | null>(null);
@@ -58,7 +58,7 @@ export default function TransformEditor({ sessionId, onClose }: Props) {
     setSaving(true);
     try {
       const { job_id } = await setPointsTransform(sessionId, affine);
-      setSavingJobId(job_id);
+      setBlockingJob({ id: job_id, label: 'Applying transform…' });
       onClose();
     } catch (err) {
       reportError('Set transform failed', err);
