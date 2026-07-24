@@ -10,10 +10,12 @@ can read), run [`squidpy`](https://squidpy.readthedocs.io/) and
 forms, and explore the result on a fast WebGL canvas that draws every cell over the
 tissue image. It runs as a single local server you open in your browser.
 
-![The spatial canvas showing a Xenium ovarian-cancer section, each cell colored by its cellular neighborhood, over the morphology image.](docs/images/hero.jpg)
+![The spatial canvas showing a Xenium ovarian-cancer section, each cell colored by its cellular neighborhood, over the morphology image, with the left panel open on the Compute (history) tab.](docs/images/hero.jpg)
 
 *A whole Xenium ovarian-cancer section (~400,000 cells), colored by cellular
-neighborhood. The left panel is the analysis history that produced this view.*
+neighborhood. The left panel organizes the session into **Compute**, **Plots**,
+**Regions**, **Annotations**, and **Subset** tabs; the **Compute** tab shown here is
+the analysis history that produced this view.*
 
 ## What you can do
 
@@ -25,7 +27,8 @@ neighborhood. The left panel is the analysis history that produced this view.*
   function appears in a searchable picker with a form generated from the function's
   own signature — QC, normalization, clustering, neighborhood enrichment, spatially
   variable genes, co-occurrence, ligand-receptor, and more. Each carries a citation
-  and a link to its documentation.
+  and a link to its documentation. Data-transforming functions run from the **Compute**
+  tab; plotting functions render static figures collected in a separate **Plots** tab.
 - **Apply curated recipes.** Multi-step workflows (preprocess → cluster → annotate →
   neighborhood analysis) you can run in one click or stage and edit step by step.
 - **Visualize interactively.** Color cells by any gene or metadata column, choose which
@@ -62,8 +65,9 @@ neighborhood. The left panel is the analysis history that produced this view.*
 *Customize the display, organised into **View**, **Cells**, and **Image** icon tabs —
 choose what colors the cells, how they render, how the plot is oriented (flip the
 horizontal/vertical axes), the zoom level (buttons plus scroll/pinch) and its background
-(light or dark), how each tissue-image channel is colored and contrast-adjusted, and add
-text/shape annotations that persist with the dataset.*
+(light or dark), and how each tissue-image channel is colored and contrast-adjusted.
+(Text and shape annotations that persist with the dataset are drawn from the left
+panel's **Annotations** tab.)*
 
 ![A Xenium section zoomed in, each cell drawn as its true segmentation outline and colored by Leiden cluster, over the morphology image.](docs/images/cell-outlines.jpg)
 
