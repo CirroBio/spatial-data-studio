@@ -6,6 +6,7 @@ import { ColorPaletteExtension } from '@vivjs/extensions';
 import type { ImageInfo } from '../../types';
 import { MAX_VISIBLE_CHANNELS, type Channel } from './useImageChannels';
 import { transparentBlackExtension } from './transparentBlackExtension';
+import { useImageTilePrefetch } from './useImageTilePrefetch';
 
 // Client-side GPU compositing of the tissue image via Viv's own `MultiscaleImageLayer`
 // — the sole canvas image path. When an image is shown, the canvas view is in the
@@ -38,6 +39,31 @@ function hexToRgb(hex: string): [number, number, number] {
 // buildSpotLayer). deck.gl forwards `parameters` to a CompositeLayer's sublayers, so this
 // reaches MultiscaleImageLayer's tiled XRLayers and its low-res background alike.
 const IMAGE_PARAMS = { depthWriteEnabled: false, depthCompare: 'always' as const };
+
+// Tile-streaming smoothness (forwarded to the deck.gl TileLayer inside Viv's
+// MultiscaleImageLayer — MultiscaleImageLayerBase extends TileLayer and Viv passes
+// `this.props` straight through). Two levers:
+//  - maxCacheSize: deck defaults to 5x the current viewport's tiles, so panning/zooming
+//    back to a spot just visited re-fetches evicted tiles (visible flicker). We instead
+//    size the cache from a fixed memory budget so previously seen tiles stay resident.
+//    Bounding by *count* alone is unsafe: a tile holds one typed array per active channel,
+//    so a fixed count would swing from ~256MB (1ch) to ~1.5GB (6ch). Bounding by bytes
+//    (maxCacheByteSize) is unusable here — Viv's tile content is a plain object with no
+//    `byteLength`, which deck logs as an error and mismeasures — so we derive the count
+//    from the budget and the actual per-tile size.
+//  - debounceTime: deck fires tile requests for every pyramid level the camera sweeps
+//    through during a continuous zoom/pan (and the animated zoom-button ease), then drops
+//    them as the camera keeps moving. Debouncing collapses those into one request at the
+//    settled viewport, killing most mid-gesture flicker at the cost of a small settle delay.
+const TILE_CACHE_BUDGET_BYTES = 256 * 1024 * 1024;
+const TILE_REQUEST_DEBOUNCE_MS = 150;
+
+// Viv dtypes are the fixed set Uint/Int 8|16|32 and Float 32|64 — the trailing bit width
+// is the byte count. Falls back to 2 (Uint16, the common microscopy case).
+function bytesPerSample(dtype: string): number {
+  const bits = Number.parseInt(dtype.replace(/\D/g, ''), 10);
+  return Number.isFinite(bits) && bits > 0 ? bits / 8 : 2;
+}
 
 type Loader = Awaited<ReturnType<typeof loadOmeZarr>>['data'];
 
@@ -114,6 +140,18 @@ export function useVivImageLayer(
   // or the layer (and its channel arrays) would be rebuilt on every camera move.
   const viewReady = !!viewState && !!size;
 
+  // Idle look-ahead prefetch: warm the tiles a zoom-in/pan is about to need while the
+  // camera is still. Keyed on the camera (not the layer memo), so it never rebuilds the
+  // image layer. See useImageTilePrefetch.
+  useImageTilePrefetch({
+    loader,
+    selections: activeSelections,
+    viewState,
+    size,
+    enabled: enabled && !failed,
+    resetKey: storeUrl,
+  });
+
   const layers = useMemo(() => {
     if (!enabled || failed || !loader || !viewReady) return [] as Layer[];
 
@@ -138,6 +176,14 @@ export function useVivImageLayer(
       ? [new ColorPaletteExtension()]
       : [new ColorPaletteExtension(), transparentBlackExtension];
 
+    // Size the tile cache from the byte budget and the actual per-tile footprint
+    // (tileSize^2 * bytesPerSample * one array per active channel). Floor at 64 tiles so a
+    // heavy multi-channel image still caches more than a single viewport; the layer already
+    // caps active channels at MAX_VISIBLE_CHANNELS, so the footprint is bounded.
+    const { tileSize, dtype } = loader[0];
+    const perTileBytes = tileSize * tileSize * bytesPerSample(dtype) * activeSelections.length;
+    const maxCacheSize = Math.max(64, Math.floor(TILE_CACHE_BUDGET_BYTES / Math.max(1, perTileBytes)));
+
     // No modelMatrix: the canvas view is already in this image's pixel space (see
     // SpatialCanvas), so the image sits at its own extent [0,0,W,H] and deck's TileLayer
     // selects tiles natively — the case Viv is designed for.
@@ -150,6 +196,20 @@ export function useVivImageLayer(
       contrastLimits,
       parameters: IMAGE_PARAMS,
       extensions: imageExtensions,
+      // Forwarded through to the deck.gl TileLayer (see the notes above the constants).
+      maxCacheSize,
+      debounceTime: TILE_REQUEST_DEBOUNCE_MS,
+      // Refinement strategy per opacity, like Viv does — but keyed on whether the tiles are
+      // actually opaque, which for us is `isRgb`, NOT deck's `opacity` prop (always 1 here).
+      // 'best-available' keeps a coarse ancestor tile visible while a finer one loads; for
+      // opaque RGB that just overpaints, but fluorescence tiles are semi-transparent
+      // (transparentBlackExtension maps black->alpha 0 and channels composite additively), so
+      // an ancestor and its finer tile briefly overlapping during a zoom SUM — the tile flashes
+      // lighter, then settles darker when the ancestor drops. 'no-overlap' never draws
+      // overlapping levels, killing that flash; the coarse base ImageLayer still fills
+      // not-yet-loaded regions, so there's no blanking. (Viv itself switches to 'no-overlap'
+      // for opacity < 1 for exactly this reason.)
+      refinementStrategy: isRgb ? 'best-available' : 'no-overlap',
     };
     // Viv's published props type both requires `dtype` (read from loader[0] at runtime,
     // not props) and omits `colors` (forwarded to the ColorPaletteExtension); it types the

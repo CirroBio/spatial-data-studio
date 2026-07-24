@@ -156,18 +156,26 @@ exists at the repo root, `run.sh` sources it before launching uvicorn, so `CIRRO
 config set there reaches the backend the same way docker compose's auto-loaded
 `.env` does.
 
-Client-side (Viv) image compositing is **on by default** (disable with
-`SDS_CLIENT_IMAGE_COMPOSITING=0`); `SDS_CLIENT_IMAGE_MAX_CHANNELS` (default `6`) caps the
-channels the browser will composite before falling back to WebP tiles. `useVivImageLayer.ts`
-streams full-resolution tiles: it reuses the WebP tile path's world-coordinate tile selection
-(`useImageTiles`) and renders a Viv `XRLayer` per visible tile (raw channels from the pyramid
-`PixelSource.getTile`, GPU-composited) over a coarse base `XRLayer` (from `getRaster` of the
-coarsest single-texture level). Both use `[px0, py1, px1, py0]` bounds (row-0 side as
-`bounds[3]`=top, matching the WebP tile `quad`): the world/OrthographicView is y-up, so image row 0
-(world y=0) must land at the screen bottom to align with the points. Viv's tiled `MultiscaleImageLayer` is deliberately NOT
-used: its deck.gl `TileLayer` never updates its tileset under our world-coordinate
-`OrthographicView` + non-unit `pixel_to_world` scale, so it renders nothing. `run.sh`
-requires no change. The raw-raster route
+Client-side (Viv) image compositing is the sole canvas image path, **on by default**
+(disable with the `sds:disableClientCompositing` localStorage key, which turns the canvas
+image off — there is no server-composited fallback); `SDS_CLIENT_IMAGE_MAX_CHANNELS`
+(default `6`) caps how many channels the browser composites in one shader pass.
+`useVivImageLayer.ts` builds a single Viv `MultiscaleImageLayer` whose deck.gl `TileLayer`
+selects and streams pyramid tiles natively: when a display has an image the canvas
+`OrthographicView` works in that image's own level-0 pixel space (the image sits at
+`[0,0,W,H]` with no modelMatrix; the cell points and every world-space overlay carry the
+`world→pixel` modelMatrix instead — see DESIGN §9.4), which is the case Viv is built for.
+(This supersedes the earlier hand-rolled per-tile `XRLayer` scheme, which existed only
+because a scaled `pixel_to_world` affine on the image stopped deck's `TileLayer` from ever
+updating its tileset.) Channel color/visibility/contrast are shader uniforms (instant, no
+refetch). Two deck `TileLayer` props are forwarded through Viv for smoothness: a
+memory-budgeted `maxCacheSize` (so pan/zoom back over a level just visited is a cache hit,
+not a re-fetch) and a `debounceTime` (so a continuous gesture doesn't fire — then drop —
+tile requests for every level it sweeps through). `useImageTilePrefetch.ts` additionally
+warms the next-finer pyramid level (plus a current-level pan ring) through `loader.getTile`
+while the camera is idle, so a subsequent zoom-in reads warmed tiles from the browser cache
+(304-revalidated against the raster route's ETag) instead of stalling. `run.sh` requires no
+change. The raw-raster route
 (`/api/sessions/{id}/raster/{element}/{key}`) serves the session's normalized zarr store
 (on disk, or in RAM when `WORK_DIR` is a tmpfs); because object-adoption, subset, and
 close `rmtree` that store under the session write lock, the route resolves the path AND

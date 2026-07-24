@@ -756,6 +756,46 @@ are rescaled by `1/affineScale` into the pixel frame. A display with no image st
 space (identity). On a slow/remote store the coarse tiles show until finer ones arrive; the
 mitigation is a RAM-backed `WORK_DIR` (§23.4), not a second compositing path.
 
+**Tile-streaming smoothness.** `useVivImageLayer` forwards two deck.gl `TileLayer` props
+through Viv (`MultiscaleImageLayerBase extends TileLayer`, and Viv passes `this.props`
+straight down): a `maxCacheSize` derived from a fixed memory budget (`TILE_CACHE_BUDGET_BYTES`,
+256 MB — divided by the actual per-tile footprint `tileSize² · bytesPerSample · activeChannels`,
+floored at 64 tiles) instead of deck's default of 5× the visible tiles, so zooming/panning
+back over a level just visited is a cache hit rather than a re-fetch (verified: descending to
+a finer pyramid level never re-requested the coarser level's tiles, and returning to it issued
+no new requests); and a `debounceTime` (`TILE_REQUEST_DEBOUNCE_MS`, 150 ms) that collapses the
+tile requests fired for every pyramid level a continuous zoom/pan sweeps through into one
+request at the settled viewport. Bounding the cache by *count* is unsafe here (a tile holds one
+array per active channel, so a fixed count swings ~6× with channel count) and `maxCacheByteSize`
+is unusable — Viv's tile content is a plain object with no `byteLength`, which deck logs as an
+error and mismeasures — hence the budget-derived count. It also sets `refinementStrategy`
+explicitly: `best-available` for opaque RGB (a coarse ancestor tile stays visible while the
+finer one loads — it just overpaints), but `no-overlap` for fluorescence. Fluorescence tiles
+are semi-transparent (transparentBlackExtension maps black→alpha 0 and channels composite
+additively), so under `best-available` an ancestor and its finer tile briefly overlapping
+during a zoom *sum* — the tile flashes lighter, then settles darker once the ancestor drops.
+`no-overlap` never draws overlapping levels, so the flash is gone; the coarse base ImageLayer
+still fills not-yet-loaded regions, so nothing blanks. (Viv makes exactly this choice, but keys
+it on its `opacity` prop, which is always 1 here — the tiles' transparency comes from the
+extension, not `opacity` — so we key it on `isRgb` instead.)
+
+**Idle look-ahead prefetch (`useImageTilePrefetch`).** deck's `TileLayer` only ever requests
+the current viewport, so the first frames of a zoom/pan stall while the newly needed tiles
+fetch. Once the camera has been still for `PREFETCH_SETTLE_MS`, this hook warms the tiles a
+gesture is about to need — the next finer pyramid level over the viewport (a zoom-in) and a
+one-tile ring at the current level (a pan) — by calling the same `loader[level].getTile` deck
+will call. The decoded result is discarded; the point is the browser HTTP-cache entry, which
+the raster route (`Cache-Control: no-cache` + weak ETag) serves back to deck's real request as
+a cheap 304 revalidation rather than a full chunk download — biggest win on slow/remote stores.
+The level a zoom-in will load is `-ceil(zoom)` clamped to `[-(levels-1), 0]` (deck's own
+`getTileIndices` math for a non-geospatial `OrthographicView`), so the finer level to warm is
+that minus one. It runs in a camera-keyed effect (never the layer memo, so the image layer is
+never rebuilt), aborts in flight the instant the camera moves again, skips tiles already warmed
+(a bounded LRU set, reset when the store URL changes), and caps tiles per pass so a zoomed-out
+view of a deep pyramid can't enqueue hundreds of fetches. This also softens the level-transition
+"pop": the finer level is already resident when the switch happens, so it sharpens in place
+immediately instead of after a network round-trip.
+
 A server-composited WebP **thumbnail** endpoint (`/image/{element}/thumbnail`) remains, used
 only by the DataInspector element preview — not by the canvas. See `docs/CONTRACT.md` for the
 info/route schemas.
