@@ -30,6 +30,9 @@ async def lifespan(app: FastAPI):
     global MANAGER, _READY
     _log.info("container memory limit: %d MiB (source: %s)",
               config.CONTAINER_MEM_MB, config.CONTAINER_MEM_SOURCE)
+    _log.info("cpu allocation: %.2f cores (source: %s); compute pool=%d workers, n_threads=%d",
+              config.CPU_LIMIT, config.CPU_LIMIT_SOURCE,
+              config.COMPUTE_POOL_WORKERS, config.N_THREADS)
     REGISTRY.build()
     MANAGER = SessionManager(REGISTRY)
     BUS.bind_loop(asyncio.get_running_loop())

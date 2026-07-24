@@ -37,6 +37,52 @@ def _host_mem_mb() -> int | None:
         return None
 
 
+def _cgroup_cpu_limit() -> float | None:
+    """The container's CPU hard-limit in (possibly fractional) cores, read from the CFS
+    quota the kernel scheduler enforces (cgroup v2 `cpu.max`, then v1
+    `cpu.cfs_quota_us`/`cpu.cfs_period_us`), or None when no quota is set. An ECS
+    task-level `cpu`, Fargate task `cpu`, and `docker run --cpus` all surface here as
+    quota/period. We deliberately ignore CPU *shares* (v2 `cpu.weight`, v1 `cpu.shares`,
+    what an ECS *container-level* `cpu` sets): shares are a relative scheduling weight
+    under contention, not a hard cap, and can't be turned into a core count. v2 `cpu.max`
+    is "<quota> <period>" or "max <period>" when unlimited; v1 quota is -1 when unlimited."""
+    try:
+        parts = Path("/sys/fs/cgroup/cpu.max").read_text().split()  # cgroup v2
+    except OSError:
+        parts = None
+    if parts:
+        if parts[0] == "max":
+            return None
+        quota, period = int(parts[0]), int(parts[1])
+        return quota / period if quota > 0 and period > 0 else None
+    try:  # cgroup v1
+        quota = int(Path("/sys/fs/cgroup/cpu/cpu.cfs_quota_us").read_text().strip())
+        period = int(Path("/sys/fs/cgroup/cpu/cpu.cfs_period_us").read_text().strip())
+    except OSError:
+        return None
+    return quota / period if quota > 0 and period > 0 else None
+
+
+def _container_cpus() -> tuple[float, str]:
+    """(CPU cores available, source) used to size the compute pool and per-op thread
+    budgets. An explicit SDS_CONTAINER_CPUS wins. Otherwise use the cgroup CFS quota —
+    the hard cap an ECS task `cpu` / `docker --cpus` imposes — so a task limited to 2
+    vCPU on a 16-core instance sizes to 2, not 16 (host `os.cpu_count()` ignores the
+    quota and would oversubscribe). With no quota (an ECS EC2 task with only a
+    container-level `cpu` share, `docker run` without `--cpus`) the container may use
+    every host core, so fall back to `os.cpu_count()`. 1.0 is the last resort."""
+    env = os.environ.get("SDS_CONTAINER_CPUS")
+    if env is not None:
+        return float(env), "SDS_CONTAINER_CPUS"
+    detected = _cgroup_cpu_limit()
+    if detected is not None:
+        return detected, "cgroup"
+    host = os.cpu_count()
+    if host:
+        return float(host), "host cpu_count (no cgroup quota)"
+    return 1.0, "default (no cgroup quota, host cpu_count unknown)"
+
+
 def _container_mem_mb() -> tuple[int, str]:
     """(limit in MiB, source) for admission accounting. An explicit SDS_CONTAINER_MEM_MB
     wins — including 0, which disables the memory percentage (see manager._mem_fraction).
@@ -93,16 +139,24 @@ class Config:
     CONTAINER_MEM_MB, CONTAINER_MEM_SOURCE = _container_mem_mb()
     ADMISSION_PCT = float(os.environ.get("SDS_ADMISSION_PCT", "0.80"))  # 80% boundary rule
 
+    # CPU cores the container may actually use — the single source of truth for sizing
+    # every CPU-bound pool/thread budget below. Auto-detected from the cgroup CFS quota
+    # (an ECS task `cpu` / `docker --cpus`) so a CPU-limited task doesn't size to the
+    # host's core count; falls back to os.cpu_count() when there is no quota. Rounded
+    # only where an integer worker/thread count is needed (see below); kept as a float
+    # here so the resource strip can show "cores used / cores available".
+    CPU_LIMIT, CPU_LIMIT_SOURCE = _container_cpus()
+    _CPU_INT = max(1, round(CPU_LIMIT))  # integer core budget for worker/thread counts
+
     MAX_SESSIONS = int(os.environ.get("SDS_MAX_SESSIONS", "8"))
 
     # Max image tiles/thumbnails composited at once. A zoom/pan burst asks for many
     # tiles simultaneously, and each finest-level tile can realize a full multi-MB
     # pyramid chunk; this caps the concurrent transient so the burst can't OOM.
-    # Scales with the box by default (more cores generally means more RAM too, and
-    # compositing is CPU-bound) rather than a fixed small number, so a bigger
-    # deployment actually gets more parallelism without a config change; override
-    # down via the env var on a memory-constrained container.
-    IMAGE_RENDER_CONCURRENCY = int(os.environ.get("SDS_IMAGE_RENDER_CONCURRENCY", str(os.cpu_count() or 4)))
+    # Scales with the CPU allocation by default (compositing is CPU-bound) rather than a
+    # fixed small number, so a bigger deployment gets more parallelism without a config
+    # change; override down via the env var on a memory-constrained container.
+    IMAGE_RENDER_CONCURRENCY = int(os.environ.get("SDS_IMAGE_RENDER_CONCURRENCY", str(_CPU_INT)))
 
     # Client-side (Viv) image compositing — the only canvas image path. When on, the
     # /image/{element}/info manifest advertises that the browser reads the session's
@@ -119,10 +173,10 @@ class Config:
     # base, chunked at imaging.TILE_SIZE so one tile realizes one small chunk.
     # Rasters rebuild one element at a time (peak RSS bounded by the largest single
     # element, not by this), so more worker threads just chews through one element's
-    # chunks faster on a bigger box — scales with cores by default, same reasoning
-    # as IMAGE_RENDER_CONCURRENCY above.
+    # chunks faster — scales with the CPU allocation by default, same reasoning as
+    # IMAGE_RENDER_CONCURRENCY above.
     RASTER_BASE_PX = int(os.environ.get("SDS_RASTER_BASE_PX", "1024"))
-    RASTER_REBUILD_WORKERS = int(os.environ.get("SDS_RASTER_REBUILD_WORKERS", str(os.cpu_count() or 2)))
+    RASTER_REBUILD_WORKERS = int(os.environ.get("SDS_RASTER_REBUILD_WORKERS", str(_CPU_INT)))
 
     # Server-side LRU (MB) of raw Viv chunk bytes read by the client-compositing path
     # (main.py raster_store). Caps repeat-view reads of the same chunk under the read
@@ -130,15 +184,17 @@ class Config:
     # 0 disables the cache. See imaging._raster_chunk_cache.
     RASTER_CHUNK_CACHE_MB = int(os.environ.get("SDS_RASTER_CHUNK_CACHE_MB", "256"))
 
-    # Default for thread-count form params (n_jobs etc.): SDS_N_THREADS if set,
-    # else all cores on the machine.
-    N_THREADS = int(os.environ.get("SDS_N_THREADS", os.cpu_count() or 1))
+    # Default for thread-count form params (n_jobs etc.): SDS_N_THREADS if set, else the
+    # CPU allocation, so one operation can use every allocated core (the main lever for
+    # a single job's CPU utilization) without oversubscribing a CPU-limited task.
+    N_THREADS = int(os.environ.get("SDS_N_THREADS", str(_CPU_INT)))
 
     # Worker processes that run the actual squidpy/scanpy call (registry/kernel.py),
     # keeping the CPU-bound work off the API process's GIL so unrelated requests
-    # (recipe list, other sessions) stay responsive during a long compute. Small by
-    # design — this is a single-user local tool, not a multi-tenant service.
-    COMPUTE_POOL_WORKERS = int(os.environ.get("SDS_COMPUTE_POOL_WORKERS", "2"))
+    # (recipe list, other sessions) stay responsive during a long compute. Defaults to
+    # the CPU allocation so concurrent jobs/sessions can spread across the allocated
+    # cores instead of a fixed pair; override down with SDS_COMPUTE_POOL_WORKERS.
+    COMPUTE_POOL_WORKERS = int(os.environ.get("SDS_COMPUTE_POOL_WORKERS", str(_CPU_INT)))
 
     RESOURCE_HZ = float(os.environ.get("SDS_RESOURCE_HZ", "2"))   # resource sample cadence
     LONG_RUNNING_S = float(os.environ.get("SDS_LONG_RUNNING_S", "120"))  # watchdog threshold

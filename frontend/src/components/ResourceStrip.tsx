@@ -42,7 +42,16 @@ export default function ResourceStrip() {
             </>
           )}
           <span className="text-border">|</span>
-          <span>CPU {global.cpu_pct.toFixed(0)}%</span>
+          <div className="flex items-center gap-2">
+            <span>CPU</span>
+            <div className="w-20 h-1.5 bg-bg rounded-full overflow-hidden">
+              <div
+                className="h-full bg-accent rounded-full transition-all duration-500"
+                style={{ width: `${global.cpu_count > 0 ? Math.min(global.cpu_pct / global.cpu_count, 100) : 0}%` }}
+              />
+            </div>
+            <span>{(global.cpu_pct / 100).toFixed(1)}/{global.cpu_count} cores</span>
+          </div>
         </>
       ) : (
         <span className="text-muted/50">waiting for resource data...</span>

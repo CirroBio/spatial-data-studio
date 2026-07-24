@@ -54,6 +54,11 @@ class SessionManager:
         self.registry = registry
         self.sessions: dict[str, Session] = {}
         self._proc = psutil.Process()
+        # Cache of Process handles for the CPU rollup (see _cpu_pct): the API process
+        # plus its compute-worker children. Kept across samples because psutil's
+        # non-blocking cpu_percent() measures the delta since the *previous* call on the
+        # same object, so a fresh handle each tick would always read 0.
+        self._cpu_procs: dict[int, psutil.Process] = {self._proc.pid: self._proc}
 
     # ---- creation ---------------------------------------------------------
     def create_from_load(self, path: str, name: str | None = None,
@@ -395,6 +400,31 @@ class SessionManager:
             return 0.0
         return self._effective_mb() / config.CONTAINER_MEM_MB
 
+    def _cpu_pct(self) -> float:
+        """Summed CPU% across the API process and its compute-worker children (the loky
+        pool in compute_pool.py). The API process itself sits mostly idle during a job,
+        blocked on the worker's future, so measuring it alone (the old reading) badly
+        under-reported real CPU use; the heavy squidpy/scanpy work runs in the children.
+        100% == one core fully busy, so the total can exceed 100% on a multi-core box
+        (the resource strip shows it against the core count, see config.CPU_LIMIT).
+        A newly seen child reads 0.0 for one tick while its baseline primes."""
+        live = {self._proc.pid}
+        try:
+            for child in self._proc.children(recursive=True):
+                live.add(child.pid)
+                self._cpu_procs.setdefault(child.pid, child)
+        except psutil.Error:
+            pass
+        for pid in [p for p in self._cpu_procs if p not in live]:
+            del self._cpu_procs[pid]
+        total = 0.0
+        for proc in self._cpu_procs.values():
+            try:
+                total += proc.cpu_percent()
+            except psutil.Error:
+                pass
+        return total
+
     def _resident_mb(self, sess: Session) -> float:
         if sess.sdata is None:
             return 0.0
@@ -440,7 +470,8 @@ class SessionManager:
         return {"global": {"rss_mb": round(self._rss_mb(), 1),
                            "work_dir_mb": round(self._work_dir_mb(), 1),
                            "rss_pct": round(self._mem_fraction() * 100, 1),
-                           "cpu_pct": self._proc.cpu_percent(),
+                           "cpu_pct": round(self._cpu_pct(), 1),
+                           "cpu_count": config.CPU_LIMIT,
                            "rasters_mb": round(sum(s.raster_cache_mb for s in sessions), 1)},
                 "per_session": {s.id: self._resident_mb(s) for s in sessions}}
 

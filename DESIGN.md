@@ -1323,7 +1323,7 @@ closed (a 406 does not auto-reconnect), so SSE remains the path wherever it work
 | `session.loading` | load_id, message, pct?, log?, done?, status?, hash_check?, error? | Show live progress in the New Session load overlay (routed by client nonce); a `log` chunk is the reader's live output, appended below the milestone message; the terminal `done` event (`status:"ready"|"errored"`) finalizes the overlay — toast `hash_check` and open the session, or show `error` for a retry |
 | `session.created` | sessionId (child) | Add to lineage |
 | `session.removed` | sessionId, reason | Prune from list; if it was active and reason≠subset, clear the view |
-| `resource.sample` | global (RSS, effective `rss_pct`, `work_dir_mb`, CPU) + per-session RSS | Update resource strip |
+| `resource.sample` | global (RSS, effective `rss_pct`, `work_dir_mb`, `cpu_pct` summed over the API process + compute workers, `cpu_count`) + per-session RSS | Update resource strip |
 | `memory.warning` | threshold breached | Block dequeue; warn |
 
 ---
