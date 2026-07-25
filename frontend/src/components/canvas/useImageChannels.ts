@@ -1,7 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useMemo } from 'react';
 import type { SpatialDisplaySpec, ImageInfo } from '../../types';
-import { putDisplay } from '../../api';
-import { useAppStore } from '../../store/sessionStore';
 import { defaultChannelColor } from './colorUtils';
 
 // Viv composites at most this many channels in one shader pass, so at most this many
@@ -28,12 +26,18 @@ type ChannelPatch = Partial<{ visible: boolean; name: string; color: string; con
 interface Params {
   imageInfo: ImageInfo | null;
   display: SpatialDisplaySpec;
-  sessionId: string;
-  updateDisplay: (display: SpatialDisplaySpec) => void;
+  // Shared persistence from useDisplayPersistence: `persistDisplay` does the optimistic
+  // store write + one debounced PUT (of the live spec), and `currentSpec` reads the
+  // latest stored spec. Routing channel edits through it (instead of a second debounce
+  // timer here) means a color pick and a concurrent camera/opacity edit coalesce into one
+  // write of the live spec, rather than racing timers where an older captured spec
+  // reverts the new color; the same hook's flusher also covers channel edits on refetch.
+  persistDisplay: (display: SpatialDisplaySpec) => void;
+  currentSpec: () => SpatialDisplaySpec;
 }
 
 export function useImageChannels(
-  { imageInfo, display, sessionId, updateDisplay }: Params,
+  { imageInfo, display, persistDisplay, currentSpec }: Params,
 ): {
   channels: Channel[];
   maxVisibleReached: boolean;
@@ -63,31 +67,16 @@ export function useImageChannels(
   const visibleCount = channels.filter((c) => c.visible).length;
   const maxVisibleReached = visibleCount >= MAX_VISIBLE_CHANNELS;
 
-  // Debounce the PUT so a contrast-slider drag collapses into one write (the local
-  // updateDisplay below stays immediate, so the canvas tracks the drag live). Mirrors
-  // SpatialCanvas.persistDisplay's 500ms coalescing for the other encoding edits. The
-  // pending spec is held in a ref and flushed on a session refetch (see
-  // useDisplayPersistence) so a stale channel PUT can't revert a fresh edit.
-  const putTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pending = useRef<SpatialDisplaySpec | null>(null);
-  const registerDisplayFlush = useAppStore((s) => s.registerDisplayFlush);
-  useEffect(() => () => { if (putTimer.current) clearTimeout(putTimer.current); }, []);
-
-  const flush = useCallback(async () => {
-    if (putTimer.current) { clearTimeout(putTimer.current); putTimer.current = null; }
-    const spec = pending.current;
-    pending.current = null;
-    if (spec) await putDisplay(sessionId, spec);
-  }, [sessionId]);
-  useEffect(() => registerDisplayFlush(flush), [registerDisplayFlush, flush]);
-
   function setChannel(index: number, patch: ChannelPatch) {
     const cur = channels[index];
     // Enforce the shader-pass cap: refuse to turn on a channel once the limit is
     // reached (the user must hide one first). Colour/name/contrast edits always apply.
     if (patch.visible === true && !cur.visible && maxVisibleReached) return;
-    const prev = display.encoding.channels?.[String(index)];
-    const next = { ...(display.encoding.channels ?? {}) };
+    // Merge onto the latest stored spec, not the possibly-stale prop, so a color pick
+    // never drops a camera/opacity edit that landed in the same window (and vice versa).
+    const base = currentSpec();
+    const prev = base.encoding.channels?.[String(index)];
+    const next = { ...(base.encoding.channels ?? {}) };
     // Preserve an unset contrast_limits (= "use the server default") unless the user
     // edits it here, so a name/color/visibility change never pins the contrast.
     next[String(index)] = {
@@ -96,15 +85,7 @@ export function useImageChannels(
       color: patch.color ?? cur.color,
       contrast_limits: patch.contrastLimits ?? prev?.contrast_limits,
     };
-    const spec = { ...display, encoding: { ...display.encoding, channels: next } };
-    updateDisplay(spec);                       // optimistic local update (instant)
-    pending.current = spec;
-    if (putTimer.current) clearTimeout(putTimer.current);
-    putTimer.current = setTimeout(() => {
-      putTimer.current = null;
-      pending.current = null;
-      putDisplay(sessionId, spec).catch(console.error);
-    }, 500);
+    persistDisplay({ ...base, encoding: { ...base.encoding, channels: next } });
   }
 
   return { channels, maxVisibleReached, setChannel };

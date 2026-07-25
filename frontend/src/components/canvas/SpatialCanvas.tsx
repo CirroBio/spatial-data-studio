@@ -55,7 +55,7 @@ interface Props {
 }
 
 export default function SpatialCanvas({ display, sessionId, canvasMode, annotationTarget }: Props) {
-  const { sessionState, updateDisplay, isolatedCategory, openSnapshotExport, setSnapshotHandler, theme } = useAppStore();
+  const { sessionState, isolatedCategory, openSnapshotExport, setSnapshotHandler, theme } = useAppStore();
   const fields = sessionState?.fields;
   const dataVersions = sessionState?.data_versions ?? {};
   const readOnly = sessionState?.summary.read_only ?? false;
@@ -169,11 +169,14 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
     display,
   });
 
+  const { persistDisplay, currentSpec, updateEncoding } = useDisplayPersistence(
+    display, sessionId, readOnly, isSpatialDisplay);
+
   const { channels, setChannel, maxVisibleReached } = useImageChannels({
     imageInfo,
     display,
-    sessionId,
-    updateDisplay,
+    persistDisplay,
+    currentSpec,
   });
 
   // Save Snapshot (settings panel) opens the export modal seeded with the live
@@ -439,9 +442,6 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
     return result;
   }, [vivLayers, positions, colors, showPoints, shapesOverlay, polygonLayer,
       display.encoding.point_size, display.encoding.opacity, marker, worldToPixelMat, radiusScale]);
-
-  const { persistDisplay, currentSpec, updateEncoding } = useDisplayPersistence(
-    display, sessionId, readOnly, isSpatialDisplay);
 
   const SEL = canvasMode === 'regions'
     ? [72, 187, 120] as [number, number, number]  // green for region labeling
