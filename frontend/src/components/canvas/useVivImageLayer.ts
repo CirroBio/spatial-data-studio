@@ -7,6 +7,7 @@ import type { ImageInfo } from '../../types';
 import { MAX_VISIBLE_CHANNELS, type Channel } from './useImageChannels';
 import { transparentBlackExtension } from './transparentBlackExtension';
 import { useImageTilePrefetch } from './useImageTilePrefetch';
+import { useTileLoadProgress, type TileLoadProgress } from './useTileLoadProgress';
 import { hexToRgb } from './colorUtils';
 
 // Client-side GPU compositing of the tissue image via Viv's own `MultiscaleImageLayer`
@@ -77,7 +78,7 @@ interface Params {
  * simply shows no image. See DESIGN.md 9.4. */
 export function useVivImageLayer(
   { imageInfo, element, channels, viewState, size, show }: Params,
-): { layers: Layer[]; active: boolean } {
+): { layers: Layer[]; active: boolean; tileProgress: TileLoadProgress } {
   const enabled = show
     && !!element
     && !!imageInfo?.client_compositing
@@ -146,6 +147,9 @@ export function useVivImageLayer(
     resetKey: storeUrl,
   });
 
+  // Progress of the current tile-loading session, for the on-canvas loading bar.
+  const tileProgress = useTileLoadProgress(loader);
+
   const layers = useMemo(() => {
     if (!enabled || failed || !loader || !viewReady) return [] as Layer[];
 
@@ -212,5 +216,5 @@ export function useVivImageLayer(
     return [new MultiscaleImageLayer(vivProps) as unknown as Layer];
   }, [enabled, failed, loader, imageInfo, isRgb, activeSelections, channels, element, viewReady]);
 
-  return { layers, active: enabled && !failed && loader !== null && layers.length > 0 };
+  return { layers, active: enabled && !failed && loader !== null && layers.length > 0, tileProgress };
 }

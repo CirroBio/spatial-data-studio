@@ -32,7 +32,7 @@ import { useImageChannels } from './useImageChannels';
 import CanvasControls from './CanvasControls';
 import { FlipOrthographicView } from './FlipOrthographicView';
 import { colorByLabel } from './colorBy';
-import { LoadingCue, ChannelLegend, CellColorLegend, DrawHint } from './CanvasOverlays';
+import { LoadingCue, ChannelLegend, CellColorLegend, DrawHint, ImageTileStatus } from './CanvasOverlays';
 
 // Animate zoom-button clicks so the level eases to the target instead of snapping.
 // Matches the axes deck's OrthographicController interpolates for its own transitions.
@@ -339,7 +339,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
 
   // GPU-composited image via Viv (the sole image path). While the pyramid loads,
   // Viv renders its own coarse low-res background and streams detail as tiles arrive.
-  const { layers: vivLayers } = useVivImageLayer({
+  const { layers: vivLayers, tileProgress } = useVivImageLayer({
     imageInfo,
     element: display.encoding.image_layer,
     channels,
@@ -550,7 +550,9 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
         }
       />
 
-      <LoadingCue coordsLoading={coordsLoading} colorLoading={colorLoading} tilesLoading={polygonsLoading} />
+      <LoadingCue coordsLoading={coordsLoading} colorLoading={colorLoading} boundariesLoading={polygonsLoading} />
+
+      <ImageTileStatus progress={tileProgress} />
 
       <ChannelLegend show={showImage} showLegend={showLegend} channels={channels} />
 

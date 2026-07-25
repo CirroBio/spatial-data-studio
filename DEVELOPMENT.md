@@ -183,8 +183,13 @@ not a re-fetch) and a `debounceTime` (so a continuous gesture doesn't fire — t
 tile requests for every level it sweeps through). `useImageTilePrefetch.ts` additionally
 warms the next-finer pyramid level (plus a current-level pan ring) through `loader.getTile`
 while the camera is idle, so a subsequent zoom-in reads warmed tiles from the browser cache
-(304-revalidated against the raster route's ETag) instead of stalling. `run.sh` requires no
-change. The raw-raster route
+(304-revalidated against the raster route's ETag) instead of stalling. `useTileLoadProgress.ts`
+wraps each pyramid level's `getTile` (both paths call it; deck exposes no request-start
+callback) to track a loading *session* — completed vs. requested tiles from the first fetch
+until none are in flight, held open a minimum of 1s — surfaced as the `ImageTileStatus`
+corner progress bar so the user sees image data streaming in even while the canvas otherwise
+looks settled. `run.sh`
+requires no change. The raw-raster route
 (`/api/sessions/{id}/raster/{element}/{key}`) serves the session's normalized zarr store
 (on disk, or in RAM when `WORK_DIR` is a tmpfs); because object-adoption, subset, and
 close `rmtree` that store under the session write lock, the route resolves the path AND

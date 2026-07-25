@@ -1,27 +1,45 @@
 import { VIRIDIS_CSS_GRADIENT } from './colorUtils';
 import type { Channel } from './useImageChannels';
 import type { ColorLegend } from './useSpotColors';
+import type { TileLoadProgress } from './useTileLoadProgress';
 
-/* Recalculation cue — top left. Visible while spatial coords, colors, or
-   image tiles for the current view are still loading/rendering. */
+/* Recalculation cue — top left. Visible while the cell layer's own data (spatial
+   coordinates, per-cell colors, or cell-boundary polygons) for the current view is
+   still loading. The image pyramid has its own indicator (ImageTileStatus). */
 export function LoadingCue({
   coordsLoading,
   colorLoading,
-  tilesLoading,
+  boundariesLoading,
 }: {
   coordsLoading: boolean;
   colorLoading: boolean;
-  tilesLoading: boolean;
+  boundariesLoading: boolean;
 }) {
-  if (!(coordsLoading || colorLoading || tilesLoading)) return null;
+  if (!(coordsLoading || colorLoading || boundariesLoading)) return null;
   return (
     <div className="absolute top-3 left-3 z-20 flex items-center gap-2 px-3 py-1.5 rounded-full bg-surface/95 border border-accent/60 text-xs text-text backdrop-blur-sm shadow-lg pointer-events-none">
       <svg className="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
         <path d="M21 12a9 9 0 1 1-6.219-8.56" />
       </svg>
       <span>
-        {coordsLoading ? 'Loading cells…' : colorLoading ? 'Loading colors…' : 'Rendering image…'}
+        {coordsLoading ? 'Loading cells…' : colorLoading ? 'Loading colors…' : 'Loading cell boundaries…'}
       </span>
+    </div>
+  );
+}
+
+/* Image tile-loading progress — bottom center. Shows a progress bar (completed / requested
+   tiles) while the image pyramid streams in, so the user knows image data is loading even
+   when the canvas looks settled (e.g. idle look-ahead prefetch). Same bar style as the
+   session-load overlay; hidden when no loading session is open. */
+export function ImageTileStatus({ progress }: { progress: TileLoadProgress }) {
+  if (!progress.active) return null;
+  return (
+    <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center gap-1.5 px-3 py-2 rounded-lg bg-surface/90 border border-border backdrop-blur-sm shadow-md pointer-events-none">
+      <span className="text-[11px] text-muted">Loading image…</span>
+      <div className="w-48 h-1.5 rounded-full bg-border overflow-hidden">
+        <div className="h-full bg-accent transition-[width]" style={{ width: `${Math.round(progress.value * 100)}%` }} />
+      </div>
     </div>
   );
 }

@@ -424,7 +424,7 @@ function EmbeddingCanvasView({
 
       <DrawHint drawMode={lassoMode} canvasMode={canvasMode} annotationTarget={annotationTarget} />
 
-      <LoadingCue coordsLoading={coordsLoading} colorLoading={colorLoading} tilesLoading={false} />
+      <LoadingCue coordsLoading={coordsLoading} colorLoading={colorLoading} boundariesLoading={false} />
 
       <CellColorLegend visible={legendVisible} legend={colorLegend} title={legendTitle} />
 
