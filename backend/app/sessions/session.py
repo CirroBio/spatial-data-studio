@@ -182,6 +182,7 @@ class Session:
         self.hash_check = None  # content-hash verification result when loaded from a hash-named checkpoint (store._hash_result)
         self.created_at = _now()
         self.status = "ready" if sdata is not None else "loading"
+        self.error = None  # failure message when status == "errored"; surfaced in the session summary
         self.active_table_key = self._default_table_key()
 
         self.lock = RWLock()
@@ -488,6 +489,7 @@ class Session:
             # A failed read bootstrap (no object ever adopted) leaves the session unusable.
             if self.sdata is None:
                 self.status = "errored"
+                self.error = result.error or "failed"
                 self._publish_summary()
             self._fail(job_id, kind, result.error or "failed", log=result.log)
             return
@@ -525,6 +527,7 @@ class Session:
                 if not self.app_state["displays"]:
                     self.manager.auto_displays(self)
                 self.status = "ready"  # the read bootstrap adopted the object
+                self.error = None
                 self._publish_summary()
                 # Replacing the live object mid-session (e.g. sc.pp.filter_cells adopted
                 # whole, §4.6) changed every field: the row-count differs, so any cached
@@ -760,12 +763,14 @@ class Session:
                 if not self.app_state["displays"]:
                     self.manager.auto_displays(self)
                 self.status = "ready"
+                self.error = None
                 self._publish_summary()
         except Exception as e:
             # Handle the failure here rather than letting it propagate to _dispatch: the
             # New Session dialog follows the load over `session.loading` (keyed by load_id),
             # not job.failed, so it needs the terminal event to surface the error.
             self.status = "errored"
+            self.error = str(e)
             self._publish_summary()
             self._fail(job_id, "load", str(e))
             if load_id:

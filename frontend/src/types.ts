@@ -54,6 +54,7 @@ export interface SessionSummary {
   created_at: string;
   saved: boolean;  // in-memory state matches the saved checkpoint (drives the unsaved-changes dot)
   read_only: boolean;  // session opened frozen (create_from_load read_only); every mutating route 403s
+  error: string | null;  // failure message when status === 'errored'; null otherwise
 }
 
 export interface ObsField {

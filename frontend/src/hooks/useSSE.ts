@@ -81,7 +81,12 @@ export function useSSE(): void {
       // finishes. upsertSession replaces the row by id, so the picker's status
       // updates live without a page reload. Same payload shape as session.created.
       'session.updated': (data) => {
-        upsertSession((data as SessionCreatedEvent).summary);
+        const summary = (data as SessionCreatedEvent).summary;
+        upsertSession(summary);
+        // This fires on a status transition (loading -> ready/errored). If it's the
+        // session currently being viewed (e.g. the user switched to it while it loaded),
+        // refetch its state so the loading view resolves to the canvas or the error.
+        if (summary.id === activeSessionId) void refreshSessionState(summary.id);
       },
 
       // Progress of a synchronous checkpoint load, before any session id exists. The

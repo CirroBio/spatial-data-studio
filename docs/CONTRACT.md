@@ -145,7 +145,9 @@ composited preview used by the DataInspector element view, not by the canvas.
 ### SessionSummary
 ```jsonc
 { "id":"uuid", "name":"visium_hne", "status":"ready|errored|loading",
-  "resident_mb": 412.0, "parent_id": null, "created_at":"ISO" }
+  "resident_mb": 412.0, "parent_id": null, "created_at":"ISO",
+  "saved": true, "read_only": false,
+  "error": null }  // string failure message when status=="errored", else null
 ```
 
 ### SessionState (`GET /api/sessions/{id}`)

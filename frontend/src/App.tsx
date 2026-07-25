@@ -205,6 +205,33 @@ export default function App() {
       );
     }
 
+    // A loading/errored session can be selected from the picker so the user can check on
+    // it; it has no canvas to show, so render its status instead of the bare "no display"
+    // fallback. Placed after the import spinner so an in-flight read import (also
+    // status 'loading') keeps its live-log view; this catches a checkpoint load still in
+    // progress (its load job isn't in compute_history) and a failed load/bootstrap.
+    if (sessionState.summary.status === 'errored') {
+      return (
+        <div className="flex flex-col items-center justify-center h-full gap-3 text-muted px-6">
+          <span className="text-sm text-danger font-medium">This session failed to load</span>
+          {sessionState.summary.error && (
+            <AnsiLog
+              text={sessionState.summary.error}
+              className="w-full max-w-2xl mt-1 bg-bg border border-border rounded p-3 text-xs font-mono text-danger overflow-auto max-h-64 whitespace-pre-wrap"
+            />
+          )}
+        </div>
+      );
+    }
+    if (sessionState.summary.status === 'loading') {
+      return (
+        <div className="flex flex-col items-center justify-center h-full gap-3 text-muted">
+          <div className="w-6 h-6 rounded-full border-2 border-border border-t-accent animate-spin" />
+          <span className="text-sm">Session is still loading…</span>
+        </div>
+      );
+    }
+
     // The viewer mode switch toggles between the canvas, embeddings, and the table inspector.
     if (mainView === 'tables') return <DataInspector />;
 

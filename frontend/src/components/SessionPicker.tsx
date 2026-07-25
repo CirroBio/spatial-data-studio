@@ -3,11 +3,11 @@ import { useAppStore } from '../store/sessionStore';
 import { deleteSession } from '../api';
 import { reportError } from '../lib/errors';
 
-// Header switcher over the currently-loaded sessions. Selecting a resident
-// session calls setActiveSessionId, which drives the whole view swap (useSession
-// refetches on the id change). Non-resident (evicted/errored) sessions can't be
-// displayed without a reload, so they show but aren't selectable. Each row also
-// exposes a delete control.
+// Header switcher over the currently-loaded sessions. Selecting a session calls
+// setActiveSessionId, which drives the whole view swap (useSession refetches on
+// the id change). Loading/errored sessions are selectable too, so a user can check
+// their status or error message (App.renderMain renders a status view for them
+// instead of the canvas). Each row also exposes a delete control.
 export default function SessionPicker() {
   const { sessions, activeSessionId, setActiveSessionId, removeSession, sessionState } = useAppStore();
   if (sessions.length === 0) return null;
@@ -73,12 +73,10 @@ export default function SessionPicker() {
             return (
               <DropdownMenu.Item
                 key={s.id}
-                disabled={!isResident}
                 onSelect={() => setActiveSessionId(s.id)}
                 className={[
-                  'group flex items-center gap-2 px-3 py-1.5 text-xs outline-none',
+                  'group flex items-center gap-2 px-3 py-1.5 text-xs outline-none cursor-pointer data-[highlighted]:bg-accent-lo/40',
                   isActive ? 'bg-accent-lo text-text' : 'text-text/80',
-                  isResident ? 'cursor-pointer data-[highlighted]:bg-accent-lo/40' : 'opacity-50 cursor-default',
                 ].join(' ')}
               >
                 <div className="flex flex-col min-w-0 flex-1">

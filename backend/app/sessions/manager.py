@@ -157,7 +157,8 @@ class SessionManager:
     def summary(self, sess: Session) -> dict:
         return {"id": sess.id, "name": sess.name, "status": sess.status,
                 "resident_mb": self._resident_mb(sess), "parent_id": sess.parent_id,
-                "created_at": sess.created_at, "saved": sess.saved, "read_only": sess.read_only}
+                "created_at": sess.created_at, "saved": sess.saved, "read_only": sess.read_only,
+                "error": sess.error}
 
     def list_summaries(self) -> list:
         return [self.summary(s) for s in list(self.sessions.values())]
