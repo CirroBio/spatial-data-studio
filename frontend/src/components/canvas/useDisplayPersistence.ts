@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { putDisplay } from '../../api';
 import { useAppStore } from '../../store/sessionStore';
 import type { DisplaySpec } from '../../types';
@@ -12,6 +12,10 @@ import type { DisplaySpec } from '../../types';
  * 403 the PUT anyway. `currentSpec` re-reads the latest stored spec (not the possibly
  * stale prop) so an encoding edit and a camera move in the same window don't clobber
  * each other. `updateEncoding` patches the encoding of that latest spec.
+ *
+ * The pending spec is held in a ref and the hook registers a flusher with the store, so
+ * a session refetch (refreshSessionState) can send the debounced PUT first — otherwise
+ * the refetch reads the server's pre-edit copy and reverts the just-made edit.
  */
 export function useDisplayPersistence<T extends DisplaySpec>(
   display: T,
@@ -20,14 +24,29 @@ export function useDisplayPersistence<T extends DisplaySpec>(
   isKind: (d: DisplaySpec) => d is T,
 ) {
   const updateDisplay = useAppStore((s) => s.updateDisplay);
+  const registerDisplayFlush = useAppStore((s) => s.registerDisplayFlush);
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pending = useRef<T | null>(null);
+
+  const flush = useCallback(async () => {
+    if (persistTimer.current) { clearTimeout(persistTimer.current); persistTimer.current = null; }
+    const spec = pending.current;
+    pending.current = null;
+    if (spec) await putDisplay(sessionId, spec);
+  }, [sessionId]);
+
+  useEffect(() => registerDisplayFlush(flush), [registerDisplayFlush, flush]);
 
   const persistDisplay = useCallback((updated: T) => {
     updateDisplay(updated);
     if (readOnly) return;
+    pending.current = updated;
     if (persistTimer.current) clearTimeout(persistTimer.current);
     persistTimer.current = setTimeout(() => {
-      putDisplay(sessionId, updated).catch(console.error);
+      persistTimer.current = null;
+      const spec = pending.current;
+      pending.current = null;
+      if (spec) putDisplay(sessionId, spec).catch(console.error);
     }, 500);
   }, [updateDisplay, readOnly, sessionId]);
 

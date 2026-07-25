@@ -25,6 +25,11 @@ const isHistStatus = (s: HistEntry['status'] | PlotEntry['status']): s is HistEn
 const isPlotStatus = (s: HistEntry['status'] | PlotEntry['status']): s is PlotEntry['status'] =>
   (PLOT_STATUSES as readonly string[]).includes(s);
 
+// Flushers for debounced display PUTs still in flight (registered by the canvas
+// persistence hooks). Kept outside reactive state — nothing renders off it — so
+// mutating the set never triggers a re-render.
+const displayFlushers = new Set<() => Promise<void>>();
+
 interface AppStore {
   // sessions list
   sessions: SessionSummary[];
@@ -42,6 +47,12 @@ interface AppStore {
   // lock, so this retries with backoff (fetchWhenIdle) — a switch during a compute can
   // still let a stale resolve arrive, hence the active-session guard before applying.
   refreshSessionState: (sessionId: string) => Promise<void>;
+  // Canvas persistence hooks register a flusher that immediately sends any debounced
+  // PUT /display still counting down. refreshSessionState awaits these before its GET so
+  // an optimistic encoding edit (e.g. the "Show cells" toggle) isn't read back as the
+  // server's pre-edit copy while the 500ms debounce is still pending. Returns an
+  // unregister for the hook's effect cleanup.
+  registerDisplayFlush: (flush: () => Promise<void>) => () => void;
   updateDataVersions: (versions: Record<string, number>) => void;
   updateDisplay: (display: DisplaySpec) => void;
   addDisplay: (display: DisplaySpec) => void;
@@ -253,7 +264,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
     ),
   sessionState: null,
   setSessionState: (state) => set({ sessionState: state }),
+  registerDisplayFlush: (flush) => {
+    displayFlushers.add(flush);
+    return () => { displayFlushers.delete(flush); };
+  },
   refreshSessionState: async (sessionId) => {
+    // Send any pending display PUT before reading, so the GET reflects the latest
+    // encoding edit instead of clobbering the optimistic value with the pre-edit copy.
+    await Promise.all([...displayFlushers].map((flush) => flush().catch(() => {})));
     try {
       const state = await fetchWhenIdle(() => getSession(sessionId));
       if (get().activeSessionId !== sessionId) return; // switched away mid-fetch

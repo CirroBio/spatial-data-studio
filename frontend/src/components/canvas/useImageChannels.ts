@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import type { SpatialDisplaySpec, ImageInfo } from '../../types';
 import { putDisplay } from '../../api';
+import { useAppStore } from '../../store/sessionStore';
 import { defaultChannelColor } from './colorUtils';
 
 // Viv composites at most this many channels in one shader pass, so at most this many
@@ -64,9 +65,21 @@ export function useImageChannels(
 
   // Debounce the PUT so a contrast-slider drag collapses into one write (the local
   // updateDisplay below stays immediate, so the canvas tracks the drag live). Mirrors
-  // SpatialCanvas.persistDisplay's 500ms coalescing for the other encoding edits.
+  // SpatialCanvas.persistDisplay's 500ms coalescing for the other encoding edits. The
+  // pending spec is held in a ref and flushed on a session refetch (see
+  // useDisplayPersistence) so a stale channel PUT can't revert a fresh edit.
   const putTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pending = useRef<SpatialDisplaySpec | null>(null);
+  const registerDisplayFlush = useAppStore((s) => s.registerDisplayFlush);
   useEffect(() => () => { if (putTimer.current) clearTimeout(putTimer.current); }, []);
+
+  const flush = useCallback(async () => {
+    if (putTimer.current) { clearTimeout(putTimer.current); putTimer.current = null; }
+    const spec = pending.current;
+    pending.current = null;
+    if (spec) await putDisplay(sessionId, spec);
+  }, [sessionId]);
+  useEffect(() => registerDisplayFlush(flush), [registerDisplayFlush, flush]);
 
   function setChannel(index: number, patch: ChannelPatch) {
     const cur = channels[index];
@@ -85,8 +98,13 @@ export function useImageChannels(
     };
     const spec = { ...display, encoding: { ...display.encoding, channels: next } };
     updateDisplay(spec);                       // optimistic local update (instant)
+    pending.current = spec;
     if (putTimer.current) clearTimeout(putTimer.current);
-    putTimer.current = setTimeout(() => putDisplay(sessionId, spec).catch(console.error), 500);
+    putTimer.current = setTimeout(() => {
+      putTimer.current = null;
+      pending.current = null;
+      putDisplay(sessionId, spec).catch(console.error);
+    }, 500);
   }
 
   return { channels, maxVisibleReached, setChannel };
