@@ -64,7 +64,7 @@ def run_custom_methods_flow(client):
     infiltration, pseudobulk-DESeq2, and region-feature-Kruskal methods end to end
     (not just unit-level FakeSession smoke tests)."""
     import pandas as pd
-    from app.main import MANAGER
+    from app.deps import MANAGER
 
     sid = new_session(client, XENIUM_TMA)
     print(f"[ok] custom-methods session created {sid[:8]}")
@@ -594,7 +594,7 @@ def run_transform_flow(client):
     print("[ok] set points-transform shifts the obsm:spatial fetch and round-trips")
 
     # persistence: the new affine survives the reload of the checkpoint it wrote
-    from app.main import MANAGER  # bound at startup, so import inside the client context
+    from app.deps import MANAGER  # bound at startup, so import inside the client context
     store_path = MANAGER.get(sid).store_path
     a_reload = client.get(f"/api/sessions/{new_session(client, store_path)}/points-transform").json()["affine"]
     assert abs(a_reload[2] - a1[2]) < 1e-3 and abs(a_reload[5] - a1[5]) < 1e-3, a_reload
@@ -609,7 +609,7 @@ def run_incremental_save_flow(client, checkpoint_path):
     table-only compute then saves by rewriting just the table element and reusing the
     on-disk rasters untouched. Asserts the incremental branch is taken, the raster
     files are left untouched, and the change round-trips."""
-    from app.main import MANAGER
+    from app.deps import MANAGER
     from app.persistence import store
     sid = new_session(client, checkpoint_path)
     sess = MANAGER.get(sid)
@@ -649,7 +649,7 @@ def run_content_hash_flow(client):
     """Default-path save writes a content-hashed filename that reloads, and a second
     save doesn't stack a second hash suffix (recent 'Content-hash checkpoint names')."""
     from app.persistence.store import strip_content_hash
-    from app.main import MANAGER
+    from app.deps import MANAGER
     import re
     sid = new_session(client)
     clean = strip_content_hash(MANAGER.get(sid).name)
@@ -773,7 +773,7 @@ def run_filter_reshape_flow(client):
     "table.obs[instance_key] must not contain null values". Guards that regression:
     the filter completes, obs shrinks, and a save round-trips."""
     import numpy as np
-    from app.main import MANAGER
+    from app.deps import MANAGER
 
     sid = new_session(client)  # visium_hne: int64 instance_key spot_id, clean
     before = n_obs_of(client, sid)
@@ -934,7 +934,7 @@ def run_raster_flow(client):
     missing keys 404. Uses xenium.zarr, whose rasters normalize_rasters rebuilds
     into a served store (visium checkpoints can be canonical and serve no store)."""
     import os as _os
-    from app.main import MANAGER
+    from app.deps import MANAGER
 
     # This flow validates the client-compositing serving path, so enable it explicitly
     # rather than depend on the default (which ships off; see config.CLIENT_IMAGE_COMPOSITING).
@@ -1008,7 +1008,7 @@ def run_raster_survives_reshape_flow(client):
     same store the canvas reads), and the store stays mapped."""
     import numpy as np
     from PIL import Image
-    from app.main import MANAGER
+    from app.deps import MANAGER
 
     sid = new_session(client, XENIUM)
     sess = MANAGER.get(sid)
@@ -1053,7 +1053,7 @@ def run_raster_locality_flow(client):
     the locality check and rebuild it again every time."""
     import numpy as np
     from pathlib import Path
-    from app.main import MANAGER
+    from app.deps import MANAGER
 
     sid = new_session(client, DATA)  # visium_hne: bare .zarr dir directly under DATA_DIR
     sess = MANAGER.get(sid)
@@ -1085,7 +1085,7 @@ def run_filter_rank_genes_save_flow(client):
     coerces those fields to fixed-length unicode for the write only. Guards that a
     rank-and-filter session saves, and that the live object keeps its NaNs afterward."""
     def nan_count(client, sid):
-        from app.main import MANAGER
+        from app.deps import MANAGER
         names = MANAGER.get(sid).active_table().uns["rank_genes_groups_filtered"]["names"]
         return sum(1 for row in names for x in tuple(row) if not isinstance(x, str))
 

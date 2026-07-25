@@ -1,11 +1,10 @@
 import asyncio
 import logging
-import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, Response, WebSocket
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import config, data_roots, within_data_dir
@@ -17,24 +16,26 @@ from .transport import tables
 from .transport.compression import SelectiveGZipMiddleware
 from .prewarm import PREWARM
 from . import datasets
-from . import imaging
+from . import deps
+from .deps import _session, _writable_session, _mgr, _in_executor, _read_locked
+from .routers import imaging as imaging_router, cirro as cirro_router
+from .routers import snapshots as snapshots_router, recipes as recipes_router
 
 _log = logging.getLogger(__name__)
 
-MANAGER: SessionManager | None = None
 _READY = False
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global MANAGER, _READY
+    global _READY
     _log.info("container memory limit: %d MiB (source: %s)",
               config.CONTAINER_MEM_MB, config.CONTAINER_MEM_SOURCE)
     _log.info("cpu allocation: %.2f cores (source: %s); compute pool=%d workers, n_threads=%d",
               config.CPU_LIMIT, config.CPU_LIMIT_SOURCE,
               config.COMPUTE_POOL_WORKERS, config.N_THREADS)
     REGISTRY.build()
-    MANAGER = SessionManager(REGISTRY)
+    deps.set_manager(SessionManager(REGISTRY))
     BUS.bind_loop(asyncio.get_running_loop())
     _READY = True
     sampler = asyncio.create_task(_resource_loop())
@@ -63,7 +64,7 @@ async def _resource_loop():
     failing = 0  # consecutive failed ticks; reset to 0 on success
     while True:
         try:
-            BUS._publish_inloop("resource.sample", MANAGER.resource_sample())
+            BUS._publish_inloop("resource.sample", deps._mgr().resource_sample())
             failing = 0
         except Exception:
             # Sampling runs every tick; log with a traceback the first time it
@@ -79,67 +80,14 @@ async def _resource_loop():
 app = FastAPI(title="Spatial Data Studio", lifespan=lifespan)
 app.add_middleware(SelectiveGZipMiddleware)
 
-
-def _mgr() -> SessionManager:
-    if MANAGER is None:
-        raise HTTPException(503, "not ready")
-    return MANAGER
-
-
-def _session(sid: str):
-    s = _mgr().get(sid)
-    if s is None:
-        raise HTTPException(404, "session not found")
-    return s
-
-
-def _writable_session(sid: str):
-    """Same lookup as `_session`, plus a 403 if the session was opened read-only
-    (`create_from_load(read_only=True)`). Every mutating route uses this instead of
-    `_session` so a frozen session stays frozen even against a buggy or malicious
-    client, not just an unwired UI."""
-    s = _session(sid)
-    if s.read_only:
-        raise HTTPException(403, "session is read-only")
-    return s
-
-
-async def _in_executor(fn, *a):
-    return await asyncio.get_running_loop().run_in_executor(None, fn, *a)
-
-
-async def _read_locked(sess, fn, *a):
-    """Run `fn(*a)` in the executor under the session's read lock — the shape
-    every read-only endpoint below needs to serve a field/manifest/preview off a
-    session that a queued job may be mutating concurrently. A compute/plot job holds
-    the write lock for its whole duration; rather than block past a fronting proxy's
-    origin timeout (which surfaces as a 504), give up after READ_LOCK_TIMEOUT_S with a
-    retryable 503 the frontend re-issues once the job completes."""
-    def _run():
-        try:
-            with sess.lock.reading(config.READ_LOCK_TIMEOUT_S):
-                return fn(*a)
-        except TimeoutError:
-            raise HTTPException(503, "session busy: compute in progress, retry")
-    return await _in_executor(_run)
-
-
-# Global cap on concurrent image compositing. deck.gl fires a burst of tile
-# requests on every zoom/pan, and each finest-level tile can realize a full
-# multi-MB pyramid chunk; without this a burst decodes them all at once and spikes
-# memory. Shared across sessions since RAM is a process-wide resource.
-_IMAGE_RENDER_SEM = asyncio.Semaphore(config.IMAGE_RENDER_CONCURRENCY)
-
-
-async def _render_image(sess, fn):
-    """Composite a tile/thumbnail under the render semaphore, refusing once RSS is
-    past the admission boundary so a zoom burst can't push an already-loaded
-    container into OOM. 503 lets the frontend keep its coarse base layer and retry
-    as memory frees (BitmapLayer just re-requests on the next viewport change)."""
-    async with _IMAGE_RENDER_SEM:
-        if _mgr().over_memory_boundary():
-            raise HTTPException(503, "image render deferred: memory boundary reached")
-        return await _read_locked(sess, fn)
+# Self-contained route domains live in routers/ (imports above); the rest — sessions,
+# jobs, staging, plots, displays, subset/save, shape annotations, the data path, and
+# SSE — stay here where they share the session/job wiring. Shared helpers (_session,
+# _read_locked, _render_image, …) live in deps.py so both sides use one copy.
+app.include_router(imaging_router.router)
+app.include_router(cirro_router.router)
+app.include_router(snapshots_router.router)
+app.include_router(recipes_router.router)
 
 
 # ---- health ----------------------------------------------------------------
@@ -445,191 +393,12 @@ async def delete_shape_annotation(sid: str, shape_id: str):
     return {"job_id": job_id}
 
 
-@app.post("/api/sessions/{sid}/snapshot")
-async def save_snapshot_endpoint(sid: str, body: dict):
-    """Render and save a high-quality figure snapshot (vector PDF and/or raster PNG)
-    of a display. body: {viewport:{target,zoom}, width_px, height_px, dpi,
-    formats:['pdf'|'png'], label?, display_id?}."""
-    sess = _writable_session(sid)
-    from . import snapshots
-    result = await _in_executor(snapshots.save_snapshot, sess, body)
-    if result.get("status") == "failed":
-        raise HTTPException(400, result.get("error", "snapshot failed"))
-    return result
-
-
-@app.post("/api/sessions/{sid}/snapshot/preview")
-async def snapshot_preview_endpoint(sid: str, body: dict):
-    """A low-cost PNG preview of the snapshot framing for the export modal. Same body
-    as the save endpoint; renders small and returns image bytes, writing nothing."""
-    sess = _session(sid)
-    from . import snapshots
-    try:
-        png = await _in_executor(snapshots.render_preview, sess, body)
-    except (ValueError, KeyError) as e:
-        raise HTTPException(400, str(e))
-    return Response(content=png, media_type="image/png")
-
-
-@app.get("/api/snapshots")
-async def list_snapshots_endpoint():
-    from . import snapshots
-    return {"snapshots": snapshots.list_snapshots()}
-
-
-@app.get("/api/snapshots/{name}/file")
-async def get_snapshot_file(name: str, fmt: str = "pdf"):
-    """Serve a snapshot's rendered PDF or PNG for download."""
-    from . import snapshots
-    if fmt not in ("pdf", "png"):
-        raise HTTPException(400, "fmt must be pdf or png")
-    try:
-        path = snapshots.artifact_path(name, fmt)
-    except (ValueError, KeyError):
-        raise HTTPException(404, "not found")
-    if not os.path.isfile(path):
-        raise HTTPException(404, "not found")
-    media = "application/pdf" if fmt == "pdf" else "image/png"
-    return FileResponse(path, media_type=media, filename=os.path.basename(path))
-
-
-@app.get("/api/snapshots/{name}/thumbnail")
-async def get_snapshot_thumbnail(name: str):
-    from . import snapshots
-    try:
-        path = snapshots.artifact_path(name, "thumbnail")
-    except (ValueError, KeyError):
-        raise HTTPException(404, "not found")
-    if not os.path.isfile(path):
-        raise HTTPException(404, "not found")
-    return FileResponse(path, media_type="image/png")
-
-
-@app.delete("/api/snapshots/{name}")
-async def delete_snapshot_endpoint(name: str):
-    from . import snapshots
-    try:
-        removed = await _in_executor(snapshots.delete_snapshot, name)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    if not removed:
-        raise HTTPException(404, "not found")
-    return {"status": "deleted"}
-
-
-@app.api_route("/api/checkpoints/{name}", methods=["GET", "HEAD"])
-async def get_checkpoint(name: str):
-    """Serve a saved checkpoint `.zarr.zip` for direct browser reads (zarrita.js
-    over HTTP range). FileResponse honors Range (206) and HEAD (zarrita probes the
-    size before range-reading). Scoped to a single `*.zarr.zip` file name inside
-    DATA_DIR — the transient `.rasters`/`.save-` caches (directories) and the
-    `.figure.*` snapshot artifacts are never matched by name here."""
-    if not name.endswith(".zarr.zip") or "/" in name or "\\" in name:
-        raise HTTPException(404, "not found")
-    target = (config.DATA_DIR / name).resolve()
-    if not within_data_dir(target) or not target.is_file():
-        raise HTTPException(404, "not found")
-    return FileResponse(str(target), media_type="application/zip")
-
-
 @app.get("/api/about/licenses")
 async def list_third_party_licenses():
     """Third-party libraries in use and their licenses, for the in-app
     Acknowledgements view (v2 Part 9.2)."""
     from . import acknowledgements
     return acknowledgements.catalog()
-
-
-# ---- Cirro upload (service-account auth; dark unless configured) ----------
-@app.get("/api/cirro/status")
-async def cirro_status():
-    return {"enabled": config.cirro_enabled()}
-
-
-@app.get("/api/cirro/projects")
-async def cirro_projects():
-    if not config.cirro_enabled():
-        raise HTTPException(503, "Cirro is not configured")
-    from . import cirro
-    return {"projects": cirro.list_projects()}
-
-
-@app.get("/api/cirro/projects/{project_id}/folders")
-async def cirro_folders(project_id: str, refresh: bool = False):
-    if not config.cirro_enabled():
-        raise HTTPException(503, "Cirro is not configured")
-    from . import cirro
-    return {"folders": cirro.list_folders(project_id, force_refresh=refresh)}
-
-
-# ---- Cirro upload queue. Uploads run in the background with a small concurrency
-# cap so several large uploads don't all realize at once; anything over the cap
-# waits (pending). The uploading/pending counts are broadcast over SSE
-# (cirro.upload.state) and also served by GET so a fresh page can render the
-# in-progress indicator without waiting for the next state change. ----
-_UPLOAD_CONCURRENCY = 2
-_upload_sem: asyncio.Semaphore | None = None
-_uploads_active = 0    # currently uploading
-_uploads_pending = 0   # queued behind the concurrency cap
-
-
-def _publish_upload_state():
-    BUS.publish("cirro.upload.state", {"uploading": _uploads_active, "pending": _uploads_pending})
-
-
-@app.get("/api/cirro/uploads")
-async def cirro_uploads():
-    return {"uploading": _uploads_active, "pending": _uploads_pending}
-
-
-@app.post("/api/cirro/upload")
-async def cirro_upload(body: dict):
-    """Upload user-selected saved checkpoint sessions + snapshots to Cirro as one
-    dataset, decoupled from any live session. Runs in the background (uploads can
-    be large) and announces completion/failure over SSE — cirro.upload.completed /
-    cirro.upload.failed — since it isn't tied to a session's job queue. body:
-    {project_id, dataset_name, session_paths: [str], snapshot_names: [str], folder?}."""
-    if not config.cirro_enabled():
-        raise HTTPException(503, "Cirro is not configured")
-    session_paths = body.get("session_paths") or []
-    snapshot_names = body.get("snapshot_names") or []
-    if not session_paths and not snapshot_names:
-        raise HTTPException(400, "select at least one session or snapshot to upload")
-    resolved: list[str] = []
-    for p in session_paths:
-        target = Path(p).resolve()
-        if not within_data_dir(target) or not target.exists():
-            raise HTTPException(400, f"not a saved checkpoint session: {p}")
-        resolved.append(str(target))
-    asyncio.create_task(_run_cirro_upload(
-        body["project_id"], body["dataset_name"], resolved, snapshot_names, body.get("folder") or None))
-    return {"status": "started"}
-
-
-async def _run_cirro_upload(project_id, dataset_name, session_paths, snapshot_names, folder):
-    from . import cirro
-    global _upload_sem, _uploads_active, _uploads_pending
-    if _upload_sem is None:
-        _upload_sem = asyncio.Semaphore(_UPLOAD_CONCURRENCY)  # bind to the running loop
-
-    def _do():
-        return cirro.upload_selection(project_id=project_id, dataset_name=dataset_name,
-                                      session_paths=session_paths, snapshot_names=snapshot_names,
-                                      folder=folder)
-    _uploads_pending += 1
-    _publish_upload_state()
-    async with _upload_sem:
-        _uploads_pending -= 1
-        _uploads_active += 1
-        _publish_upload_state()
-        try:
-            result = await _in_executor(_do)
-            BUS.publish("cirro.upload.completed", {"dataset_name": result["dataset_name"]})
-        except Exception as e:
-            BUS.publish("cirro.upload.failed", {"error": str(e), "dataset_name": dataset_name})
-        finally:
-            _uploads_active -= 1
-            _publish_upload_state()
 
 
 def _default_save_path(sess) -> str:
@@ -676,45 +445,6 @@ async def set_points_transform(sid: str, body: dict):
     path = explicit or _default_save_path(sess)
     job_id = sess.enqueue_special("set_transform", {"affine": affine, "path": path, "hash_name": not explicit})
     return {"job_id": job_id, "path": path}
-
-
-# ---- recipes (DESIGN §10) --------------------------------------------------
-@app.get("/api/recipes")
-async def list_bundled_recipes():
-    """Curated analysis recipes shipped with the app (run via /recipe/run)."""
-    from . import recipes
-    return {"recipes": recipes.catalog()}
-
-
-@app.get("/api/sessions/{sid}/recipe")
-async def export_recipe(sid: str):
-    sess = _session(sid)
-    steps = [{"namespace": r["namespace"], "function": r["function"], "params": r["params"]}
-             for r in sess.app_state["compute_history"] if r["status"] == "completed"]
-    return {"library_versions": REGISTRY.library_versions, "steps": steps}
-
-
-@app.post("/api/sessions/{sid}/recipe/run")
-async def run_recipe(sid: str, recipe: dict):
-    """Import a recipe: run now (queue all steps) or stage as PENDING (spec §5.3).
-    A recipe carrying declared `params` + caller `param_values` is resolved first
-    ($param references filled in); an ad-hoc {steps} import resolves to itself."""
-    from . import recipes
-    sess = _writable_session(sid)
-    mode = recipe.get("mode") or "run"
-    steps = recipes.resolve_steps(recipe, recipe.get("param_values"))
-    n = recipes.run_steps(sess, steps, mode)
-    return {"staged" if mode == "stage" else "queued": n}
-
-
-@app.post("/api/sessions/{sid}/recipe/preflight")
-async def preflight_recipe(sid: str, recipe: dict):
-    """Validate against the installed registry. Recipe params are resolved first
-    so referenced-key checks reflect the caller's chosen `param_values`."""
-    from . import recipes
-    _session(sid)
-    steps = recipes.resolve_steps(recipe, recipe.get("param_values"))
-    return recipes.preflight({"steps": steps})
 
 
 # ---- Arrow data path -------------------------------------------------------
@@ -809,147 +539,6 @@ async def table_preview(sid: str, path: str, offset: int = 0, limit: int = 50):
         return await _read_locked(sess, _build)
     except (KeyError, ValueError) as e:
         raise HTTPException(404, str(e))
-
-
-# ---- image tiles -----------------------------------------------------------
-@app.get("/api/sessions/{sid}/image/{element}/info")
-async def image_info(sid: str, element: str):
-    sess = _session(sid)
-
-    def _info():
-        table = sess.active_table() if sess.active_table_key else None
-        # Base manifest (dims/levels/pixel_to_world/channels) from imaging.image_info;
-        # the client-compositing fields below are layered on only at this live endpoint.
-        info = imaging.image_info(sess.sdata, element, table)
-        is_rgb = imaging._is_rgb(sess.sdata, element)
-        # Client (Viv) compositing is possible when the feature is on AND we have an
-        # on-disk store to serve for this element — normalize_rasters registers one for
-        # every image, whether freshly rebuilt (non-canonical) or already tile-chunked
-        # (canonical, e.g. reopened from a checkpoint: it points at sdata.path). Without
-        # the store the raster_base_url would 404, so gate on it here. Channel count is
-        # NOT gated: the frontend displays up to MAX_VISIBLE_CHANNELS of the image's
-        # channels at once (the picker caps it), so an image with more channels still
-        # composites client-side — the user just chooses which ones to show.
-        has_store = element in sess.raster_stores
-        client_compositing = bool(config.CLIENT_IMAGE_COMPOSITING and has_store)
-        info["client_compositing"] = client_compositing
-        info["raster_base_url"] = f"/api/sessions/{sid}/raster/{element}"
-        info["zarr_group_path"] = f"images/{element}"
-        info["contrast_limits"] = [[0.0, hi] for hi in
-                                   imaging.channel_contrast_limits(sess.sdata, element)]
-        info["contrast_range"] = [[lo, hi] for lo, hi in
-                                  imaging.channel_value_range(sess.sdata, element)]
-        info["is_rgb"] = is_rgb
-        return info
-
-    try:
-        return await _read_locked(sess, _info)
-    except KeyError as e:
-        raise HTTPException(404, str(e))
-
-
-@app.get("/api/sessions/{sid}/image/{element}/thumbnail")
-async def image_thumbnail(sid: str, element: str, max_px: int = 2048, channels: str | None = None):
-    sess = _session(sid)
-    channel_colors = imaging.parse_channel_colors(channels)
-
-    def _render():
-        return imaging.thumbnail_image(sess.sdata, element, max_px, channel_colors)
-
-    try:
-        image = await _render_image(sess, _render)
-    except KeyError as e:
-        raise HTTPException(404, str(e))
-    return Response(content=image, media_type=imaging.TILE_IMAGE_MEDIA_TYPE,
-                    headers={"Cache-Control": "public, max-age=3600"})
-
-
-# ---- raw raster zarr (client-side Viv compositing) -------------------------
-# Serves the session's on-disk normalized raster zarr store so the browser (zarrita
-# FetchStore rooted at .../raster/{element}) can read raw per-channel chunks and
-# composite on the GPU, instead of fetching server-composited PNG tiles. The PNG
-# tile path above stays the fallback. See image_info's client_compositing field.
-def _raster_file(store_dir: str, rel: str) -> Path | None:
-    """Resolve zarr key `rel` under `store_dir`, or None if it escapes the store
-    (absolute, backslash, or `..`) — mirrors config._within_dir path safety. The
-    store dir is under DATA_DIR but this bounds reads to the one element's store."""
-    if rel.startswith("/") or "\\" in rel or ".." in rel.split("/"):
-        return None
-    root = Path(store_dir).resolve()
-    target = (root / rel).resolve()
-    if target != root and root not in target.parents:
-        return None
-    return target
-
-
-def _byte_range_response(data: bytes, media: str, range_header: str | None, is_head: bool,
-                         etag: str) -> Response:
-    """Serve in-memory `data` with HTTP Range/HEAD support. The bytes are read under
-    the session read lock (see raster_store) and handed here already in memory, so a
-    concurrent rmtree of the live store can't race a lazily-streamed file read. `etag`
-    is a weak validator computed fresh per request from the backing file's current
-    mtime/size (not a session-lifetime assumption), so a swapped store's new file
-    naturally gets a new ETag — a client that already has this exact file cached can
-    304 (see raster_store), one that doesn't gets a normal 200/206."""
-    total = len(data)
-    headers = {"Accept-Ranges": "bytes", "Cache-Control": "no-cache", "ETag": etag}
-    if range_header and range_header.startswith("bytes="):
-        spec = range_header[len("bytes="):].split(",")[0].strip()
-        start_s, _, end_s = spec.partition("-")
-        if start_s == "":  # suffix range: last N bytes
-            start, end = max(0, total - int(end_s)), total - 1
-        else:
-            start = int(start_s)
-            end = int(end_s) if end_s else total - 1
-        if start > end or start >= total:
-            return Response(status_code=416, headers={**headers, "Content-Range": f"bytes */{total}"})
-        end = min(end, total - 1)
-        headers["Content-Range"] = f"bytes {start}-{end}/{total}"
-        headers["Content-Length"] = str(end - start + 1)
-        return Response(content=b"" if is_head else data[start:end + 1], status_code=206,
-                        media_type=media, headers=headers)
-    headers["Content-Length"] = str(total)
-    return Response(content=b"" if is_head else data, media_type=media, headers=headers)
-
-
-@app.api_route("/api/sessions/{sid}/raster/{element}/{path:path}", methods=["GET", "HEAD"])
-async def raster_store(sid: str, element: str, path: str, request: Request):
-    sess = _session(sid)
-    is_head = request.method == "HEAD"
-    range_header = request.headers.get("range")
-
-    def _read():
-        # Resolve AND read while holding the read lock (via _read_locked): object-adoption
-        # (session.py::_run_call), perform_subset, and close() all rmtree/replace the
-        # raster cache dir under the write lock, so reading the bytes into memory here
-        # (rather than streaming a FileResponse lazily after the handler returns) is
-        # what guarantees the store can't be deleted mid-read. Files are one 512-chunk
-        # each (<= a few MB), so a single in-memory read never stalls a writer.
-        store_dir = sess.raster_stores.get(element)
-        if store_dir is None or not Path(store_dir).is_dir():
-            return None
-        target = _raster_file(store_dir, path)
-        # A missing chunk file is a zarr empty/fill chunk: 404 is correct (zarrita
-        # reads it as the array's fill value). Same for a bad key or a gone store.
-        if target is None or not target.is_file():
-            return None
-        media = "application/json" if target.name.endswith(".json") else "application/octet-stream"
-        st = target.stat()
-        etag = f'W/"{st.st_mtime_ns:x}-{st.st_size:x}"'
-        cached = imaging.raster_chunk_get(sess.sdata, element, path)
-        if cached is not None:
-            return cached, media, etag
-        data = target.read_bytes()
-        imaging.raster_chunk_put(sess.sdata, element, path, data)
-        return data, media, etag
-
-    result = await _read_locked(sess, _read)
-    if result is None:
-        raise HTTPException(404, "not found")
-    data, media, etag = result
-    if request.headers.get("if-none-match") == etag:
-        return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "no-cache"})
-    return _byte_range_response(data, media, range_header, is_head, etag)
 
 
 # ---- SSE -------------------------------------------------------------------

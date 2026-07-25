@@ -45,6 +45,15 @@ The only library-specific knowledge lives in the **Parameter Term Dictionary**
 
 ```
 backend/    FastAPI app
+  app/main.py     FastAPI app + lifespan; the core session/job/staging/plot/display/subset/
+                  annotation/points-transform/data-path/SSE routes. Self-contained route
+                  groups live in app/routers/.
+  app/routers/    APIRouter modules mounted by main.py: imaging (image tiles + raw raster
+                  zarr), cirro (status/projects/folders + the background upload queue),
+                  snapshots (figure save/preview/list/delete + checkpoint serving), recipes
+  app/deps.py     shared FastAPI helpers used by main.py and every router: the MANAGER
+                  holder, session lookup (_session/_writable_session), the read-lock/executor
+                  wrappers, and the image-render admission semaphore
   app/registry/   base.py (abstract Function + contract envelope), library_fn.py (one reflection
                   executor for squidpy/scanpy/spatialdata-io), custom/ (non-squidpy functions),
                   library_catalog.yaml (opt-in library manifests), terms.yaml + dictionary.py
@@ -92,15 +101,15 @@ Component-level notes: [`backend/README.md`](backend/README.md),
 | Add a new analysis or plot method | `backend/app/registry/custom/*.py` (a `Function` subclass) | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | Expose more of a library, or add a library | `backend/app/registry/library_catalog.yaml` + `library_meta.yaml` | [DESIGN.md](DESIGN.md) §4.3 |
 | Improve a parameter's widget/binding everywhere it appears | `backend/app/registry/terms.yaml` | [DESIGN.md](DESIGN.md) §4.4 |
-| Change the REST/SSE/Arrow API | `backend/app/main.py` + `backend/app/transport/` | [docs/CONTRACT.md](docs/CONTRACT.md) |
+| Change the REST/SSE/Arrow API | `backend/app/main.py` (core routes) or `backend/app/routers/` (imaging/cirro/snapshots/recipes) + `backend/app/transport/` | [docs/CONTRACT.md](docs/CONTRACT.md) |
 | Change what streams live during import | `backend/app/transport/livelog.py` (+ `capture_log` in `registry/base.py`) | below |
 | Change session/queue/worker behavior | `backend/app/sessions/` | [DESIGN.md](DESIGN.md) §5–6 |
 | Change the checkpoint/persistence format | `backend/app/persistence/store.py` | [DESIGN.md](DESIGN.md) §3 |
 | Change the deck.gl canvas / rendering | `frontend/src/components/canvas/` | [frontend/README.md](frontend/README.md) |
-| Change how the browser reads raw image data (client-side Viv compositing) | `backend/app/main.py` raster route + `/image/{element}/info` fields; `rasters.py` `raster_stores` map | [docs/CONTRACT.md](docs/CONTRACT.md) |
+| Change how the browser reads raw image data (client-side Viv compositing) | `backend/app/routers/imaging.py` raster route + `/image/{element}/info` fields; `rasters.py` `raster_stores` map | [docs/CONTRACT.md](docs/CONTRACT.md) |
 | Change the parameter-form UI | `frontend/src/components/forms/` | — |
 | Change how a snapshot figure renders or what it embeds | `backend/app/snapshots.py` (render + metadata) + `frontend/src/components/SnapshotExportModal.tsx` (framing/output) + `frontend/src/components/SnapshotBrowser.tsx` (gallery) | [DESIGN.md](DESIGN.md) §14 |
-| Change Cirro upload | `backend/app/cirro.py` + `frontend/src/components/CirroUploadDialog.tsx` | — |
+| Change Cirro upload | `backend/app/cirro.py` (client) + `backend/app/routers/cirro.py` (routes + upload queue) + `frontend/src/components/CirroUploadDialog.tsx` | — |
 
 ### Live import logging
 

@@ -1,0 +1,85 @@
+"""Shared FastAPI dependencies: the process-wide SessionManager holder plus the
+session-lookup / executor / read-lock / image-render helpers used by both main.py
+and every router module. Kept out of main.py so routers can import them without a
+circular dependency on the app object (main.py imports the routers, not vice versa).
+"""
+import asyncio
+
+from fastapi import HTTPException
+
+from .config import config
+from .sessions.manager import SessionManager
+
+# The process-wide manager, bound by lifespan once the registry is built. Public
+# (not underscore) because it is the canonical live-manager handle for out-of-request
+# readers too — e.g. the e2e harness inspects `deps.MANAGER` after startup. Routes go
+# through `_mgr()` for the not-ready guard.
+MANAGER: SessionManager | None = None
+
+
+def set_manager(m: SessionManager) -> None:
+    """Bind the process-wide manager once the app has built the registry (lifespan)."""
+    global MANAGER
+    MANAGER = m
+
+
+def _mgr() -> SessionManager:
+    if MANAGER is None:
+        raise HTTPException(503, "not ready")
+    return MANAGER
+
+
+def _session(sid: str):
+    s = _mgr().get(sid)
+    if s is None:
+        raise HTTPException(404, "session not found")
+    return s
+
+
+def _writable_session(sid: str):
+    """Same lookup as `_session`, plus a 403 if the session was opened read-only
+    (`create_from_load(read_only=True)`). Every mutating route uses this instead of
+    `_session` so a frozen session stays frozen even against a buggy or malicious
+    client, not just an unwired UI."""
+    s = _session(sid)
+    if s.read_only:
+        raise HTTPException(403, "session is read-only")
+    return s
+
+
+async def _in_executor(fn, *a):
+    return await asyncio.get_running_loop().run_in_executor(None, fn, *a)
+
+
+async def _read_locked(sess, fn, *a):
+    """Run `fn(*a)` in the executor under the session's read lock — the shape every
+    read-only endpoint needs to serve a field/manifest/preview off a session that a
+    queued job may be mutating concurrently. A compute/plot job holds the write lock for
+    its whole duration; rather than block past a fronting proxy's origin timeout (which
+    surfaces as a 504), give up after READ_LOCK_TIMEOUT_S with a retryable 503 the
+    frontend re-issues once the job completes."""
+    def _run():
+        try:
+            with sess.lock.reading(config.READ_LOCK_TIMEOUT_S):
+                return fn(*a)
+        except TimeoutError:
+            raise HTTPException(503, "session busy: compute in progress, retry")
+    return await _in_executor(_run)
+
+
+# Global cap on concurrent image compositing. deck.gl fires a burst of tile requests on
+# every zoom/pan, and each finest-level tile can realize a full multi-MB pyramid chunk;
+# without this a burst decodes them all at once and spikes memory. Shared across sessions
+# since RAM is a process-wide resource.
+_IMAGE_RENDER_SEM = asyncio.Semaphore(config.IMAGE_RENDER_CONCURRENCY)
+
+
+async def _render_image(sess, fn):
+    """Composite a tile/thumbnail under the render semaphore, refusing once RSS is past
+    the admission boundary so a zoom burst can't push an already-loaded container into
+    OOM. 503 lets the frontend keep its coarse base layer and retry as memory frees
+    (BitmapLayer just re-requests on the next viewport change)."""
+    async with _IMAGE_RENDER_SEM:
+        if _mgr().over_memory_boundary():
+            raise HTTPException(503, "image render deferred: memory boundary reached")
+        return await _read_locked(sess, fn)
