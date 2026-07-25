@@ -18,7 +18,7 @@ import ComputeDetail from './components/ComputeDetail';
 import AnsiLog from './components/AnsiLog';
 import PlotDetail from './components/PlotDetail';
 import DataInspector from './components/DataInspector';
-import DetailModal from './components/DetailModal';
+import DetailPanel from './components/DetailPanel';
 import NewSessionDialog from './components/NewSessionDialog';
 import Toaster from './components/Toaster';
 import BlockingOverlay from './components/BlockingOverlay';
@@ -115,8 +115,9 @@ export default function App() {
   // The Spatial/Embeddings/Tables switcher floats over the viewer.
   const showViewSwitcher = !!activeSessionId;
 
-  // Compute/plot detail opens in a modal over the current view, so it works
-  // whether the canvas or the table inspector is showing.
+  // Compute/plot detail opens in a side panel docked to the right of the sidebar,
+  // pushing the viewer aside; it works whether the canvas or the table inspector
+  // is showing.
   const detail = selectedComputeId ? <ComputeDetail /> : selectedPlotId ? <PlotDetail /> : null;
 
   // Canvas mode is set by which tab is active — never a drawing mode on a
@@ -248,7 +249,13 @@ export default function App() {
       <Header />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar />
-        <main className="flex-1 overflow-hidden relative">
+        <DetailPanel
+          open={!!detail}
+          onClose={() => { setSelectedComputeId(null); setSelectedPlotId(null); }}
+        >
+          {detail}
+        </DetailPanel>
+        <main className="flex-1 overflow-hidden relative min-w-0">
           {showViewSwitcher && (
             <div data-tour={TourAnchors.ViewSwitcher} className="absolute top-2 left-2 z-20 flex rounded-md border border-border bg-surface/90 backdrop-blur overflow-hidden text-xs shadow">
               {([
@@ -281,11 +288,6 @@ export default function App() {
       <ResourceStrip />
       <Toaster />
       <BlockingOverlay />
-      {detail && (
-        <DetailModal onClose={() => { setSelectedComputeId(null); setSelectedPlotId(null); }}>
-          {detail}
-        </DetailModal>
-      )}
       {showNewSession && (
         <NewSessionDialog
           onClose={() => setShowNewSession(false)}

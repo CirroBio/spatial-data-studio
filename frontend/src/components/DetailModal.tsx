@@ -1,11 +1,6 @@
 import { useEffect, useRef } from 'react';
 import StatusBadge, { type Status } from './StatusBadge';
 
-interface Props {
-  onClose: () => void;
-  children: React.ReactNode;
-}
-
 interface DetailHeaderProps {
   title: string;
   status: Status;
@@ -97,34 +92,6 @@ export function ModalOverlay({ onClose, widthClassName, children }: ModalOverlay
       onClick={(e) => { if (pointerDownOnBackdrop.current && e.target === e.currentTarget) onClose(); }}
     >
       <div className={`bg-surface border border-border rounded-lg shadow-xl flex flex-col overflow-hidden ${widthClassName}`}>
-        {children}
-      </div>
-    </div>
-  );
-}
-
-// Shell for the compute/plot detail views — a large centered panel over the
-// current viewer (canvas or table inspector). Closes on backdrop click or Esc.
-export default function DetailModal({ onClose, children }: Props) {
-  const pointerDownOnBackdrop = useRef(false);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
-  return (
-    <div
-      className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-6"
-      // Close only when the press *starts* on the backdrop, so a drag that begins
-      // inside (e.g. selecting text in an input) and releases outside won't close.
-      onMouseDown={(e) => { pointerDownOnBackdrop.current = e.target === e.currentTarget; }}
-      onClick={(e) => { if (pointerDownOnBackdrop.current && e.target === e.currentTarget) onClose(); }}
-    >
-      <div className="bg-surface border border-border rounded-lg shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden">
         {children}
       </div>
     </div>

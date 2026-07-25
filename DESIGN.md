@@ -61,7 +61,7 @@ parameter.
 │  ┌────────────┐  ┌──────────────────────────────────────────┐    │
 │  │ Left        │  │ Main area                                │    │
 │  │ sidebar     │  │  - deck.gl canvas                        │    │
-│  │ (4 tabs:    │  │  - or call detail modal                  │    │
+│  │ (4 tabs:    │  │  - call detail docks beside the sidebar  │    │
 │  │  compute/   │  │  ┌── gear (global ops)                   │    │
 │  │  plots/     │  │  └── Resource strip (live RAM/CPU)       │    │
 │  │  annot/     │  └──────────────────────────────────────────┘    │
@@ -1388,8 +1388,8 @@ closed (a 406 does not auto-reconnect), so SSE remains the path wherever it work
 │ 4 tabs:      │   default: deck.gl spatial canvas                │
 │  Compute     │     (image + points; controls)                   │
 │  Plots       │   or data inspector (Tables view)                │
-│  Annot.      │   selected item: detail MODAL over                │
-│  Subset      │     the current view (form/status)                │
+│  Annot.      │   selected item: detail PANEL docked              │
+│  Subset      │     to the right of the sidebar (form/status)     │
 ├──────────────┴──────────────────────────────────────────────────┤
 │  Resource strip: ▓▓▓▓░░ RAM 62% (this session 1.8 GB) · CPU …    │
 └───────────────────────────────────────────────────────────────┘
@@ -1398,8 +1398,9 @@ closed (a 406 does not auto-reconnect), so SSE remains the path wherever it work
 - **Left sidebar — four peer tabs in two classes:**
   - **Operation-log tabs** (**Compute**, **Plots**) — a shared history list (name +
     status badge + timestamp + hover-delete); selecting an item opens its detail in a
-    **modal** over the current view (form, params, status, log, **Edit & rerun**,
-    Redraw for plots). Footer: **Run all pending (N)**, **+ Add function**, **Browse
+    **side panel** docked to the right of the sidebar, pushing the viewer aside (form,
+    params, status, log, **Edit & rerun**, Redraw for plots). Footer: **Run all
+    pending (N)**, **+ Add function**, **Browse
     recipes**, **Load recipe**, **Export recipe**.
   - **Canvas-workflow tabs** (**Annotations**, **Subsetting**) — keep the main area on
     the canvas and **the active tab sets the canvas selection mode**: Annotations → a
