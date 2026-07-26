@@ -1,7 +1,5 @@
 import { useRef } from 'react';
 import { useAppStore } from '../store/sessionStore';
-import { updateShapeAnnotation, deleteShapeAnnotation } from '../api';
-import { reportError } from '../lib/errors';
 import ColorSwatchPicker from './ColorSwatchPicker';
 import ShapeToolbar from './ShapeToolbar';
 import type { ShapeAnnotation, StrokeStyle, FillStyle } from '../schemas/annotations';
@@ -27,7 +25,8 @@ export default function AnnotationsPanel() {
     draftVertices,
     clearDraft,
     upsertShapeAnnotation,
-    removeShapeAnnotationLocal,
+    sendShapeUpdate,
+    deleteShape,
     commitNewShape,
   } = useAppStore();
 
@@ -38,16 +37,15 @@ export default function AnnotationsPanel() {
 
   // Style edits (color/width/alpha sliders) persist debounced, same 500ms
   // coalescing pattern SpatialCanvas uses for display-encoding edits, so a
-  // slider drag doesn't fire a job per tick.
+  // slider drag doesn't fire a job per tick. The upsert is immediate (canvas tracks the
+  // drag live); the flush re-reads the latest stored shape via sendShapeUpdate, so a
+  // captured-early snapshot can't revert a concurrent drag/edit.
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   function persistShape(shape: ShapeAnnotation) {
     upsertShapeAnnotation(shape);
     if (!activeSessionId) return;
     if (persistTimer.current) clearTimeout(persistTimer.current);
-    const sid = activeSessionId;
-    persistTimer.current = setTimeout(() => {
-      updateShapeAnnotation(sid, shape.id, shape).catch((err) => reportError('Update shape failed', err));
-    }, 500);
+    persistTimer.current = setTimeout(() => sendShapeUpdate(shape.id), 500);
   }
 
   const selectedShape = shapeAnnotations.find((s) => s.id === selectedShapeId) ?? null;
@@ -68,15 +66,8 @@ export default function AnnotationsPanel() {
     persistShape({ ...selectedShape, geometry: { ...selectedShape.geometry, ...patch } });
   }
 
-  async function handleDelete(id: string) {
-    if (!activeSessionId) return;
-    removeShapeAnnotationLocal(id);
-    if (selectedShapeId === id) setSelectedShapeId(null);
-    try {
-      await deleteShapeAnnotation(activeSessionId, id);
-    } catch (err) {
-      reportError('Delete shape failed', err);
-    }
+  function handleDelete(id: string) {
+    deleteShape(id);  // optimistic remove + tombstone + delete job (see store)
   }
 
   if (!activeSessionId) {

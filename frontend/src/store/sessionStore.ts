@@ -11,7 +11,7 @@ import type {
   PlotEntry,
 } from '../types';
 import { isSpatialDisplay } from '../types';
-import { putDisplay, getSession, listShapeAnnotations, createShapeAnnotation, ApiError, fetchWhenIdle } from '../api';
+import { putDisplay, getSession, listShapeAnnotations, createShapeAnnotation, updateShapeAnnotation, deleteShapeAnnotation, ApiError, fetchWhenIdle } from '../api';
 import type { ShapeAnnotation, ShapeGeometry, ShapeKind } from '../schemas/annotations';
 import { defaultStroke, defaultFill } from '../schemas/annotations';
 import type { SnapshotExportParams } from '../lib/snapshots';
@@ -29,6 +29,22 @@ const isPlotStatus = (s: HistEntry['status'] | PlotEntry['status']): s is PlotEn
 // persistence hooks). Kept outside reactive state — nothing renders off it — so
 // mutating the set never triggers a re-render.
 const displayFlushers = new Set<() => Promise<void>>();
+
+// Shapes are edited optimistically but persisted via async `shape_annotate` jobs, so a
+// wholesale refresh (refreshShapeAnnotations fires on *any* shape job completing) can
+// clobber a shape whose own job hasn't landed yet — reverting an edit, dropping a
+// just-created shape, or resurrecting a just-deleted one. A shape with ≥1 outstanding
+// job is "locally owned": the refresh keeps the optimistic version (or the tombstone,
+// if it was deleted locally) instead of the server's pre-edit copy. Counted, because a
+// drag and a style edit can be in flight at once; the job→shape map clears each count on
+// that job's completion. Kept outside reactive state — nothing renders off it.
+const shapeJobShape = new Map<string, string>();     // job_id -> shape_id
+const pendingShapeJobs = new Map<string, number>();  // shape_id -> outstanding job count
+function bumpShapePending(shapeId: string, delta: number) {
+  const n = (pendingShapeJobs.get(shapeId) ?? 0) + delta;
+  if (n <= 0) pendingShapeJobs.delete(shapeId);
+  else pendingShapeJobs.set(shapeId, n);
+}
 
 interface AppStore {
   // sessions list
@@ -127,6 +143,17 @@ interface AppStore {
   refreshShapeAnnotations: (sessionId: string) => Promise<void>;
   upsertShapeAnnotation: (shape: ShapeAnnotation) => void;
   removeShapeAnnotationLocal: (id: string) => void;
+  // Persist the current (already-upserted) state of a shape via an update job, reading
+  // the latest stored version so a captured-early snapshot can't revert a concurrent
+  // edit, and marking it locally owned until the job lands. Shared by the annotations
+  // panel (debounced style edits) and the canvas (drag-to-move/resize).
+  sendShapeUpdate: (shapeId: string) => void;
+  // Optimistically remove a shape and enqueue its delete job, tombstoning it so a
+  // refetch before the job lands can't resurrect it.
+  deleteShape: (id: string) => void;
+  // Clear a shape's locally-owned mark once its job completes/fails (called from the
+  // SSE handlers before the reconciling refetch).
+  resolveShapeJob: (jobId: string) => void;
   // Persist a freshly drawn shape (optimistically; the job.completed refetch
   // reconciles) and select it. Shared by the canvas (drag/click creation) and the
   // annotations panel (the polygon Close Shape button).
@@ -421,7 +448,20 @@ export const useAppStore = create<AppStore>((set, get) => ({
     try {
       const { shapes } = await fetchWhenIdle(() => listShapeAnnotations(sessionId));
       if (get().activeSessionId !== sessionId) return; // switched away mid-fetch
-      set({ shapeAnnotations: shapes });
+      if (pendingShapeJobs.size === 0) { set({ shapeAnnotations: shapes }); return; }
+      // Keep locally-owned shapes (an edit/create/delete whose job hasn't landed) as they
+      // are locally: the server copy is still pre-edit. Preserve server order — substitute
+      // the optimistic version for a pending edit/move in place, drop a pending delete
+      // (absent locally = tombstone), and append a pending create the server doesn't have.
+      const localById = new Map(get().shapeAnnotations.map((s) => [s.id, s]));
+      const serverIds = new Set(shapes.map((s) => s.id));
+      const merged = shapes
+        .filter((s) => !pendingShapeJobs.has(s.id) || localById.has(s.id))
+        .map((s) => (pendingShapeJobs.has(s.id) ? localById.get(s.id)! : s));
+      for (const id of pendingShapeJobs.keys()) {
+        if (!serverIds.has(id)) { const local = localById.get(id); if (local) merged.push(local); }
+      }
+      set({ shapeAnnotations: merged });
     } catch (err) {
       // Still busy after retries: the next job.completed re-triggers this, so stay quiet.
       if (err instanceof ApiError && err.status === 503) return;
@@ -452,11 +492,47 @@ export const useAppStore = create<AppStore>((set, get) => ({
       fill: geometry.kind === 'line' || geometry.kind === 'text' ? undefined : defaultFill(),
     };
     get().upsertShapeAnnotation(shape); // optimistic — the job.completed refetch reconciles
-    createShapeAnnotation(sessionId, shape).catch((err) => {
-      get().pushNotification({ kind: 'error', message: `Create shape failed: ${err instanceof Error ? err.message : String(err)}` });
-      get().removeShapeAnnotationLocal(shape.id);
-    });
+    bumpShapePending(shape.id, 1);
+    createShapeAnnotation(sessionId, shape)
+      .then(({ job_id }) => { shapeJobShape.set(job_id, shape.id); })
+      .catch((err) => {
+        bumpShapePending(shape.id, -1);
+        get().pushNotification({ kind: 'error', message: `Create shape failed: ${err instanceof Error ? err.message : String(err)}` });
+        get().removeShapeAnnotationLocal(shape.id);
+      });
     get().setSelectedShapeId(shape.id); // also clears activeShapeTool + draft (see setSelectedShapeId)
+  },
+  sendShapeUpdate: (shapeId) => {
+    const sessionId = get().activeSessionId;
+    if (!sessionId) return;
+    const shape = get().shapeAnnotations.find((s) => s.id === shapeId);
+    if (!shape) return; // deleted meanwhile
+    bumpShapePending(shapeId, 1);
+    updateShapeAnnotation(sessionId, shapeId, shape)
+      .then(({ job_id }) => { shapeJobShape.set(job_id, shapeId); })
+      .catch((err) => {
+        bumpShapePending(shapeId, -1);
+        get().pushNotification({ kind: 'error', message: `Update shape failed: ${err instanceof Error ? err.message : String(err)}` });
+      });
+  },
+  deleteShape: (id) => {
+    const sessionId = get().activeSessionId;
+    if (!sessionId) return;
+    get().removeShapeAnnotationLocal(id);
+    if (get().selectedShapeId === id) get().setSelectedShapeId(null);
+    bumpShapePending(id, 1);
+    deleteShapeAnnotation(sessionId, id)
+      .then(({ job_id }) => { shapeJobShape.set(job_id, id); })
+      .catch((err) => {
+        bumpShapePending(id, -1);
+        get().pushNotification({ kind: 'error', message: `Delete shape failed: ${err instanceof Error ? err.message : String(err)}` });
+      });
+  },
+  resolveShapeJob: (jobId) => {
+    const shapeId = shapeJobShape.get(jobId);
+    if (shapeId === undefined) return;
+    shapeJobShape.delete(jobId);
+    bumpShapePending(shapeId, -1);
   },
 
   activeShapeTool: null,

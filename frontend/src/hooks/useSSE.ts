@@ -36,6 +36,7 @@ export function useSSE(): void {
     setSessionState,
     refreshSessionState,
     refreshShapeAnnotations,
+    resolveShapeJob,
     pushNotification,
     setActiveSessionId,
     setSessions,
@@ -181,7 +182,10 @@ export function useSSE(): void {
         }
         // Shape-annotation geometry lives in sdata.shapes, not app_state, so a
         // job.completed for it needs its own refetch alongside the session-state one.
+        // Clear this shape's locally-owned mark first so the refetch adopts the now-
+        // persisted server copy instead of preserving the stale optimistic one.
         if (d.kind === 'shape_annotate') {
+          resolveShapeJob(d.job_id);
           void refreshShapeAnnotations(d.session_id);
         }
         scheduleRefresh(d.session_id);
@@ -204,9 +208,10 @@ export function useSSE(): void {
         const prefix = d.source ? `[${d.source} @ ${d.timestamp}] ` : '';
         pushNotification({ kind: 'error', message: `${prefix}${d.error ?? 'unknown error'}` });
         // Shape edits/deletes apply optimistically to local state before the job runs;
-        // if it failed, re-read the authoritative geometry so the canvas doesn't keep a
-        // change (or deletion) that never persisted.
+        // if it failed, drop this shape's locally-owned mark and re-read the authoritative
+        // geometry so the canvas doesn't keep a change (or deletion) that never persisted.
         if (d.kind === 'shape_annotate') {
+          resolveShapeJob(d.job_id);
           void refreshShapeAnnotations(d.session_id);
         }
         scheduleRefresh(d.session_id);
@@ -313,5 +318,5 @@ export function useSSE(): void {
       if (pollTimer !== undefined) clearTimeout(pollTimer);
       if (refreshTimer.current) clearTimeout(refreshTimer.current);
     };
-  }, [activeSessionId, upsertSession, setResourceSample, updateDataVersions, updateDisplay, addActiveJob, removeActiveJob, addQueuedEntry, setEntryStatus, setSessionState, refreshSessionState, refreshShapeAnnotations, pushNotification, setActiveSessionId, setSessions, removeSession, setCirroUploads, setLoadProgress, appendLoadLog, appendJobLog, clearJobLog]);
+  }, [activeSessionId, upsertSession, setResourceSample, updateDataVersions, updateDisplay, addActiveJob, removeActiveJob, addQueuedEntry, setEntryStatus, setSessionState, refreshSessionState, refreshShapeAnnotations, resolveShapeJob, pushNotification, setActiveSessionId, setSessions, removeSession, setCirroUploads, setLoadProgress, appendLoadLog, appendJobLog, clearJobLog]);
 }

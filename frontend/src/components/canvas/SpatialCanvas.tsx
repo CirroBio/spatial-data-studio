@@ -6,10 +6,8 @@ import type { Layer, OrthographicViewState, PickingInfo } from '@deck.gl/core';
 import { useAppStore } from '../../store/sessionStore';
 import { useArrowField } from '../../hooks/useArrowField';
 import {
-  getImageInfo, getElements,
-  updateShapeAnnotation, fetchWhenIdle,
+  getImageInfo, getElements, fetchWhenIdle,
 } from '../../api';
-import { reportError } from '../../lib/errors';
 import { countPointsInRings } from '../../lib/pointInPolygon';
 import TransformEditor from '../TransformEditor';
 import { isSpatialDisplay, type SpatialDisplaySpec, type ImageInfo } from '../../types';
@@ -125,7 +123,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   const {
     shapeAnnotations, activeShapeTool, selectedShapeId, draftVertices,
     setSelectedShapeId, addDraftVertex, clearDraft,
-    upsertShapeAnnotation, commitNewShape,
+    upsertShapeAnnotation, sendShapeUpdate, commitNewShape,
   } = useAppStore();
   // In-progress drag (creating a shape, or dragging a selected shape's handle) is
   // local: it changes on every pointer move and only this canvas renders it.
@@ -307,13 +305,12 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
       if (shape) {
         const updated: ShapeAnnotation = { ...shape, geometry: shapeDragPreview };
         upsertShapeAnnotation(updated);
-        updateShapeAnnotation(sessionId, shape.id, updated)
-          .catch((err) => reportError('Update shape failed', err));
+        sendShapeUpdate(shape.id);  // reads the just-upserted latest; marks it locally owned
       }
     }
     setShapeDragTarget(null);
     setShapeDragPreview(null);
-  }, [shapeDragTarget, shapeDragPreview, shapeAnnotations, sessionId, commitNewShape, upsertShapeAnnotation]);
+  }, [shapeDragTarget, shapeDragPreview, shapeAnnotations, commitNewShape, upsertShapeAnnotation, sendShapeUpdate]);
 
   // Load image info. Retry a transient 503 (session busy — the async checkpoint load
   // holds the write lock on first open) so the image layer materializes once the lock
