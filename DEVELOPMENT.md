@@ -337,11 +337,17 @@ renders a display server-side with matplotlib into a vector PDF and/or raster PN
 the microscopy image (when shown) is rasterized as an image layer (reusing
 `imaging`'s per-channel compositing), cell points are emitted as vector markers
 colored by the same palette/colormap the frontend uses (ported in `snapshots.py` so a
-figure matches the canvas without shipping a per-cell buffer), and cell boundaries/masks
-are rasterized. Above `POINT_VECTOR_CAP` cells in view the point layer is rasterized to
-keep the PDF small. Colors/styling come from the display's persisted encoding; the
-render request carries only framing (`viewport`) + output settings (`width_px`,
-`height_px`, `dpi`, `formats`).
+figure matches the canvas without shipping a per-cell buffer). When the display is in
+`render_mode: 'points+shapes'` and zoomed in past the same gate the canvas applies
+(`SHAPES_MIN_CELL_PX`, and a `POLYGON_LIMIT` cells-in-view cap), the point markers are
+replaced by the actual cell-boundary polygons — the viewport-clipped world-space
+geometry from `transport/geometry.clipped_polygons` (shared with the GeoArrow
+endpoint), drawn as vector paths, filled or stroked per `boundary_style` and colored per
+cell — so a snapshot of a segmentation view captures the outlines, not circles. Above
+`POINT_VECTOR_CAP` features in view the point/polygon layer is rasterized to keep the
+PDF small. Colors/styling come from the display's persisted encoding; the render request
+carries only framing (`viewport`) + output settings (`width_px`, `height_px`, `dpi`,
+`formats`).
 
 Each snapshot is a set of sibling files under `DATA_DIR` sharing a `<base>` name:
 `<base>.figure.pdf`/`.png` (the deliverables), `<base>.figure.thumb.png` (gallery

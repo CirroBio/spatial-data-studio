@@ -1103,10 +1103,17 @@ looked on the canvas at the chosen framing.
   deterministic palette (categorical: 15-color CB-friendly palette over the sorted
   categories) / colormap (numeric: viridis over the data range) the frontend uses —
   the palette/LUT are ported into `snapshots.py`, so a figure matches the canvas
-  without the client shipping a per-cell color buffer. Cell boundaries/masks
-  (`render_mode` `points+shapes`) are rasterized as an image layer. Above
-  `POINT_VECTOR_CAP` cells in view the point layer is rasterized too, to keep the PDF
-  small and fast to open (recorded in the metadata when it happens).
+  without the client shipping a per-cell color buffer. When the display is in
+  `render_mode` `points+shapes` and zoomed in past the same gate the canvas applies
+  (`SHAPES_MIN_CELL_PX` cell diameter, and a `POLYGON_LIMIT` cells-in-view cap), the
+  point markers are **replaced** by the actual cell-boundary polygons — the
+  viewport-clipped world-space geometry from `transport/geometry.clipped_polygons`
+  (shared with the GeoArrow endpoint), drawn as **vector** paths, filled or stroked per
+  `boundary_style`/`boundary_line_width` and colored per cell — so a segmentation view
+  snapshots as outlines, not circles. Below the gate (or over the cell cap) it falls
+  back to the point scatter, exactly as the canvas does. Above `POINT_VECTOR_CAP`
+  features in view the point/polygon layer is rasterized too, to keep the PDF small and
+  fast to open (recorded in the metadata when it happens).
 - **Coordinate regime:** with an image the figure is drawn in level-0 pixel space
   (points mapped world→pixel via `imaging.pixel_to_world`, the image at identity),
   matching the live canvas; otherwise pure world/spot space. `invert_x`/`invert_y`

@@ -906,6 +906,40 @@ def run_segmentation_flow(client):
                       params={"bbox": covering}).status_code == 404
     print(f"[ok] over-limit gate: limit {n - 1} -> 0, limit {n} -> {n}; missing element 404s")
 
+    # snapshot fidelity: a display in render_mode 'points+shapes' must render the SAME
+    # cell-boundary polygons the canvas overlays once zoomed in -- not fall back to the
+    # circle markers. Configure a world-space display (no image) so the framing math is
+    # directly computable, then snapshot zoomed in past the shapes gate (window sized
+    # under POLYGON_LIMIT cells) and zoomed out (below the gate -> points).
+    spatial_disp = next(d for d in client.get(f"/api/sessions/{sid}").json()["app_state"]["displays"]
+                        if d["type"] == "spatial_canvas")
+    enc = {**spatial_disp["encoding"], "render_mode": "points+shapes",
+           "shapes_layer": "cell_boundaries", "image_layer": None,
+           "show_image": False, "show_points": True}
+    spatial_disp = {**spatial_disp, "encoding": enc}
+    assert client.put(f"/api/sessions/{sid}/displays/{spatial_disp['id']}",
+                      json=spatial_disp).status_code == 200
+    spacing = float(np.sqrt(max((maxx - minx) * (maxy - miny), 1.0) / max(1, len(wx))))
+    gate_zoom = np.log2(6.0 / spacing)  # snapshots.SHAPES_MIN_CELL_PX / spacing, world space
+    center = [float(np.median(wx)), float(np.median(wy))]
+
+    def snap_render(zoom):
+        spec = {"label": "seg-shapes", "viewport": {"target": center, "zoom": float(zoom)},
+                "width_px": 800, "height_px": 800, "dpi": 100, "formats": ["png"],
+                "display_id": spatial_disp["id"]}
+        nm = client.post(f"/api/sessions/{sid}/snapshot", json=spec).json()["name"]
+        m = next(s for s in client.get("/api/snapshots").json()["snapshots"]
+                 if s["name"] == nm)["metadata"]["render"]
+        client.delete(f"/api/snapshots/{nm}")
+        return m
+
+    zoomed_in = snap_render(gate_zoom + 3.0)   # +3 keeps the window well under POLYGON_LIMIT
+    assert zoomed_in["shapes_drawn"] > 0, f"points+shapes drew no polygons zoomed in: {zoomed_in}"
+    zoomed_out = snap_render(gate_zoom - 3.0)
+    assert zoomed_out["shapes_drawn"] == 0, f"below the gate must fall back to points: {zoomed_out}"
+    print(f"[ok] snapshot points+shapes: {zoomed_in['shapes_drawn']} polygons zoomed in, "
+          f"points ({zoomed_out['cells_in_view']} cells) zoomed out")
+
     # checkpoint round-trip: cell_boundaries survives save + reload and still serves
     out = os.path.join(str(config.DATA_DIR), "xenium_segmentation.zarr.zip")
     sv = client.post(f"/api/sessions/{sid}/save", json={"path": out}).json()

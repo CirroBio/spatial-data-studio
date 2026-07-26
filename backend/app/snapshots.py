@@ -10,8 +10,10 @@ and reproduces the display exactly as styled on the live canvas:
 - cell points are drawn as **vector** markers (circle/square/hexagon), colored by the same
   deterministic palette/colormap the frontend uses (see colorUtils.ts) so the figure
   matches the canvas without the client shipping a per-cell color buffer;
-- cell boundaries/masks (render_mode 'points+shapes') are rasterized into an image layer;
-- above a cell-count cap the point layer is rasterized too, to keep the PDF small/fast.
+- when the display is in render_mode 'points+shapes' and zoomed in far enough, the point
+  markers are replaced by the same viewport-clipped cell-boundary polygons (filled or
+  outline) the canvas overlays — drawn as vector paths, colored per cell to match;
+- above a cell-count cap the point/polygon layer is rasterized, to keep the PDF small/fast.
 
 Extensive provenance metadata (dataset, viewport, output settings, full display encoding,
 and the analysis recipe that produced the data) is embedded in every output file (PDF
@@ -25,6 +27,7 @@ import datetime
 import hashlib
 import io
 import json
+import math
 import os
 from pathlib import Path
 
@@ -45,6 +48,16 @@ SNAPSHOT_SCHEMA_VERSION = "3.0"
 # vector markers — a vector scatter of hundreds of thousands of markers makes a PDF that
 # is huge and slow to open. Recorded in metadata when it trips.
 POINT_VECTOR_CAP = 60000
+
+# render_mode 'points+shapes' overlays cell-boundary polygons in place of the point
+# markers once the view is zoomed in far enough (matching the live canvas). These
+# mirror the frontend so a snapshot shows shapes exactly when the canvas would:
+#   POLYGON_LIMIT   — usePolygonBbox.POLYGON_LIMIT: over this many cells in view the
+#                     shapes overlay is suppressed and points are shown instead.
+#   SHAPES_MIN_CELL_PX — useCanvasViewState.SHAPES_MIN_CELL_PX: a cell must reach this
+#                     on-screen diameter (px) before its outline is drawn.
+POLYGON_LIMIT = 20000
+SHAPES_MIN_CELL_PX = 6
 
 THUMB_MAX_PX = 320
 
@@ -135,6 +148,19 @@ def _image_element(session, enc: dict) -> str | None:
     if el and el in getattr(session.sdata, "images", {}):
         return el
     return None
+
+
+def _shapes_element(session, enc: dict) -> str | None:
+    """The polygonal shapes element the cell-boundary overlay would use: the
+    encoding's `shapes_layer` if it still exists and is polygonal, else the first
+    available polygonal shapes element (mirrors SpatialCanvas' `shapesElement`)."""
+    from .transport import geometry
+    shapes = getattr(session.sdata, "shapes", {})
+    polygonal = [name for name, gdf in shapes.items() if geometry.is_polygonal(gdf)]
+    chosen = enc.get("shapes_layer")
+    if chosen and chosen in polygonal:
+        return chosen
+    return polygonal[0] if polygonal else None
 
 
 def _window(target, zoom, width_px, height_px):
@@ -268,6 +294,83 @@ def _tint_channels(data_cyx, names, enc, sdata, element) -> np.ndarray:
     return np.clip(out, 0, 255).astype(np.uint8)
 
 
+# ---- cell-boundary polygons (render_mode 'points+shapes') --------------------
+def _geom_to_path(geom):
+    """A matplotlib compound Path for a shapely Polygon/MultiPolygon: exterior +
+    interior rings as sub-paths, so holes render (the same geometry the GeoArrow
+    polygon layer tessellates on the canvas). None if the geometry has no rings."""
+    from matplotlib.path import Path as MplPath
+    from shapely.geometry import MultiPolygon
+    polys = list(geom.geoms) if isinstance(geom, MultiPolygon) else [geom]
+    verts, codes = [], []
+    for poly in polys:
+        for ring in [poly.exterior, *poly.interiors]:
+            coords = np.asarray(ring.coords)
+            if len(coords) == 0:
+                continue
+            verts.append(coords)
+            c = np.full(len(coords), MplPath.LINETO, dtype=np.uint8)
+            c[0] = MplPath.MOVETO
+            c[-1] = MplPath.CLOSEPOLY
+            codes.append(c)
+    if not verts:
+        return None
+    return MplPath(np.concatenate(verts), np.concatenate(codes))
+
+
+def _draw_shapes(ax, session, enc, element, view_bbox, p2w, w2p, n_cells, dpi) -> int:
+    """Draw cell-boundary polygons over `view_bbox` (in the view's coordinate space:
+    level-0 pixels when an image is shown, else world). Returns the number of
+    polygons drawn — 0 when the viewport holds none or more than `POLYGON_LIMIT`
+    cells, in which case the caller falls back to the point scatter (matching the
+    live canvas, where the outlines drop out and the points show)."""
+    from matplotlib.collections import PathCollection
+    from shapely.affinity import affine_transform
+    from .transport import geometry
+
+    # The query bbox is world space; convert from pixel space when an image is shown.
+    if p2w is not None:
+        corners = np.array([[view_bbox[0], view_bbox[1]], [view_bbox[2], view_bbox[1]],
+                            [view_bbox[2], view_bbox[3]], [view_bbox[0], view_bbox[3]]])
+        wc = (p2w[:2, :2] @ corners.T).T + p2w[:2, 2]
+        world_bbox = (wc[:, 0].min(), wc[:, 1].min(), wc[:, 0].max(), wc[:, 1].max())
+    else:
+        world_bbox = (view_bbox[0], view_bbox[1], view_bbox[2], view_bbox[3])
+
+    geoms, cell_index = geometry.clipped_polygons(
+        session.sdata, session.active_table(), element, world_bbox, limit=POLYGON_LIMIT)
+    if len(geoms) == 0:
+        return 0
+
+    # World -> view (pixel) space, the same transform the points carry.
+    if w2p is not None:
+        aff = [w2p[0, 0], w2p[0, 1], w2p[1, 0], w2p[1, 1], w2p[0, 2], w2p[1, 2]]
+        geoms = [affine_transform(g, aff) for g in geoms]
+
+    rgba = _cell_rgba(session, enc, n_cells)
+    outline = enc.get("boundary_style", "filled") == "outline"
+    line_pts = float(enc.get("boundary_line_width", 1)) * 72.0 / dpi  # px -> points at this dpi
+    transparent = (0.0, 0.0, 0.0, 0.0)
+
+    paths, facecolors, edgecolors = [], [], []
+    for g, ci in zip(geoms, cell_index):
+        path = _geom_to_path(g)
+        if path is None:
+            continue
+        color = tuple(rgba[ci]) if 0 <= ci < n_cells else transparent
+        paths.append(path)
+        facecolors.append(transparent if outline else color)
+        edgecolors.append(color if outline else transparent)
+    if not paths:
+        return 0
+
+    coll = PathCollection(paths, facecolors=facecolors, edgecolors=edgecolors,
+                          linewidths=line_pts if outline else 0, antialiased=True,
+                          rasterized=len(paths) > POINT_VECTOR_CAP, zorder=1)
+    ax.add_collection(coll)
+    return len(paths)
+
+
 # ---- the render core ---------------------------------------------------------
 def _render_figure(session, spec: dict):
     """Render into an in-memory matplotlib Figure. Returns (fig, render_meta)."""
@@ -292,6 +395,7 @@ def _render_figure(session, spec: dict):
     # Coordinate regime: with an image the canvas works in level-0 pixel space (points
     # carry a world->pixel transform); otherwise pure world/spot space.
     affine_scale = 1.0
+    p2w = w2p = None
     if element is not None:
         p2w = imaging.pixel_to_world(session.sdata, element, session.active_table())
         w2p = np.linalg.inv(p2w)
@@ -327,27 +431,46 @@ def _render_figure(session, spec: dict):
             ax.imshow(rgb, extent=extent, origin="lower", interpolation="nearest", zorder=0)
 
     show_points = enc.get("show_points", True)
+    cells_in_view = 0
+    shapes_drawn = 0
     if show_points and len(pts):
-        # cull to a slightly padded window so off-view markers don't bloat the file
-        pad = radius_data
-        m = ((pts[:, 0] >= bbox[0] - pad) & (pts[:, 0] <= bbox[2] + pad)
-             & (pts[:, 1] >= bbox[1] - pad) & (pts[:, 1] <= bbox[3] + pad))
-        vx, vy = pts[m, 0], pts[m, 1]
-        rgba = _cell_rgba(session, enc, len(pts))[m]
-        rasterized_points = len(vx) > POINT_VECTOR_CAP
-        marker = {"circle": "o", "square": "s", "hexagon": "h"}.get(enc.get("point_marker", "circle"), "o")
-        # radius (data units) -> points at this figure size (equal aspect, window aspect
-        # == figure aspect): pts-per-data-unit = 72 * 2**zoom / dpi.
-        radius_pts = radius_data * 72.0 * (2.0 ** zoom) / dpi
-        s = max((2.0 * radius_pts) ** 2, 0.25)
-        ax.scatter(vx, vy, s=s, c=rgba, marker=marker, linewidths=0, rasterized=rasterized_points, zorder=1)
+        # render_mode 'points+shapes' replaces the point markers with cell-boundary
+        # polygons once a cell is big enough on screen (SHAPES_MIN_CELL_PX) and the
+        # viewport fits under POLYGON_LIMIT — the same gate the live canvas applies.
+        # The scatter is the fallback for the zoomed-out / over-budget regimes.
+        render_mode = enc.get("render_mode")
+        shapes_mode = render_mode in ("points+shapes", "shapes")
+        shapes_element = _shapes_element(session, enc) if (shapes_mode and kind == "spatial") else None
+        mean_spacing_screen = spacing / affine_scale  # world spacing scaled to view space
+        zoomed_in_for_shapes = mean_spacing_screen > 0 and \
+            zoom >= math.log2(SHAPES_MIN_CELL_PX / max(mean_spacing_screen, 1e-9))
+        if shapes_element is not None and zoomed_in_for_shapes:
+            shapes_drawn = _draw_shapes(ax, session, enc, shapes_element, bbox, p2w, w2p, len(pts), dpi)
+
+        if not shapes_drawn:
+            # cull to a slightly padded window so off-view markers don't bloat the file
+            pad = radius_data
+            m = ((pts[:, 0] >= bbox[0] - pad) & (pts[:, 0] <= bbox[2] + pad)
+                 & (pts[:, 1] >= bbox[1] - pad) & (pts[:, 1] <= bbox[3] + pad))
+            vx, vy = pts[m, 0], pts[m, 1]
+            rgba = _cell_rgba(session, enc, len(pts))[m]
+            rasterized_points = len(vx) > POINT_VECTOR_CAP
+            marker = {"circle": "o", "square": "s", "hexagon": "h"}.get(enc.get("point_marker", "circle"), "o")
+            # radius (data units) -> points at this figure size (equal aspect, window aspect
+            # == figure aspect): pts-per-data-unit = 72 * 2**zoom / dpi.
+            radius_pts = radius_data * 72.0 * (2.0 ** zoom) / dpi
+            s = max((2.0 * radius_pts) ** 2, 0.25)
+            ax.scatter(vx, vy, s=s, c=rgba, marker=marker, linewidths=0, rasterized=rasterized_points, zorder=1)
+            cells_in_view = int(m.sum())
+        else:
+            cells_in_view = shapes_drawn
 
     ax.set_xlim(bbox[2], bbox[0]) if enc.get("invert_x") else ax.set_xlim(bbox[0], bbox[2])
     ax.set_ylim(bbox[3], bbox[1]) if enc.get("invert_y") else ax.set_ylim(bbox[1], bbox[3])
 
     render_meta = {"kind": kind, "rasterized_points": rasterized_points,
                    "image_element": element if show_image else None,
-                   "cells_in_view": int(m.sum()) if (show_points and len(pts)) else 0}
+                   "cells_in_view": cells_in_view, "shapes_drawn": shapes_drawn}
     return fig, render_meta
 
 

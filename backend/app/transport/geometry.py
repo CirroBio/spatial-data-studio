@@ -80,15 +80,16 @@ def _empty_geoarrow(gdf):
     return ga_type.wrap_array(pa.array([], type=ga_type.storage_type))
 
 
-def polygons_geoarrow(sdata, table, element: str, bbox, limit: int | None = None) -> bytes:
-    """Viewport-clipped boundary polygons of `element` as an Arrow IPC stream with a
-    GeoArrow `geometry` column (polygon/multipolygon) and an int32 `cell_index`
-    column. `bbox` is `(minx, miny, maxx, maxy)` in world space; it is inverted into
-    the element's intrinsic space to query `gdf.sindex`, so only the covered subset
-    is materialized and transformed. Raises KeyError if the element is missing or
-    not polygonal."""
-    import geoarrow.pyarrow as ga
-
+def clipped_polygons(sdata, table, element: str, bbox, limit: int | None = None):
+    """Viewport-clipped boundary polygons of `element` as `(geoms, cell_index)`:
+    a list of world-space shapely polygons/multipolygons and a matching int32
+    `cell_index` array (each shape's row position in the active table, -1 if none).
+    `bbox` is `(minx, miny, maxx, maxy)` in world space; it is inverted into the
+    element's intrinsic space to query `gdf.sindex`, so only the covered subset is
+    materialized and transformed into world space. Over `limit` hits returns empty
+    (an all-or-nothing viewport, so a partial subset is never shown). Raises
+    KeyError if the element is missing or not polygonal. Shared by the GeoArrow
+    transport and the snapshot figure renderer."""
     if element not in getattr(sdata, "shapes", {}):
         raise KeyError(f"shapes element '{element}' not found")
     gdf = sdata.shapes[element]
@@ -108,22 +109,35 @@ def polygons_geoarrow(sdata, table, element: str, bbox, limit: int | None = None
         # nothing rather than an arbitrary partial subset, so the "Shapes
         # (zoomed in)" layer stays blank until the user zooms in far enough that
         # the visible set fits under `limit`. Skips serializing the geometry too.
-        _log.info("polygons_geoarrow over limit for %s: %d hits > limit %d; returning empty",
+        _log.info("clipped_polygons over limit for %s: %d hits > limit %d; returning empty",
                   element, len(hits), limit)
         hits = []
 
     if not hits:
-        table_out = pa.table({"geometry": _empty_geoarrow(gdf),
-                              "cell_index": pa.array([], type=pa.int32())})
-        return _to_ipc(table_out)
+        return [], np.empty(0, dtype="int32")
 
     sub = gdf.iloc[hits]
     aff = [m[0, 0], m[0, 1], m[1, 0], m[1, 1], m[0, 2], m[1, 2]]  # shapely: a,b,d,e,xoff,yoff
     geoms = [affine_transform(g, aff) for g in sub.geometry.to_numpy()]
+    cell_index = _cell_index(table, list(sub.index))
+    return geoms, cell_index
+
+
+def polygons_geoarrow(sdata, table, element: str, bbox, limit: int | None = None) -> bytes:
+    """Viewport-clipped boundary polygons of `element` as an Arrow IPC stream with a
+    GeoArrow `geometry` column (polygon/multipolygon) and an int32 `cell_index`
+    column, in the coords world space. See `clipped_polygons` for the query."""
+    import geoarrow.pyarrow as ga
+
+    geoms, cell_index = clipped_polygons(sdata, table, element, bbox, limit)
+    if len(geoms) == 0:
+        table_out = pa.table({"geometry": _empty_geoarrow(sdata.shapes[element]),
+                              "cell_index": pa.array([], type=pa.int32())})
+        return _to_ipc(table_out)
+
     geoms = shapely.transform(np.asarray(geoms, dtype=object),
                               lambda coords: np.round(coords, _COORD_DECIMALS), include_z=False)
     geometry = ga.as_geoarrow(ga.array([g.wkb for g in geoms]))
-    cell_index = _cell_index(table, list(sub.index))
     table_out = pa.table({"geometry": geometry, "cell_index": pa.array(cell_index, type=pa.int32())})
     return _to_ipc(table_out)
 

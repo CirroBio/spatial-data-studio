@@ -204,7 +204,8 @@ DESIGN.md §14).
   "output": { "width_px":800, "height_px":636, "dpi":200 },
   "viewport": { "target":[x,y], "zoom":z },
   "encoding": DisplaySpec.encoding,    // the source display's encoding verbatim (how it was styled)
-  "render": { "rasterized_points":bool, "image_element":str|null, "cells_in_view":int },
+  "render": { "rasterized_points":bool, "image_element":str|null, "cells_in_view":int,
+              "shapes_drawn":int },  // >0 when render_mode points+shapes drew cell-boundary polygons instead of points
   "recipe": [ { "namespace":str, "function":str, "params":{} } ] }  // completed analysis steps
 ```
 - **Rendering it:** the request body is `{viewport:{target,zoom}, width_px, height_px,
