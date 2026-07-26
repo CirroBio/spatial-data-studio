@@ -434,7 +434,7 @@ export default function CanvasControls({
                           className="w-7 h-6 rounded border border-border bg-bg cursor-pointer"
                           title="Pick any color"
                         />
-                        <ColorSwatchPicker colors={CATEGORY_SWATCHES} selected={item.color} onSelect={(color) => setCategoryColor(item.label, color)} />
+                        <ColorSwatchPicker colors={CATEGORY_SWATCHES} selected={item.color} onSelect={(color) => setCategoryColor(item.label, color)} columns={5} />
                       </div>
                     )}
                   </div>
