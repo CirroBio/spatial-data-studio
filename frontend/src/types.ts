@@ -128,6 +128,10 @@ export interface DisplayEncoding {
   show_image?: boolean;      // image-layer visibility; defaults to (image_layer != null)
   show_channel_legend?: boolean;  // image channel legend visibility; defaults on
   isolated_category?: string | null;  // isolate one category in the color-by legend (dims the rest)
+  // Per-category color overrides for a categorical color-by, keyed by the color_by
+  // path (obs:<col>, X:<gene>, ...) then by category level -> `#rrggbb`. Levels
+  // without an entry fall back to the default categorical palette.
+  category_colors?: Record<string, Record<string, string>>;
   // How the Cells layer renders. Points always draw (styled by `point_size` +
   // `point_marker`, overlaps merged not blended), visible at every zoom. 'points'
   // (default) is points only; 'points+shapes' additionally overlays cell-boundary

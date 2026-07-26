@@ -8,7 +8,7 @@ import LegendControls from './LegendControls';
 import RangeField from './RangeField';
 import DualRangeField from './DualRangeField';
 import type { SpatialDisplaySpec, ObsField } from '../../types';
-import { CHANNEL_COLORS } from './colorUtils';
+import { CHANNEL_COLORS, CATEGORY_SWATCHES } from './colorUtils';
 import { ZOOM_LIMITS } from './viewFit';
 import type { Channel } from './useImageChannels';
 
@@ -20,6 +20,12 @@ interface CanvasControlsProps {
   colorByName: string;
   legendVisible: boolean;
   updateEncoding: (patch: Partial<SpatialDisplaySpec['encoding']>) => void;
+  // Categorical levels + effective hex color for the per-category color controls;
+  // null unless the current color-by field is categorical (within the level cap).
+  categoryColorItems: { label: string; color: string }[] | null;
+  hasCategoryOverrides: boolean;
+  setCategoryColor: (label: string, color: string) => void;
+  resetCategoryColors: () => void;
   showPoints: boolean;
   setShowPoints: (v: boolean) => void;
   showImage: boolean;
@@ -109,6 +115,10 @@ export default function CanvasControls({
   colorByName,
   legendVisible,
   updateEncoding,
+  categoryColorItems,
+  hasCategoryOverrides,
+  setCategoryColor,
+  resetCategoryColors,
   showPoints,
   setShowPoints,
   showImage,
@@ -143,6 +153,8 @@ export default function CanvasControls({
   const [tab, setTab] = useState<DisplayTab>('layers');
   // Which channel's color/contrast settings are expanded (Image tab). Ephemeral UI.
   const [expandedChannel, setExpandedChannel] = useState<number | null>(null);
+  // Which category's color swatch picker is expanded (Cells tab). Ephemeral UI.
+  const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
 
   // One-word labels + inline-SVG icons in the left-sidebar style (24×24 viewBox,
   // stroke=currentColor); PanelTabs' collapseInactive shows icon-only until selected.
@@ -365,6 +377,71 @@ export default function CanvasControls({
 
           <RangeField label="Opacity" value={display.encoding.opacity} min={0.1} max={1} step={0.05} digits={2}
             onChange={(v) => updateEncoding({ opacity: v })} />
+
+          {/* Per-category colors — only for a categorical color-by. Expand a level (▸)
+              to pick its color. The list scrolls when there are many levels. */}
+          {categoryColorItems && (
+            <div className="flex flex-col gap-1 border-t border-border pt-2">
+              <div className="flex items-center justify-between">
+                <span className={FIELD_LABEL}>Category colors</span>
+                {hasCategoryOverrides && (
+                  <button
+                    type="button"
+                    onClick={resetCategoryColors}
+                    className="text-[10px] text-muted hover:text-accent transition-colors"
+                    title="Reset all categories to the default palette"
+                  >
+                    Reset
+                  </button>
+                )}
+              </div>
+              <div className="flex flex-col gap-1 max-h-56 overflow-y-auto pr-1">
+                {categoryColorItems.map((item) => (
+                  <div key={item.label} className="flex flex-col gap-1">
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setExpandedCategory(expandedCategory === item.label ? null : item.label)}
+                        className="w-3.5 h-3.5 rounded-sm border border-border shrink-0 hover:ring-1 hover:ring-accent"
+                        style={{ background: item.color }}
+                        title="Category color"
+                        aria-label={`Color for ${item.label}`}
+                      />
+                      <span className="flex-1 min-w-0 truncate text-[10px] text-text" title={item.label}>{item.label}</span>
+                      <button
+                        type="button"
+                        onClick={() => setExpandedCategory(expandedCategory === item.label ? null : item.label)}
+                        className="shrink-0 text-muted hover:text-accent transition-colors"
+                        title="Pick color"
+                        aria-expanded={expandedCategory === item.label}
+                        aria-label={`Pick color for ${item.label}`}
+                      >
+                        <svg
+                          width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                          strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+                          style={{ transform: expandedCategory === item.label ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }}
+                        >
+                          <path d="m9 18 6-6-6-6" />
+                        </svg>
+                      </button>
+                    </div>
+                    {expandedCategory === item.label && (
+                      <div className="flex items-center gap-2 pl-5 pb-1.5">
+                        <input
+                          type="color"
+                          value={item.color}
+                          onChange={(e) => setCategoryColor(item.label, e.target.value)}
+                          className="w-7 h-6 rounded border border-border bg-bg cursor-pointer"
+                          title="Pick any color"
+                        />
+                        <ColorSwatchPicker colors={CATEGORY_SWATCHES} selected={item.color} onSelect={(color) => setCategoryColor(item.label, color)} />
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </Tabs.Content>
 
         {/* ---- Tab 3: Image ---- */}

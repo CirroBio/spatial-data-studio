@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import * as arrow from 'apache-arrow';
 import type { ScatterPositions } from './useArrowPositions';
-import { buildCategoricalPalette, buildNumericColormap } from './colorUtils';
+import { buildCategoricalPalette, buildNumericColormap, hexToRgb } from './colorUtils';
 
 // Above this many distinct levels a categorical coloring is meaningless (the
 // palette only has 15 colors) and rendering one legend row per level can hang or
@@ -50,10 +50,26 @@ interface Params {
   positions: ScatterPositions | null;
   opacity: number;
   isolatedCategory: string | null;
+  // Per-category `#rrggbb` overrides for the current categorical field; a level
+  // absent here falls back to the default palette. Undefined for numeric fields.
+  categoryColors?: Record<string, string>;
+}
+
+// Resolve each category's effective RGB: a user override if present, else the
+// default palette color. Shared by the color buffer and the legend so both agree.
+function resolveCategoryColors(
+  categories: string[],
+  overrides: Record<string, string> | undefined,
+): [number, number, number][] {
+  const palette = buildCategoricalPalette(categories);
+  return categories.map((cat) => {
+    const override = overrides?.[cat];
+    return override ? hexToRgb(override) : palette.get(cat) ?? [128, 128, 128];
+  });
 }
 
 export function useSpotColors(
-  { colorSource, positions, opacity, isolatedCategory }: Params,
+  { colorSource, positions, opacity, isolatedCategory, categoryColors }: Params,
 ): { colors: Uint8Array | null; colorLegend: ColorLegend | null } {
   // Build color array — respects isolated category by dimming non-matching points
   const colors = useMemo((): Uint8Array | null => {
@@ -75,15 +91,12 @@ export function useSpotColors(
         }
         return result;
       }
-      const palette = buildCategoricalPalette(categories);
-      const categoryColors: [number, number, number][] = categories.map(
-        (cat) => palette.get(cat) ?? [128, 128, 128]
-      );
+      const resolved = resolveCategoryColors(categories, categoryColors);
 
       for (let i = 0; i < n; i++) {
         const code = codes[i];
         const cat = categories[code];
-        const [r, g, b] = categoryColors[code] ?? [128, 128, 128];
+        const [r, g, b] = resolved[code] ?? [128, 128, 128];
         const dimmed = isolatedCategory !== null && cat !== isolatedCategory;
         result[i * 4] = r;
         result[i * 4 + 1] = g;
@@ -100,7 +113,7 @@ export function useSpotColors(
       }
     }
     return result;
-  }, [colorSource, positions, opacity, isolatedCategory]);
+  }, [colorSource, positions, opacity, isolatedCategory, categoryColors]);
 
   // Legend for the current cell coloring: category swatches (categorical) or a
   // colorbar with the value range (numeric). Mirrors the palette/ramp used above.
@@ -111,10 +124,10 @@ export function useSpotColors(
       if (categories.length > MAX_CATEGORICAL_LEVELS) {
         return { kind: 'too-many-categories' as const, count: categories.length, limit: MAX_CATEGORICAL_LEVELS };
       }
-      const palette = buildCategoricalPalette(categories);
+      const resolved = resolveCategoryColors(categories, categoryColors);
       return {
         kind: 'categorical' as const,
-        items: categories.map((c) => ({ label: c, color: palette.get(c) ?? [128, 128, 128] })),
+        items: categories.map((c, i) => ({ label: c, color: resolved[i] })),
       };
     }
     let min = Infinity;
@@ -127,7 +140,7 @@ export function useSpotColors(
     }
     if (!Number.isFinite(min)) return null;
     return { kind: 'numeric' as const, min, max };
-  }, [colorSource]);
+  }, [colorSource, categoryColors]);
 
   return { colors, colorLegend };
 }

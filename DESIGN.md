@@ -829,7 +829,9 @@ fetched field keyed by `(session, field_path, data_version)`, where `data_versio
 per-field counter bumped by the structural diff — so a refetch happens only when a
 field's version actually advances. Categorical color palettes are keyed by **category
 value** (not ordinal index) so recompute that changes the label set keeps stable
-colors.
+colors. Individual levels can be overridden from the **Cells** tab; the override map is
+persisted in the encoding as `category_colors` (keyed by `color_by` path, then by
+category value → `#rrggbb`) and honored by both the live canvas and snapshot export.
 
 ### 9.7 Camera
 

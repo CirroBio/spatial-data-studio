@@ -27,7 +27,7 @@ export default function CanvasSettingsShell({ collapsed, onToggleCollapsed, chil
   }
 
   return (
-    <div className="absolute top-3 right-3 z-10 bg-surface/90 border border-border rounded p-3 flex flex-col gap-2 min-w-[200px] backdrop-blur-sm">
+    <div className="absolute top-3 right-3 z-10 bg-surface/90 border border-border rounded p-3 flex flex-col gap-2 min-w-[200px] max-h-[calc(100vh-1.5rem)] backdrop-blur-sm">
       <div className="flex items-center justify-between -mt-1 -mr-1">
         <span className="text-xs font-semibold text-muted uppercase tracking-wide">Display Settings</span>
         <button
@@ -42,7 +42,11 @@ export default function CanvasSettingsShell({ collapsed, onToggleCollapsed, chil
           </svg>
         </button>
       </div>
-      {children}
+      {/* Content scrolls when it outgrows the viewport-capped panel (e.g. a long
+          per-category color list); the header above stays put. */}
+      <div className="min-h-0 overflow-y-auto -mr-1 pr-1">
+        {children}
+      </div>
     </div>
   );
 }

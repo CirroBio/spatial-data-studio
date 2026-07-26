@@ -66,6 +66,8 @@ the analysis history that produced this view.*
 choose what colors the cells, how they render, how the plot is oriented (flip the
 horizontal/vertical axes), the zoom level (buttons plus scroll/pinch) and its background
 (light or dark), and how each tissue-image channel is colored and contrast-adjusted.
+When cells are colored by a categorical value, each group's color can be overridden
+individually (and reset to the default palette) at the bottom of the **Cells** tab.
 (Text and shape annotations that persist with the dataset are drawn from the left
 panel's **Annotations** tab.)*
 

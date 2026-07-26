@@ -174,7 +174,8 @@ PlotEntry = {id, namespace:"pl", function, params, status:"pending|queued|runnin
                 "shapes_layer":null, "point_size":3, "opacity":0.8, "colormap":"viridis",
                 "render_mode":"points",   // "points" (scatter alone) | "points+shapes" (scatter + boundary overlay once zoomed in); legacy "shapes" == "points+shapes"
                 "boundary_style":"filled", "boundary_line_width":1,   // points+shapes overlay: "filled" (default) fills each boundary | "outline" strokes it at boundary_line_width pixels
-                "invert_x":false, "invert_y":false, "background":"dark" },   // optional Spatial-only view controls: mirror the plot horizontally/vertically; per-plot backdrop "light"|"dark" (unset follows the app theme)
+                "invert_x":false, "invert_y":false, "background":"dark",   // optional Spatial-only view controls: mirror the plot horizontally/vertically; per-plot backdrop "light"|"dark" (unset follows the app theme)
+                "category_colors":{ "obs:leiden":{ "0":"#ff0000" } } },   // optional per-category color overrides: keyed by color_by path, then category value -> #rrggbb; unset levels use the default palette
   "viewport": { "target":[x,y], "zoom":z } }
 ```
 ```jsonc

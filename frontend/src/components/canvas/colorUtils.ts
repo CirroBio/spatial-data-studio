@@ -1,5 +1,5 @@
 // 15 distinct colors for categorical data (colorblind-friendly where possible)
-const CATEGORY_COLORS: [number, number, number][] = [
+export const CATEGORY_COLORS: [number, number, number][] = [
   [86, 180, 233],
   [230, 159, 0],
   [0, 158, 115],
@@ -35,6 +35,16 @@ export const CHANNEL_COLORS: string[] = [
 export function defaultChannelColor(index: number): string {
   return CHANNEL_COLORS[index % CHANNEL_COLORS.length];
 }
+
+// Format an RGB triple as a `#rrggbb` string — the value `<input type="color">`
+// expects and the shape a persisted category-color override stores.
+export function rgbToHex([r, g, b]: [number, number, number]): string {
+  return '#' + [r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('');
+}
+
+// The categorical palette as hex preset swatches, for ColorSwatchPicker in the
+// per-category color controls (mirrors CHANNEL_COLORS for the channel controls).
+export const CATEGORY_SWATCHES: string[] = CATEGORY_COLORS.map(rgbToHex);
 
 // Parse a `#rrggbb` string to an RGB triple, falling back to white on a malformed
 // value. Shared by every canvas layer that reads a persisted hex color (channel

@@ -23,7 +23,7 @@ import { useSpotColors, arrowToColorSource } from './useSpotColors';
 import { Matrix4 } from '@math.gl/core';
 import { worldToPixelAffine, affineScale, wx, wy } from './imageAffine';
 import { buildSpotLayer, estimateMeanSpacing } from './buildSpotLayer';
-import { PLOT_BACKGROUNDS } from './colorUtils';
+import { PLOT_BACKGROUNDS, rgbToHex } from './colorUtils';
 import { buildShapeAnnotationLayers, buildShapeHandleLayer, buildDragPreviewLayers } from './buildShapeAnnotationLayers';
 import { usePolygonBbox } from './usePolygonBbox';
 import { useImageChannels } from './useImageChannels';
@@ -327,12 +327,36 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   }, [sessionId, display.encoding.image_layer]);
 
   const colorSource = useMemo(() => arrowToColorSource(colorTable), [colorTable]);
+  const categoryColors = display.encoding.category_colors?.[colorByPath];
   const { colors, colorLegend } = useSpotColors({
     colorSource,
     positions,
     opacity: display.encoding.opacity,
     isolatedCategory,
+    categoryColors,
   });
+
+  // Categorical levels + their effective hex color, for the per-category color
+  // controls. Null unless the current field is categorical (within the level cap).
+  const categoryColorItems = useMemo(
+    () => (colorLegend?.kind === 'categorical'
+      ? colorLegend.items.map((it) => ({ label: it.label, color: rgbToHex(it.color) }))
+      : null),
+    [colorLegend],
+  );
+
+  const setCategoryColor = useCallback((label: string, color: string) => {
+    const existing = display.encoding.category_colors ?? {};
+    const forField = { ...(existing[colorByPath] ?? {}), [label]: color };
+    updateEncoding({ category_colors: { ...existing, [colorByPath]: forField } });
+  }, [display.encoding.category_colors, colorByPath, updateEncoding]);
+
+  const resetCategoryColors = useCallback(() => {
+    const existing = display.encoding.category_colors ?? {};
+    if (!existing[colorByPath]) return;
+    const { [colorByPath]: _drop, ...rest } = existing;
+    updateEncoding({ category_colors: rest });
+  }, [display.encoding.category_colors, colorByPath, updateEncoding]);
 
   const legendVisible = display.encoding.legend_visible !== false;
   const legendTitle = display.encoding.legend_title || colorByLabel(colorByPath);
@@ -565,6 +589,10 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
         colorByName={colorByName}
         legendVisible={legendVisible}
         updateEncoding={updateEncoding}
+        categoryColorItems={categoryColorItems}
+        hasCategoryOverrides={!!categoryColors && Object.keys(categoryColors).length > 0}
+        setCategoryColor={setCategoryColor}
+        resetCategoryColors={resetCategoryColors}
         showPoints={showPoints}
         setShowPoints={(v) => updateEncoding({ show_points: v })}
         showImage={showImage}

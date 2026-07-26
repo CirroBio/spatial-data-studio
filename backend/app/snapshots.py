@@ -198,6 +198,13 @@ def _cell_rgba(session, enc: dict, n: int) -> np.ndarray:
         order = {cat: i for i, cat in enumerate(sorted(categories))}
         palette = np.array([CATEGORY_COLORS[order[c] % len(CATEGORY_COLORS)] for c in categories],
                            dtype=np.float64) / 255.0
+        # Per-category color overrides from the display settings win over the default
+        # palette, matching useSpotColors on the live canvas.
+        overrides = (enc.get("category_colors") or {}).get(color_by) or {}
+        for i, c in enumerate(categories):
+            rgb = imaging.hex_to_rgb(overrides[c]) if c in overrides else None
+            if rgb is not None:
+                palette[i] = np.array(rgb, dtype=np.float64) / 255.0
         missing = codes < 0  # pandas' code for cells with no category value
         safe = np.clip(codes, 0, len(categories) - 1)
         rgba[:, :3] = palette[safe]
