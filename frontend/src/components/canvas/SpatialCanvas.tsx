@@ -6,7 +6,7 @@ import type { Layer, OrthographicViewState, PickingInfo } from '@deck.gl/core';
 import { useAppStore } from '../../store/sessionStore';
 import { useArrowField } from '../../hooks/useArrowField';
 import {
-  getImageInfo, getElements, fetchWhenIdle,
+  getImageInfo, getElements, getImageThumbnailUrl, fetchWhenIdle,
 } from '../../api';
 import { countPointsInRings } from '../../lib/pointInPolygon';
 import TransformEditor from '../TransformEditor';
@@ -28,6 +28,7 @@ import { buildShapeAnnotationLayers, buildShapeHandleLayer, buildDragPreviewLaye
 import { usePolygonBbox } from './usePolygonBbox';
 import { useImageChannels } from './useImageChannels';
 import CanvasControls from './CanvasControls';
+import Minimap from './Minimap';
 import { FlipOrthographicView } from './FlipOrthographicView';
 import { colorByLabel } from './colorBy';
 import { LoadingCue, ChannelLegend, CellColorLegend, DrawHint, ImageTileStatus } from './CanvasOverlays';
@@ -36,6 +37,10 @@ import { LoadingCue, ChannelLegend, CellColorLegend, DrawHint, ImageTileStatus }
 // Matches the axes deck's OrthographicController interpolates for its own transitions.
 const ZOOM_TRANSITION = new LinearInterpolator(['target', 'zoomX', 'zoomY']);
 const ZOOM_TRANSITION_MS = 250;
+
+// Resolution of the whole-image overview fetched for the minimap inset (drawn at
+// most 160 CSS px across, so this covers a retina display with room to spare).
+const MINIMAP_THUMB_PX = 384;
 
 type Point = [number, number];
 type ShapeDragTarget =
@@ -53,7 +58,7 @@ interface Props {
 }
 
 export default function SpatialCanvas({ display, sessionId, canvasMode, annotationTarget }: Props) {
-  const { sessionState, isolatedCategory, openSnapshotExport, setSnapshotHandler, theme } = useAppStore();
+  const { sessionState, isolatedCategory, openSnapshotExport, setSnapshotHandler } = useAppStore();
   const fields = sessionState?.fields;
   const dataVersions = sessionState?.data_versions ?? {};
   const readOnly = sessionState?.summary.read_only ?? false;
@@ -101,12 +106,13 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   const showPoints = display.encoding.show_points ?? true;
   const showImage = display.encoding.show_image ?? (display.encoding.image_layer !== null);
   const showLegend = display.encoding.show_channel_legend ?? true;
+  const showMinimap = display.encoding.show_minimap ?? true;
   // View orientation + backdrop. Both flips live in the camera (FlipOrthographicView),
-  // so picking/drawing stay consistent; the backdrop follows the app theme until the
-  // user pins one explicitly.
+  // so picking/drawing stay consistent. The backdrop is independent of the app theme
+  // and defaults to dark, matching the snapshot renderer's facecolor default.
   const invertX = display.encoding.invert_x ?? false;
   const invertY = display.encoding.invert_y ?? false;
-  const bg = display.encoding.background ?? theme;
+  const bg = display.encoding.background ?? 'dark';
   const views = useMemo(
     () => [new FlipOrthographicView({ id: 'main', flipX: invertX, flipY: invertY })],
     [invertX, invertY],
@@ -196,12 +202,50 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
       viewport: { target: (vs.target as number[]).slice(0, 2), zoom: vs.zoom },
       canvasSize: size,
       label: sessionState?.summary.name ?? 'snapshot',
+      minimap: showMinimap,
     });
-  }, [sessionId, display.id, openSnapshotExport, sessionState?.summary.name]);
+  }, [sessionId, display.id, openSnapshotExport, sessionState?.summary.name, showMinimap]);
   useEffect(() => {
     setSnapshotHandler(handleSnapshot);
     return () => setSnapshotHandler(null);
   }, [handleSnapshot, setSnapshotHandler]);
+
+  // Overview inset (Minimap): the whole section with a box marking the visible window.
+  // Its coordinate space is the canvas': the image's level-0 pixel extent when the
+  // display has an image, else the cell bounds in world space.
+  const minimapExtent = useMemo((): [number, number, number, number] | null => {
+    if (pixelAffine && imageInfo?.levels.length) {
+      const { width, height } = imageInfo.levels[0];
+      return [0, 0, width, height];
+    }
+    if (!positions) return null;
+    const { d0min, d0max, d1min, d1max } = positions.bounds;
+    if (!Number.isFinite(d0min + d0max + d1min + d1max)) return null;
+    return [d0min, d1min, d0max, d1max];
+  }, [pixelAffine, imageInfo, positions]);
+
+  // Whole-image overview, composited server-side with the visible channels' colors
+  // (the endpoint reads the coarsest pyramid level; contrast overrides don't apply to
+  // it). Null when the image is off — the inset then draws the cell scatter instead.
+  const minimapImageUrl = useMemo(() => {
+    const element = display.encoding.image_layer;
+    if (!element || !showImage) return null;
+    const visible = channels.filter((c) => c.visible)
+      .map((c) => `${c.index}:${c.color.replace('#', '')}`).join(',');
+    return getImageThumbnailUrl(sessionId, element, visible || undefined, MINIMAP_THUMB_PX);
+  }, [display.encoding.image_layer, showImage, channels, sessionId]);
+
+  const navigateTo = useCallback((target: [number, number]) => {
+    const vs = viewStateRef.current;
+    if (!vs) return;
+    setViewState({ ...vs, target: [target[0], target[1], 0] });
+  }, [setViewState]);
+  const persistViewport = useCallback(() => {
+    const vs = viewStateRef.current;
+    if (!vs) return;
+    const t = vs.target as number[];
+    persistDisplay({ ...currentSpec(), viewport: { target: [t[0], t[1]], zoom: vs.zoom as number } });
+  }, [persistDisplay, currentSpec]);
 
   // Clear any in-progress drawing when leaving/entering a draw mode.
   useEffect(() => {
@@ -571,6 +615,22 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
         }
       />
 
+      {showMinimap && minimapExtent && canvasSize && (
+        <Minimap
+          imageUrl={minimapImageUrl}
+          positions={positions}
+          colors={colors}
+          worldToCanvas={pixelAffine ? worldToPixelAffine(pixelAffine) : null}
+          extent={minimapExtent}
+          viewport={{ target: [(viewState.target as number[])[0], (viewState.target as number[])[1]], zoom }}
+          canvasSize={canvasSize}
+          invertX={invertX}
+          invertY={invertY}
+          onNavigate={navigateTo}
+          onNavigateEnd={persistViewport}
+        />
+      )}
+
       <LoadingCue coordsLoading={coordsLoading} colorLoading={colorLoading} boundariesLoading={polygonsLoading} />
 
       <ImageTileStatus progress={tileProgress} />
@@ -605,6 +665,8 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
         setBackground={(v) => updateEncoding({ background: v })}
         showLegend={showLegend}
         setShowLegend={(v) => updateEncoding({ show_channel_legend: v })}
+        showMinimap={showMinimap}
+        setShowMinimap={(v) => updateEncoding({ show_minimap: v })}
         renderMode={renderMode}
         setRenderMode={(v) => updateEncoding({ render_mode: v })}
         shapeSets={polygonElements}

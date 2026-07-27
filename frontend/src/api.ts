@@ -161,6 +161,7 @@ export interface SnapshotRenderSpec {
   formats: SnapshotFormat[];
   label?: string;
   display_id?: string;
+  include_minimap?: boolean;  // draw the overview inset in the figure (spatial only)
 }
 
 // Render and save a high-quality figure snapshot (vector PDF and/or raster PNG).
@@ -277,9 +278,15 @@ export async function getImageInfo(sessionId: string, element: string): Promise<
 }
 
 // Server-rendered thumbnail of an image element, used by DataInspector's element
-// preview (the canvas itself composites client-side via Viv, not this endpoint).
-export function getImageThumbnailUrl(sessionId: string, element: string, channels?: string): string {
-  const q = channels !== undefined ? `?channels=${channels}` : '';
+// preview and the canvas minimap (the canvas itself composites client-side via Viv,
+// not this endpoint). `channels` is `index:rrggbb` pairs; only listed channels show.
+export function getImageThumbnailUrl(
+  sessionId: string, element: string, channels?: string, maxPx?: number,
+): string {
+  const params = new URLSearchParams();
+  if (channels !== undefined) params.set('channels', channels);
+  if (maxPx !== undefined) params.set('max_px', String(maxPx));
+  const q = params.size ? `?${params}` : '';
   return `/api/sessions/${sessionId}/image/${element}/thumbnail${q}`;
 }
 

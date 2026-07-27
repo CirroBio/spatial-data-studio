@@ -15,6 +15,7 @@ import typing
 
 from .base import Function, ParamSpec, CallResult
 from .dictionary import DICTIONARY
+from .reader_paths import classify_path_param, primary_path_param
 from . import kernel, library_meta
 
 # Session-held types filled by injection (DESIGN §4.6 step 2), matched on the
@@ -244,31 +245,41 @@ def _schema_for(annot, default, has_default) -> tuple[dict, str, bool]:
     return {"type": "string"}, "text", True
 
 
+# numpydoc sections that end the Parameters block when they appear as a header.
+_DOC_SECTIONS = frozenset({
+    "Returns", "Return", "Yields", "Receives", "Other Parameters", "Raises", "Warns",
+    "Warnings", "See Also", "Notes", "Note", "References", "Examples", "Example",
+    "Attributes", "Methods",
+})
+
+
 def _parse_param_docs(doc: str) -> dict:
-    """Best-effort numpydoc Parameters section -> {param: first-line description}."""
+    """Best-effort numpydoc Parameters section -> {param: first-paragraph description}.
+
+    After `inspect.getdoc` dedents, a numpydoc param name sits at column 0 (`name`
+    or `name : type`) with its description indented beneath it; a blank line or the
+    next name ends that description, and a following section header ends the block."""
     out = {}
-    lines = doc.splitlines()
     in_params = False
     cur = None
-    for ln in lines:
+    for ln in doc.splitlines():
         st = ln.strip()
-        if st == "Parameters":
-            in_params = True
-            continue
-        if in_params and st and set(st) == {"-"}:
-            continue
-        if in_params and st in ("Returns", "Raises", "Examples", "Notes", "See Also"):
-            break
         if not in_params:
+            if st == "Parameters":
+                in_params = True
             continue
-        if ln and not ln[0].isspace():  # dedented -> end of section
+        if st and set(st) == {"-"}:  # the "----------" underline under a header
+            continue
+        if st in _DOC_SECTIONS:  # next section -> Parameters block is done
             break
-        if " : " in st or (st and not ln.startswith("        ") and ln.startswith("    ")):
+        if not st:  # blank line ends the current param's first paragraph
+            cur = None
+            continue
+        if not ln[0].isspace():  # column-0 line -> a parameter declaration
             cur = st.split(" : ")[0].split(",")[0].strip()
             out.setdefault(cur, "")
-        elif cur and st:
-            if not out.get(cur):
-                out[cur] = st
+        elif cur is not None:  # indented line -> (continued) description for cur
+            out[cur] = f"{out[cur]} {st}".strip() if out[cur] else st
     return out
 
 
@@ -339,12 +350,22 @@ def build_library_function(library: str, namespace: str, name: str, fn, *,
             required=not has_default, tooltip=tooltip, role=res.role,
         ))
 
+    eff = effect_class or _default_effect_for_namespace(namespace)
+    if eff == "read":
+        # Tag path params so the New Session form renders a folder/file picker per
+        # param (the primary acquisition path is a folder for every reflected reader).
+        primary = primary_path_param([p.name for p in params])
+        for p in params:
+            classified = classify_path_param(p.name, primary, "folder")
+            if classified is not None:
+                p.path_kind, p.bound_to = classified
+
     key = key or f"{namespace}.{name}"
     resolved_path = path or f"{namespace}.{name}"
     return LibraryFunction(
         key=key, library=library, path=resolved_path,
         namespace=namespace, function=name,
-        effect_class=effect_class or _default_effect_for_namespace(namespace), summary=summary, doc=doc,
+        effect_class=eff, summary=summary, doc=doc,
         injected=injected, pinned=pinned, params=params,
         partially_supported=partially, unsupported_params=unsupported,
         citation=library_meta.citation(library),

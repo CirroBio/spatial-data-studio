@@ -417,7 +417,8 @@ def run_snapshot_flow(client, sid):
     assert spatial, "no spatial display to snapshot"
     spec = {"label": "e2e-snap", "viewport": {"target": [100, 100], "zoom": -2},
             "width_px": 800, "height_px": 600, "dpi": 100,
-            "formats": ["pdf", "png"], "display_id": spatial["id"]}
+            "formats": ["pdf", "png"], "display_id": spatial["id"],
+            "include_minimap": True}
 
     prev = client.post(f"/api/sessions/{sid}/snapshot/preview", json=spec)
     assert prev.status_code == 200 and prev.headers["content-type"] == "image/png", prev.text
@@ -446,6 +447,7 @@ def run_snapshot_flow(client, sid):
     meta = entry["metadata"]
     assert meta["output"] == {"width_px": 800, "height_px": 600, "dpi": 100}, meta["output"]
     assert meta["encoding"] == spatial["encoding"], "figure metadata lost the display encoding"
+    assert meta["render"]["minimap"] is True, "include_minimap did not draw the overview inset"
 
     assert client.delete(f"/api/snapshots/{snap['name']}").status_code == 200
     listing2 = client.get("/api/snapshots").json()["snapshots"]

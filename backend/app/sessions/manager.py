@@ -13,27 +13,24 @@ from . import appstate
 from .session import Session
 from ..config import config, within_data_dir
 from ..persistence.store import estimate_resident_mb, save_spatialdata
+from ..registry.reader_paths import ABSOLUTE_PATH_PARAMS, RELATIVE_FILE_PARAMS
 from ..transport.sse import BUS
 
-# Reader params that terms.yaml documents as filesystem paths (see the
-# "reader path inputs" term). Any of these passed to a read-effect function
-# is validated against the allowed data roots before the reader ever runs.
-_READ_PATH_PARAMS = ("path", "input", "image_path", "alignment_file", "store")
+# Reader params that are absolute filesystem paths (the primary acquisition path
+# plus image_path/alignment_file). Any of these passed to a read-effect function
+# is validated against the allowed data roots before the reader ever runs. Source
+# of truth (shared with the form's per-param path pickers): registry/reader_paths.py.
+_READ_PATH_PARAMS = ABSOLUTE_PATH_PARAMS
 
-# Secondary filename params that readers resolve relative to their own "path"
+# Secondary filename params that readers resolve relative to their own primary path
 # param (squidpy.read.vizgen/nanostring/visium, spatialdata_io.visium/visium_hd/
-# merscope all do `Path(path) / counts_file` or similar internally). None of
-# these have their own top-level widget validation (terms.yaml has no entry for
-# them, so dictionary.py falls back to a free-text widget), and `Path(base) /
-# value` silently DISCARDS `base` when `value` is itself absolute — so without
-# this, an absolute counts_file/meta_file/etc. reads an arbitrary host path
-# regardless of how well `path` itself is sandboxed. Validated below by
-# reproducing the same join against the descriptor's own "path" and running it
-# through the same _resolve_or_raise check, which catches both that discard and
-# a "../.." traversal.
-_READ_AUX_PATH_PARAMS = ("counts_file", "meta_file", "fov_file", "transformation_file",
-                        "source_image_path", "fullres_image_file", "tissue_positions_file",
-                        "scalefactors_file", "vpt_outputs")
+# merscope all do `Path(path) / counts_file` or similar internally). `Path(base) /
+# value` silently DISCARDS `base` when `value` is itself absolute — so without this,
+# an absolute counts_file/meta_file/etc. reads an arbitrary host path regardless of
+# how well `path` itself is sandboxed. Validated below by reproducing the same join
+# against the descriptor's own primary path and running it through the same
+# _resolve_or_raise check, which catches both that discard and a "../.." traversal.
+_READ_AUX_PATH_PARAMS = RELATIVE_FILE_PARAMS
 
 
 def _resolve_or_raise(path: str) -> Path:

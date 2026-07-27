@@ -106,8 +106,10 @@ Component-level notes: [`backend/README.md`](backend/README.md),
 | Change session/queue/worker behavior | `backend/app/sessions/` | [DESIGN.md](DESIGN.md) §5–6 |
 | Change the checkpoint/persistence format | `backend/app/persistence/store.py` | [DESIGN.md](DESIGN.md) §3 |
 | Change the deck.gl canvas / rendering | `frontend/src/components/canvas/` | [frontend/README.md](frontend/README.md) |
+| Change the canvas minimap (overview inset) | `frontend/src/components/canvas/Minimap.tsx` (overlay + navigation) + `SpatialCanvas.tsx` (extent/thumbnail wiring) + `backend/app/snapshots.py` `_draw_minimap` (figure inset) | [DESIGN.md](DESIGN.md) §9.11 |
 | Change how the browser reads raw image data (client-side Viv compositing) | `backend/app/routers/imaging.py` raster route + `/image/{element}/info` fields; `rasters.py` `raster_stores` map | [docs/CONTRACT.md](docs/CONTRACT.md) |
-| Change the parameter-form UI | `frontend/src/components/forms/` | — |
+| Change the parameter-form UI | `frontend/src/components/forms/` (`FunctionFields` renders the widgets incl. the `FsPicker` filesystem picker; `FunctionForm` adds the submit footer; the New Session dialog reuses `FunctionFields` as the reader's input form) | — |
+| Change how a reader param is classified as a folder/file/value input | `backend/app/registry/reader_paths.py` (`path_kind` + the absolute/relative path sets, shared with `sessions/manager.py` validation) | [docs/CONTRACT.md](docs/CONTRACT.md) |
 | Change how a snapshot figure renders or what it embeds | `backend/app/snapshots.py` (render + metadata) + `frontend/src/components/SnapshotExportModal.tsx` (framing/output) + `frontend/src/components/SnapshotBrowser.tsx` (gallery) | [DESIGN.md](DESIGN.md) §14 |
 | Change Cirro upload | `backend/app/cirro.py` (client) + `backend/app/routers/cirro.py` (routes + upload queue) + `frontend/src/components/CirroUploadDialog.tsx` | — |
 
@@ -250,8 +252,8 @@ and fails open to the mount-time `size=` otherwise.
   206) on `xenium.zarr`, an image tile keeping its signal after a reshaping compute
   (filter_cells) — i.e. the per-session raster store isn't deleted while the
   adopted object still references it — and rendering a snapshot figure end to end
-  (preview, PDF+PNG render, gallery list, download, embedded metadata, delete —
-  `run_snapshot_flow`). The five Xenium-backed
+  (preview, PDF+PNG render with the minimap inset, gallery list, download, embedded
+  metadata, delete — `run_snapshot_flow`). The five Xenium-backed
   flows (zarr-import, custom methods, segmentation, raster, raster-survives-reshape)
   skip with a `[skip]` line when their fixture is absent, so CI runs only the
   Visium-backed subset; regenerate the Xenium fixtures locally via

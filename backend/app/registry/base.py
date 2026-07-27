@@ -52,10 +52,13 @@ class ParamSpec:
     name: str
     schema: dict          # JSON Schema fragment
     widget: str           # a WIDGETS member
-    bound_to: str | None  # None for every widget except obs_value_map (names its companion field param)
+    bound_to: str | None  # obs_value_map: its companion column; a relative-file path: the primary-path param it roots against; else None
     required: bool
     tooltip: str = ""
     role: str = "input"   # input | output (output params name a slot the step creates)
+    # For reader path params: 'folder' | 'file' | 'either' — render a filesystem
+    # picker (see registry/reader_paths.py) instead of the plain widget. None = value.
+    path_kind: str | None = None
 
     # Named-intent constructors: one per common parameter kind, each baking in the
     # correct widget and schema skeleton so a contributor picks intent, not magic
@@ -174,7 +177,8 @@ class Function(ABC):
         return {"type": "object", "properties": props, "required": required}
 
     def ui_schema(self) -> dict:
-        return {p.name: {"widget": p.widget, "bound_to": p.bound_to, "tooltip": p.tooltip}
+        return {p.name: {"widget": p.widget, "bound_to": p.bound_to, "tooltip": p.tooltip,
+                         "path_kind": p.path_kind}
                 for p in self.params}
 
     def to_public(self) -> dict:

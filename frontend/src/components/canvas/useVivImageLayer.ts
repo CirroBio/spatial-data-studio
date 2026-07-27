@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Layer, OrthographicViewState } from '@deck.gl/core';
 import { loadOmeZarr } from '@vivjs/loaders';
-import { MultiscaleImageLayer } from '@vivjs/layers';
+import { MultiscaleImageLayer, XRLayer } from '@vivjs/layers';
 import { ColorPaletteExtension } from '@vivjs/extensions';
 import type { ImageInfo } from '../../types';
 import { MAX_VISIBLE_CHANNELS, type Channel } from './useImageChannels';
@@ -61,6 +61,42 @@ function bytesPerSample(dtype: string): number {
 }
 
 type Loader = Awaited<ReturnType<typeof loadOmeZarr>>['data'];
+
+// Sublayer props deck.gl's TileLayer hands `renderSubLayers`: the tile's index/bbox plus the
+// fetched content, on top of every forwarded layer prop.
+interface TileSubLayerProps {
+  tile: { bbox: { left: number; top: number }; index: { x: number; y: number; z: number } };
+  data: { data: unknown[]; width: number; height: number } | null;
+  id: string;
+  maxZoom: number;
+}
+
+// Tile placement, replacing Viv's default `renderSubLayers`. Viv stretches any tile whose
+// fetched data is smaller than `tileSize` — the right column and bottom row at *every* pyramid
+// level — to the full level-0 extent, which is only correct when each level is an exact halving
+// of the base. Ours are floor-halvings (spatialdata's downsample trims the odd pixel per step),
+// so level k spans size_k * 2**k, up to 2**k - 1 px short of the base: the stretch over-scales
+// those tiles by a level-dependent amount (1-3 px at fine levels, ~50 px at the coarsest level
+// of a 24k x 33k Xenium). A feature then lands at a slightly different x/y depending on which
+// level is currently drawn, so the image visibly shifts as tiles stream in. Placing every tile
+// at its true footprint (data size * 2**level) equals deck's own bbox for full tiles and fixes
+// the partial ones at every level. Viv additionally has a BitmapLayer branch for interleaved
+// (y, x, 3) stores; unreachable here — every served raster is (c, y, x), one channel per chunk.
+function renderTileSubLayers(props: TileSubLayerProps) {
+  const { data, id, maxZoom } = props;
+  const { bbox: { left, top }, index: { x, y, z } } = props.tile;
+  if (!data || data.width === 0 || data.height === 0 || left < 0 || top < 0) return null;
+  const levelPx = 2 ** Math.round(-z); // level-0 pixels per pixel of this level
+  const bounds = [left, top + data.height * levelPx, left + data.width * levelPx, top];
+  return new XRLayer(props, {
+    channelData: data,
+    bounds,
+    id: `tile-sub-layer-${bounds}-${id}`,
+    tileId: { x, y, z },
+    // Viv's rule: NEAREST at the finest level, LINEAR for an upscaled coarser one.
+    interpolation: z === maxZoom ? 'nearest' : 'linear',
+  });
+}
 
 interface Params {
   imageInfo: ImageInfo | null;
@@ -194,6 +230,9 @@ export function useVivImageLayer(
       contrastLimits,
       parameters: IMAGE_PARAMS,
       extensions: imageExtensions,
+      // Corrected per-tile placement (see renderTileSubLayers) — forwarded to the inner
+      // TileLayer, which Viv does not override.
+      renderSubLayers: renderTileSubLayers,
       // Forwarded through to the deck.gl TileLayer (see the notes above the constants).
       maxCacheSize,
       debounceTime: TILE_REQUEST_DEBOUNCE_MS,

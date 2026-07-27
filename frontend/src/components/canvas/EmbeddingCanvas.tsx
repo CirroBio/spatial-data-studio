@@ -216,6 +216,7 @@ function EmbeddingCanvasView({
     positions,
     opacity: display.encoding.opacity,
     isolatedCategory,
+    categoryColors: display.encoding.category_colors?.[colorByPath],
   });
 
   // Save Snapshot opens the export modal seeded with the live camera (read via a ref

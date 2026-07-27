@@ -26,7 +26,7 @@ Pinned versions: squidpy 1.8.2, spatialdata 0.7.3, anndata, pyarrow.
   "effect_class": "compute",
   "summary": "Create a graph from spatial coordinates.",
   "json_schema": { /* JSON Schema draft-07 for params, no injected/pinned args */ },
-  "ui_schema":  { /* per-field widget hints: {field: {widget, bound_to, tooltip}} */ },
+  "ui_schema":  { /* per-field widget hints: {field: {widget, bound_to, tooltip, path_kind}} */ },
   "partially_supported": false,
   "unsupported_params": []   // locked-to-default params (variadic / non-serializable)
 }
@@ -34,6 +34,7 @@ Pinned versions: squidpy 1.8.2, spatialdata 0.7.3, anndata, pyarrow.
 `GET /api/functions` → `{ "functions": [ <entry>... ], "library_versions": { "squidpy": "1.8.2", "scanpy": "1.11.5", "spatialdata_io": "0.7.0" } }`
 
 ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_categorical|var_names|layer_key|obsm_key|obsp_key|library_id`.
+`path_kind` (`folder|file|either`, else null) tags a reader path param so the New Session form renders a filesystem picker instead of the plain widget; for a relative-file param, `bound_to` names the primary-path param the picker roots against (see `registry/reader_paths.py`).
 
 ---
 
@@ -65,7 +66,7 @@ ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_cate
 | PUT  | `/api/sessions/{id}/displays/{displayId}` | `DisplaySpec` | `{ok:true}` |
 | POST | `/api/sessions/{id}/displays` | `DisplaySpec` (no id) | `DisplaySpec` (with id) — lazily add a display (e.g. an `embedding_canvas` for a dataset/obsm gained after session creation) |
 | POST | `/api/sessions/{id}/subset` | `{polygons:[[[x,y]...]] \| cell_indices:[int], coordinate_system, save_parent:bool, name?, invert?:bool}` | `{job_id}` (queued; the child session arrives via a `session.created` SSE event). `invert:true` keeps the cells OUTSIDE the region. `cell_indices` (in place of `polygons`) subsets by explicit table rows — the embedding view's client-resolved selection, filtered via `match_sdata_to_table` |
-| POST | `/api/sessions/{id}/annotate` | `{polygons \| cell_indices:[int], region_set, category, color?}` | `{job_id}` (label the lassoed cells — spatial `polygons`, or the embedding view's `cell_indices` — into a region set) |
+| POST | `/api/sessions/{id}/annotate` | `{polygons \| cell_indices:[int], region_set, category, color?}` | `{job_id}` (label the lassoed cells — spatial `polygons`, or the embedding view's `cell_indices` — into a region set). Side effects on `app_state`: every display's `color_by` switches to `obs:<region_set>`, and `color` (if given) is written as that category's `category_colors` override on every display so the labelled cells render in it |
 | GET  | `/api/sessions/{id}/shape-annotations` | — | `{shapes:[ShapeAnnotation]}` (arrows/lines/boxes/polygons/ellipses/text from `sdata.shapes["annotations"]`) |
 | POST | `/api/sessions/{id}/shape-annotations` | `ShapeAnnotation` (no id) | `{job_id}` (create one shape) |
 | PUT  | `/api/sessions/{id}/shape-annotations/{shapeId}` | `ShapeAnnotation` | `{job_id}` (replace one shape's geometry/style) |
@@ -73,7 +74,7 @@ ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_cate
 | POST | `/api/sessions/{id}/save` | `{path?}` | `{job_id, path}` (queued save) |
 | GET  | `/api/sessions/{id}/points-transform` | — | `{affine:[a,b,c,d,e,f], element}` (points→global affine of the active table's region element) |
 | POST | `/api/sessions/{id}/points-transform` | `{affine:[a,b,c,d,e,f], path?}` | `{job_id, path}` (sets the affine and persists to disk) |
-| POST | `/api/sessions/{id}/snapshot` | `{viewport:{target,zoom}, width_px, height_px, dpi, formats:["pdf"\|"png"], label?, display_id?}` | `{status,name,formats,rasterized_points}` — renders + writes `<base>.figure.{pdf,png,thumb.png,json}` in DATA_DIR |
+| POST | `/api/sessions/{id}/snapshot` | `{viewport:{target,zoom}, width_px, height_px, dpi, formats:["pdf"\|"png"], label?, display_id?, include_minimap?}` | `{status,name,formats,rasterized_points}` — renders + writes `<base>.figure.{pdf,png,thumb.png,json}` in DATA_DIR |
 | POST | `/api/sessions/{id}/snapshot/preview` | same as snapshot | `image/png` bytes — a low-res preview of the framing; writes nothing |
 | GET  | `/api/snapshots` | — | `{snapshots:[{name,base,label,created,kind,dataset,formats,output,thumbnail_url,metadata}]}` |
 | GET  | `/api/snapshots/{name}/file?fmt=pdf\|png` | — | the rendered file (`application/pdf` / `image/png`) |
@@ -174,7 +175,8 @@ PlotEntry = {id, namespace:"pl", function, params, status:"pending|queued|runnin
                 "shapes_layer":null, "point_size":3, "opacity":0.8, "colormap":"viridis",
                 "render_mode":"points",   // "points" (scatter alone) | "points+shapes" (scatter + boundary overlay once zoomed in); legacy "shapes" == "points+shapes"
                 "boundary_style":"filled", "boundary_line_width":1,   // points+shapes overlay: "filled" (default) fills each boundary | "outline" strokes it at boundary_line_width pixels
-                "invert_x":false, "invert_y":false, "background":"dark",   // optional Spatial-only view controls: mirror the plot horizontally/vertically; per-plot backdrop "light"|"dark" (unset follows the app theme)
+                "invert_x":false, "invert_y":false, "background":"dark",   // optional Spatial-only view controls: mirror the plot horizontally/vertically; per-plot backdrop "light"|"dark", independent of the app theme (defaults to "dark")
+                "show_minimap":true,      // optional Spatial-only overview inset (top-left thumbnail + view rectangle); defaults on
                 "category_colors":{ "obs:leiden":{ "0":"#ff0000" } } },   // optional per-category color overrides: keyed by color_by path, then category value -> #rrggbb; unset levels use the default palette
   "viewport": { "target":[x,y], "zoom":z } }
 ```
@@ -206,11 +208,14 @@ DESIGN.md §14).
   "viewport": { "target":[x,y], "zoom":z },
   "encoding": DisplaySpec.encoding,    // the source display's encoding verbatim (how it was styled)
   "render": { "rasterized_points":bool, "image_element":str|null, "cells_in_view":int,
-              "shapes_drawn":int },  // >0 when render_mode points+shapes drew cell-boundary polygons instead of points
+              "shapes_drawn":int,    // >0 when render_mode points+shapes drew cell-boundary polygons instead of points
+              "minimap":bool },      // whether the overview inset was drawn (include_minimap)
   "recipe": [ { "namespace":str, "function":str, "params":{} } ] }  // completed analysis steps
 ```
 - **Rendering it:** the request body is `{viewport:{target,zoom}, width_px, height_px,
-  dpi, formats:["pdf"|"png"], label?, display_id?}`. Styling is read from the display's
+  dpi, formats:["pdf"|"png"], label?, display_id?, include_minimap?}`
+  (`include_minimap` draws the overview inset in the figure — spatial displays only).
+  Styling is read from the display's
   persisted `encoding`; the response is `{status, name, formats, rasterized_points}`
   where `name` is the `<base>.figure.json` handle for the file/thumbnail/delete routes.
 - **Preview:** `POST /api/sessions/{id}/snapshot/preview` takes the same body and returns

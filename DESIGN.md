@@ -167,7 +167,7 @@ sdata.attrs["app_state"] = {
                     "image_layer": "morphology_focus", "point_size": 3,
                     "opacity": 0.8, "channels": [ /* per-index visible/name/color */ ],
                     "show_points": true, "show_image": true,       // layer-visibility toggles
-                    "show_channel_legend": true,
+                    "show_channel_legend": true, "show_minimap": true,  // overview inset (§9.11)
                     "render_mode": "points",                        // cell render (§9.10): points | points+shapes
                     "isolated_category": "Tumor" },                 // dim all but this category
       "viewport": { "target": [x,y], "zoom": z } }   // persisted on pan/zoom (embedding adds rotationX/rotationOrbit in 3D)
@@ -615,7 +615,8 @@ library calls but with a signature **defined by the application**:
 | `boundary_style` | `filled` \| `outline` | cell-boundary overlay style (§9.10); `filled` is default, `outline` strokes the boundary only |
 | `boundary_line_width` | number (pixels) | outline stroke width when `boundary_style: outline`; defaults to 1 |
 | `invert_x` / `invert_y` | bool | Spatial-only; mirror the plot horizontally / vertically (camera-level, see §9.2) |
-| `background` | `light` \| `dark` | Spatial-only per-plot backdrop; unset follows the app theme |
+| `background` | `light` \| `dark` | Spatial-only per-plot backdrop, independent of the app theme; defaults to `dark` |
+| `show_minimap` | bool | Spatial-only overview inset (§9.11); defaults on |
 
 On load, default specs are generated from the object's structure. **Color by** first
 picks a slot (`obs`, `X` gene expression, or a `layer`) then the column within it:
@@ -636,11 +637,12 @@ applied at the camera, not per layer: `FlipOrthographicView` (a thin mirror of d
 `OrthographicViewport` adding an `flipX` term to the view-matrix scale, alongside the
 native `flipY`) flips the whole scene — points, image, and annotations together — so
 picking, `info.coordinate`, pan, and fit stay consistent with no layer/coordinate changes.
-The backdrop paints the canvas container behind the transparent deck canvas (matching a
-theme's `--color-bg`), defaulting to the app theme until pinned. `invert_x`/`invert_y`/
-`background` live in the display `encoding`, so a rendered snapshot (§14) reproduces the
-plot's orientation and backdrop — the matplotlib renderer flips its axes and sets the
-figure facecolor the same way (`background` defaults to `dark` when unset).
+The backdrop paints the canvas container behind the transparent deck canvas (its two
+values match the light/dark `--color-bg`, but the plot backdrop is a display setting in
+its own right — it never follows the app theme, and defaults to `dark`). `invert_x`/
+`invert_y`/`background` live in the display `encoding`, so a rendered snapshot (§14)
+reproduces the plot's orientation and backdrop — the matplotlib renderer flips its axes
+and sets the figure facecolor the same way, with the same `dark` default.
 
 ### 9.3 Tiled image pyramid + coordinate reconciliation
 
@@ -737,11 +739,12 @@ an unset per-channel `contrast_limits` means "use the server default". The front
 the visible channels' selections (and their effective contrast) to Viv.
 
 The Spatial display-settings panel is organised into three icon tabs — **View** (layer
-visibility, axis inversion, background, zoom, and the Fit-to-data / Edit-points-transform
-actions), **Cells** (render mode, point size/geometry, boundary style, color-by, legend,
-opacity), and **Image** (channel legend + the per-channel picker above) — rendered with the
-same `PanelTabs` component as the left sidebar's tabs (one-word labels, sidebar-style icons,
-collapsing to icon-only when unselected).
+visibility, axis inversion, the minimap toggle, zoom, and the Fit-to-data /
+Edit-points-transform actions), **Cells** (render mode, point size/geometry, boundary style, color-by, legend,
+opacity), and **Image** (the light/dark plot backdrop, channel legend + the per-channel
+picker above; always present, since the backdrop applies with or without an image
+element) — rendered with the same `PanelTabs` component as the left sidebar's tabs
+(one-word labels, sidebar-style icons, collapsing to icon-only when unselected).
 
 **Image-pixel coordinate space.** When a display has an image, the canvas's `OrthographicView`
 works in that image's own level-0 pixel space, so `MultiscaleImageLayer` sits at its native
@@ -778,6 +781,21 @@ during a zoom *sum* — the tile flashes lighter, then settles darker once the a
 still fills not-yet-loaded regions, so nothing blanks. (Viv makes exactly this choice, but keys
 it on its `opacity` prop, which is always 1 here — the tiles' transparency comes from the
 extension, not `opacity` — so we key it on `isRgb` instead.)
+
+**Tile placement (`renderTileSubLayers`).** `useVivImageLayer` replaces Viv's default
+`renderSubLayers`, which places any tile whose fetched data is smaller than `tileSize` — the
+right column and bottom row at *every* pyramid level — at the full level-0 extent (`width`/
+`height`). That is only correct for an exactly-halving pyramid; ours floor-halves (§9.3 builds
+it with `scale_factors=[2]*n`, and spatialdata's downsample trims the odd pixel per step), so
+level *k* spans `size_k · 2**k`, up to `2**k - 1` px short of the base. The stretch therefore
+over-scaled those tiles by a level-dependent amount, so a feature landed at a slightly
+different x/y depending on which level was drawn and the image visibly *shifted* as tiles
+streamed in (measured on a 34,155 × 13,770 Xenium: 11 px at level 5, 10 px at level 4, ~1 px at
+level 1, plus a third position from the coarse background `ImageLayer`, which is short but
+correctly scaled). Placing every tile at its true footprint (`data size · 2**level`) equals
+deck's own bbox for full tiles and fixes the partial ones at every level; the cost is that the
+few-pixel sliver the coarse levels genuinely don't cover stays unpainted until a finer level
+loads, instead of being smeared over.
 
 **Idle look-ahead prefetch (`useImageTilePrefetch`).** deck's `TileLayer` only ever requests
 the current viewport, so the first frames of a zoom/pan stall while the newly needed tiles
@@ -907,6 +925,27 @@ a `cell_index` back to the active table for color gather. See
 is renamed to `@geoarrow/deck.gl-geoarrow` (0.4.x). Not migrated: 0.3.2 is the verified
 working version, and 0.4.x may drift the API and needs re-testing.
 
+### 9.11 Minimap (overview inset)
+
+`Minimap.tsx`, top-left of the spatial canvas, toggled by `show_minimap` (**View** tab,
+default on): a thumbnail of the whole section with a white rectangle marking the window
+the main view is showing, so a zoomed-in view keeps its context.
+
+- **Coordinate space.** The canvas' own — the image's level-0 pixel extent when the
+  display has an image, else the cell bounds in world space. The window rectangle is
+  `target ± (canvasSize/2)/2**zoom`, the same relation §14 uses for a snapshot's framing.
+  The view is y-up (deck's `flipY` is off unless `invert_y`), so the inset maps a content
+  `y` to a CSS `y` from the bottom and mirrors itself with `invert_x`/`invert_y`.
+- **What's in it.** The whole-image composite from `GET
+  /api/sessions/{id}/image/{element}/thumbnail?channels=&max_px=` (the coarsest pyramid
+  level, tinted with the visible channels' colors — contrast overrides don't reach it),
+  or, with no image (or the image hidden), a strided cell scatter drawn to a 2D canvas in
+  the same per-cell colors as the points.
+- **Navigation.** Click or drag anywhere in the inset to move the main view's target
+  there; the drag end persists the viewport like any other camera change.
+- **In snapshots.** The figure renderer can draw the same inset — opt-in per render
+  (`include_minimap`), see §14.
+
 ---
 
 ## 10. Region annotation
@@ -954,6 +993,12 @@ lock — identical lifecycle to subset):
    `matplotlib.path.Path.contains_points` over `obsm["spatial"]`, writes
    `obs["<set>"]`, updates the `attrs.regions` registry, and emits a structural diff
    (`obs:<set>`). The polygon is discarded once membership is computed.
+   In the same write-locked mutation it also points every display's `color_by` at the
+   region set and seeds the picked color as that category's `category_colors` override
+   (honored by both the spatial and embedding canvases) — so the labelled cells
+   immediately render in the chosen color without the user re-selecting the column or
+   re-picking in the legend controls. Doing this server-side (rather than as a follow-up
+   display PUT) guarantees the color-by switch can't outrun a freshly created obs column.
 
 An **Annotate region** checkbox (spatial canvas only — shape annotations are tissue
 coordinates) additionally persists the drawn region *as geometry*: one filled-outline
@@ -1123,9 +1168,15 @@ looked on the canvas at the chosen framing.
   figure backdrop.
 - **Framing + output come from the request; styling from the display:** the render
   request carries only `{viewport:{target,zoom}, width_px, height_px, dpi, formats}`
-  (+ optional `label`/`display_id`). Everything visual — channels, colors, contrast,
-  color-by, point size, marker, render mode — is read from the display's persisted
-  `encoding`. The window is `target ± (output_px/2)/2**zoom`.
+  (+ optional `label`/`display_id`/`include_minimap`). Everything visual — channels,
+  colors, contrast, color-by, point size, marker, render mode — is read from the
+  display's persisted `encoding`. The window is `target ± (output_px/2)/2**zoom`.
+- **Minimap inset (opt-in per render):** `include_minimap` draws the §9.11 overview in
+  the figure's top-left corner — the composited whole image (or the strided cell scatter
+  when no image is shown) with a white rectangle marking the rendered window, axes
+  flipped like the main axes. It is a *render* option, not an encoding one, so a figure
+  can carry the inset whether or not the live canvas is showing one; the export modal
+  seeds its checkbox from the canvas and `render.minimap` records what was drawn.
 - **Files:** a set of siblings under `DATA_DIR` sharing a `<base>` name:
   `<base>.figure.pdf`/`.png` (the chosen deliverables), `<base>.figure.thumb.png`
   (gallery thumbnail), and `<base>.figure.json` (the provenance sidecar the gallery
@@ -1142,7 +1193,8 @@ looked on the canvas at the chosen framing.
   `DELETE /api/snapshots/{name}`.
 - **Invocation:** **Save snapshot** (settings panel) opens the export modal
   (`SnapshotExportModal`) seeded with the live viewport — the user sets zoom, output
-  size, DPI, and format(s) against a live server-rendered preview. **Browse
+  size, DPI, format(s), and (spatial) whether to include the minimap inset, against a
+  live server-rendered preview. **Browse
   snapshots** opens the gallery (`SnapshotBrowser`): a thumbnail grid with a detail
   panel for download/delete and the embedded provenance.
 
@@ -1423,10 +1475,17 @@ closed (a 406 does not auto-reconnect), so SSE remains the path wherever it work
 - **Header:** New/Save session (icon buttons), theme toggle (light/dark via CSS
   variables, persisted in `localStorage`), About (Acknowledgements), Cirro upload
   (only when configured). The gear dropdown holds remaining global ops.
-- **Forms:** the introspection layer emits JSON Schema; `forms/FunctionForm.tsx` renders
-  with react-hook-form + a custom widget map (obs-key picker, var-name search/multiselect,
-  layer/obsm/obsp pickers, enum dropdowns, `obs_value_map` old→new editor) driven by the
-  `x-binding` hints (§4.4).
+- **Forms:** the introspection layer emits JSON Schema; `forms/FunctionFields.tsx` renders
+  the field widgets (react-hook-form + a custom widget map: obs-key picker, var-name
+  search/multiselect, layer/obsm/obsp pickers, enum dropdowns, `obs_value_map` old→new
+  editor, and — for reader path params — an inline `forms/FsPicker.tsx` filesystem
+  picker) driven by the `x-binding` hints (§4.4). `forms/FunctionForm.tsx` wraps those
+  fields with the run/stage submit footer (function picker, recipe gallery, re-run
+  editor); the New Session dialog embeds the same fields as the reader's full input
+  form. Each reader param renders by its `path_kind` (`registry/reader_paths.py`):
+  the primary path is a folder/either picker, absolute file params a file picker, and
+  relative filename params (counts_file/…) a file picker rooted at the chosen primary
+  path that yields a relative name; everything else is a value input.
 - **Stack:** React + TS, Tailwind, Radix, deck.gl. Vite build; a single-image Docker
   build serves the SPA behind an nginx edge.
 

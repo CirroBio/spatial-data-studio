@@ -24,6 +24,10 @@ export interface UiFieldInfo {
   widget: UiWidget;
   bound_to: string | null;
   tooltip: string;
+  // Reader path params render a filesystem picker instead of the plain widget:
+  // 'folder' | 'file' | 'either'. For a relative-file param, `bound_to` names the
+  // primary-path param the picker roots against. null/absent for value params.
+  path_kind?: 'folder' | 'file' | 'either' | null;
 }
 
 export interface FunctionEntry {
@@ -127,6 +131,7 @@ export interface DisplayEncoding {
   show_points?: boolean;     // cells-layer visibility; defaults on
   show_image?: boolean;      // image-layer visibility; defaults to (image_layer != null)
   show_channel_legend?: boolean;  // image channel legend visibility; defaults on
+  show_minimap?: boolean;    // overview inset (minimap) in the canvas' top left; defaults on
   isolated_category?: string | null;  // isolate one category in the color-by legend (dims the rest)
   // Per-category color overrides for a categorical color-by, keyed by the color_by
   // path (obs:<col>, X:<gene>, ...) then by category level -> `#rrggbb`. Levels
@@ -146,7 +151,7 @@ export interface DisplayEncoding {
   point_marker?: 'circle' | 'square' | 'hexagon';  // point glyph shape; defaults to circle
   invert_x?: boolean;                   // mirror the plot horizontally; defaults off
   invert_y?: boolean;                   // mirror the plot vertically; defaults off
-  background?: 'light' | 'dark';        // per-plot backdrop; unset follows the app theme
+  background?: 'light' | 'dark';        // per-plot backdrop, independent of the app theme; defaults to dark
 }
 
 export interface Viewport {
@@ -168,6 +173,9 @@ export interface EmbeddingEncoding {
   colormap: string;
   legend_visible?: boolean;
   legend_title?: string;
+  // Per-category color overrides for a categorical color-by, keyed by color_by path
+  // then category level -> `#rrggbb`. Same shape/semantics as on DisplayEncoding.
+  category_colors?: Record<string, Record<string, string>>;
 }
 
 export interface SpatialDisplaySpec {

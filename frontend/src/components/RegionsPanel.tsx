@@ -97,6 +97,11 @@ export default function RegionsPanel() {
         await createRegionAnnotations(activeSessionId, allPolygons, regionCategoryName, regionColor);
       }
       clearDraw();
+      // Advance the draw color to the next preset so a fresh group gets a distinct
+      // default without the user re-picking (indexOf(-1) + 1 wraps to the first swatch
+      // when the current color isn't one of the presets).
+      const nextColor = NEW_CAT_COLORS[(NEW_CAT_COLORS.indexOf(regionColor) + 1) % NEW_CAT_COLORS.length];
+      setRegionTarget(regionNewSetName, regionCategoryName, nextColor);
     } catch (err) {
       reportError('Annotate failed', err);
     } finally {

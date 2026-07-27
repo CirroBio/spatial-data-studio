@@ -20,9 +20,12 @@ the analysis history that produced this view.*
 ## What you can do
 
 - **Load your data.** Point the app at a raw acquisition folder (a spatialdata-io
-  reader parses it) or open an existing SpatialData `.zarr` store. Large datasets can
-  take a while to read, so the reader's log streams live while it works. Datasets stay
-  resident in memory for the session.
+  reader parses it) or open an existing SpatialData `.zarr` store. Each reader input
+  is its own field: a folder or file input opens a filesystem picker, and the reader's
+  options (e.g. whether Xenium reads transcripts, cell boundaries, or the morphology
+  image) are toggles/values — so you tailor exactly what gets loaded. Large datasets
+  can take a while to read, so the reader's log streams live while it works. Datasets
+  stay resident in memory for the session.
 - **Run analyses without writing code.** Every `squidpy` and (curated) `scanpy`
   function appears in a searchable picker with a form generated from the function's
   own signature — QC, normalization, clustering, neighborhood enrichment, spatially
@@ -35,16 +38,21 @@ the analysis history that produced this view.*
   tissue-image channels to display (up to 6 at once) and how they're named, colored (any
   color, not just presets), and contrast-adjusted (min/max per channel), switch between
   point and cell-boundary rendering, and view non-spatial embeddings (UMAP/PCA) in 2D or
-  3D — all on the same GPU canvas.
+  3D — all on the same GPU canvas. A **minimap** in the canvas' top-left corner shows the
+  whole section with a box marking the part you're looking at; click or drag it to jump
+  somewhere else.
 - **Annotate.** Draw lasso regions to label cells, or draw shapes and text directly on
   the tissue. Region labels become ordinary metadata columns you can then analyze by.
-  Labeling works on the embedding view too — in 3D it labels every cell visible within
-  the drawn region.
+  Applying a label recolors the view by that region set and paints the labelled cells in
+  the color you picked; the draw color then advances to the next preset for the next
+  group. Labeling works on the embedding view too — in 3D it labels every cell visible
+  within the drawn region.
 - **Subset.** Lasso a region — on the tissue or an embedding — to spin off a child session
   that keeps (or removes) just those cells.
 - **Save and share.** Save a checkpoint you can reopen later, save a **snapshot** — a
   high-quality figure of the current view exported as a vector PDF and/or raster PNG,
-  framed and sized in a dialog with a live preview — or (optionally) upload results to
+  framed and sized in a dialog with a live preview, optionally with the minimap inset
+  included in the figure — or (optionally) upload results to
   [Cirro](https://cirro.bio/). Saved snapshots are collected in a gallery you can
   browse, download, or delete; each file embeds the provenance (view, settings, and the
   analysis steps that produced the data).
@@ -60,12 +68,14 @@ the analysis history that produced this view.*
 </tr>
 </table>
 
-![The display settings panel, organised into View, Cells, and Image icon tabs: layer visibility, color by, render mode, point size, plot orientation, zoom, background, and per-channel image color/contrast.](docs/images/display.jpg)
+![The display settings panel, organised into View, Cells, and Image icon tabs: layer visibility, color by, render mode, point size, plot orientation, zoom, minimap, plot backdrop, and per-channel image color/contrast.](docs/images/display.jpg)
 
 *Customize the display, organised into **View**, **Cells**, and **Image** icon tabs —
 choose what colors the cells, how they render, how the plot is oriented (flip the
-horizontal/vertical axes), the zoom level (buttons plus scroll/pinch) and its background
-(light or dark), and how each tissue-image channel is colored and contrast-adjusted.
+horizontal/vertical axes), the zoom level (buttons plus scroll/pinch), whether the
+minimap is shown, the plot's own light/dark backdrop (on the **Image** tab, set per
+plot and independent of the app theme), and how each tissue-image channel is colored
+and contrast-adjusted.
 When cells are colored by a categorical value, each group's color can be overridden
 individually (and reset to the default palette) at the bottom of the **Cells** tab.
 (Text and shape annotations that persist with the dataset are drawn from the left

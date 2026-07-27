@@ -13,7 +13,10 @@ and reproduces the display exactly as styled on the live canvas:
 - when the display is in render_mode 'points+shapes' and zoomed in far enough, the point
   markers are replaced by the same viewport-clipped cell-boundary polygons (filled or
   outline) the canvas overlays — drawn as vector paths, colored per cell to match;
-- above a cell-count cap the point/polygon layer is rasterized, to keep the PDF small/fast.
+- above a cell-count cap the point/polygon layer is rasterized, to keep the PDF small/fast;
+- when the request asks for it (`include_minimap`), an overview inset — the whole section
+  with a white box marking the rendered window — is drawn in the figure's top-left corner,
+  matching the live canvas minimap.
 
 Extensive provenance metadata (dataset, viewport, output settings, full display encoding,
 and the analysis recipe that produced the data) is embedded in every output file (PDF
@@ -60,6 +63,15 @@ POLYGON_LIMIT = 20000
 SHAPES_MIN_CELL_PX = 6
 
 THUMB_MAX_PX = 320
+
+# Minimap (overview inset, drawn when the request sets include_minimap): the whole
+# section with a white rectangle marking the rendered window, mirroring the live
+# canvas overlay. Its longest side is this fraction of the figure's matching side.
+MINIMAP_FIG_FRACTION = 0.18
+MINIMAP_MARGIN_FRACTION = 0.02
+# Cells drawn in the scatter overview (no image, or the image hidden); beyond this
+# the points are strided — the overview only needs the shape of the section.
+MINIMAP_MAX_POINTS = 4000
 
 # Cell-color palettes, kept byte-identical to frontend/src/components/canvas/colorUtils.ts
 # so a snapshot matches the live canvas exactly. CATEGORY_COLORS: 15 distinct
@@ -378,6 +390,59 @@ def _draw_shapes(ax, session, enc, element, view_bbox, p2w, w2p, n_cells, dpi) -
     return len(paths)
 
 
+# ---- minimap (overview inset) ------------------------------------------------
+def _draw_minimap(fig, session, enc, element, pts, bbox, facecolor, dpi) -> bool:
+    """Draw the overview inset in the figure's top-left corner: the whole section —
+    the composited image when one is shown, else the (strided) cell scatter — with a
+    white rectangle marking the window this figure renders. Same context the live
+    canvas minimap gives. Coordinates are the figure's view space (level-0 pixels with
+    an image, else world). Returns False when there is nothing to draw."""
+    from matplotlib.patches import Rectangle
+
+    if element is not None:
+        w0, h0 = imaging.image_dims(session.sdata, element)
+        extent = [0.0, 0.0, float(w0), float(h0)]
+    elif len(pts):
+        extent = [float(pts[:, 0].min()), float(pts[:, 1].min()),
+                  float(pts[:, 0].max()), float(pts[:, 1].max())]
+    else:
+        return False
+    ew = max(extent[2] - extent[0], 1e-9)
+    eh = max(extent[3] - extent[1], 1e-9)
+
+    # Fit the content aspect inside a box whose longest side is MINIMAP_FIG_FRACTION of
+    # the figure's matching side, inset by an equal pixel margin from the top-left.
+    fig_w, fig_h = (float(s) * dpi for s in fig.get_size_inches())
+    scale = min(MINIMAP_FIG_FRACTION * fig_w / ew, MINIMAP_FIG_FRACTION * fig_h / eh)
+    box_w, box_h = ew * scale, eh * scale
+    margin = MINIMAP_MARGIN_FRACTION * min(fig_w, fig_h)
+    ax = fig.add_axes([margin / fig_w, 1.0 - (margin + box_h) / fig_h,
+                       box_w / fig_w, box_h / fig_h], zorder=5)
+    ax.set_facecolor(facecolor)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    for spine in ax.spines.values():
+        spine.set_color("white")
+        spine.set_linewidth(0.6)
+
+    if element is not None:
+        comp = _composite_window(session, element, enc, extent)
+        if comp is not None:
+            rgb, img_extent = comp
+            ax.imshow(rgb, extent=img_extent, origin="lower", interpolation="nearest", zorder=0)
+    elif len(pts):
+        stride = max(1, -(-len(pts) // MINIMAP_MAX_POINTS))
+        sample = pts[::stride]
+        ax.scatter(sample[:, 0], sample[:, 1], s=0.5,
+                   c=_cell_rgba(session, enc, len(pts))[::stride], linewidths=0, zorder=1)
+
+    ax.add_patch(Rectangle((bbox[0], bbox[1]), bbox[2] - bbox[0], bbox[3] - bbox[1],
+                           fill=False, edgecolor="white", linewidth=0.8, zorder=3))
+    ax.set_xlim(extent[2], extent[0]) if enc.get("invert_x") else ax.set_xlim(extent[0], extent[2])
+    ax.set_ylim(extent[3], extent[1]) if enc.get("invert_y") else ax.set_ylim(extent[1], extent[3])
+    return True
+
+
 # ---- the render core ---------------------------------------------------------
 def _render_figure(session, spec: dict):
     """Render into an in-memory matplotlib Figure. Returns (fig, render_meta)."""
@@ -475,9 +540,15 @@ def _render_figure(session, spec: dict):
     ax.set_xlim(bbox[2], bbox[0]) if enc.get("invert_x") else ax.set_xlim(bbox[0], bbox[2])
     ax.set_ylim(bbox[3], bbox[1]) if enc.get("invert_y") else ax.set_ylim(bbox[1], bbox[3])
 
+    # Overview inset — opt-in per render (the export modal's "Minimap inset"), not read
+    # from the encoding: a figure can carry it whether or not the canvas is showing one.
+    minimap = bool(spec.get("include_minimap")) and kind == "spatial" and _draw_minimap(
+        fig, session, enc, element if show_image else None, pts, bbox, facecolor, dpi)
+
     render_meta = {"kind": kind, "rasterized_points": rasterized_points,
                    "image_element": element if show_image else None,
-                   "cells_in_view": cells_in_view, "shapes_drawn": shapes_drawn}
+                   "cells_in_view": cells_in_view, "shapes_drawn": shapes_drawn,
+                   "minimap": minimap}
     return fig, render_meta
 
 
@@ -517,8 +588,8 @@ def _metadata(session, spec: dict, display, render_meta: dict, formats: list[str
 def save_snapshot(session, spec: dict) -> dict:
     """Render and persist a snapshot figure. `spec`:
     {viewport:{target,zoom}, width_px, height_px, dpi, formats:['pdf'|'png'], label?,
-     display_id?}. Writes the chosen formats + a thumbnail + a sidecar `.figure.json`,
-     each embedding the provenance metadata."""
+     display_id?, include_minimap?}. Writes the chosen formats + a thumbnail + a sidecar
+     `.figure.json`, each embedding the provenance metadata."""
     import matplotlib.pyplot as plt
     if session.sdata is None:
         return {"status": "failed", "error": "no data to snapshot"}

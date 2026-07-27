@@ -38,6 +38,8 @@ interface CanvasControlsProps {
   setBackground: (v: 'light' | 'dark') => void;
   showLegend: boolean;
   setShowLegend: (v: boolean) => void;
+  showMinimap: boolean;
+  setShowMinimap: (v: boolean) => void;
   renderMode: 'points' | 'points+shapes';
   setRenderMode: (v: 'points' | 'points+shapes') => void;
   shapeSets: string[];
@@ -131,6 +133,8 @@ export default function CanvasControls({
   setBackground,
   showLegend,
   setShowLegend,
+  showMinimap,
+  setShowMinimap,
   renderMode,
   setRenderMode,
   shapeSets,
@@ -180,8 +184,8 @@ export default function CanvasControls({
         </svg>
       ),
     },
-    ...(hasImage ? [{
-      id: 'image' as const,
+    {
+      id: 'image',
       label: 'Image',
       icon: (
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -190,7 +194,7 @@ export default function CanvasControls({
           <path d="m21 15-4.5-4.5L5 21" />
         </svg>
       ),
-    }] : []),
+    },
   ];
 
   return (
@@ -235,16 +239,6 @@ export default function CanvasControls({
                   <path d="M2 12h2" /><path d="M8 12h2" /><path d="M14 12h2" /><path d="M20 12h2" />
                 </svg>
               </IconToggle>
-              <IconToggle
-                active={background === 'light'}
-                onClick={() => setBackground(background === 'dark' ? 'light' : 'dark')}
-                title={`Switch to ${background === 'dark' ? 'light' : 'dark'} background`}
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="12" cy="12" r="10" />
-                  <path d="M12 2a10 10 0 0 1 0 20z" fill="currentColor" stroke="none" />
-                </svg>
-              </IconToggle>
             </div>
             <div className="flex items-center gap-1.5">
               <IconButton onClick={() => onZoom(-1)} title="Zoom out" disabled={zoom <= ZOOM_LIMITS.minZoom}>
@@ -265,6 +259,10 @@ export default function CanvasControls({
                 </svg>
               </IconButton>
             </div>
+            <label className="flex items-center gap-2 text-xs text-text cursor-pointer">
+              <input type="checkbox" checked={showMinimap} onChange={(e) => setShowMinimap(e.target.checked)} className="accent-accent" />
+              <span title="Overview inset in the canvas' top left showing where the current view sits in the whole section; click or drag it to move the view.">Minimap</span>
+            </label>
           </div>
 
           <div className="flex flex-col gap-1 border-t border-border pt-2">
@@ -445,98 +443,118 @@ export default function CanvasControls({
         </Tabs.Content>
 
         {/* ---- Tab 3: Image ---- */}
-        {hasImage && (
-          <Tabs.Content value="image" className="flex flex-col gap-2 pt-2 focus:outline-none">
-            {!showImage && (
-              <p className="text-[10px] text-muted/60 leading-snug">The image is hidden — enable “Show image” on the Layers + view tab.</p>
-            )}
-            {channels.length > 0 ? (
-              <>
-                <label className="flex items-center gap-2 text-xs text-text cursor-pointer">
-                  <input type="checkbox" checked={showLegend} onChange={(e) => setShowLegend(e.target.checked)} className="accent-accent" />
-                  Channel legend
-                </label>
+        {/* Always available: the backdrop applies whether or not the dataset has an
+            image element, so this tab is not gated on `hasImage`. */}
+        <Tabs.Content value="image" className="flex flex-col gap-2 pt-2 focus:outline-none">
+          <div className="flex flex-col gap-1">
+            <label className={FIELD_LABEL}>Backdrop</label>
+            <div className="flex items-center gap-1.5">
+              <IconToggle
+                active={background === 'light'}
+                onClick={() => setBackground(background === 'dark' ? 'light' : 'dark')}
+                title={`Switch to ${background === 'dark' ? 'light' : 'dark'} background`}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M12 2a10 10 0 0 1 0 20z" fill="currentColor" stroke="none" />
+                </svg>
+              </IconToggle>
+            </div>
+          </div>
 
-                <div className="flex flex-col gap-1.5">
-                  <span className={FIELD_LABEL}>Channels</span>
-                  <span className="text-[10px] text-muted/60 leading-snug">Expand a channel (▸) to set its color and contrast min/max.</span>
-                  {/* Viv composites at most 6 channels at once; once 6 are on, unchecked
-                      channels are disabled until the user hides one. */}
-                  {maxVisibleReached && (
-                    <span className="text-[10px] text-muted">Showing the maximum of 6 channels — hide one to add another.</span>
-                  )}
-                  {channels.map((c) => (
-                    <div key={c.index} className="flex flex-col gap-1">
-                      <div className="flex items-center gap-1.5">
-                        <input
-                          type="checkbox"
-                          checked={c.visible}
-                          disabled={maxVisibleReached && !c.visible}
-                          onChange={(e) => setChannel(c.index, { visible: e.target.checked })}
-                          className="accent-accent disabled:opacity-40 disabled:cursor-not-allowed"
-                          title={maxVisibleReached && !c.visible ? 'Maximum of 6 channels shown' : 'Toggle channel'}
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setExpandedChannel(expandedChannel === c.index ? null : c.index)}
-                          className="w-3.5 h-3.5 rounded-sm border border-border shrink-0 hover:ring-1 hover:ring-accent"
-                          style={{ background: c.color }}
-                          title="Channel color & contrast"
-                          aria-label={`Color and contrast for ${c.name}`}
-                        />
-                        <input
-                          type="text"
-                          value={c.name}
-                          onChange={(e) => setChannel(c.index, { name: e.target.value })}
-                          className="flex-1 min-w-0 bg-bg border border-border rounded px-1 py-0.5 text-[10px] text-text focus:outline-none focus:border-accent"
-                          title="Rename channel"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setExpandedChannel(expandedChannel === c.index ? null : c.index)}
-                          className="shrink-0 text-muted hover:text-accent transition-colors"
-                          title="Color & contrast"
-                          aria-expanded={expandedChannel === c.index}
-                          aria-label={`Color and contrast for ${c.name}`}
+          {!hasImage && (
+            <p className="text-[10px] text-muted/60 leading-snug">This dataset has no image element.</p>
+          )}
+          {hasImage && !showImage && (
+            <p className="text-[10px] text-muted/60 leading-snug">The image is hidden — enable “Show image” on the View tab.</p>
+          )}
+          {hasImage && channels.length === 0 && (
+            <p className="text-[10px] text-muted/60 leading-snug">This image has no adjustable channels.</p>
+          )}
+          {hasImage && channels.length > 0 && (
+            <>
+              <label className="flex items-center gap-2 text-xs text-text cursor-pointer">
+                <input type="checkbox" checked={showLegend} onChange={(e) => setShowLegend(e.target.checked)} className="accent-accent" />
+                Channel legend
+              </label>
+
+              <div className="flex flex-col gap-1.5">
+                <span className={FIELD_LABEL}>Channels</span>
+                <span className="text-[10px] text-muted/60 leading-snug">Expand a channel (▸) to set its color and contrast min/max.</span>
+                {/* Viv composites at most 6 channels at once; once 6 are on, unchecked
+                    channels are disabled until the user hides one. */}
+                {maxVisibleReached && (
+                  <span className="text-[10px] text-muted">Showing the maximum of 6 channels — hide one to add another.</span>
+                )}
+                {channels.map((c) => (
+                  <div key={c.index} className="flex flex-col gap-1">
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="checkbox"
+                        checked={c.visible}
+                        disabled={maxVisibleReached && !c.visible}
+                        onChange={(e) => setChannel(c.index, { visible: e.target.checked })}
+                        className="accent-accent disabled:opacity-40 disabled:cursor-not-allowed"
+                        title={maxVisibleReached && !c.visible ? 'Maximum of 6 channels shown' : 'Toggle channel'}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setExpandedChannel(expandedChannel === c.index ? null : c.index)}
+                        className="w-3.5 h-3.5 rounded-sm border border-border shrink-0 hover:ring-1 hover:ring-accent"
+                        style={{ background: c.color }}
+                        title="Channel color & contrast"
+                        aria-label={`Color and contrast for ${c.name}`}
+                      />
+                      <input
+                        type="text"
+                        value={c.name}
+                        onChange={(e) => setChannel(c.index, { name: e.target.value })}
+                        className="flex-1 min-w-0 bg-bg border border-border rounded px-1 py-0.5 text-[10px] text-text focus:outline-none focus:border-accent"
+                        title="Rename channel"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setExpandedChannel(expandedChannel === c.index ? null : c.index)}
+                        className="shrink-0 text-muted hover:text-accent transition-colors"
+                        title="Color & contrast"
+                        aria-expanded={expandedChannel === c.index}
+                        aria-label={`Color and contrast for ${c.name}`}
+                      >
+                        <svg
+                          width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                          strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+                          style={{ transform: expandedChannel === c.index ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }}
                         >
-                          <svg
-                            width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                            strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
-                            style={{ transform: expandedChannel === c.index ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }}
-                          >
-                            <path d="m9 18 6-6-6-6" />
-                          </svg>
-                        </button>
-                      </div>
-                      {expandedChannel === c.index && (
-                        <div className="flex flex-col gap-1.5 pl-5 pb-1.5">
-                          <span className="text-[10px] text-muted">Color</span>
-                          <div className="flex items-center gap-2">
-                            <input
-                              type="color"
-                              value={c.color}
-                              onChange={(e) => setChannel(c.index, { color: e.target.value })}
-                              className="w-7 h-6 rounded border border-border bg-bg cursor-pointer"
-                              title="Pick any color"
-                            />
-                            <ColorSwatchPicker colors={CHANNEL_COLORS} selected={c.color} onSelect={(color) => setChannel(c.index, { color })} />
-                          </div>
-                          <DualRangeField
-                            label="Contrast" value={c.contrastLimits} min={c.contrastRange[0]} max={c.contrastRange[1]}
-                            step={contrastStep(c.contrastRange)} digits={contrastDigits(c.contrastRange)}
-                            onChange={(v) => setChannel(c.index, { contrastLimits: v })}
-                          />
-                        </div>
-                      )}
+                          <path d="m9 18 6-6-6-6" />
+                        </svg>
+                      </button>
                     </div>
-                  ))}
-                </div>
-              </>
-            ) : (
-              <p className="text-[10px] text-muted/60 leading-snug">This image has no adjustable channels.</p>
-            )}
-          </Tabs.Content>
-        )}
+                    {expandedChannel === c.index && (
+                      <div className="flex flex-col gap-1.5 pl-5 pb-1.5">
+                        <span className="text-[10px] text-muted">Color</span>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="color"
+                            value={c.color}
+                            onChange={(e) => setChannel(c.index, { color: e.target.value })}
+                            className="w-7 h-6 rounded border border-border bg-bg cursor-pointer"
+                            title="Pick any color"
+                          />
+                          <ColorSwatchPicker colors={CHANNEL_COLORS} selected={c.color} onSelect={(color) => setChannel(c.index, { color })} />
+                        </div>
+                        <DualRangeField
+                          label="Contrast" value={c.contrastLimits} min={c.contrastRange[0]} max={c.contrastRange[1]}
+                          step={contrastStep(c.contrastRange)} digits={contrastDigits(c.contrastRange)}
+                          onChange={(v) => setChannel(c.index, { contrastLimits: v })}
+                        />
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </Tabs.Content>
       </Tabs.Root>
     </CanvasSettingsShell>
   );

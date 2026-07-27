@@ -20,6 +20,7 @@ export default function SnapshotExportModal({ params, onClose }: { params: Snaps
   const [lockAspect, setLockAspect] = useState(true);
   const [dpi, setDpi] = useState(200);
   const [formats, setFormats] = useState<Record<SnapshotFormat, boolean>>({ pdf: true, png: false });
+  const [minimap, setMinimap] = useState(!!params.minimap);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -34,7 +35,8 @@ export default function SnapshotExportModal({ params, onClose }: { params: Snaps
     width_px: width, height_px: height, dpi,
     formats: (Object.keys(formats) as SnapshotFormat[]).filter((f) => formats[f]),
     label: params.label, display_id: params.displayId,
-  }), [params, zoom, width, height, dpi, formats]);
+    include_minimap: minimap,
+  }), [params, zoom, width, height, dpi, formats, minimap]);
 
   // Debounced preview: a small PNG at the current framing (aspect only — resolution
   // doesn't change the composition), superseding any in-flight request.
@@ -126,6 +128,13 @@ export default function SnapshotExportModal({ params, onClose }: { params: Snaps
           </label>
 
           {numberField('Resolution (DPI)', dpi, setDpi, { min: 36, max: 600, step: 1 })}
+
+          {params.kind === 'spatial' && (
+            <label className="flex items-center gap-2 text-xs text-muted">
+              <input type="checkbox" checked={minimap} onChange={(e) => setMinimap(e.target.checked)} />
+              Minimap inset
+            </label>
+          )}
 
           <div className="flex flex-col gap-1 text-xs text-muted">
             Format

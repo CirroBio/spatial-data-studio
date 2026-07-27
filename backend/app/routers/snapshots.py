@@ -16,7 +16,7 @@ router = APIRouter()
 async def save_snapshot_endpoint(sid: str, body: dict):
     """Render and save a high-quality figure snapshot (vector PDF and/or raster PNG) of
     a display. body: {viewport:{target,zoom}, width_px, height_px, dpi,
-    formats:['pdf'|'png'], label?, display_id?}."""
+    formats:['pdf'|'png'], label?, display_id?, include_minimap?}."""
     sess = _writable_session(sid)
     result = await _in_executor(snapshots.save_snapshot, sess, body)
     if result.get("status") == "failed":

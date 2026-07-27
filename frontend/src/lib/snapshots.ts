@@ -38,6 +38,7 @@ export interface SnapshotExportParams {
   viewport: { target: number[]; zoom: number };
   canvasSize: { width: number; height: number };  // seeds the default output aspect/size
   label: string;
+  minimap?: boolean;  // spatial only: seeds the modal's "Minimap inset" checkbox
 }
 
 // Format the ISO `created` timestamp for display; empty string if unparseable.

@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react';
+import { useForm } from 'react-hook-form';
 import * as Dialog from '@radix-ui/react-dialog';
-import { createSession, browsePath, getDatasets } from '../api';
+import { createSession, getDatasets } from '../api';
 import { useAppStore } from '../store/sessionStore';
 import { formatError } from '../lib/format';
 import AnsiLog from './AnsiLog';
+import FunctionFields, { coerceParams } from './forms/FunctionFields';
+import { EMPTY_FIELDS } from '../hooks/useRerunEditor';
 import type { SessionSummary, FunctionEntry } from '../types';
-import type { FsEntry, FsListing, NewSessionSource, DatasetEntry } from '../api';
+import type { NewSessionSource, DatasetEntry } from '../api';
 
 interface Props {
   onClose: () => void;
@@ -14,6 +17,13 @@ interface Props {
 
 function readerLabel(r: FunctionEntry): string {
   return r.label ?? `${r.function} (${r.source.replace(/_/g, '-')})`;
+}
+
+// The one param a reader takes from the file browser (its data path); every other
+// declared param is a reader option surfaced in the options form.
+function readerPathParam(r: FunctionEntry): string {
+  const req = ((r.json_schema as { required?: string[] }).required) ?? [];
+  return req.find((p) => ['path', 'input', 'image_path'].includes(p)) ?? req[0] ?? 'path';
 }
 
 // Default session name derived from a selected path: the basename with any store
@@ -59,21 +69,17 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   const selectedReader = readers.find((f) => f.key === reader);
-  // What the import picker should let the user land on: spatialdata-io readers take
-  // a raw acquisition folder; the SpatialData reader takes a folder or an archive.
-  const inputKind = selectedReader?.input_kind ?? 'folder';
-  const browserTitle = mode === 'load' ? 'Checkpoints'
-    : inputKind === 'folder' ? 'Data folder' : inputKind === 'file' ? 'Data file' : 'Data path';
-  const browserHint = mode === 'load' ? 'saved .sdata.zarr.zip checkpoints in the data folder'
-    : inputKind === 'folder' ? 'open the raw data folder for the chosen reader'
-    : inputKind === 'file' ? 'pick a data file for the chosen reader'
-    : 'pick a .zarr folder, or a .zarr.zip / .zarr.tar.gz archive';
+  // A reader's params render as a form (FunctionFields): value inputs plus an inline
+  // filesystem picker for each path param (path_kind). Unregistered on reader change
+  // (shouldUnregister) so a prior reader's values never leak.
+  const optionsForm = useForm<Record<string, unknown>>({ shouldUnregister: true });
+  const pathParam = selectedReader ? readerPathParam(selectedReader) : 'path';
+  // The primary path the user has picked (drives name autofill + the submit gate).
+  const importPath = selectedReader ? ((optionsForm.watch(pathParam) as string) || '') : '';
 
   const [datasets, setDatasets] = useState<DatasetEntry[]>([]);
   const [datasetsLoading, setDatasetsLoading] = useState(true);
-  const [listing, setListing] = useState<FsListing | null>(null);
-  const [browseDir, setBrowseDir] = useState('');  // directory currently listed (import mode; '' = roots)
-  const [filter, setFilter] = useState('');        // filters the current listing by name
+  const [filter, setFilter] = useState('');        // filters the checkpoint list by name
 
   // Load mode: autodetect every loadable checkpoint under the checkpoint folders once.
   useEffect(() => {
@@ -83,23 +89,12 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
       .finally(() => setDatasetsLoading(false));
   }, []);
 
-  // Import mode: list the current directory so the user can navigate to a dataset.
-  // Folder-only readers hide files (so the user lands on a folder); file/either
-  // readers list files too, so archives and data files are selectable.
-  useEffect(() => {
-    if (mode !== 'import') return;
-    browsePath(browseDir || undefined, inputKind !== 'folder').then(setListing).catch(() => setListing(null));
-  }, [browseDir, mode, inputKind]);
-
   const q = filter.trim().toLowerCase();
   const datasetMatches = datasets
     .filter((d) => d.name.toLowerCase().includes(q) || d.path.toLowerCase().includes(q))
     .sort((a, b) => b.mtime - a.mtime);
-  const browseMatches: FsEntry[] = (listing?.entries ?? []).filter((e) =>
-    e.name.toLowerCase().includes(q)
-  );
 
-  // Fill the (empty, untouched) name field from a chosen path so the user rarely
+  // Fill the (empty, untouched) name field from a chosen checkpoint so the user rarely
   // has to type one; a name they typed themselves is never overwritten.
   function selectPath(p: string) {
     setSelectedPath(p);
@@ -107,48 +102,39 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
     setError(null);
   }
 
-  // Navigate into a directory. For folder-input readers, entering a folder also
-  // selects it as the dataset target (there is nothing to pick inside it).
-  function navTo(dir: string) {
-    setBrowseDir(dir);
-    setFilter('');
-    if (mode === 'import' && inputKind === 'folder' && dir) selectPath(dir);
-  }
-
-  function chooseEntry(entry: FsEntry) {
-    if (entry.kind === 'dir') navTo(entry.path);
-    else selectPath(entry.path);
-  }
-
-  function goUp() {
-    navTo(listing?.parent ?? '');
-  }
+  // Import mode: autofill the name from the picked primary path (folder basename).
+  useEffect(() => {
+    if (mode === 'import' && importPath && !nameEdited) setName(deriveSessionName(importPath));
+  }, [importPath, mode, nameEdited]);
 
   function switchMode(m: 'load' | 'import') {
     setMode(m);
     setError(null);
     setSelectedPath('');
     setFilter('');
-    setBrowseDir('');
+    optionsForm.reset();
     if (m === 'import' && !reader && readers[0]) setReader(readers[0].key);
   }
 
   async function submit() {
-    const chosen = selectedPath.trim();
-    if (!chosen) {
-      setError(mode === 'import'
-        ? (inputKind === 'folder' ? 'Open the dataset folder' : 'Pick a dataset')
-        : 'Select a checkpoint');
-      return;
-    }
     let source: NewSessionSource;
+    let chosen: string;  // primary path / checkpoint, for name derivation
     if (mode === 'import') {
-      const r = readers.find((f) => f.key === reader);
+      const r = selectedReader;
       if (!r) { setError('Select a reader for the dataset format'); return; }
-      const req = ((r.json_schema as { required?: string[] }).required) ?? [];
-      const pathParam = req.find((p) => ['path', 'input', 'image_path'].includes(p)) ?? req[0] ?? 'path';
-      source = { kind: 'read', namespace: r.namespace, function: r.function, params: { [pathParam]: chosen } };
+      // Collect + validate every reader param through RHF, so required params (the
+      // path, and any required file/value) block submit with inline field errors.
+      const values = await new Promise<Record<string, unknown> | null>((resolve) => {
+        optionsForm.handleSubmit((v) => resolve(v), () => resolve(null))();
+      });
+      if (!values) { setError(null); return; }
+      const params = coerceParams(values, r);
+      chosen = String(params[readerPathParam(r)] ?? '');
+      if (!chosen) { setError('Choose the dataset path'); return; }
+      source = { kind: 'read', namespace: r.namespace, function: r.function, params };
     } else {
+      chosen = selectedPath.trim();
+      if (!chosen) { setError('Select a checkpoint'); return; }
       source = { kind: 'load', path: chosen };
     }
     const id = crypto.randomUUID();
@@ -255,7 +241,7 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
                     </label>
                     <select
                       value={reader}
-                      onChange={(e) => { setReader(e.target.value); setSelectedPath(''); }}
+                      onChange={(e) => { setReader(e.target.value); optionsForm.reset(); setError(null); }}
                       className="bg-bg border border-border rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-accent"
                     >
                       <option value="">-- select a reader --</option>
@@ -292,46 +278,27 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
                 )}
               </aside>
 
-              {/* Right: file browser */}
+              {/* Right: checkpoint list (load) or reader-parameter form (import) */}
               <section className="flex-1 min-w-0 flex flex-col bg-bg/40">
-                <div className="shrink-0 border-b border-border px-3 py-2 flex flex-col gap-2">
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-xs font-semibold text-text">{browserTitle}</span>
-                    <span className="text-[11px] text-muted/70 truncate">{browserHint}</span>
-                  </div>
-
-                  {mode === 'import' && (
-                    <div className="flex items-center gap-2 min-w-0">
-                      <button
-                        type="button"
-                        onClick={goUp}
-                        disabled={!browseDir}
-                        className="shrink-0 px-2 py-1 text-xs font-mono rounded border border-border text-muted hover:text-text hover:bg-bg disabled:opacity-40 disabled:hover:text-muted disabled:hover:bg-transparent transition-colors"
-                        title="Up one level"
-                      >
-                        ⬆ Up
-                      </button>
-                      <span className="text-[11px] font-mono text-muted truncate" title={listing?.path || '/'}>
-                        {listing?.path || 'roots'}
-                      </span>
+                {mode === 'load' ? (
+                  <>
+                    <div className="shrink-0 border-b border-border px-3 py-2 flex flex-col gap-2">
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-xs font-semibold text-text">Checkpoints</span>
+                        <span className="text-[11px] text-muted/70 truncate">saved .sdata.zarr.zip checkpoints in the data folder</span>
+                      </div>
+                      <input
+                        type="text"
+                        placeholder="Search checkpoints…"
+                        value={filter}
+                        onChange={(e) => setFilter(e.target.value)}
+                        autoComplete="off"
+                        role="presentation"
+                        spellCheck={false}
+                        className="w-full bg-bg border border-border rounded px-3 py-1.5 text-xs text-text placeholder-muted/50 focus:outline-none focus:border-accent font-mono"
+                      />
                     </div>
-                  )}
-
-                  <input
-                    type="text"
-                    placeholder={mode === 'load' ? 'Search checkpoints…' : 'Filter this folder…'}
-                    value={filter}
-                    onChange={(e) => setFilter(e.target.value)}
-                    autoComplete="off"
-                    role="presentation"
-                    spellCheck={false}
-                    className="w-full bg-bg border border-border rounded px-3 py-1.5 text-xs text-text placeholder-muted/50 focus:outline-none focus:border-accent font-mono"
-                  />
-                </div>
-
-                <div className="flex-1 overflow-y-auto">
-                  {mode === 'load' && (
-                    <>
+                    <div className="flex-1 overflow-y-auto">
                       {datasetMatches.map((d) => {
                         const active = d.path === selectedPath;
                         return (
@@ -364,50 +331,41 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
                             : 'No saved checkpoints found'}
                         </div>
                       )}
-                    </>
-                  )}
-
-                  {mode === 'import' && (
-                    <>
-                      {browseMatches.map((entry) => {
-                        const active = entry.path === selectedPath;
-                        return (
-                          <button
-                            key={entry.path}
-                            type="button"
-                            onClick={() => chooseEntry(entry)}
-                            onDoubleClick={() => { if (entry.kind !== 'dir') { selectPath(entry.path); submit(); } }}
-                            title={entry.path}
-                            className={`w-full text-left px-3 py-2 flex items-center gap-2 border-b border-border/40 ${
-                              active ? 'bg-accent/20' : 'hover:bg-accent-lo/30'
-                            }`}
-                          >
-                            <span className={entry.kind === 'dataset' ? 'text-accent shrink-0' : 'text-muted shrink-0'}>
-                              {entry.kind === 'dataset' ? '▣' : entry.kind === 'dir' ? '📁' : '📄'}
-                            </span>
-                            <span className="text-xs font-mono text-text truncate">{entry.name}</span>
-                            <span className="ml-auto shrink-0 text-[10px] text-muted/60">
-                              {entry.kind === 'dataset' ? 'dataset' : entry.kind === 'dir' ? '›' : 'file'}
-                            </span>
-                          </button>
-                        );
-                      })}
-                      {browseMatches.length === 0 && (
-                        <div className="px-3 py-6 text-center text-xs text-muted/60">
-                          {listing ? 'Empty folder' : 'Nothing to show'}
+                    </div>
+                    <div className="shrink-0 border-t border-border px-3 py-2 text-[11px] font-mono truncate">
+                      {selectedPath
+                        ? <><span className="text-muted">Selected: </span><span className="text-text" title={selectedPath}>{selectedPath}</span></>
+                        : <span className="text-muted/60">Nothing selected</span>}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="shrink-0 border-b border-border px-3 py-2 flex items-baseline gap-2">
+                      <span className="text-xs font-semibold text-text">Reader inputs</span>
+                      <span className="text-[11px] text-muted/70 truncate">
+                        {selectedReader ? readerLabel(selectedReader) : 'choose a reader'}
+                      </span>
+                    </div>
+                    <div className="flex-1 overflow-y-auto px-4 py-3">
+                      {selectedReader ? (
+                        // Keyed by reader so switching format remounts the fields at their
+                        // defaults; shouldUnregister then drops the old reader's values.
+                        <div key={selectedReader.key} className="flex flex-col gap-3">
+                          <FunctionFields
+                            fn={selectedReader}
+                            fields={EMPTY_FIELDS}
+                            register={optionsForm.register}
+                            errors={optionsForm.formState.errors}
+                            watch={optionsForm.watch}
+                            setValue={optionsForm.setValue}
+                          />
                         </div>
+                      ) : (
+                        <p className="text-sm text-muted/60">Select a reader to configure its inputs.</p>
                       )}
-                    </>
-                  )}
-                </div>
-
-                <div className="shrink-0 border-t border-border px-3 py-2 text-[11px] font-mono truncate">
-                  {selectedPath
-                    ? <><span className="text-muted">Selected: </span><span className="text-text" title={selectedPath}>{selectedPath}</span></>
-                    : <span className="text-muted/60">
-                        {mode === 'import' && inputKind === 'folder' ? 'Open a folder to select it' : 'Nothing selected'}
-                      </span>}
-                </div>
+                    </div>
+                  </>
+                )}
               </section>
             </div>
 
@@ -421,10 +379,10 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
               </button>
               <button
                 type="submit"
-                disabled={loading || !selectedPath}
+                disabled={loading || (mode === 'load' ? !selectedPath : !importPath)}
                 className="px-4 py-2 bg-accent hover:bg-accent/80 disabled:opacity-50 text-white rounded text-sm transition-colors"
               >
-                {loading ? 'Loading...' : 'Load'}
+                {loading ? 'Loading...' : mode === 'load' ? 'Load' : 'Import'}
               </button>
             </div>
           </form>

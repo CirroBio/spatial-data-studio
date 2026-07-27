@@ -96,7 +96,25 @@ def assign(session, payload: dict) -> list:
     adata.obs[set_name] = col
 
     _update_registry(st, adata, set_name, primary=category, color=color)
+    _apply_region_to_displays(st, set_name, category, color)
     return [f"obs:{set_name}"]
+
+
+def _apply_region_to_displays(st: dict, set_name: str, category: str, color: str | None):
+    """Make the just-labelled cells visible as labelled: point every display's color-by
+    at the region set, and seed the picked color as that category's `category_colors`
+    override (the per-category override mechanism honored by useSpotColors on both the
+    spatial and embedding canvases) so the cells render in it without the user re-picking
+    in the legend controls. Runs inside the same write-locked mutation that creates the
+    obs column, so the color-by switch can never outrun the column's existence."""
+    key = f"obs:{set_name}"
+    for d in st.get("displays", []):
+        enc = d.get("encoding")
+        if enc is None:
+            continue
+        enc["color_by"] = key
+        if color:
+            enc.setdefault("category_colors", {}).setdefault(key, {})[category] = color
 
 
 def _update_registry(st: dict, adata, set_name: str, primary: str, color: str | None):

@@ -13,7 +13,8 @@ from ._docs import custom_doc
 
 _STORE_PARAM = ParamSpec(
     "store", {"type": "string"}, "text", None, required=True,
-    tooltip="Path to a SpatialData store: a .zarr directory, or a .zarr.zip / .zarr.tar.gz archive")
+    tooltip="Path to a SpatialData store: a .zarr directory, or a .zarr.zip / .zarr.tar.gz archive",
+    path_kind="either")
 
 
 class ReadSpatialDataZarr(Function):
