@@ -5,6 +5,7 @@ import { LinearInterpolator } from '@deck.gl/core';
 import type { Layer, OrthographicViewState, PickingInfo } from '@deck.gl/core';
 import { useAppStore } from '../../store/sessionStore';
 import { useArrowField } from '../../hooks/useArrowField';
+import { useEditGate } from '../../hooks/usePresence';
 import {
   getImageInfo, getElements, getImageThumbnailUrl, fetchWhenIdle,
 } from '../../api';
@@ -23,7 +24,7 @@ import { useSpotColors, arrowToColorSource } from './useSpotColors';
 import { Matrix4 } from '@math.gl/core';
 import { worldToPixelAffine, affineScale, wx, wy } from './imageAffine';
 import { buildSpotLayer, estimateMeanSpacing } from './buildSpotLayer';
-import { PLOT_BACKGROUNDS, rgbToHex } from './colorUtils';
+import { PLOT_BACKGROUNDS, SELECTION_COLORS, rgbToHex } from './colorUtils';
 import { buildShapeAnnotationLayers, buildShapeHandleLayer, buildDragPreviewLayers } from './buildShapeAnnotationLayers';
 import { usePolygonBbox } from './usePolygonBbox';
 import { useImageChannels } from './useImageChannels';
@@ -61,7 +62,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   const { sessionState, isolatedCategory, openSnapshotExport, setSnapshotHandler } = useAppStore();
   const fields = sessionState?.fields;
   const dataVersions = sessionState?.data_versions ?? {};
-  const readOnly = sessionState?.summary.read_only ?? false;
+  const { canEdit, reason: editBlockedReason } = useEditGate();
 
   const coordsPath = display.encoding.coords;
   const coordsVersion = dataVersions[coordsPath] ?? 0;
@@ -174,7 +175,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   });
 
   const { persistDisplay, currentSpec, updateEncoding } = useDisplayPersistence(
-    display, sessionId, readOnly, isSpatialDisplay);
+    display, sessionId, canEdit, isSpatialDisplay);
 
   const { channels, setChannel, maxVisibleReached } = useImageChannels({
     imageInfo,
@@ -508,9 +509,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   }, [vivLayers, positions, colors, showPoints, shapesOverlay, polygonLayer,
       display.encoding.point_size, display.encoding.opacity, marker, worldToPixelMat, radiusScale]);
 
-  const SEL = canvasMode === 'regions'
-    ? [72, 187, 120] as [number, number, number]  // green for region labeling
-    : [124, 108, 246] as [number, number, number]; // accent purple for subset
+  const SEL = SELECTION_COLORS[bg][canvasMode === 'regions' ? 'regions' : 'subset'];
 
   // Selection graphics are UI overlays that must always be visible: 'always' depth
   // compare so they aren't occluded by any cell layer that writes depth.
@@ -693,6 +692,8 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
         }}
         onFit={() => { const fit = fitToData(); if (fit) setViewState(fit); }}
         onEditTransform={() => setTransformOpen(true)}
+        canEdit={canEdit}
+        editBlockedReason={editBlockedReason}
       />
 
       {transformOpen && <TransformEditor sessionId={sessionId} onClose={() => setTransformOpen(false)} />}

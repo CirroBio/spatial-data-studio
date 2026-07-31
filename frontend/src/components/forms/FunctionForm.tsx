@@ -22,6 +22,10 @@ interface Props {
   submitLabel?: string;
   // Render one button per action instead of the single submit button.
   submitActions?: SubmitAction[];
+  // Why submitting is unavailable, when it is (the session's edit lock is held by
+  // someone else, or it's a read-only snapshot). Disables the button(s) and explains
+  // it on hover; the fields stay usable so the form can still be read.
+  blockedReason?: string | null;
 }
 
 // Inverse of processSubmit: turn stored params back into the form's field shapes
@@ -41,7 +45,7 @@ function paramsToFormValues(fn: FunctionEntry, params: Record<string, unknown>):
   return out;
 }
 
-export default function FunctionForm({ fn, fields, sessionId, onSubmit, submitting, initialValues, submitLabel, submitActions }: Props) {
+export default function FunctionForm({ fn, fields, sessionId, onSubmit, submitting, initialValues, submitLabel, submitActions, blockedReason }: Props) {
   // Which action button was clicked; read at submit time to route the params.
   const [pendingAction, setPendingAction] = useState<string | undefined>(undefined);
   const { register, handleSubmit, watch, setValue, formState: { errors } } = useForm<Record<string, unknown>>({
@@ -100,11 +104,12 @@ export default function FunctionForm({ fn, fields, sessionId, onSubmit, submitti
               key={a.key}
               type="submit"
               onClick={() => setPendingAction(a.key)}
-              disabled={submitting}
+              disabled={submitting || !!blockedReason}
+              title={blockedReason ?? undefined}
               className={
                 a.variant === 'secondary'
                   ? 'flex-1 px-4 py-2 bg-bg border border-border hover:border-accent disabled:opacity-50 text-text rounded text-sm transition-colors'
-                  : 'flex-1 px-4 py-2 bg-accent hover:bg-accent/80 disabled:opacity-50 text-white rounded text-sm transition-colors'
+                  : 'flex-1 px-4 py-2 bg-accent hover:bg-accent/80 disabled:opacity-50 text-on-accent rounded text-sm transition-colors'
               }
             >
               {a.label}
@@ -114,8 +119,9 @@ export default function FunctionForm({ fn, fields, sessionId, onSubmit, submitti
       ) : (
         <button
           type="submit"
-          disabled={submitting}
-          className="w-full px-4 py-2 bg-accent hover:bg-accent/80 disabled:opacity-50 text-white rounded text-sm transition-colors"
+          disabled={submitting || !!blockedReason}
+          title={blockedReason ?? undefined}
+          className="w-full px-4 py-2 bg-accent hover:bg-accent/80 disabled:opacity-50 text-on-accent rounded text-sm transition-colors"
         >
           {submitting ? 'Running...' : submitLabel ?? 'Run'}
         </button>

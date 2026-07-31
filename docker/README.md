@@ -108,6 +108,7 @@ read. The example above passes it just to illustrate the override.
 | `SDS_N_THREADS`      | auto (CPU alloc) | Default for thread-count form params (`n_jobs`, etc.). Defaults to the CPU allocation (`SDS_CONTAINER_CPUS`) so one operation can use every allocated core. |
 | `SDS_COMPUTE_POOL_WORKERS` | auto (CPU alloc) | Worker processes that run the squidpy/scanpy/custom call off the API process's GIL. Defaults to the CPU allocation (`SDS_CONTAINER_CPUS`) so concurrent jobs/sessions spread across the allocated cores; set lower to cap concurrency. |
 | `SDS_RESOURCE_HZ`        | `2`       | Resource-sample broadcast cadence (Hz) for the RAM/CPU strip. |
+| `SDS_PRESENCE_TIMEOUT_S` | `20`      | How long a viewer may go without a heartbeat (the browser sends one every 5 s) before it drops out of the viewer list and its session **edit lock** is released — so a closed tab never leaves a session locked. Raise it on a high-latency deployment; keep it several heartbeats wide. |
 | `SDS_LONG_RUNNING_S`     | `120`     | Long-running-job watchdog threshold (seconds). |
 | `CIRRO_BASE_URL`         | _(unset)_ | Cirro API base URL. Upload is dark unless all three `CIRRO_*` are set. |
 | `CIRRO_CLIENT_ID`        | _(unset)_ | Cirro service-account (client-credentials) id. |

@@ -197,6 +197,13 @@ class Config:
     # cores instead of a fixed pair; override down with SDS_COMPUTE_POOL_WORKERS.
     COMPUTE_POOL_WORKERS = int(os.environ.get("SDS_COMPUTE_POOL_WORKERS", str(_CPU_INT)))
 
+    # Viewer presence + the per-session edit lock (sessions/presence.py). A viewer that
+    # goes silent for this long drops out of the viewer list and releases any lock it
+    # held, so a closed tab never strands a session. Must stay several heartbeats wide
+    # (the client beats every 5 s — hooks/usePresence.ts) so a slow request or a
+    # throttled background tab isn't mistaken for a departure.
+    PRESENCE_TIMEOUT_S = float(os.environ.get("SDS_PRESENCE_TIMEOUT_S", "20"))
+
     RESOURCE_HZ = float(os.environ.get("SDS_RESOURCE_HZ", "2"))   # resource sample cadence
     LONG_RUNNING_S = float(os.environ.get("SDS_LONG_RUNNING_S", "120"))  # watchdog threshold
 

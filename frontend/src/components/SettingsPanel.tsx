@@ -2,6 +2,7 @@ import { lazy, Suspense, useState, type ReactNode } from 'react';
 import { useAppStore } from '../store/sessionStore';
 import { saveSession } from '../api';
 import { reportError } from '../lib/errors';
+import { useEditGate } from '../hooks/usePresence';
 import AcknowledgementsDialog from './AcknowledgementsDialog';
 import CirroUploadDialog from './CirroUploadDialog';
 const SnapshotBrowser = lazy(() => import('./SnapshotBrowser'));
@@ -55,7 +56,7 @@ export default function SettingsPanel({ onNewSession }: Props) {
     snapshotExport, closeSnapshotExport,
   } = useAppStore();
   const unsaved = !!activeSessionId && sessionState?.summary.saved === false;
-  const readOnly = sessionState?.summary.read_only ?? false;
+  const { canEdit, reason: editReason } = useEditGate();
   const { start: startTour } = useTour(spatialDataStudioTour.id, true);
   const uploadsActive = cirroUploads.uploading + cirroUploads.pending;
   const uploadTitle = uploadsActive > 0
@@ -63,19 +64,19 @@ export default function SettingsPanel({ onNewSession }: Props) {
       + (cirroUploads.pending ? `, ${cirroUploads.pending} pending` : '')
     : 'Upload to Cirro';
 
-  const saveDisabledReason = !activeSessionId
+  const saveDisabledReason = !activeSessionId || canEdit
     ? undefined
-    : readOnly
+    : sessionState?.summary.read_only
     ? 'Viewing a read-only snapshot — save a new session from New Session instead.'
-    : undefined;
+    : `${editReason} — they have to unlock it before the session can be saved.`;
 
   // A snapshot renders whatever's on the active canvas — it needs a session with a
   // Spatial or Embeddings view open, but no saved checkpoint (the figure is a
   // standalone artifact with embedded provenance, not a pointer to stored data).
   const snapshotDisabledReason = !activeSessionId
     ? 'Load a session to save a snapshot.'
-    : readOnly
-    ? 'Viewing a read-only session.'
+    : !canEdit
+    ? `${editReason} — the figure is rendered from the session's own display settings.`
     : !snapshotHandler
     ? 'Open the Spatial or Embeddings view to save a snapshot.'
     : null;
@@ -121,7 +122,7 @@ export default function SettingsPanel({ onNewSession }: Props) {
             <PanelItem
               label="Save session"
               onClick={handleSave}
-              disabled={!activeSessionId || !!blockingJob || readOnly}
+              disabled={!activeSessionId || !!blockingJob || !canEdit}
               title={saveDisabledReason ?? (unsaved ? 'Save session — unsaved changes' : undefined)}
               trailing={unsaved ? <span className="w-1.5 h-1.5 rounded-full bg-warn" title="Unsaved changes" /> : undefined}
               icon={

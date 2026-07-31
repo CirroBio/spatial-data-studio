@@ -52,6 +52,9 @@ ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_cate
 | GET  | `/api/sessions/{id}/obs/{column}/values` | — | `{column, values:[{value,count}]}` (unique values of a categorical column, for Edit Annotations) |
 | GET  | `/api/sessions/{id}/var-names?q=&limit=` | — | `{names:[str]}` (server-side gene-name search, prefix matches first; keeps type-to-search responsive on datasets with tens of thousands of genes) |
 | DELETE | `/api/sessions/{id}` | `{save?:bool}` | `{ok:true}` |
+| POST | `/api/presence` | `{client_id, name, session_id\|null}` | `PresenceView` — viewer heartbeat (every ~5 s); also the rename call and the client's initial fetch. Attaching to an unlocked session takes its lock; leaving one releases it. A `session_id` that no longer exists is treated as null |
+| POST | `/api/sessions/{id}/lock` | — | `{ok:true}` — take the edit lock; **409** while another viewer holds it; 400 without `X-SDS-Client-Id` |
+| DELETE | `/api/sessions/{id}/lock` | — | `{ok:true}` — release it; **403** if you don't hold it |
 | POST | `/api/sessions/{id}/jobs` | `Descriptor` | `{job_id, status}` |
 | DELETE | `/api/sessions/{id}/jobs/{jobId}` | — | `{ok:true}` (queued only) |
 | GET  | `/api/sessions/{id}/jobs/{jobId}` | — | `{job_id, status}` (poll a job; only way to await "special" save/subset/… jobs without SSE) |
@@ -138,6 +141,26 @@ is served straight from its own backing store instead.
 
 The only server-side WebP route that remains is `/image/{element}/thumbnail` — a whole-image
 composited preview used by the DataInspector element view, not by the canvas.
+
+### Viewer presence and the edit lock
+Every request carries `X-SDS-Client-Id`: the browser's own id (a uuid it mints and keeps
+in `localStorage`, alongside a two-word display name like `gloomy socrates`). There are no
+accounts — the id only identifies who holds a session's **edit lock**.
+
+Exactly one viewer may change a session at a time. Attaching to an unlocked session takes
+its lock, a mutating request takes it too when it is free, and while another viewer holds
+it **every mutating route answers `423` with `{"detail":"session is locked by <name>"}`**.
+Read paths are never gated, and a caller with no `X-SDS-Client-Id` (the offline CLI, the
+e2e harness) writes freely while nobody holds the lock. A viewer that stops heartbeating
+for 20 s drops out and releases its lock. Full rules: DESIGN §16.5.
+
+```jsonc
+// PresenceView — POST /api/presence response and the `presence.updated` payload.
+// Sessions with no viewers and no lock are omitted (missing = unlocked + unwatched).
+{ "sessions": {
+    "<session-id>": { "lock": { "client_id": "uuid", "name": "gloomy socrates" },
+                      "viewers": ["brave curie", "gloomy socrates"] } } }
+```
 
 ### Session source on create
 - read:  `{kind:"read", namespace:"read", function:"visium", params:{path:"..."}}` — any `path`/`input`/`image_path`/`alignment_file` param must resolve under `DATA_DIR`, else 400.
@@ -277,6 +300,7 @@ Each event: `event: <type>`, `data: <json>`, every payload carries `session_id` 
 | `session.created` | `{session_id, summary}` |
 | `session.updated` | `{session_id, summary}` (a session's summary changed after creation — chiefly `status` flipping `loading`→`ready`/`errored` once an async load/read bootstrap finishes; clients replace the list row by id) |
 | `session.removed` | `{session_id, reason:"closed"|"subset"}` (closed or lasso-evicted; clients prune it from the session list) |
+| `presence.updated` | `PresenceView` (see above) — who is viewing what and who holds each session's edit lock. Published only when that picture changes, not on every heartbeat |
 | `session.errored` | `{session_id, error}` |
 | `resource.sample` | `{global:{rss_mb, work_dir_mb, rss_pct, cpu_pct, cpu_count, rasters_mb}, per_session:{<id>:rss_mb}}` (`rss_pct`: effective memory = RSS + RAM-backed working set, as % of the limit — the fraction the admission boundary gates on; `work_dir_mb`: WORK_DIR usage when RAM-backed, else 0; `cpu_pct`: CPU% summed across the API process and its compute-worker children, where 100% is one fully-used core; `cpu_count`: cores the container may use — the `cpu_pct` denominator; `rasters_mb`: total size of all sessions' normalized-raster caches) |
 | `memory.warning` | `{session_id?, message}` |

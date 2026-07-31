@@ -58,9 +58,24 @@ export function hexToRgb(hex: string): [number, number, number] {
 
 // Per-plot backdrop colors, matching --color-bg for each theme (index.css). The deck
 // canvas is transparent, so this paints the container behind it on the live canvas.
+// Mirrors backend/app/snapshots.py PLOT_BACKGROUNDS so an exported figure matches.
 export const PLOT_BACKGROUNDS: Record<'light' | 'dark', string> = {
-  dark: 'rgb(15 17 23)',
-  light: 'rgb(243 244 246)',
+  dark: 'rgb(7 11 36)',
+  light: 'rgb(250 251 252)',
+};
+
+// Lasso/selection overlay colors, shared by the spatial and embedding canvases. These
+// are UI chrome drawn over the plot, so they follow the theme tokens — success for
+// region labeling, accent for subsetting — not the data palettes above. Keyed by the
+// backdrop they sit on (the plot's own for the spatial canvas, the app theme for the
+// embedding one), since the accent is the bright brand teal on dark and the deeper
+// teal on light.
+export const SELECTION_COLORS: Record<
+  'light' | 'dark',
+  Record<'regions' | 'subset', [number, number, number]>
+> = {
+  dark: { regions: [75, 143, 109], subset: [36, 191, 211] },
+  light: { regions: [46, 125, 85], subset: [14, 124, 160] },
 };
 
 /**

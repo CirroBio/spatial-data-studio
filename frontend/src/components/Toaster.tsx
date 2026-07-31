@@ -14,7 +14,7 @@ function Toast({ n }: { n: AppNotification }) {
     }
   }, [n.id, n.kind, dismiss]);
 
-  const color = n.kind === 'error' ? 'border-danger bg-danger/95 text-white' : 'border-border bg-surface text-text';
+  const color = n.kind === 'error' ? 'border-danger bg-danger/95 text-on-accent' : 'border-border bg-surface text-text';
   return (
     <div className={`pointer-events-auto flex items-start gap-2 rounded border px-3 py-2 text-xs shadow-lg max-w-md ${color}`}>
       <span className="flex-1 whitespace-pre-wrap break-words font-medium">{n.message}</span>

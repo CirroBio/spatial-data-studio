@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type {
   SessionSummary,
   SessionState,
+  SessionPresence,
   FunctionEntry,
   ResourceSample,
   SessionLoadingEvent,
@@ -11,7 +12,8 @@ import type {
   PlotEntry,
 } from '../types';
 import { isSpatialDisplay } from '../types';
-import { putDisplay, getSession, listShapeAnnotations, createShapeAnnotation, updateShapeAnnotation, deleteShapeAnnotation, ApiError, fetchWhenIdle } from '../api';
+import { clientName, setClientName, editBlockReason } from '../lib/presence';
+import { putDisplay, getSession, listShapeAnnotations, createShapeAnnotation, updateShapeAnnotation, deleteShapeAnnotation, postPresence, ApiError, fetchWhenIdle } from '../api';
 import type { ShapeAnnotation, ShapeGeometry, ShapeKind } from '../schemas/annotations';
 import { defaultStroke, defaultFill } from '../schemas/annotations';
 import type { SnapshotExportParams } from '../lib/snapshots';
@@ -52,6 +54,17 @@ interface AppStore {
   setSessions: (sessions: SessionSummary[]) => void;
   upsertSession: (summary: SessionSummary) => void;
   removeSession: (id: string) => void;
+
+  // Who is viewing which session and who holds each session's edit lock, keyed by
+  // session id. Seeded by the presence heartbeat's response and kept current by the
+  // `presence.updated` SSE event (usePresence / useSSE). A session with no entry is
+  // unlocked and unwatched.
+  presence: Record<string, SessionPresence>;
+  setPresence: (presence: Record<string, SessionPresence>) => void;
+  // The viewer's own display name, editable and persisted in localStorage; renaming
+  // heartbeats immediately so the other viewers' lists update without a delay.
+  clientName: string;
+  renameClient: (name: string) => void;
 
   // active session
   activeSessionId: string | null;
@@ -244,6 +257,25 @@ export interface AppNotification {
   message: string;
 }
 
+// A viewer without the edit lock changes display settings locally only — the PUT is
+// skipped (useDisplayPersistence), so the server still holds the lock holder's copy.
+// Adopting the fetched displays wholesale would therefore snap such a viewer's canvas
+// back to the holder's settings on every refetch, so keep the local copy of any display
+// already on screen for the same session; displays the holder has *added* still arrive.
+function withLocalDisplays(store: AppStore, fetched: SessionState): SessionState {
+  const local = store.sessionState;
+  if (!local || local.summary.id !== fetched.summary.id) return fetched;
+  if (!editBlockReason(fetched, store.presence)) return fetched;
+  const localById = new Map(local.app_state.displays.map((d) => [d.id, d]));
+  return {
+    ...fetched,
+    app_state: {
+      ...fetched.app_state,
+      displays: fetched.app_state.displays.map((d) => localById.get(d.id) ?? d),
+    },
+  };
+}
+
 let _notificationSeq = 0;
 
 const THEME_KEY = 'sds-theme';
@@ -276,6 +308,19 @@ export const useAppStore = create<AppStore>((set, get) => ({
   removeSession: (id) =>
     set((s) => ({ sessions: s.sessions.filter((x) => x.id !== id) })),
 
+  presence: {},
+  setPresence: (presence) => set({ presence }),
+  clientName: clientName(),
+  renameClient: (name) => {
+    setClientName(name);
+    set({ clientName: clientName() });
+    postPresence(get().activeSessionId, clientName())
+      .then(({ sessions }) => set({ presence: sessions }))
+      .catch((err) => get().pushNotification({
+        kind: 'error', message: `Rename failed: ${err instanceof Error ? err.message : String(err)}`,
+      }));
+  },
+
   activeSessionId: null,
   // Switching sessions must drop per-session view state: a lingering isolated
   // category would dim the new session's other categories (looking like data loss),
@@ -302,9 +347,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
     try {
       const state = await fetchWhenIdle(() => getSession(sessionId));
       if (get().activeSessionId !== sessionId) return; // switched away mid-fetch
-      set({ sessionState: state });
-      // Restore the persisted isolated category (setActiveSessionId cleared it).
-      const spatial = state.app_state.displays.find(isSpatialDisplay);
+      const applied = withLocalDisplays(get(), state);
+      set({ sessionState: applied });
+      // Restore the persisted isolated category (setActiveSessionId cleared it) — from
+      // the state actually applied, so a viewer without the lock keeps their own.
+      const spatial = applied.app_state.displays.find(isSpatialDisplay);
       get().setIsolatedCategory(spatial ? spatial.encoding.isolated_category ?? null : null);
     } catch (err) {
       // Still busy after retries: the next job.completed re-triggers this, so stay quiet.
@@ -420,7 +467,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
         encoding: { ...spatial.encoding, isolated_category: cat },
       };
       s.updateDisplay(updated);
-      putDisplay(s.activeSessionId, updated).catch(console.error);
+      // Isolation is a display setting, so a viewer without the lock gets it locally
+      // and it stays out of the session (the PUT would 423 anyway).
+      if (!editBlockReason(s.sessionState, s.presence)) {
+        putDisplay(s.activeSessionId, updated).catch(console.error);
+      }
     }
   },
   regionNewSetName: '',

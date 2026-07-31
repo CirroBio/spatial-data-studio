@@ -15,7 +15,9 @@ import type {
   SessionLoadingEvent,
   ResourceSample,
   MemoryWarningEvent,
+  PresenceView,
 } from '../types';
+import { editBlockReason } from '../lib/presence';
 
 // Poll cadence for the fallback below. Matches the read-retry cadence elsewhere
 // (fetchWhenIdle); the fallback only runs where SSE is blocked, so a few seconds
@@ -46,6 +48,7 @@ export function useSSE(): void {
     appendLoadLog,
     appendJobLog,
     clearJobLog,
+    setPresence,
   } = useAppStore();
 
   // Last event id processed, kept across effect re-runs (session switches) so the
@@ -253,11 +256,21 @@ export function useSSE(): void {
 
       'display.updated': (data) => {
         const d = data as DisplayUpdatedEvent;
-        // Same-session viewers see each other's encoding edits live (real collaboration);
-        // a viewer of another session must not have their displays touched.
-        if (d.session_id === activeSessionId) {
+        // Same-session viewers see the lock holder's encoding edits live (real
+        // collaboration); a viewer of another session must not have their displays
+        // touched. A viewer without the lock has their own local display settings
+        // (the PUT is skipped), so leave those alone rather than snapping their canvas
+        // to the holder's — that divergence is the point of view-only access.
+        const store = useAppStore.getState();
+        if (d.session_id === activeSessionId && !editBlockReason(store.sessionState, store.presence)) {
           updateDisplay(d.spec);
         }
+      },
+
+      // Who is viewing what, and who holds each session's edit lock. Published only when
+      // the picture actually changes, so this is not a per-heartbeat event.
+      'presence.updated': (data) => {
+        setPresence((data as PresenceView).sessions);
       },
 
       'resource.sample': (data) => {
@@ -318,5 +331,5 @@ export function useSSE(): void {
       if (pollTimer !== undefined) clearTimeout(pollTimer);
       if (refreshTimer.current) clearTimeout(refreshTimer.current);
     };
-  }, [activeSessionId, upsertSession, setResourceSample, updateDataVersions, updateDisplay, addActiveJob, removeActiveJob, addQueuedEntry, setEntryStatus, setSessionState, refreshSessionState, refreshShapeAnnotations, resolveShapeJob, pushNotification, setActiveSessionId, setSessions, removeSession, setCirroUploads, setLoadProgress, appendLoadLog, appendJobLog, clearJobLog]);
+  }, [activeSessionId, upsertSession, setResourceSample, updateDataVersions, updateDisplay, addActiveJob, removeActiveJob, addQueuedEntry, setEntryStatus, setSessionState, refreshSessionState, refreshShapeAnnotations, resolveShapeJob, pushNotification, setActiveSessionId, setSessions, removeSession, setCirroUploads, setLoadProgress, appendLoadLog, appendJobLog, clearJobLog, setPresence]);
 }

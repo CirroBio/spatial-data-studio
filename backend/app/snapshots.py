@@ -84,7 +84,9 @@ CATEGORY_COLORS: list[tuple[int, int, int]] = [
 MAX_CATEGORICAL_LEVELS = 100  # matches useSpotColors.MAX_CATEGORICAL_LEVELS
 DIM_ALPHA = 30  # isolated-category dimming, matches useSpotColors
 
-PLOT_BACKGROUNDS = {"dark": (15 / 255, 17 / 255, 23 / 255), "light": (243 / 255, 244 / 255, 246 / 255)}
+# Mirrors PLOT_BACKGROUNDS in frontend/src/components/canvas/colorUtils.ts, which in turn
+# tracks --color-bg per theme, so an exported figure matches the canvas it came from.
+PLOT_BACKGROUNDS = {"dark": (7 / 255, 11 / 255, 36 / 255), "light": (250 / 255, 251 / 255, 252 / 255)}
 
 
 def _dir() -> str:

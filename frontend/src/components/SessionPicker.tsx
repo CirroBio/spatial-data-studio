@@ -2,6 +2,7 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useAppStore } from '../store/sessionStore';
 import { deleteSession } from '../api';
 import { reportError } from '../lib/errors';
+import { lockStateOf } from '../lib/presence';
 
 // Header switcher over the currently-loaded sessions. Selecting a session calls
 // setActiveSessionId, which drives the whole view swap (useSession refetches on
@@ -9,7 +10,7 @@ import { reportError } from '../lib/errors';
 // their status or error message (App.renderMain renders a status view for them
 // instead of the canvas). Each row also exposes a delete control.
 export default function SessionPicker() {
-  const { sessions, activeSessionId, setActiveSessionId, removeSession, sessionState } = useAppStore();
+  const { sessions, activeSessionId, setActiveSessionId, removeSession, sessionState, presence } = useAppStore();
   if (sessions.length === 0) return null;
   const active = sessions.find((s) => s.id === activeSessionId);
   // Does the active session have a job in flight? Derived from its durable history
@@ -22,6 +23,9 @@ export default function SessionPicker() {
     !!sessionState &&
     (sessionState.app_state.compute_history.some((h) => h.status === 'queued' || h.status === 'running') ||
       sessionState.app_state.plots.some((p) => p.status === 'queued' || p.status === 'running'));
+  // Every viewer counted once, however many sessions they are spread across (a viewer
+  // is attached to at most one session, so the sum is the app-wide viewer count).
+  const totalViewers = Object.values(presence).reduce((n, p) => n + p.viewers.length, 0);
 
   async function handleDelete(e: React.MouseEvent, id: string, name: string) {
     e.preventDefault();
@@ -66,10 +70,13 @@ export default function SessionPicker() {
         >
           <div className="px-3 py-1 text-[10px] text-muted font-mono uppercase tracking-wide">
             Loaded sessions ({sessions.length})
+            {totalViewers > 0 && ` · ${totalViewers} viewing`}
           </div>
           {sessions.map((s) => {
             const isActive = s.id === activeSessionId;
             const isResident = s.status === 'ready';
+            const lock = lockStateOf(presence[s.id]);
+            const viewers = presence[s.id]?.viewers.length ?? 0;
             return (
               <DropdownMenu.Item
                 key={s.id}
@@ -90,6 +97,22 @@ export default function SessionPicker() {
                     {s.status === 'errored' && <span className="text-[9px] text-danger font-mono">errored</span>}
                     {s.status === 'loading' && <span className="text-[9px] text-muted/50 font-mono">loading</span>}
                     {isActive && <span className="text-[9px] text-accent font-mono">active</span>}
+                    {/* Who holds the edit lock, and how many people are on this session. */}
+                    {lock.state !== 'none' && (
+                      <span
+                        className={`text-[9px] font-mono ${lock.state === 'you' ? 'text-accent' : 'text-warn'}`}
+                        title={lock.state === 'you'
+                          ? 'You hold this session\'s edit lock'
+                          : `${lock.holder} holds this session's edit lock`}
+                      >
+                        {lock.state === 'you' ? 'locked to you' : `locked: ${lock.holder}`}
+                      </span>
+                    )}
+                    {viewers > 0 && (
+                      <span className="text-[9px] text-muted/60 font-mono" title={presence[s.id]?.viewers.join(', ')}>
+                        {viewers} viewing
+                      </span>
+                    )}
                     {isActive && activeHasJob && (
                       <span className="text-[9px] text-accent font-mono flex items-center gap-1">
                         <span className="w-1 h-1 rounded-full bg-accent animate-pulse" />running
@@ -102,10 +125,16 @@ export default function SessionPicker() {
                     <path d="M20 6L9 17l-5-5" />
                   </svg>
                 )}
+                {/* Closing a session another viewer holds the lock on is refused (423),
+                    so the control reads that row's own lock, not the active session's
+                    edit gate. A read-only session can still be closed. */}
                 <button
                   onClick={(e) => handleDelete(e, s.id, s.name)}
-                  title="Delete session"
-                  className="w-4 h-4 flex items-center justify-center rounded text-muted/50 opacity-0 group-hover:opacity-100 hover:text-danger hover:bg-danger/10 transition-all shrink-0"
+                  disabled={lock.state === 'other'}
+                  title={lock.state === 'other'
+                    ? `${lock.holder} holds this session's edit lock — they have to unlock it before it can be deleted`
+                    : 'Delete session'}
+                  className="w-4 h-4 flex items-center justify-center rounded text-muted/50 opacity-0 group-hover:opacity-100 hover:text-danger hover:bg-danger/10 transition-all shrink-0 disabled:hover:text-muted/50 disabled:hover:bg-transparent disabled:cursor-not-allowed"
                 >
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 6L6 18M6 6l12 12" /></svg>
                 </button>

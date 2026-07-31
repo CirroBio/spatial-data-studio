@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-103.9 -134.2 262 262">
+  <!-- Cirro brand mark. Geometry traced from the Cirro logo artwork: a ring of outer
+       radius 100 centred on the origin, with a blank channel carved through it by the
+       two-node link glyph. Kept in sync with src/components/CirroMark.tsx. -->
+  <mask id="channel" maskUnits="userSpaceOnUse" x="-176" y="-176" width="352" height="352">
+    <rect x="-176" y="-176" width="352" height="352" fill="#fff" />
+    <path
+      d="M 17.66 -36.53 A 38.71 38.71 0 0 0 73.12 -68.69 A 40.57 40.57 0 1 1 95.94 -29.34 A 38.71 38.71 0 0 0 40.47 2.82 A 40.57 40.57 0 1 1 17.66 -36.53 Z"
+      fill="#000" stroke="#000" stroke-width="34.8" />
+  </mask>
+  <circle r="79" fill="none" stroke="#0e7ca0" stroke-width="42" mask="url(#channel)" />
+  <path
+    d="M 17.66 -36.53 A 38.71 38.71 0 0 0 73.12 -68.69 A 40.57 40.57 0 1 1 95.94 -29.34 A 38.71 38.71 0 0 0 40.47 2.82 A 40.57 40.57 0 1 1 17.66 -36.53 Z"
+    fill="#24bfd3" />
+</svg>

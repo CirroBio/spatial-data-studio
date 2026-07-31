@@ -26,6 +26,7 @@ app/
     adapter.py           the single CallAdapter.execute (§4.6) — routes a descriptor to Function.execute
     appstate.py          versioned app_state in sdata.attrs["app_state"] + migration (§3.2,§13)
     regions.py           lasso membership -> region-set obs column; transform.py: points->global affine
+    presence.py          viewer heartbeats + the per-session edit lock (one editor at a time) (§16.5)
   transport/
     arrow.py             field-path resolver -> Arrow IPC (obs/obsm/var/X dense, obsp CSR triplets) (§3.3)
     tables.py            data-inspector element inventory + paginated dataframe JSON

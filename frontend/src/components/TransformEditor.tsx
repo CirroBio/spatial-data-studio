@@ -145,7 +145,7 @@ export default function TransformEditor({ sessionId, onClose }: Props) {
             <button
               onClick={save}
               disabled={saving}
-              className="px-3 py-1.5 bg-accent hover:bg-accent/80 disabled:opacity-50 text-white rounded text-xs transition-colors"
+              className="px-3 py-1.5 bg-accent hover:bg-accent/80 disabled:opacity-50 text-on-accent rounded text-xs transition-colors"
             >
               {saving ? 'Saving…' : 'Save'}
             </button>

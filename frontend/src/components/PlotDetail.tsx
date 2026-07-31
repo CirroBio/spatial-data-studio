@@ -14,10 +14,8 @@ export default function PlotDetail() {
   const [redrawing, setRedrawing] = useState(false);
 
   const item = sessionState?.app_state.plots.find((p) => p.id === selectedPlotId) ?? null;
-  const { fn, fields, editing, setEditing, submitting, rerun, runStaged, saveStaged } = useRerunEditor(
-    item,
-    () => setSelectedPlotId(null)
-  );
+  const { fn, fields, editing, setEditing, submitting, rerun, runStaged, saveStaged, canEdit, editBlockedReason } =
+    useRerunEditor(item, () => setSelectedPlotId(null));
   const isPending = item?.status === 'pending';
 
   useEffect(() => {
@@ -88,6 +86,8 @@ export default function PlotDetail() {
   }
 
   const actionBtn = 'px-3 py-1.5 text-xs rounded border border-border bg-surface hover:bg-border text-muted hover:text-text transition-colors';
+  // Lowercased to sit inside a parenthetical, as in Sidebar's disabled-tab titles.
+  const blockedNote = (editBlockedReason ?? '').toLowerCase();
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -99,15 +99,18 @@ export default function PlotDetail() {
             {fn && (
               <button
                 onClick={() => setEditing(true)}
-                className="px-3 py-1.5 bg-accent/20 hover:bg-accent/30 text-accent text-xs rounded transition-colors"
+                disabled={!canEdit}
+                title={editBlockedReason ?? undefined}
+                className="px-3 py-1.5 bg-accent/20 hover:bg-accent/30 text-accent text-xs rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 Edit params
               </button>
             )}
             <button
               onClick={runStaged}
-              disabled={submitting}
-              className="px-3 py-1.5 bg-accent/20 hover:bg-accent/30 text-accent text-xs rounded transition-colors disabled:opacity-50"
+              disabled={submitting || !canEdit}
+              title={editBlockedReason ?? undefined}
+              className="px-3 py-1.5 bg-accent/20 hover:bg-accent/30 text-accent text-xs rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {submitting ? 'Queuing...' : 'Run'}
             </button>
@@ -123,15 +126,18 @@ export default function PlotDetail() {
             {fn && (
               <button
                 onClick={() => setEditing(true)}
-                className="px-3 py-1.5 bg-accent/20 hover:bg-accent/30 text-accent text-xs rounded transition-colors"
+                disabled={!canEdit}
+                title={editBlockedReason ?? undefined}
+                className="px-3 py-1.5 bg-accent/20 hover:bg-accent/30 text-accent text-xs rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 Edit &amp; rerun
               </button>
             )}
             <button
               onClick={handleRedraw}
-              disabled={redrawing}
-              className="px-3 py-1.5 bg-accent/20 hover:bg-accent/30 text-accent text-xs rounded transition-colors disabled:opacity-50"
+              disabled={redrawing || !canEdit}
+              title={editBlockedReason ?? undefined}
+              className="px-3 py-1.5 bg-accent/20 hover:bg-accent/30 text-accent text-xs rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {redrawing ? 'Redrawing...' : 'Redraw'}
             </button>
@@ -170,7 +176,9 @@ export default function PlotDetail() {
             </div>
           ) : item.status === 'invalidated' ? (
             <div className="flex items-center justify-center h-32 text-warn text-sm">
-              Figure invalidated — click Redraw
+              {canEdit
+                ? 'Figure invalidated — click Redraw'
+                : `Figure invalidated — redraw unavailable (${blockedNote})`}
             </div>
           ) : item.status === 'failed' ? (
             <div className="flex items-center justify-center h-32 text-danger text-sm">
@@ -178,7 +186,9 @@ export default function PlotDetail() {
             </div>
           ) : item.status === 'pending' ? (
             <div className="flex items-center justify-center h-32 text-warn text-sm">
-              Staged — edit params or run to draw
+              {canEdit
+                ? 'Staged — edit params or run to draw'
+                : `Staged — running it is unavailable (${blockedNote})`}
             </div>
           ) : null}
 

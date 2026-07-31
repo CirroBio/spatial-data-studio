@@ -32,7 +32,7 @@ export default function ShapeToolbar({ activeShapeTool, setActiveShapeTool, draf
             onClick={() => setActiveShapeTool(activeShapeTool === kind ? null : kind)}
             className={`py-1.5 text-xs rounded border transition-colors ${
               activeShapeTool === kind
-                ? 'bg-accent text-white border-accent'
+                ? 'bg-accent text-on-accent border-accent'
                 : 'bg-bg border-border text-text hover:border-accent'
             }`}
           >
@@ -49,7 +49,7 @@ export default function ShapeToolbar({ activeShapeTool, setActiveShapeTool, draf
             <button
               onClick={onClosePolygon}
               disabled={draftVertexCount < 3}
-              className="flex-1 py-1.5 text-xs rounded border border-accent bg-accent text-white enabled:hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
+              className="flex-1 py-1.5 text-xs rounded border border-accent bg-accent text-on-accent enabled:hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
             >
               Close Shape
             </button>

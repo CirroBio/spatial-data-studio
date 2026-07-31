@@ -61,6 +61,24 @@ export interface SessionSummary {
   error: string | null;  // failure message when status === 'errored'; null otherwise
 }
 
+// Live viewer presence + edit lock for one session (backend sessions/presence.py).
+// `viewers` holds every attached viewer's display name (the holder included).
+export interface SessionLock {
+  client_id: string;
+  name: string;
+}
+
+export interface SessionPresence {
+  lock: SessionLock | null;
+  viewers: string[];
+}
+
+// POST /api/presence response and the `presence.updated` SSE payload. Sessions with
+// no viewers and no lock are omitted, so a missing entry means unlocked + unwatched.
+export interface PresenceView {
+  sessions: Record<string, SessionPresence>;
+}
+
 export interface ObsField {
   name: string;
   kind: 'categorical' | 'numeric';

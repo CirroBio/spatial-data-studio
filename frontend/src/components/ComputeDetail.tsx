@@ -13,10 +13,8 @@ export default function ComputeDetail() {
   const item = sessionState?.app_state.compute_history.find(
     (h) => h.id === selectedComputeId
   ) ?? null;
-  const { fn, fields, editing, setEditing, submitting, rerun, runStaged, saveStaged } = useRerunEditor(
-    item,
-    () => setSelectedComputeId(null)
-  );
+  const { fn, fields, editing, setEditing, submitting, rerun, runStaged, saveStaged, canEdit, editBlockedReason } =
+    useRerunEditor(item, () => setSelectedComputeId(null));
   const isPending = item?.status === 'pending';
   // While a reader/compute runs its stored log is empty (delivered at completion), so
   // fall back to the live buffer streamed over `job.log` (transport/livelog.py).
@@ -52,15 +50,18 @@ export default function ComputeDetail() {
             {fn && (
               <button
                 onClick={() => setEditing(true)}
-                className="px-3 py-1.5 bg-accent/20 hover:bg-accent/30 text-accent text-xs rounded transition-colors"
+                disabled={!canEdit}
+                title={editBlockedReason ?? undefined}
+                className="px-3 py-1.5 bg-accent/20 hover:bg-accent/30 text-accent text-xs rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 {isPending ? 'Edit params' : 'Edit & rerun'}
               </button>
             )}
             <button
               onClick={() => (isPending ? runStaged() : rerun(item.params))}
-              disabled={submitting}
-              className="px-3 py-1.5 bg-accent/20 hover:bg-accent/30 text-accent text-xs rounded transition-colors disabled:opacity-50"
+              disabled={submitting || !canEdit}
+              title={editBlockedReason ?? undefined}
+              className="px-3 py-1.5 bg-accent/20 hover:bg-accent/30 text-accent text-xs rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {submitting ? 'Queuing...' : isPending ? 'Run' : 'Re-run'}
             </button>

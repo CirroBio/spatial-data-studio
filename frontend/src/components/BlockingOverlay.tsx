@@ -26,6 +26,7 @@ export default function BlockingOverlay() {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-[1px]">
       <div className="flex flex-col items-center gap-3">
         <div className="w-8 h-8 rounded-full border-2 border-border border-t-accent animate-spin" />
+        {/* Sits on the black scrim, not on a themed surface, so this label stays white. */}
         <span className="text-sm text-white">{blockingJob.label}</span>
       </div>
 

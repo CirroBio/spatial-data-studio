@@ -180,8 +180,7 @@ export default function RegionsPanel() {
             type="button"
             onClick={handleApplyLabel}
             disabled={applying || !canApply}
-            className="py-1.5 text-xs text-white rounded transition-colors disabled:opacity-40"
-            style={{ background: '#3d9970' }}
+            className="py-1.5 text-xs bg-success hover:bg-success/90 text-on-accent rounded transition-colors disabled:opacity-40"
           >
             {applying ? 'Labeling...' : `Apply label${regionCount ? ` (n=${regionCellCount.toLocaleString()})` : ''}`}
           </button>

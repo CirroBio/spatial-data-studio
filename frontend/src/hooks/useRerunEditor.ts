@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useAppStore } from '../store/sessionStore';
 import { submitJob, runPendingStep, editPendingStep, getSession } from '../api';
 import { reportError } from '../lib/errors';
+import { useEditGate } from './usePresence';
 import type { SessionFields } from '../types';
 
 export const EMPTY_FIELDS: SessionFields = {
@@ -18,8 +19,12 @@ interface RerunItem {
 // Shared edit-and-rerun state for the compute/plot detail views: the function
 // entry + session fields the form needs, an editing toggle (reset when the
 // selected item changes), and a submit that queues a fresh job then closes.
+// Every submit here is a mutating route, so it also carries the edit gate for the
+// callers' buttons — the detail views stay readable without the lock, but rerunning
+// from them does not.
 export function useRerunEditor(item: RerunItem | null, onDone: () => void) {
   const { functions, sessionState, activeSessionId, setSessionState } = useAppStore();
+  const { canEdit, reason: editBlockedReason } = useEditGate();
   const [editing, setEditing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
@@ -27,6 +32,13 @@ export function useRerunEditor(item: RerunItem | null, onDone: () => void) {
   const fields = sessionState?.fields ?? EMPTY_FIELDS;
 
   useEffect(() => setEditing(false), [item?.id]);
+
+  // Losing the gate mid-edit (someone else took the lock) leaves a form whose submit
+  // would be refused, so fold the editor away — the same move Sidebar makes for a
+  // mutating tab that is open when the gate closes.
+  useEffect(() => {
+    if (!canEdit) setEditing(false);
+  }, [canEdit]);
 
   async function rerun(params: Record<string, unknown>) {
     if (!activeSessionId || !item) return;
@@ -71,5 +83,5 @@ export function useRerunEditor(item: RerunItem | null, onDone: () => void) {
     }
   }
 
-  return { fn, fields, editing, setEditing, submitting, rerun, runStaged, saveStaged };
+  return { fn, fields, editing, setEditing, submitting, rerun, runStaged, saveStaged, canEdit, editBlockedReason };
 }

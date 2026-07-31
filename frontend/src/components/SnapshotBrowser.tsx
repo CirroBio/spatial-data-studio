@@ -103,7 +103,7 @@ function SnapshotDetail({ snapshot, onDelete }: { snapshot: Snapshot; onDelete: 
       <div className="flex flex-wrap gap-2">
         {snapshot.formats.map((f) => (
           <a key={f} href={snapshotFileUrl(snapshot.name, f)} download
-            className="px-3 py-1.5 bg-accent hover:bg-accent/80 text-white rounded text-xs transition-colors">
+            className="px-3 py-1.5 bg-accent hover:bg-accent/80 text-on-accent rounded text-xs transition-colors">
             Download {f.toUpperCase()}
           </a>
         ))}

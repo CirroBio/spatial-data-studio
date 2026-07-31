@@ -4,6 +4,7 @@ import PanelTabs, { type PanelTab } from './PanelTabs';
 import { useAppStore } from '../store/sessionStore';
 import { deleteHistoryEntry, getRecipe, importRecipe, getSession, runAllPending } from '../api';
 import { reportError } from '../lib/errors';
+import { useEditGate } from '../hooks/usePresence';
 import StatusBadge, { type Status } from './StatusBadge';
 import FunctionPicker from './FunctionPicker';
 import RecipeGallery from './RecipeGallery';
@@ -87,14 +88,14 @@ function HistoryList({
   onSelect,
   onDelete,
   emptyLabel,
-  readOnly,
+  canEdit,
 }: {
   items: HistoryItem[];
   selectedId: string | null;
   onSelect: (id: string) => void;
   onDelete: (e: React.MouseEvent, id: string) => void;
   emptyLabel: string;
-  readOnly: boolean;
+  canEdit: boolean;
 }) {
   if (items.length === 0) {
     return <div className="px-3 py-4 text-xs text-muted/60 text-center">{emptyLabel}</div>;
@@ -119,7 +120,7 @@ function HistoryList({
               </div>
             )}
           </button>
-          {!readOnly && item.status !== 'queued' && item.status !== 'running' && (
+          {canEdit && item.status !== 'queued' && item.status !== 'running' && (
             <button
               onClick={(e) => onDelete(e, item.id)}
               title="Delete from history"
@@ -148,6 +149,8 @@ export default function Sidebar() {
     pushNotification,
     leftMenuOpen,
   } = useAppStore();
+  const { canEdit, reason } = useEditGate();
+  const editReason = (reason ?? '').toLowerCase();
 
   const [showPicker, setShowPicker] = useState(false);
   const [showRecipes, setShowRecipes] = useState(false);
@@ -207,7 +210,6 @@ export default function Sidebar() {
     }
   }
 
-  const readOnly = sessionState?.summary.read_only ?? false;
   const computeItems = sessionState?.app_state.compute_history ?? [];
   const plotItems = sessionState?.app_state.plots ?? [];
   const pendingCount =
@@ -218,12 +220,13 @@ export default function Sidebar() {
   const effectClass = sidebarTab === 'plots' ? 'plot' : 'compute';
   const MUTATING_TABS: SidebarTab[] = ['regions', 'annotations', 'subsetting'];
 
-  // A mutating tab left active from a previous (editable) session must not stay
-  // selected after switching to a read-only one — its trigger disables, but Radix
-  // Tabs.Content still renders whatever `value` already is.
+  // A mutating tab left active must not stay selected once this viewer can no longer
+  // change the session (switched to a read-only snapshot, or another viewer took the
+  // lock) — its trigger disables, but Radix Tabs.Content still renders whatever `value`
+  // already is.
   useEffect(() => {
-    if (readOnly && MUTATING_TABS.includes(sidebarTab)) setSidebarTab('compute');
-  }, [readOnly, sidebarTab, setSidebarTab]);
+    if (!canEdit && MUTATING_TABS.includes(sidebarTab)) setSidebarTab('compute');
+  }, [canEdit, sidebarTab, setSidebarTab]);
 
   return (
     <aside className={`shrink-0 overflow-hidden border-r border-border bg-surface transition-[width] duration-200 ease-in-out ${leftMenuOpen ? 'w-60' : 'w-0'}`}>
@@ -235,11 +238,11 @@ export default function Sidebar() {
       >
         <PanelTabs
           tabs={SIDEBAR_TABS.map((t) => {
-            const disabled = readOnly && MUTATING_TABS.includes(t.id);
+            const disabled = !canEdit && MUTATING_TABS.includes(t.id);
             return {
               ...t,
               disabled,
-              title: disabled ? `${t.label} (unavailable — viewing a read-only snapshot)` : t.label,
+              title: disabled ? `${t.label} (unavailable — ${editReason})` : t.label,
             };
           })}
           value={sidebarTab}
@@ -254,7 +257,7 @@ export default function Sidebar() {
             onSelect={(id) => setSelectedComputeId(selectedComputeId === id ? null : id)}
             onDelete={handleDelete}
             emptyLabel="No compute history"
-            readOnly={readOnly}
+            canEdit={canEdit}
           />
         </Tabs.Content>
 
@@ -265,7 +268,7 @@ export default function Sidebar() {
             onSelect={(id) => setSelectedPlotId(selectedPlotId === id ? null : id)}
             onDelete={handleDelete}
             emptyLabel="No plots"
-            readOnly={readOnly}
+            canEdit={canEdit}
           />
         </Tabs.Content>
 
@@ -282,9 +285,9 @@ export default function Sidebar() {
         </Tabs.Content>
       </Tabs.Root>
 
-      {/* Add + recipe controls — only for compute/plots operation tabs, and never
-          on a read-only snapshot session (every route here would 403). */}
-      {activeSessionId && isOperationTab && !readOnly && (
+      {/* Add + recipe controls — only for compute/plots operation tabs, and never when
+          this viewer can't change the session (every route here would be refused). */}
+      {activeSessionId && isOperationTab && canEdit && (
         <div className="p-2 border-t border-border shrink-0 flex flex-col gap-1.5">
           {pendingCount > 0 && (
             <button
@@ -297,14 +300,14 @@ export default function Sidebar() {
           <button
             onClick={() => setShowPicker(true)}
             data-tour={TourAnchors.AddFunction}
-            className="w-full py-1.5 text-xs bg-accent hover:bg-accent/90 text-white rounded transition-colors"
+            className="w-full py-1.5 text-xs bg-accent hover:bg-accent/90 text-on-accent rounded transition-colors"
           >
             {sidebarTab === 'plots' ? '+ Add plot function' : '+ Run function'}
           </button>
           <button
             onClick={() => setShowRecipes(true)}
             data-tour={TourAnchors.BrowseRecipes}
-            className="w-full py-1.5 text-xs bg-accent hover:bg-accent/90 text-white rounded transition-colors"
+            className="w-full py-1.5 text-xs bg-accent hover:bg-accent/90 text-on-accent rounded transition-colors"
           >
             + Run recipe
           </button>

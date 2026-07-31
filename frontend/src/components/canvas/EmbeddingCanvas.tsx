@@ -5,6 +5,7 @@ import { PolygonLayer, PathLayer, ScatterplotLayer } from '@deck.gl/layers';
 import type { Layer, PickingInfo } from '@deck.gl/core';
 import { useAppStore } from '../../store/sessionStore';
 import { useArrowField } from '../../hooks/useArrowField';
+import { useEditGate } from '../../hooks/usePresence';
 import { addDisplay as postDisplay } from '../../api';
 import { reportError } from '../../lib/errors';
 import { indicesInRings } from '../../lib/pointInPolygon';
@@ -17,6 +18,7 @@ import { buildSpotLayer } from './buildSpotLayer';
 import EmbeddingControls from './EmbeddingControls';
 import ColorBySelect from './ColorBySelect';
 import { colorByLabel } from './colorBy';
+import { SELECTION_COLORS } from './colorUtils';
 import { LoadingCue, CellColorLegend, DrawHint } from './CanvasOverlays';
 
 interface Props {
@@ -76,6 +78,9 @@ function EmbeddingEmptyState({
   const [selectedKey, setSelectedKey] = useState(obsmFields[0]?.name ?? '');
   const [colorBy, setColorBy] = useState(firstCategorical ? `obs:${firstCategorical.name}` : '');
   const [creating, setCreating] = useState(false);
+  // Creating the view POSTs a display to the session, so it needs the edit lock even
+  // though everything else about this canvas is read-only.
+  const { canEdit, reason: editBlockedReason } = useEditGate();
 
   if (obsmFields.length === 0) {
     return (
@@ -150,8 +155,9 @@ function EmbeddingEmptyState({
         <button
           type="button"
           onClick={handleCreate}
-          disabled={creating}
-          className="mt-1 w-full px-3 py-1 bg-accent hover:bg-accent/80 text-white rounded text-xs transition-colors disabled:opacity-50"
+          disabled={creating || !canEdit}
+          title={editBlockedReason ?? undefined}
+          className="mt-1 w-full px-3 py-1 bg-accent hover:bg-accent/80 text-on-accent rounded text-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {creating ? 'Creating…' : 'Create embedding view'}
         </button>
@@ -180,9 +186,10 @@ function EmbeddingCanvasView({
   const {
     sessionState, isolatedCategory, openSnapshotExport, setSnapshotHandler,
     drawPolygons, drawRing, addDrawVertex, clearDraw, setRegionCellCount, setRegionCellIndices,
+    theme,
   } = useAppStore();
   const dataVersions = sessionState?.data_versions ?? {};
-  const readOnly = sessionState?.summary.read_only ?? false;
+  const { canEdit } = useEditGate();
 
   const { is_3d, x_component, y_component, z_component } = display.encoding;
   const coordsPath = `obsm:${display.encoding.obsm_key}`;
@@ -265,7 +272,9 @@ function EmbeddingCanvasView({
   // Shape annotations aren't offered here (they're tissue-coordinate decorations), so
   // only the cell-selecting modes arm drawing.
   const lassoMode = canvasMode === 'regions' || canvasMode === 'subset';
-  const selColor: [number, number, number] = canvasMode === 'regions' ? [72, 187, 120] : [124, 108, 246];
+  // Unlike the spatial canvas, the embedding plot has no backdrop of its own — it sits
+  // on the app background, so the overlay color keys off the app theme.
+  const selColor = SELECTION_COLORS[theme][canvasMode === 'regions' ? 'regions' : 'subset'];
 
   // A click adds a lasso vertex. In 2D the vertex is an embedding coordinate; in 3D the
   // orbit camera makes an unprojected world point meaningless, so we capture the screen
@@ -354,7 +363,7 @@ function EmbeddingCanvasView({
   }, [lassoMode, is_3d, drawPolygons, drawRing, canvasMode]);
 
   const { persistDisplay, currentSpec, updateEncoding } = useDisplayPersistence(
-    display, sessionId, readOnly, isEmbeddingDisplay);
+    display, sessionId, canEdit, isEmbeddingDisplay);
 
   // Persist a camera move as the display's viewport; 3D keeps the orbit angles,
   // 2D just target + zoom.

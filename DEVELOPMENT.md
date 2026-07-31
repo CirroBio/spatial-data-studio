@@ -30,6 +30,11 @@ core, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 - **Execution is an audit log, not a replay graph.** Compute mutates the object in
   place; there is no undo and no reactive recomputation. App state persists in
   `sdata.attrs["app_state"]` and round-trips through the Zarr store.
+- **One editor per session.** Since every viewer shares one in-memory object, a
+  per-session *edit lock* decides who may mutate it: viewers heartbeat
+  `POST /api/presence`, attaching to an unlocked session takes its lock, and every
+  mutating route refuses a request from anyone else (423). Presence and locks are
+  process-memory only, keyed by a client-minted id — no accounts, no auth (DESIGN §16.5).
 
 **Foundational principle — zero hardcoded library functions.** No part of the app
 names a specific library function. Operations are discovered by reflection at
@@ -52,14 +57,17 @@ backend/    FastAPI app
                   zarr), cirro (status/projects/folders + the background upload queue),
                   snapshots (figure save/preview/list/delete + checkpoint serving), recipes
   app/deps.py     shared FastAPI helpers used by main.py and every router: the MANAGER
-                  holder, session lookup (_session/_writable_session), the read-lock/executor
-                  wrappers, and the image-render admission semaphore
+                  holder, session lookup (_session/_writable_session — the read-only + edit-lock
+                  guard every mutating route goes through), the per-request client id
+                  (bind_client_id/CLIENT_ID), the read-lock/executor wrappers, and the
+                  image-render admission semaphore
   app/registry/   base.py (abstract Function + contract envelope), library_fn.py (one reflection
                   executor for squidpy/scanpy/spatialdata-io), custom/ (non-squidpy functions),
                   library_catalog.yaml (opt-in library manifests), terms.yaml + dictionary.py
                   (Parameter Term Dictionary), introspect.py (Registry)
   app/manifest/   data manifest contributor registry + seed contributors
-  app/sessions/   manager, session (queue/worker), adapter (routes to Function.execute), regions,
+  app/sessions/   manager, session (queue/worker), presence (viewer list + per-session edit lock),
+                  adapter (routes to Function.execute), regions,
                   shape_annotations (arrows/lines/boxes/polygons/ellipses/text -> sdata.shapes["annotations"]),
                   appstate, transform (points->global affine)
   app/schemas/    pydantic request-body schemas (annotations.py, kept in sync with
@@ -104,8 +112,10 @@ Component-level notes: [`backend/README.md`](backend/README.md),
 | Change the REST/SSE/Arrow API | `backend/app/main.py` (core routes) or `backend/app/routers/` (imaging/cirro/snapshots/recipes) + `backend/app/transport/` | [docs/CONTRACT.md](docs/CONTRACT.md) |
 | Change what streams live during import | `backend/app/transport/livelog.py` (+ `capture_log` in `registry/base.py`) | below |
 | Change session/queue/worker behavior | `backend/app/sessions/` | [DESIGN.md](DESIGN.md) §5–6 |
+| Change who may edit a session (presence, the edit lock, viewer names) | `backend/app/sessions/presence.py` + `deps.py` (`_claim_lock`) + `frontend/src/lib/presence.ts` (identity + gate) + `hooks/usePresence.ts` (heartbeat) + `components/LockBadge.tsx` | [DESIGN.md](DESIGN.md) §16.5 |
 | Change the checkpoint/persistence format | `backend/app/persistence/store.py` | [DESIGN.md](DESIGN.md) §3 |
 | Change the deck.gl canvas / rendering | `frontend/src/components/canvas/` | [frontend/README.md](frontend/README.md) |
+| Retune the palette, theme tokens, fonts, or the Cirro mark | `frontend/src/index.css` (tokens) + `frontend/tailwind.config.js` (names) + `frontend/src/components/CirroMark.tsx` / `public/favicon.svg` (logo) | [frontend/README.md](frontend/README.md) |
 | Change the canvas minimap (overview inset) | `frontend/src/components/canvas/Minimap.tsx` (overlay + navigation) + `SpatialCanvas.tsx` (extent/thumbnail wiring) + `backend/app/snapshots.py` `_draw_minimap` (figure inset) | [DESIGN.md](DESIGN.md) §9.11 |
 | Change how the browser reads raw image data (client-side Viv compositing) | `backend/app/routers/imaging.py` raster route + `/image/{element}/info` fields; `rasters.py` `raster_stores` map | [docs/CONTRACT.md](docs/CONTRACT.md) |
 | Change the parameter-form UI | `frontend/src/components/forms/` (`FunctionFields` renders the widgets incl. the `FsPicker` filesystem picker; `FunctionForm` adds the submit footer; the New Session dialog reuses `FunctionFields` as the reader's input form) | — |
@@ -247,7 +257,9 @@ and fails open to the mount-time `size=` otherwise.
   endpoints, cross-session isolation, saving a session that ran
   `filter_rank_genes_groups` (whose `uns` record arrays carry NaN gene names), the
   eight spatial/multi-sample custom methods on `xenium_tma.zarr`, the
-  cell-segmentation `/shapes/{element}/geoarrow` polygons on `xenium.zarr`, the
+  cell-segmentation `/shapes/{element}/geoarrow` polygons on `xenium.zarr`, viewer
+  presence + the per-session edit lock (auto-lock on attach, 423 for everyone else,
+  release → take, and the heartbeat timeout freeing a lock — `run_session_lock_flow`), the
   client-compositing raster route + `/info` manifest (raw zarr served with Range
   206) on `xenium.zarr`, an image tile keeping its signal after a reshaping compute
   (filter_cells) — i.e. the per-session raster store isn't deleted while the
@@ -269,11 +281,16 @@ and fails open to the mount-time `size=` otherwise.
 - `cd frontend && npx tsc --noEmit -p tsconfig.app.json && npm run build` — typecheck
   + build.
 - `cd frontend && npm run check:tours` — static guard that every guided-tour anchor
-  has a matching `data-tour="…"` attribute in the source.
+  reaches the DOM: as a `data-tour="…"` attribute placed directly, or as the prop a
+  shared component renders that attribute from (`dataTour` in `PanelTabs`) — the check
+  resolves those forwarding props itself. A component that instead re-spreads props
+  onto `data-tour` hides the anchor from it, so name the prop.
 - `cd frontend && npm run test:e2e` — Playwright browser e2e tests (`frontend/e2e/`).
   Boots the real backend (against `test-data/`) and the Vite dev server, drives the
-  app in Chromium to open `visium_hne`, run a compute function end-to-end, browse the
-  result, and walk the guided tour.
+  app in Chromium to import `visium_hne` through the New Session reader form, run a
+  compute function end-to-end, browse the result, and walk the guided tour. The
+  webServer entries reuse whatever already listens on 5173/8000, so make sure those
+  are this app's servers and not another project's.
 
 ## Test datasets
 

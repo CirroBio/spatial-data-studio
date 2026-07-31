@@ -54,6 +54,11 @@ interface CanvasControlsProps {
   onZoom: (delta: number) => void;
   onFit: () => void;
   onEditTransform: () => void;
+  // False when this viewer can't change the session (read-only snapshot, or another
+  // viewer holds the edit lock): everything else here is a display setting that stays
+  // on this screen, but the transform editor writes to the session and its checkpoint.
+  canEdit: boolean;
+  editBlockedReason: string | null;
 }
 
 type DisplayTab = 'layers' | 'cells' | 'image';
@@ -70,7 +75,7 @@ function IconToggle({
       aria-pressed={active}
       className={`w-7 h-7 flex items-center justify-center rounded border transition-colors ${
         active
-          ? 'border-accent bg-accent text-white'
+          ? 'border-accent bg-accent text-on-accent'
           : 'border-border text-muted hover:text-accent hover:border-accent'
       }`}
     >
@@ -149,6 +154,8 @@ export default function CanvasControls({
   onZoom,
   onFit,
   onEditTransform,
+  canEdit,
+  editBlockedReason,
 }: CanvasControlsProps) {
   // The shapes overlay needs a polygon element; with none available the Cells layer
   // is Points-only, regardless of any persisted render_mode.
@@ -270,14 +277,16 @@ export default function CanvasControls({
             <button
               type="button"
               onClick={onFit}
-              className="py-1 text-[11px] bg-accent text-white rounded hover:bg-accent/90 transition-colors"
+              className="py-1 text-[11px] bg-accent text-on-accent rounded hover:bg-accent/90 transition-colors"
             >
               Fit to data
             </button>
             <button
               type="button"
               onClick={onEditTransform}
-              className="py-1 text-[11px] bg-bg border border-border rounded text-text hover:border-accent transition-colors"
+              disabled={!canEdit}
+              title={editBlockedReason ?? undefined}
+              className="py-1 text-[11px] bg-bg border border-border rounded text-text hover:border-accent transition-colors disabled:opacity-40 disabled:hover:border-border"
             >
               Edit points transform
             </button>

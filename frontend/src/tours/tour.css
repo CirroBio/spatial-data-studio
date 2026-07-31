@@ -8,7 +8,7 @@
   border: 1px solid rgb(var(--color-border));
   border-radius: 8px;
   box-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
-  font-family: system-ui, -apple-system, sans-serif;
+  font-family: 'Geist Variable', system-ui, -apple-system, sans-serif;
   max-width: 320px;
 }
 
@@ -55,12 +55,12 @@
 .driver-popover button.driver-popover-next-btn {
   background: rgb(var(--color-accent));
   border-color: rgb(var(--color-accent));
-  color: #fff;
+  color: rgb(var(--color-on-accent));
 }
 
 .driver-popover button.driver-popover-next-btn:hover {
   background: rgb(var(--color-accent) / 0.9);
-  color: #fff;
+  color: rgb(var(--color-on-accent));
 }
 
 .driver-popover .driver-popover-close-btn {

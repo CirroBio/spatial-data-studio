@@ -5,6 +5,7 @@ import { isSpatialDisplay, isEmbeddingDisplay } from './types';
 import { resolveRegionSetColumn } from './lib/regions';
 import { useSSE } from './hooks/useSSE';
 import { useSession } from './hooks/useSession';
+import { usePresence, useEditGate } from './hooks/usePresence';
 import Header from './components/Header';
 import Sidebar from './components/Sidebar';
 import SettingsPanel from './components/SettingsPanel';
@@ -51,6 +52,10 @@ export default function App() {
   } = useAppStore();
 
   useSession(activeSessionId);
+  // Announce this viewer on the session it is looking at, which also takes that
+  // session's edit lock when nobody holds it (hooks/usePresence.ts).
+  usePresence(activeSessionId);
+  const { canEdit } = useEditGate();
 
   const [showNewSession, setShowNewSession] = useState(false);
   const [backendReady, setBackendReady] = useState(false);
@@ -120,11 +125,11 @@ export default function App() {
   // is showing.
   const detail = selectedComputeId ? <ComputeDetail /> : selectedPlotId ? <PlotDetail /> : null;
 
-  // Canvas mode is set by which tab is active — never a drawing mode on a
-  // read-only snapshot session (Sidebar also resets off a mutating tab, but the
-  // canvas checks read_only directly too rather than depending on that timing).
-  const readOnly = sessionState?.summary.read_only ?? false;
-  const canvasMode = readOnly ? null
+  // Canvas mode is set by which tab is active — never a drawing mode when this viewer
+  // can't change the session (a read-only snapshot, or another viewer holds the edit
+  // lock). Sidebar also resets off a mutating tab, but the canvas checks the gate
+  // directly too rather than depending on that timing.
+  const canvasMode = !canEdit ? null
     : sidebarTab === 'regions'
     ? 'regions'
     : sidebarTab === 'annotations'
@@ -162,7 +167,7 @@ export default function App() {
           <span className="text-lg">No session open</span>
           <button
             onClick={() => setShowNewSession(true)}
-            className="px-4 py-2 bg-accent hover:bg-accent/80 text-white rounded text-sm transition-colors"
+            className="px-4 py-2 bg-accent hover:bg-accent/80 text-on-accent rounded text-sm transition-colors"
           >
             New Session
           </button>
@@ -294,7 +299,7 @@ export default function App() {
                   key={mode}
                   onClick={() => setMainView(mode)}
                   className={`px-3 py-1 font-medium transition-colors ${
-                    mainView === mode ? 'bg-accent text-white' : 'text-muted hover:text-text'
+                    mainView === mode ? 'bg-accent text-on-accent' : 'text-muted hover:text-text'
                   }`}
                 >
                   {label}

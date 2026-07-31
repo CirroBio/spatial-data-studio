@@ -4,6 +4,7 @@ import { useAppStore } from '../store/sessionStore';
 import { submitJob } from '../api';
 import FunctionForm from './forms/FunctionForm';
 import { formatError } from '../lib/format';
+import { useEditGate } from '../hooks/usePresence';
 import { EMPTY_FIELDS } from '../hooks/useRerunEditor';
 import type { FunctionEntry } from '../types';
 
@@ -15,6 +16,10 @@ interface Props {
 
 export default function FunctionPicker({ sessionId, effectClass, onClose }: Props) {
   const { functions, sessionState } = useAppStore();
+  // Sidebar only offers this dialog to a viewer who can edit, but the lock can change
+  // hands while it is open, and submitting would then be refused — so read the gate here
+  // too. Browsing the catalogue and its docs stays available either way.
+  const { reason: editBlockedReason } = useEditGate();
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<FunctionEntry | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -186,6 +191,7 @@ export default function FunctionPicker({ sessionId, effectClass, onClose }: Prop
                   sessionId={sessionId}
                   onSubmit={handleSubmit}
                   submitting={submitting}
+                  blockedReason={editBlockedReason}
                 />
               </div>
             </div>

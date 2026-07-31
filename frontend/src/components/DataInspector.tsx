@@ -301,7 +301,7 @@ function TableView({
                   key={f}
                   onClick={() => onField(f)}
                   className={`px-2.5 py-0.5 font-mono transition-colors ${
-                    sel.field === f ? 'bg-accent text-white' : 'bg-bg text-muted hover:text-text'
+                    sel.field === f ? 'bg-accent text-on-accent' : 'bg-bg text-muted hover:text-text'
                   }`}
                 >
                   {f}

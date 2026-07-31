@@ -3,13 +3,14 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request, Response, WebSocket
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import config, data_roots, within_data_dir
 from .registry.introspect import REGISTRY
 from .sessions.manager import SessionManager
+from .sessions.presence import PRESENCE, clean_name
 from .transport.sse import BUS
 from .transport import arrow
 from .transport import tables
@@ -17,7 +18,8 @@ from .transport.compression import SelectiveGZipMiddleware
 from .prewarm import PREWARM
 from . import datasets
 from . import deps
-from .deps import _session, _writable_session, _mgr, _in_executor, _read_locked
+from .deps import (_session, _writable_session, _claim_lock, _mgr, _in_executor,
+                   _read_locked, bind_client_id, CLIENT_ID)
 from .routers import imaging as imaging_router, cirro as cirro_router
 from .routers import snapshots as snapshots_router, recipes as recipes_router
 
@@ -77,7 +79,11 @@ async def _resource_loop():
         await asyncio.sleep(interval)
 
 
-app = FastAPI(title="Spatial Data Studio", lifespan=lifespan)
+# The app-wide `bind_client_id` dependency binds the calling browser client's
+# identity (X-SDS-Client-Id) for every request, which is what the edit-lock guard in
+# deps reads. Registered here rather than per route so no handler can forget it.
+app = FastAPI(title="Spatial Data Studio", lifespan=lifespan,
+              dependencies=[Depends(bind_client_id)])
 app.add_middleware(SelectiveGZipMiddleware)
 
 # Self-contained route domains live in routers/ (imports above); the rest — sessions,
@@ -232,7 +238,53 @@ async def close_session(sid: str, body: dict | None = None):
     save = bool((body or {}).get("save"))
     if save:
         _writable_session(sid)  # closing read-only is fine; overwriting its checkpoint is not
+    else:
+        _claim_lock(sid)  # ...but never close a session another viewer holds the lock on
     await _in_executor(_mgr().close, sid, save)
+    return {"ok": True}
+
+
+# ---- viewer presence + the per-session edit lock (DESIGN §16.5) -------------
+@app.post("/api/presence")
+async def presence_heartbeat(body: dict):
+    """Heartbeat from one browser client: its client-minted id, its display name, and
+    the session it is looking at (null when none). Doubles as the rename call (the name
+    simply arrives changed) and as the client's initial fetch — the response is the same
+    view the `presence.updated` SSE event carries. Attaching to an unlocked session takes
+    that session's lock; see sessions/presence.py for the full rules."""
+    client_id = str(body.get("client_id") or "").strip()
+    if not client_id:
+        raise HTTPException(400, "client_id is required")
+    session_id = body.get("session_id")
+    if session_id is not None and _mgr().get(session_id) is None:
+        session_id = None  # the client is still showing a session that has since closed
+    return PRESENCE.heartbeat(client_id, clean_name(body.get("name"), client_id), session_id)
+
+
+def _client_id_or_400() -> str:
+    client_id = CLIENT_ID.get()
+    if not client_id:
+        raise HTTPException(400, "X-SDS-Client-Id header is required to hold a lock")
+    return client_id
+
+
+@app.post("/api/sessions/{sid}/lock")
+async def take_lock(sid: str):
+    """Take an unlocked session's edit lock. 409 while another viewer holds it — the
+    holder has to release it first (that is the whole point of the lock)."""
+    _session(sid)
+    holder = PRESENCE.claim(sid, _client_id_or_400())
+    if holder is not None:
+        raise HTTPException(409, f"session is locked by {holder.name}")
+    return {"ok": True}
+
+
+@app.delete("/api/sessions/{sid}/lock")
+async def release_lock(sid: str):
+    """Give up the lock so another viewer can take it. Only the holder may."""
+    _session(sid)
+    if not PRESENCE.release(sid, _client_id_or_400()):
+        raise HTTPException(403, "you do not hold this session's lock")
     return {"ok": True}
 
 

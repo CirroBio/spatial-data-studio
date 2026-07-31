@@ -10,7 +10,9 @@ import type {
   ImageInfo,
   UiFieldInfo,
   HashCheck,
+  PresenceView,
 } from './types';
+import { CLIENT_ID } from './lib/presence';
 import type { Snapshot, SnapshotFormat } from './lib/snapshots';
 import type { ShapeAnnotation } from './schemas/annotations';
 
@@ -53,7 +55,12 @@ export async function fetchWhenIdle<T>(
 }
 
 async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
-  const res = await fetch(path, init);
+  // Every request identifies this browser so the backend can tell the session's lock
+  // holder from anyone else (backend deps.bind_client_id).
+  const res = await fetch(path, {
+    ...init,
+    headers: { ...init?.headers, 'X-SDS-Client-Id': CLIENT_ID },
+  });
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText);
     throw new ApiError(res.status, `API ${path}: ${res.status} ${text}`);
@@ -89,6 +96,34 @@ export async function pollEvents(after?: number): Promise<{ last_id: number; eve
   const q = after === undefined ? '' : `?after=${after}`;
   const res = await apiFetch(`/api/events/poll${q}`);
   return res.json() as Promise<{ last_id: number; events: PolledEvent[] }>;
+}
+
+// ---- viewer presence + session lock -----------------------------------------
+// Heartbeat: says who we are and which session we're looking at, and returns the
+// whole presence view (also broadcast as `presence.updated`). Attaching to an
+// unlocked session takes its lock, so a lone viewer is protected without clicking.
+export async function postPresence(
+  sessionId: string | null,
+  name: string,
+  keepalive = false,
+): Promise<PresenceView> {
+  const res = await apiFetch('/api/presence', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ client_id: CLIENT_ID, name, session_id: sessionId }),
+    keepalive,
+  });
+  return res.json() as Promise<PresenceView>;
+}
+
+// Take an unlocked session's edit lock (409 while someone else holds it).
+export async function takeSessionLock(sessionId: string): Promise<void> {
+  await apiFetch(`/api/sessions/${sessionId}/lock`, { method: 'POST' });
+}
+
+// Release the lock we hold so another viewer can take it (403 if we don't hold it).
+export async function releaseSessionLock(sessionId: string): Promise<void> {
+  await apiFetch(`/api/sessions/${sessionId}/lock`, { method: 'DELETE' });
 }
 
 export type NewSessionSource =

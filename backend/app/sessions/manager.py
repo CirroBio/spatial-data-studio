@@ -10,6 +10,7 @@ from pathlib import Path
 import psutil
 
 from . import appstate
+from .presence import PRESENCE
 from .session import Session
 from ..config import config, within_data_dir
 from ..persistence.store import estimate_resident_mb, save_spatialdata
@@ -343,6 +344,9 @@ class SessionManager:
         for d in (sess.extract_dir, sess.raster_cache_dir):  # unpacked .zarr.zip + tiled-raster temps (DESIGN §13)
             if d:
                 shutil.rmtree(d, ignore_errors=True)
+        # Drop the edit lock and everyone's attachment to it, so a closed session never
+        # lingers in the viewer/lock lists (presence.py).
+        PRESENCE.drop_session(sid)
         # Tell every viewer the session is gone so it drops out of their session list.
         # reason="subset" marks a lasso eviction: the parent's viewers are moved to the
         # child by the job.completed(child_id) handler, so they must NOT be nulled/notified

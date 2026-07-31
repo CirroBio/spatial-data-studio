@@ -6,6 +6,7 @@ import { formatError } from '../lib/format';
 import { reportError } from '../lib/errors';
 import { ModalOverlay, ModalHeader } from './DetailModal';
 import FunctionForm from './forms/FunctionForm';
+import { useEditGate } from '../hooks/usePresence';
 import { EMPTY_FIELDS } from '../hooks/useRerunEditor';
 
 interface Props {
@@ -35,6 +36,9 @@ function recipeAsFn(recipe: BundledRecipe): FunctionEntry {
 
 export default function RecipeGallery({ sessionId, onClose }: Props) {
   const { setSessionState, pushNotification, sessionState } = useAppStore();
+  // As in FunctionPicker: the gallery is only offered to a viewer who can edit, but the
+  // lock can change hands while it is open, and both Run and Stage write to the session.
+  const { reason: editBlockedReason } = useEditGate();
   const [recipes, setRecipes] = useState<BundledRecipe[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState<string | null>(null);
@@ -116,6 +120,7 @@ export default function RecipeGallery({ sessionId, onClose }: Props) {
           sessionId={sessionId}
           onSubmit={(params, action) => apply(recipe, action === 'stage' ? 'stage' : 'run', params)}
           submitting={running !== null}
+          blockedReason={editBlockedReason}
           submitActions={[
             { key: 'run', label: 'Run', variant: 'primary' },
             { key: 'stage', label: 'Stage', variant: 'secondary' },
@@ -165,7 +170,7 @@ export default function RecipeGallery({ sessionId, onClose }: Props) {
                 <button
                   onClick={() => setConfiguring(r)}
                   disabled={running !== null}
-                  className="px-3 py-1.5 bg-accent hover:bg-accent/80 disabled:opacity-50 text-white rounded text-xs transition-colors"
+                  className="px-3 py-1.5 bg-accent hover:bg-accent/80 disabled:opacity-50 text-on-accent rounded text-xs transition-colors"
                 >
                   Select
                 </button>

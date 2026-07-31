@@ -4,11 +4,13 @@ and every router module. Kept out of main.py so routers can import them without 
 circular dependency on the app object (main.py imports the routers, not vice versa).
 """
 import asyncio
+from contextvars import ContextVar
 
-from fastapi import HTTPException
+from fastapi import Header, HTTPException
 
 from .config import config
 from .sessions.manager import SessionManager
+from .sessions.presence import PRESENCE
 
 # The process-wide manager, bound by lifespan once the registry is built. Public
 # (not underscore) because it is the canonical live-manager handle for out-of-request
@@ -38,13 +40,41 @@ def _session(sid: str):
 
 def _writable_session(sid: str):
     """Same lookup as `_session`, plus a 403 if the session was opened read-only
-    (`create_from_load(read_only=True)`). Every mutating route uses this instead of
-    `_session` so a frozen session stays frozen even against a buggy or malicious
-    client, not just an unwired UI."""
+    (`create_from_load(read_only=True)`) and a 423 if another viewer holds its edit
+    lock. Every mutating route uses this instead of `_session` so a frozen or
+    someone-else's session stays that way even against a buggy or malicious client,
+    not just an unwired UI."""
     s = _session(sid)
     if s.read_only:
         raise HTTPException(403, "session is read-only")
+    _claim_lock(sid)
     return s
+
+
+def _claim_lock(sid: str):
+    """The edit-lock half of the mutating-route guard (sessions/presence.py): refuse
+    the write while another viewer holds the session's lock, and otherwise take the
+    lock for this client, so the window after a deliberate unlock can't have two
+    viewers writing at once."""
+    holder = PRESENCE.claim(sid, CLIENT_ID.get())
+    if holder is not None:
+        raise HTTPException(423, f"session is locked by {holder.name}")
+
+
+# The calling browser client's id, bound per request from the X-SDS-Client-Id header
+# by the app-wide `bind_client_id` dependency. A ContextVar rather than a parameter
+# on every route: the lock guard above is reached from ~20 route handlers and three
+# router modules, none of which otherwise need the request. Absent (None) for the
+# offline CLI, the e2e harness, and any non-browser caller.
+CLIENT_ID: ContextVar[str | None] = ContextVar("sds_client_id", default=None)
+
+
+async def bind_client_id(x_sds_client_id: str | None = Header(default=None)) -> None:
+    """App-wide dependency (registered on the FastAPI app) that binds CLIENT_ID for
+    the request. Runs in the request's own task context, so one request's identity
+    never leaks into another's. Must be `async` — FastAPI runs a *sync* dependency in
+    a worker thread, whose copied context would discard the set."""
+    CLIENT_ID.set(x_sds_client_id)
 
 
 async def _in_executor(fn, *a):

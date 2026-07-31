@@ -1,5 +1,7 @@
 import { useAppStore } from '../store/sessionStore';
+import CirroMark from './CirroMark';
 import SessionPicker from './SessionPicker';
+import LockBadge from './LockBadge';
 import { TourAnchors } from '../tours';
 
 const ICON_BTN ='p-1.5 rounded border border-border bg-bg text-text hover:border-accent hover:text-accent transition-colors disabled:opacity-40 disabled:hover:border-border disabled:hover:text-text';
@@ -33,10 +35,14 @@ export default function Header() {
             <path d="M9 3v18" />
           </svg>
         </button>
-        <span className="text-accent font-semibold tracking-wide text-sm">Spatial Data Studio</span>
+        <span className="flex items-center gap-2">
+          <CirroMark className="h-5 w-auto shrink-0" />
+          <span className="text-accent tracking-wide text-sm">Spatial Data Studio</span>
+        </span>
         <span data-tour={TourAnchors.SessionPicker}>
           <SessionPicker />
         </span>
+        <LockBadge />
         {fields?.n_obs != null && (
           <span className="text-[11px] text-muted font-mono" style={{ fontVariantNumeric: 'tabular-nums' }}>
             {fields.n_obs.toLocaleString()} cells

@@ -125,12 +125,11 @@ export function DrawHint({
   if (!drawMode || canvasMode === 'shapes') return null;
   return (
     <div
-      className="absolute top-3 left-1/2 -translate-x-1/2 z-10 px-3 py-1.5 rounded text-xs tracking-wide pointer-events-none backdrop-blur-sm whitespace-nowrap"
-      style={{
-        background: 'rgba(26,29,39,0.92)',
-        border: `1px solid ${canvasMode === 'regions' ? 'rgba(72,187,120,0.7)' : 'rgba(124,108,246,0.7)'}`,
-        color: canvasMode === 'regions' ? '#6fd99a' : '#a99bff',
-      }}
+      className={`absolute top-3 left-1/2 -translate-x-1/2 z-10 px-3 py-1.5 rounded border text-xs tracking-wide pointer-events-none backdrop-blur-sm whitespace-nowrap bg-surface/90 ${
+        canvasMode === 'regions'
+          ? 'border-success/70 text-success'
+          : 'border-accent/70 text-accent'
+      }`}
     >
       {canvasMode === 'regions'
         ? annotationTarget

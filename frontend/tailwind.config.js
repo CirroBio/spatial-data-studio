@@ -10,13 +10,17 @@ export default {
         text: 'rgb(var(--color-text) / <alpha-value>)',
         muted: 'rgb(var(--color-muted) / <alpha-value>)',
         accent: 'rgb(var(--color-accent) / <alpha-value>)',
+        // Foreground for anything filled with a brand color (accent, success, danger),
+        // so a solid button stays legible in both themes — see index.css.
+        'on-accent': 'rgb(var(--color-on-accent) / <alpha-value>)',
         'accent-lo': 'rgb(var(--color-accent-lo) / <alpha-value>)',
         success: 'rgb(var(--color-success) / <alpha-value>)',
         warn: 'rgb(var(--color-warn) / <alpha-value>)',
         danger: 'rgb(var(--color-danger) / <alpha-value>)',
       },
       fontFamily: {
-        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Consolas', 'monospace'],
+        sans: ['Geist Variable', 'system-ui', '-apple-system', 'sans-serif'],
+        mono: ['Geist Mono Variable', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
       },
     },
   },

@@ -7,6 +7,8 @@ test('intro tour walks its always-present steps', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByText('No session open')).toBeVisible();
 
+  // The tour is launched from the right-hand menu, collapsed by default.
+  await page.getByRole('button', { name: 'Menu', exact: true }).click();
   await page.getByRole('button', { name: 'Take the tour' }).click();
 
   const popover = page.locator('.driver-popover');
@@ -14,8 +16,8 @@ test('intro tour walks its always-present steps', async ({ page }) => {
   await expect(popover).toContainText('Welcome to Spatial Data Studio');
 
   // Step through to the end via Next. Optional (session-dependent) steps are
-  // skipped automatically when no session is open; the always-present header
-  // steps must appear, ending on the Snapshots step's Done button.
+  // skipped automatically when their target is absent; the always-present header
+  // steps must appear, ending on the app-menu step's Done button.
   const nextBtn = page.locator('.driver-popover-next-btn');
   await expect(nextBtn).toBeVisible();
 
@@ -33,6 +35,5 @@ test('intro tour walks its always-present steps', async ({ page }) => {
 
   await expect(popover).not.toBeVisible();
   expect(seen).toContain('Sessions');
-  expect(seen).toContain('Save your work');
-  expect(seen).toContain('Snapshots');
+  expect(seen).toContain('App menu');
 });

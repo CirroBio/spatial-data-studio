@@ -7,9 +7,10 @@ import type { DisplaySpec } from '../../types';
  *
  * `persistDisplay` mirrors the change into the store immediately, then debounces the
  * PUT (500ms) so a slider drag or pan/rotate collapses into one write; a ref holds the
- * timer so back-to-back events during a drag reset the same debounce. A read-only
- * (snapshot) session stays interactive locally but never persists — the backend would
- * 403 the PUT anyway. `currentSpec` re-reads the latest stored spec (not the possibly
+ * timer so back-to-back events during a drag reset the same debounce. Without the edit
+ * gate (`canEdit`: a read-only snapshot, or another viewer holds the session's lock) the
+ * canvas stays fully interactive but persists nothing — display settings then live on
+ * this screen only, and the backend would refuse the PUT anyway. `currentSpec` re-reads the latest stored spec (not the possibly
  * stale prop) so an encoding edit and a camera move in the same window don't clobber
  * each other. `updateEncoding` patches the encoding of that latest spec.
  *
@@ -28,7 +29,7 @@ import type { DisplaySpec } from '../../types';
 export function useDisplayPersistence<T extends DisplaySpec>(
   display: T,
   sessionId: string,
-  readOnly: boolean,
+  canEdit: boolean,
   isKind: (d: DisplaySpec) => d is T,
 ) {
   const updateDisplay = useAppStore((s) => s.updateDisplay);
@@ -52,7 +53,7 @@ export function useDisplayPersistence<T extends DisplaySpec>(
 
   const persistDisplay = useCallback((updated: T) => {
     updateDisplay(updated);
-    if (readOnly) return;
+    if (!canEdit) return;
     dirty.current = true;
     if (persistTimer.current) clearTimeout(persistTimer.current);
     persistTimer.current = setTimeout(() => {
@@ -61,7 +62,7 @@ export function useDisplayPersistence<T extends DisplaySpec>(
       dirty.current = false;
       putDisplay(sessionId, currentSpec()).catch(console.error);
     }, 500);
-  }, [updateDisplay, readOnly, sessionId, currentSpec]);
+  }, [updateDisplay, canEdit, sessionId, currentSpec]);
 
   const updateEncoding = useCallback((patch: Partial<T['encoding']>) => {
     const base = currentSpec();

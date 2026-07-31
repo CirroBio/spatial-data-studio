@@ -49,6 +49,16 @@ the analysis history that produced this view.*
   within the drawn region.
 - **Subset.** Lasso a region — on the tissue or an embedding — to spin off a child session
   that keeps (or removes) just those cells.
+- **Share a session safely.** Opening a session locks it to you, so a second person
+  who connects can look but not change anything. A padlock next to the session name
+  shows whether the session is locked to you, locked to someone else, or unlocked, and
+  lists everyone currently viewing; the session list shows who holds each session's
+  lock and how many people are on it. You appear under a two-word name like *gloomy
+  socrates* — click the padlock to rename yourself, unlock the session so a colleague
+  can take over, or take an unlocked session's lock. While someone else holds the lock
+  you can still explore freely and change any display setting (color by, channels,
+  zoom, render mode); those changes stay on your screen instead of going into the
+  session.
 - **Save and share.** Save a checkpoint you can reopen later, save a **snapshot** — a
   high-quality figure of the current view exported as a vector PDF and/or raster PNG,
   framed and sized in a dialog with a live preview, optionally with the minimap inset
@@ -81,7 +91,7 @@ individually (and reset to the default palette) at the bottom of the **Cells** t
 (Text and shape annotations that persist with the dataset are drawn from the left
 panel's **Annotations** tab.)*
 
-![A Xenium section zoomed in, each cell drawn as its true segmentation outline and colored by Leiden cluster, over the morphology image.](docs/images/cell-outlines.jpg)
+![A Xenium section zoomed in, each cell drawn as its true segmentation outline and colored by its cellular neighborhood, over the morphology image.](docs/images/cell-outlines.jpg)
 
 *Switch to cell-boundary rendering to draw each cell as its actual segmentation
 shape rather than a point — pick the shape set (here `cell_boundaries`) and choose

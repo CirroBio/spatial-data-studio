@@ -161,7 +161,7 @@ export default function SnapshotExportModal({ params, onClose }: { params: Snaps
       <div className="p-3 border-t border-border flex justify-end gap-2">
         <button onClick={onClose} className="px-3 py-2 text-sm text-muted hover:text-text transition-colors">Cancel</button>
         <button onClick={save} disabled={saving || noFormat}
-          className="px-4 py-2 bg-accent hover:bg-accent/80 disabled:opacity-50 text-white rounded text-sm transition-colors">
+          className="px-4 py-2 bg-accent hover:bg-accent/80 disabled:opacity-50 text-on-accent rounded text-sm transition-colors">
           {saving ? 'Saving…' : 'Save'}
         </button>
       </div>

@@ -50,7 +50,7 @@ export default function SubsettingPanel() {
           type="button"
           onClick={() => handleSubset(false)}
           disabled={working || !finished}
-          className="py-1.5 text-xs bg-accent hover:bg-accent/80 disabled:opacity-40 text-white rounded transition-colors"
+          className="py-1.5 text-xs bg-accent hover:bg-accent/80 disabled:opacity-40 text-on-accent rounded transition-colors"
         >
           {working ? 'Subsetting...' : `Only keep cells in region${finished ? ` (n=${regionCellCount.toLocaleString()})` : ''}`}
         </button>

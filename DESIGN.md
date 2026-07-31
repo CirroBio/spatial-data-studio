@@ -1250,9 +1250,10 @@ dark unless `CIRRO_BASE_URL`, `CIRRO_CLIENT_ID`, and `CIRRO_CLIENT_SECRET` are a
 
 - A session = one in-memory `SpatialData` + one queue + one worker thread + its `attrs`
   state.
-- Sessions are **shared and fully collaborative**. Multiple users may attach; all see
-  the same data, queue, history, plots, regions, and display specs, updated in real time
-  over SSE. (Access control is the deployment layer's concern.)
+- Sessions are **shared and fully collaborative to read**. Multiple users may attach;
+  all see the same data, queue, history, plots, regions, and display specs, updated in
+  real time over SSE. Who may *change* a session is decided by its edit lock (§16.5).
+  (Authentication and access control remain the deployment layer's concern.)
 - Switching sessions is a client navigation; it does not evict server-side sessions.
   Session navigation lives in the **Subsetting** tab's lineage tree (§20).
 
@@ -1293,6 +1294,59 @@ structures). Therefore: **monitor closely, expose live, guard at boundaries.**
 - Subsetting evicts the parent (§8.3).
 - Otherwise sessions are evicted under memory pressure or by explicit close; eviction
   flushes to a Zarr checkpoint first if there is unsaved state, then drops from RAM.
+
+### 16.5 Viewer presence and the per-session edit lock
+
+Every viewer of a session shares one in-memory object and one audit log, and there is no
+undo — so two people editing at once is a data-integrity problem, not a merge problem.
+The **edit lock** makes exactly one viewer the editor while everyone else watches.
+Implemented in `sessions/presence.py` (process memory only; nothing persists to the
+checkpoint) and enforced in `deps._claim_lock`, which every mutating route reaches
+through `_writable_session`.
+
+**Identity.** No accounts, no auth (that stays the deployment layer's concern). A browser
+mints a `client_id` (uuid) and a two-word display name (e.g. *gloomy socrates*) and keeps
+both in `localStorage`, so a reload keeps its name *and* its lock. The name is editable
+and is what other viewers see; the id is what the lock is keyed on. Both ride every
+request as `X-SDS-Client-Id` / the heartbeat body.
+
+**Presence.** Clients `POST /api/presence` every 5 s with their id, name, and the session
+they are viewing; a client silent for `PRESENCE_TIMEOUT_S` (20 s, the one knob) drops out
+and releases what it held, so a closed tab never strands a session. A
+closing tab also sends a parting `session_id: null` beat, which frees its lock at once
+rather than after the timeout. The heartbeat returns the whole view (who is viewing what,
+who holds each lock); changes are broadcast as `presence.updated`, published only when the
+picture actually changes rather than per heartbeat.
+
+**Lock rules.**
+
+- Attaching to a session nobody has locked **takes** its lock — the ordinary single-user
+  case is protected with no clicking. Only the attach transition does this, so a
+  deliberate unlock is not undone by the holder's next heartbeat; leaving a session
+  releases it.
+- A mutating request claims the lock the same way, which is what stops two viewers from
+  both writing in the window after a deliberate unlock.
+- While another viewer holds the lock, every mutating route answers **423 Locked**
+  (naming the holder). Read paths are never gated.
+- The holder can **unlock**; any viewer can then **take** it. Taking a lock someone else
+  holds is refused (409) — handover is deliberate, never a steal.
+- A caller with no client id (the offline CLI, the e2e harness, scripts) writes freely
+  while nobody holds the lock, and is refused while someone does.
+
+**What a viewer without the lock can still do.** Everything that doesn't touch the
+session: pan/zoom, inspect tables, and change any *display* setting (color by, channels,
+contrast, render mode, minimap, isolated category). Those edits apply locally and skip the
+`PUT /displays` write, so they never enter `app_state`; a session refetch keeps them
+(`withLocalDisplays`) instead of snapping the view back to the holder's, and the holder's
+`display.updated` broadcasts are ignored for the same reason. The frontend derives one
+gate from this (`lib/presence.editBlockReason`) which read-only snapshot sessions share, so
+both cases disable the same controls with a reason the user can read. The rule for adding a
+control: if its route takes `_writable_session`, it reads the gate — directly via
+`useEditGate`, or through whatever already owns its submit (`useRerunEditor` for the detail
+views, `FunctionForm`'s `blockedReason` for the picker and recipe forms) — since a live
+button whose write comes back 423 is a bug. Hiding the entry point is not enough on its own:
+the lock can change hands while a dialog is open. A control acting on a *listed* session rather than the active one (the
+session picker's delete) keys off that row's own lock instead.
 
 ---
 
@@ -1369,6 +1423,8 @@ Arrow IPC (binary). See `docs/CONTRACT.md` for the full contract.
 | `POST` | `/api/sessions` | Start session via a `read` call (folder + read descriptor) |
 | `GET` | `/api/sessions/{id}` | Session state: history, plots, displays, regions, status |
 | `DELETE` | `/api/sessions/{id}` | Close session (flush if needed, evict) |
+| `POST` | `/api/presence` | Viewer heartbeat: id + display name + session being viewed → the presence/lock view (§16.5) |
+| `POST`/`DELETE` | `/api/sessions/{id}/lock` | Take / release the session's edit lock (409 if held by another; 403 releasing one you don't hold) |
 | `POST` | `/api/sessions/{id}/jobs` | Enqueue a call descriptor (run or stage) |
 | `POST` | `/api/sessions/{id}/jobs/{jobId}/run` | Run a PENDING step |
 | `POST` | `/api/sessions/{id}/run-pending` | Run all pending steps in order |
@@ -1429,11 +1485,12 @@ closed (a 406 does not auto-reconnect), so SSE remains the path wherever it work
 | `job.failed` | jobId | Surface the error; keep the row for inspect/remove; offer log |
 | `job.log` | jobId, chunk | Append to the job's live-log buffer (read bootstrap only) so the import UI streams the reader's log; dropped on completion |
 | `plot.drawn` / `plot.invalidated` | plotId(s) | Enable figure / flag for redraw |
-| `display.updated` | displayId, spec | Re-derive canvas |
+| `display.updated` | displayId, spec | Re-derive canvas (ignored by a viewer without the edit lock, whose display settings are local — §16.5) |
 | `region.updated` | regions | Refresh annotations panel + coloring |
 | `session.loading` | load_id, message, pct?, log?, done?, status?, hash_check?, error? | Show live progress in the New Session load overlay (routed by client nonce); a `log` chunk is the reader's live output, appended below the milestone message; the terminal `done` event (`status:"ready"|"errored"`) finalizes the overlay — toast `hash_check` and open the session, or show `error` for a retry |
 | `session.created` | sessionId (child) | Add to lineage |
 | `session.removed` | sessionId, reason | Prune from list; if it was active and reason≠subset, clear the view |
+| `presence.updated` | per-session `{lock, viewers}` | Update the lock badge + the session list's holder/viewer counts; re-derive the edit gate (§16.5). Published only when the picture changes, not per heartbeat |
 | `resource.sample` | global (RSS, effective `rss_pct`, `work_dir_mb`, `cpu_pct` summed over the API process + compute workers, `cpu_count`) + per-session RSS | Update resource strip |
 | `memory.warning` | threshold breached | Block dequeue; warn |
 
@@ -1472,9 +1529,12 @@ closed (a 406 does not auto-reconnect), so SSE remains the path wherever it work
 - **Status badges:** PENDING (dashed draft badge), QUEUED, RUNNING (spinner + elapsed),
   COMPLETED/DRAWN, FAILED (error glyph + log), INVALIDATED (stale + Redraw). The activity
   badge counts staged · queued · running.
-- **Header:** New/Save session (icon buttons), theme toggle (light/dark via CSS
-  variables, persisted in `localStorage`), About (Acknowledgements), Cirro upload
-  (only when configured). The gear dropdown holds remaining global ops.
+- **Header:** the session switcher (each row showing the session's lock holder and
+  viewer count) and, beside it, the **lock badge** — a padlock reading "Locked to you",
+  the holder's name, or "Unlocked", which opens the panel that takes/releases the lock,
+  lists who is viewing, and edits your own display name (§16.5). The menu holds
+  New/Save session, snapshots, the theme toggle (light/dark via CSS variables, persisted
+  in `localStorage`), About (Acknowledgements), and Cirro upload (only when configured).
 - **Forms:** the introspection layer emits JSON Schema; `forms/FunctionFields.tsx` renders
   the field widgets (react-hook-form + a custom widget map: obs-key picker, var-name
   search/multiselect, layer/obsm/obsp pickers, enum dropdowns, `obs_value_map` old→new
@@ -1508,10 +1568,15 @@ closed (a 406 does not auto-reconnect), so SSE remains the path wherever it work
 10. A child session's `attrs` are deep-copied; its compute history starts empty.
 11. State-changing ops (compute, annotate, subset, save) are queued jobs under the write
     lock; region annotation and subset are queued mutating jobs.
+    Every route that starts one goes through `deps._writable_session`, so a frozen
+    (read-only) session and a session another viewer has locked (§16.5) are refused at the
+    boundary rather than relying on the UI to hide the control.
 12. The boundary-admission check is always active: new work is refused once effective
     memory reaches `ADMISSION_PCT` of the container limit. An in-flight spike past that is
     bounded only by the cgroup OOM killer (followed by a supervised restart).
 13. uvicorn runs exactly one worker; sessions are never spread across worker processes.
+    This is also what makes the edit lock and viewer presence (§16.5) sound: both live in
+    process memory, so a second worker would give each its own idea of who holds a lock.
 14. Snapshots are rendered figures (vector PDF / raster PNG) that reproduce the live
     canvas server-side, with provenance embedded in every file.
 15. Dependencies are permissive or explicitly adjudicated (§25).

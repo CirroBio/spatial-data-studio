@@ -746,6 +746,66 @@ def run_encoding_persistence_flow(client):
     print("[ok] canvas encoding (toggles, isolated category, camera) survives save + reload")
 
 
+def run_session_lock_flow(client):
+    """Viewer presence + the per-session edit lock (sessions/presence.py): attaching
+    takes an unlocked session's lock, a second viewer is refused every mutation but
+    keeps every read, and release → take hands the lock over. The offline/CLI caller
+    (no client id, as everywhere else in this file) writes freely while nobody holds
+    the lock and is refused while someone does."""
+    sid = new_session(client)
+    a, b = {"X-SDS-Client-Id": "viewer-a"}, {"X-SDS-Client-Id": "viewer-b"}
+
+    def beat(client_id, name, session_id=sid):
+        return client.post("/api/presence", json={
+            "client_id": client_id, "name": name, "session_id": session_id}).json()["sessions"]
+
+    def display_put(headers):
+        disp = next(d for d in client.get(f"/api/sessions/{sid}").json()["app_state"]["displays"]
+                    if d["type"] == "spatial_canvas")
+        return client.put(f"/api/sessions/{sid}/displays/{disp['id']}", json=disp, headers=headers)
+
+    assert display_put({}).status_code == 200, "an unwatched session must stay writable"
+
+    view = beat("viewer-a", "gloomy socrates")[sid]
+    assert view["lock"] == {"client_id": "viewer-a", "name": "gloomy socrates"}, view
+    view = beat("viewer-b", "brave curie")[sid]
+    assert view["lock"]["client_id"] == "viewer-a", view
+    assert view["viewers"] == ["brave curie", "gloomy socrates"], view
+
+    assert display_put(a).status_code == 200, "the holder must be able to write"
+    assert display_put(b).status_code == 423, "a non-holder's write must be refused"
+    assert display_put({}).status_code == 423, "an unidentified write must be refused too"
+    # Reads stay open to everyone — that is what makes view-only access work.
+    assert client.get(f"/api/sessions/{sid}", headers=b).status_code == 200
+    assert client.get(f"/api/sessions/{sid}/data/obsm:spatial", headers=b).status_code == 200
+
+    assert client.post(f"/api/sessions/{sid}/lock", headers=b).status_code == 409
+    assert client.delete(f"/api/sessions/{sid}/lock", headers=b).status_code == 403
+    assert client.delete(f"/api/sessions/{sid}/lock", headers=a).status_code == 200
+    assert beat("viewer-b", "brave curie")[sid]["lock"] is None
+    assert client.post(f"/api/sessions/{sid}/lock", headers=b).status_code == 200
+    assert display_put(b).status_code == 200 and display_put(a).status_code == 423
+
+    # A viewer that stops heartbeating drops out and releases its lock, so a closed
+    # tab never strands a session. Swept by the next heartbeat from anyone — here one
+    # that is attached to no session, so it doesn't take the freed lock itself.
+    timeout = config.PRESENCE_TIMEOUT_S
+    config.PRESENCE_TIMEOUT_S = 0.05
+    try:
+        time.sleep(0.2)
+        assert sid not in beat("viewer-a", "gloomy socrates", None), "silent viewers must be swept"
+    finally:
+        config.PRESENCE_TIMEOUT_S = timeout
+    assert display_put({}).status_code == 200, "the lock must be free once its holder times out"
+
+    # Closing a session takes it out of presence, and a client still showing it is
+    # treated as attached to nothing rather than re-locking a session that is gone.
+    assert beat("viewer-a", "gloomy socrates")[sid]["lock"]["client_id"] == "viewer-a"
+    assert client.delete(f"/api/sessions/{sid}", headers=a).status_code == 200
+    assert sid not in beat("viewer-a", "gloomy socrates"), "a closed session must leave presence"
+    print("[ok] session lock: auto-lock on attach, 423 for others, release → take, timeout release")
+
+
 def run_inspector_flow(client):
     """Data-inspector endpoints backing the UI pickers/tables (elements, table
     preview, var-names search, obs value counts)."""
@@ -1365,6 +1425,7 @@ def main():
         run_invalidation_flow(client)
         run_encoding_persistence_flow(client)
         run_inspector_flow(client)
+        run_session_lock_flow(client)
         run_isolation_flow(client)
         run_filter_reshape_flow(client)
         run_filter_rank_genes_save_flow(client)
