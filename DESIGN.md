@@ -82,7 +82,7 @@ parameter.
 │  ┌──────────────┐  ┌──────────────────────────────────────────┐  │
 │  │ Resource      │  │ Arrow / tile / table transport            │  │
 │  │ monitor       │  └──────────────────────────────────────────┘  │
-│  │ (psutil RSS)  │                                                │
+│  │ (cgroup/RSS)  │                                                │
 │  └──────────────┘                                                 │
 └─────────────────────────────┬─────────────────────────────────────┘
                               │ read / write
@@ -107,7 +107,7 @@ process-per-session.)
 | Data transport | Apache Arrow IPC (binary) | Zero-copy-ish to JS typed arrays → deck.gl binary attributes; no JSON on hot path |
 | Server push | Server-Sent Events (SSE) | One-directional (queue/job/resource events); commands go over POST |
 | Rendering | deck.gl + `@deck.gl-community/editable-layers` | Millions of points on GPU, binary attributes, built-in lasso/box/polygon editing, coordinate systems, image tiles |
-| Resource monitoring | `psutil` (process RSS) | Heavy allocations live in numpy/numba/C; `tracemalloc` would miss them |
+| Resource monitoring | cgroup `memory.stat` where containerized, else `psutil` RSS | Heavy allocations live in numpy/numba/C (`tracemalloc` would miss them) and in compute-pool child processes (process RSS would miss those) |
 | Frontend UI | React + TS + Tailwind + Radix | Lightweight; maximizes canvas real estate; no heavy component kit chrome |
 | Dynamic forms | JSON Schema → react-hook-form + custom widget map | Introspection emits JSON Schema; custom widgets for obs-key/var-name pickers |
 
@@ -674,10 +674,14 @@ per-session cache store under `WORK_DIR` (the system temp dir by default, a tmpf
 mount in Docker so the cache is held in RAM — see §23.4); the live elements are
 rebound to lazy refs into it. An in-memory rechunk alone can't fix this — a small tile read
 still fetches the large *store* chunk from disk — so the rewrite is the point.
-After it, one tile realizes one ~2 MB chunk. Elements are rebuilt one at a time
-and freed between (writing all four Xenium rasters together peaks ~8.8 GB); with a
-small dask pool (`SDS_RASTER_REBUILD_WORKERS`) the peak is the largest single image
-(~2.1 GB for the 3.8 GB morphology). Images get a mean-downsampled pyramid; labels
+After it, one tile realizes one ~2 MB chunk. Each element's rebuild runs in the
+**compute pool** (§24.7) rather than the API process — re-reading and re-encoding a
+multi-GB raster is exactly the sustained CPU that must not hold the API's GIL, or one
+user opening a checkpoint stalls every other viewer's canvas for the length of the
+rebuild. Elements are rebuilt one at a time and freed between (writing all four Xenium
+rasters together peaks ~8.8 GB); with a small dask pool
+(`SDS_RASTER_REBUILD_WORKERS`, now spent in the worker) the peak is the largest single
+image (~2.1 GB for the 3.8 GB morphology). Images get a mean-downsampled pyramid; labels
 are rebuilt **single-scale, tile-chunked only** — they aren't LOD-rendered, and a
 nearest/mode downsample of integer IDs can't stream (it materializes the whole
 array plus every level at once, ~6 GB for a 1.9 GB label), so a pure lazy rechunk
@@ -1272,15 +1276,30 @@ process that holds it — no IPC hop, which matters for high-performance renderi
 Memory peak is **not predictable** (some functions allocate transient O(n²)
 structures). Therefore: **monitor closely, expose live, guard at boundaries.**
 
-- **Monitor:** sample process **RSS** via `psutil` on a fixed cadence; push over SSE to
-  the resource strip. Show global and per-session resident cost.
+- **Monitor:** sample memory on a fixed cadence and push over SSE to the resource strip.
+  Show global and per-session resident cost. The sample is taken in a worker thread, not
+  inline on the event loop: it is all syscalls, and at this cadence running it inline was
+  measurably a periodic hitch in every client's request latency (§24.4).
+- **Whose memory:** inside a memory-limited container the reading is the **cgroup's own**
+  `anon` + `shmem` (`config.cgroup_mem_usage`), not this process's RSS. The heavy work
+  runs in compute-pool workers — each holds a full pickled copy of the table for a job's
+  duration, and the largest raster during an ingest re-tile (§9.3) — so process-local RSS
+  is blind to it and admission would keep saying yes while the container filled. The
+  cgroup charges shared pages (interpreter, libraries) once, whereas summing each
+  process's RSS charges them once *per worker*: ~324 MB of mostly-shared RSS per idle
+  worker, which across a core-count-sized pool invents gigabytes of pressure that isn't
+  there. Reclaimable page cache is excluded — reading a multi-GB checkpoint fills it, but
+  the kernel frees it rather than let us be OOM-killed. Outside a cgroup (local dev) it
+  falls back to this process's RSS, where the workers stay invisible.
 - **RAM-backed working set:** when `WORK_DIR` is a tmpfs mount (`SDS_WORK_DIR_IN_RAM=1`,
   §23.4), the unpacked archives and raster caches living there consume RAM that the
   cgroup/OOM killer counts but process RSS does not. So the boundary/admission math uses
-  **effective memory = RSS + WORK_DIR usage** (`manager._effective_mb`, an `os.statvfs`
-  of the dedicated mount); otherwise (`WORK_DIR` on disk) the term is 0 and behaviour is
-  unchanged. `resource.sample` surfaces this as `work_dir_mb`, and `rss_pct` is the
-  effective fraction the boundary gates on.
+  **effective memory = anonymous memory + WORK_DIR usage** (`manager._effective_mb`). In a
+  container that second term is the cgroup's `shmem` — the same quantity measured rather
+  than inferred, so it needs neither the flag nor a dedicated mount; outside one it is an
+  `os.statvfs` of the mount, and 0 when `WORK_DIR` is on disk. `resource.sample` surfaces
+  it as `work_dir_mb`, disjoint from `rss_mb`, and `rss_pct` is the effective fraction the
+  boundary gates on.
 - **Load-admission control:** before loading a dataset, estimate its **resident** cost
   from Zarr metadata (tables load eagerly and dominate; images/labels are lazy). If it
   won't fit in the effective-memory headroom, block the load.
@@ -1491,7 +1510,7 @@ closed (a 406 does not auto-reconnect), so SSE remains the path wherever it work
 | `session.created` | sessionId (child) | Add to lineage |
 | `session.removed` | sessionId, reason | Prune from list; if it was active and reason≠subset, clear the view |
 | `presence.updated` | per-session `{lock, viewers}` | Update the lock badge + the session list's holder/viewer counts; re-derive the edit gate (§16.5). Published only when the picture changes, not per heartbeat |
-| `resource.sample` | global (RSS, effective `rss_pct`, `work_dir_mb`, `cpu_pct` summed over the API process + compute workers, `cpu_count`) + per-session RSS | Update resource strip |
+| `resource.sample` | global (`rss_mb`, effective `rss_pct`, `work_dir_mb`, `cpu_pct` — memory and CPU both summed over the API process + compute workers, `cpu_count`) + per-session RSS | Update resource strip |
 | `memory.warning` | threshold breached | Block dequeue; warn |
 
 ---
@@ -1679,11 +1698,13 @@ corollary: this one process is a single point of failure.
   `WORK_DIR` (`SDS_WORK_DIR`, default the system temp dir). Point it at a tmpfs mount and
   set `SDS_WORK_DIR_IN_RAM=1` to hold that working set in RAM, so tile/chunk reads are
   served from memory instead of disk. tmpfs pages count against the cgroup limit but not
-  process RSS, so with `SDS_WORK_DIR_IN_RAM=1` the admission math adds current `WORK_DIR`
-  usage (an `os.statvfs` of the mount) to RSS — the soft admission boundary therefore
-  trips before the tmpfs can grow the container past its hard limit into an OOM kill.
-  `WORK_DIR` must be a **dedicated** mount for that statvfs to reflect only the app's own
-  usage. Durable checkpoints/snapshots always stay on the real `DATA_DIR` disk; the
+  process RSS, so the admission math adds the current `WORK_DIR` usage to the app's
+  anonymous memory — the soft admission boundary therefore trips before the tmpfs can
+  grow the container past its hard limit into an OOM kill. In a container that term is
+  read straight from the cgroup (`shmem`, §11.3), so it is self-detecting; the
+  `SDS_WORK_DIR_IN_RAM=1` flag and the **dedicated**-mount requirement apply only to the
+  `os.statvfs` fallback used outside a cgroup. Durable checkpoints/snapshots always stay
+  on the real `DATA_DIR` disk; the
   save-staging tempdir stays beside the destination so its commit is a same-filesystem
   rename regardless of `WORK_DIR`. The Docker image ships a `/work` tmpfs enabled by
   `docker-compose.yml`; the `work-tmpfs.sh` entrypoint remounts it to
@@ -1755,7 +1776,16 @@ exclusivity. Everything below maximizes parallelism *around* that narrow window.
    the read lane: a plot caches `uns['<col>_colors']` on the live table, so it goes through
    the serial worker where that write is applied and persisted — it therefore blocks behind
    any queued compute and renders the up-to-date object (at the cost of waiting for it).
-7. **Honest limits:** the GIL still serializes any pure-Python hot loop; running jobs are
+7. **Ingest raster rebuild runs in the compute pool:** re-tiling a raster (§9.3) is
+   minutes of CPU on a large Xenium store, and it used to run in the API process, where
+   it held the GIL in bursts long enough to stall every request in flight — one user's
+   checkpoint load froze every other viewer's canvas. `rasters._child_rebuild` submits it
+   to the same pool the compute call uses. Only the element crosses the boundary, as a
+   lazy ref to its backing store (a few hundred kB of dask graph); the rebuilt bytes
+   return via the cache store on disk, which the parent reopens lazily. Measured on a
+   364 MB checkpoint: time the API spends stalled during someone else's load drops from
+   ~1.4 s to ~0.24 s, worst single stall from ~210 ms to ~25 ms.
+8. **Honest limits:** the GIL still serializes any pure-Python hot loop; running jobs are
    not interruptible; within-session *mutation* is serial by design (concurrent mutation
    of one object is unsafe and is not attempted); an extract in the read lane reads the
    committed state as of its snapshot, so it can be one operation stale.

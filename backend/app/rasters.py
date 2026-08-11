@@ -16,6 +16,11 @@ rebuilt elements are written to a per-session cache store (so the tiny-window re
 actually hit tile-sized store chunks, which an in-memory rechunk alone can't
 achieve) and the live SpatialData is rebound to lazy refs into it. The caller owns
 the returned dir for cleanup.
+
+Each element's rebuild runs in the compute pool (`_child_rebuild`), not in the API
+process — it is the same GIL-isolation argument registry/kernel.py makes for compute,
+and here it is what keeps one user opening a checkpoint from stalling every other
+viewer's canvas for the length of the rebuild.
 """
 import gc
 import math
@@ -30,6 +35,7 @@ from spatialdata.transformations import get_transformation
 
 from . import imaging
 from .config import config
+from .sessions import compute_pool
 
 TILE = imaging.TILE_SIZE
 
@@ -93,6 +99,27 @@ def _rebuild(el, is_label: bool):
     return Image2DModel.parse(data, dims=dims, c_coords=c_coords,
                               scale_factors=_scale_factors(max(arr.shape[-1], arr.shape[-2])),
                               chunks=(1, TILE, TILE), transformations=transforms)
+
+
+def _child_rebuild(el, kind: str, name: str, store: str) -> None:
+    """Rebuild one element and write it to `store` — runs in the compute pool
+    (registry/kernel.py's reasoning, applied to ingest): reading a raster, re-chunking
+    it and re-encoding every chunk is seconds to minutes of CPU that used to run in the
+    API process, where it holds the GIL in bursts long enough to stall every request in
+    flight — a user opening a checkpoint froze the canvas for everyone else. Only the
+    element crosses the boundary; it is a lazy ref to its backing store (a few hundred
+    kB of dask graph), and the rebuilt bytes come back through `store` on disk, which
+    the caller reopens lazily.
+
+    The rebuild's dask threads run here, in the child, for the same reason. Elements
+    are submitted one at a time (see `normalize_rasters`), so peak memory is still
+    bounded by the largest single element — now in the worker rather than the API
+    process."""
+    with dask.config.set(scheduler="threads", num_workers=config.RASTER_REBUILD_WORKERS):
+        rebuilt = _rebuild(el, is_label=(kind == "labels"))
+        sd.SpatialData(**{kind: {name: rebuilt}}).write(store)
+    del rebuilt
+    gc.collect()
 
 
 def normalize_rasters(sdata, progress=None,
@@ -163,20 +190,19 @@ def normalize_rasters(sdata, progress=None,
         return None, stores
 
     cache_dir = tempfile.mkdtemp(suffix=".rasters", dir=str(config.WORK_DIR))
-    # Rebuild one element at a time, freeing between: each is a full read, so writing
-    # them together sums their footprints (all four Xenium rasters at once peak
-    # ~8.8 GB). Per-element with a small dask pool, peak is the largest single
-    # element (~2.1 GB for the 3.8 GB morphology image).
-    with dask.config.set(scheduler="threads", num_workers=config.RASTER_REBUILD_WORKERS):
-        for i, (kind, name) in enumerate(todo):
-            report(f"Preparing image {i + 1}/{len(todo)}…")
-            rebuilt = _rebuild(getattr(sdata, kind)[name], is_label=(kind == "labels"))
-            store = os.path.join(cache_dir, f"{i}.zarr")  # write() needs a non-existing path
-            sd.SpatialData(**{kind: {name: rebuilt}}).write(store)
-            getattr(sdata, kind)[name] = getattr(sd.read_zarr(store), kind)[name]
-            stores[name] = store
-            del rebuilt
-            gc.collect()
+    # Rebuild one element at a time, waiting for each: every rebuild is a full read, so
+    # running them together sums their footprints (all four Xenium rasters at once peak
+    # ~8.8 GB) — one at a time keeps the peak at the largest single element (~2.1 GB for
+    # the 3.8 GB morphology image). The rebuild itself runs in the compute pool
+    # (_child_rebuild); waiting on the future blocks this worker thread but releases the
+    # GIL, which is the whole point.
+    for i, (kind, name) in enumerate(todo):
+        report(f"Preparing image {i + 1}/{len(todo)}…")
+        store = os.path.join(cache_dir, f"{i}.zarr")  # write() needs a non-existing path
+        compute_pool.executor().submit(
+            _child_rebuild, getattr(sdata, kind)[name], kind, name, store).result()
+        getattr(sdata, kind)[name] = getattr(sd.read_zarr(store), kind)[name]
+        stores[name] = store
     return cache_dir, stores
 
 

@@ -66,7 +66,12 @@ async def _resource_loop():
     failing = 0  # consecutive failed ticks; reset to 0 on success
     while True:
         try:
-            BUS._publish_inloop("resource.sample", deps._mgr().resource_sample())
+            # Sampling is all syscalls (RSS, statvfs, per-process CPU times), which on a
+            # busy host add up to milliseconds — enough to be visible as a periodic hitch
+            # in every client's request latency if run inline on the loop. Take it in a
+            # worker thread and publish the finished sample.
+            sample = await _in_executor(deps._mgr().resource_sample)
+            BUS._publish_inloop("resource.sample", sample)
             failing = 0
         except Exception:
             # Sampling runs every tick; log with a traceback the first time it

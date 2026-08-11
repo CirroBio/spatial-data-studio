@@ -4,6 +4,7 @@ sampler (§11.3). One shared process; one worker thread per session.
 """
 import copy
 import os
+import time
 import uuid
 from pathlib import Path
 
@@ -12,7 +13,7 @@ import psutil
 from . import appstate
 from .presence import PRESENCE
 from .session import Session
-from ..config import config, within_data_dir
+from ..config import cgroup_mem_usage, config, within_data_dir
 from ..persistence.store import estimate_resident_mb, save_spatialdata
 from ..registry.reader_paths import ABSOLUTE_PATH_PARAMS, RELATIVE_FILE_PARAMS
 from ..transport.sse import BUS
@@ -32,6 +33,13 @@ _READ_PATH_PARAMS = ABSOLUTE_PATH_PARAMS
 # against the descriptor's own primary path and running it through the same
 # _resolve_or_raise check, which catches both that discard and a "../.." traversal.
 _READ_AUX_PATH_PARAMS = RELATIVE_FILE_PARAMS
+
+
+# Backstop cadence for re-scanning compute-worker child processes; see
+# `SessionManager._refresh_cpu_procs` for why this is much slower than the sample rate.
+# A job starting forces a scan of its own (`admit_job`), so this only has to reap
+# workers loky retired while nothing was running.
+_CPU_PROC_SCAN_S = 10.0
 
 
 def _resolve_or_raise(path: str) -> Path:
@@ -57,6 +65,7 @@ class SessionManager:
         # non-blocking cpu_percent() measures the delta since the *previous* call on the
         # same object, so a fresh handle each tick would always read 0.
         self._cpu_procs: dict[int, psutil.Process] = {self._proc.pid: self._proc}
+        self._cpu_procs_at = 0.0  # monotonic time of the last child scan (_refresh_cpu_procs)
 
     # ---- creation ---------------------------------------------------------
     def create_from_load(self, path: str, name: str | None = None,
@@ -355,7 +364,15 @@ class SessionManager:
 
     # ---- memory (DESIGN §11.3) -------------------------------------------
     def _rss_mb(self) -> float:
-        return self._proc.memory_info().rss / 1e6
+        """Anonymous memory the app holds. Inside a memory-limited container that is the
+        whole cgroup's `anon` — the API process *and* its compute-pool workers, shared
+        pages charged once (see config.cgroup_mem_usage). A worker holds a full pickled
+        copy of the table for a job's duration and the largest raster during an ingest
+        re-tile, so counting only this process under-reports exactly when the container is
+        closest to its limit. Outside a cgroup (local dev) it falls back to this process
+        alone, where the workers stay invisible."""
+        usage = cgroup_mem_usage()
+        return usage[0] if usage is not None else self._proc.memory_info().rss / 1e6
 
     def _work_dir_mb(self) -> float:
         """RAM held by the working set (unpacked archives + raster caches) when
@@ -363,9 +380,17 @@ class SessionManager:
         count against the cgroup limit the OOM killer enforces, so the boundary and
         admission math must add them in — otherwise it would keep admitting loads,
         jobs and tile renders until the OOM killer fires. 0.0 when WORK_DIR is on
-        disk (the default), where it isn't spending the RAM budget. O(1): reads the
-        mount's used blocks, so it stays cheap at the resource-sample cadence.
-        Assumes WORK_DIR is a dedicated mount (see config.WORK_DIR_IN_RAM)."""
+        disk (the default), where it isn't spending the RAM budget.
+
+        Inside a container this is the cgroup's own `shmem`: the same quantity, read
+        from the kernel's accounting instead of inferred, so it needs neither the
+        WORK_DIR_IN_RAM flag nor the assumption that WORK_DIR is a dedicated mount —
+        it is simply 0 when nothing is on tmpfs. The statvfs estimate below is the
+        fallback outside a cgroup (local dev). O(1) either way, so it stays cheap at
+        the resource-sample cadence."""
+        usage = cgroup_mem_usage()
+        if usage is not None:
+            return usage[1]
         if not config.WORK_DIR_IN_RAM:
             return 0.0
         try:
@@ -375,12 +400,14 @@ class SessionManager:
         return (st.f_blocks - st.f_bfree) * st.f_frsize / 1e6
 
     def _effective_mb(self) -> float:
-        """Process RSS plus the RAM-backed working set — the real memory pressure
-        spent against the container limit (see `_work_dir_mb`)."""
+        """Anonymous memory plus the RAM-backed working set — the real memory pressure
+        spent against the container limit. In a container both halves are the cgroup's
+        own, so this covers the compute-pool workers too (see `_rss_mb`); outside one it
+        is this process plus the statvfs working-set estimate."""
         return self._rss_mb() + self._work_dir_mb()
 
     def _mem_fraction(self) -> float:
-        """Effective memory (RSS + RAM-backed working set) as a fraction of the
+        """Effective memory (anon + RAM-backed working set) as a fraction of the
         container memory limit. Returns 0.0 (unknown) when the limit is non-positive
         — e.g. SDS_CONTAINER_MEM_MB=0 in the task definition — so a misconfigured
         limit degrades to "no percentage / never blocks" instead of a
@@ -389,14 +416,15 @@ class SessionManager:
             return 0.0
         return self._effective_mb() / config.CONTAINER_MEM_MB
 
-    def _cpu_pct(self) -> float:
-        """Summed CPU% across the API process and its compute-worker children (the loky
-        pool in compute_pool.py). The API process itself sits mostly idle during a job,
-        blocked on the worker's future, so measuring it alone (the old reading) badly
-        under-reported real CPU use; the heavy squidpy/scanpy work runs in the children.
-        100% == one core fully busy, so the total can exceed 100% on a multi-core box
-        (the resource strip shows it against the core count, see config.CPU_LIMIT).
-        A newly seen child reads 0.0 for one tick while its baseline primes."""
+    def _refresh_cpu_procs(self) -> None:
+        """Re-scan which compute-worker children exist. `children(recursive=True)` walks
+        every process on the host (~10 ms with a few hundred processes around) and holds
+        the GIL for it, which at the sampler's cadence was enough to show up as a periodic
+        hitch in every client's request latency. So it runs on its own slow cadence rather
+        than every sample: the child set only changes when loky spawns or retires workers,
+        and `admit_job` forces a scan when a job is about to start. A child that exits
+        between scans just raises NoSuchProcess in the rollup below and is skipped until
+        the next one prunes it."""
         live = {self._proc.pid}
         try:
             for child in self._proc.children(recursive=True):
@@ -406,6 +434,18 @@ class SessionManager:
             pass
         for pid in [p for p in self._cpu_procs if p not in live]:
             del self._cpu_procs[pid]
+        self._cpu_procs_at = time.monotonic()
+
+    def _cpu_pct(self) -> float:
+        """Summed CPU% across the API process and its compute-worker children (the loky
+        pool in compute_pool.py). The API process itself sits mostly idle during a job,
+        blocked on the worker's future, so measuring it alone (the old reading) badly
+        under-reported real CPU use; the heavy squidpy/scanpy work runs in the children.
+        100% == one core fully busy, so the total can exceed 100% on a multi-core box
+        (the resource strip shows it against the core count, see config.CPU_LIMIT).
+        A newly seen child reads 0.0 for one tick while its baseline primes."""
+        if time.monotonic() - self._cpu_procs_at >= _CPU_PROC_SCAN_S:
+            self._refresh_cpu_procs()
         total = 0.0
         for proc in self._cpu_procs.values():
             try:
@@ -444,6 +484,10 @@ class SessionManager:
         return self._mem_fraction() >= config.ADMISSION_PCT
 
     def admit_job(self, sess: Session) -> bool:
+        # A job is about to submit to the compute pool, which spawns worker processes if
+        # loky retired them while idle. Expire the child scan so the next resource sample
+        # picks the new workers up rather than under-reporting CPU for the scan interval.
+        self._cpu_procs_at = 0.0
         if self.over_memory_boundary():
             pct = self._mem_fraction()
             BUS.publish("memory.warning", {"session_id": sess.id,
@@ -453,9 +497,11 @@ class SessionManager:
 
     def resource_sample(self) -> dict:
         sessions = list(self.sessions.values())
-        # rss_pct is the effective fraction (RSS + RAM-backed working set) that the
+        # rss_pct is the effective fraction (anon + RAM-backed working set) that the
         # admission boundary actually gates on; work_dir_mb is that working set (0.0
-        # unless WORK_DIR is tmpfs-backed). rss_mb stays raw process RSS.
+        # unless WORK_DIR is tmpfs-backed). The two are disjoint, so the strip can show
+        # them side by side. In a container both cover the compute workers as well as
+        # the API process (see `_rss_mb`), which is what the strip's "global" means.
         return {"global": {"rss_mb": round(self._rss_mb(), 1),
                            "work_dir_mb": round(self._work_dir_mb(), 1),
                            "rss_pct": round(self._mem_fraction() * 100, 1),

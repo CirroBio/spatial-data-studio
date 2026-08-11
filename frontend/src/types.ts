@@ -379,9 +379,9 @@ export interface SessionLoadingEvent {
 
 export interface ResourceSample {
   global: {
-    rss_mb: number;
+    rss_mb: number;       // anonymous memory: API process + compute workers when containerized
     work_dir_mb: number;  // RAM-backed working set (0 unless WORK_DIR is tmpfs)
-    rss_pct: number;      // effective memory (RSS + work_dir_mb) as % of the limit
+    rss_pct: number;      // effective memory (rss_mb + work_dir_mb) as % of the limit
     cpu_pct: number;      // summed across the API process + compute workers; 100% == one core
     cpu_count: number;    // cores the container may use (the cpu_pct denominator)
     rasters_mb: number;

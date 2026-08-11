@@ -26,7 +26,10 @@ core, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
   nothing back) skip the serial queue and run concurrently in a read lane
   (`session._run_read_lane`) on a cheap shallow snapshot of the active table. Plots stay on
   the serial mutation path (they persist a `uns` color cache), so they block behind a
-  running compute and render the up-to-date object.
+  running compute and render the up-to-date object. Ingest-time raster re-tiling
+  (`rasters._child_rebuild`) goes to the same subprocess pool for the same reason —
+  it is the other multi-minute CPU burn, and in-process it stalled every *other*
+  viewer while one user opened a checkpoint.
 - **Execution is an audit log, not a replay graph.** Compute mutates the object in
   place; there is no undo and no reactive recomputation. App state persists in
   `sdata.attrs["app_state"]` and round-trips through the Zarr store.

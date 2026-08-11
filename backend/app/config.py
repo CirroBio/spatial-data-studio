@@ -28,6 +28,54 @@ def _cgroup_mem_limit_mb() -> int | None:
     return None
 
 
+# (memory.stat path, anonymous-memory key, tmpfs/shmem key) for each cgroup version.
+# v2 reports the cgroup's own totals; v1's `total_*` are the hierarchy sums.
+_CGROUP_MEM_STAT = (
+    ("/sys/fs/cgroup/memory.stat", "anon", "shmem"),                    # cgroup v2
+    ("/sys/fs/cgroup/memory/memory.stat", "total_rss", "total_shmem"),  # cgroup v1
+)
+
+
+def cgroup_mem_usage() -> tuple[float, float] | None:
+    """(anonymous MB, tmpfs/shmem MB) currently charged to the container's cgroup, or
+    None when we aren't inside a memory-limited container.
+
+    This is the whole cgroup, so it counts the compute-pool worker processes as well as
+    the API process — the point of reading it. A worker holds a full pickled copy of the
+    table for the length of a job (and the largest raster during an ingest re-tile), and
+    process-local RSS is blind to all of it, so admission would keep saying yes while the
+    container filled up. Shared pages (interpreter, libraries) are charged once here,
+    whereas summing each process's RSS counts them once *per worker* — measured at ~324 MB
+    of mostly-shared RSS per idle worker, which across a core-count-sized pool would
+    invent gigabytes of pressure that isn't there.
+
+    Reclaimable page cache is deliberately left out (only `anon` + `shmem` is counted):
+    reading a multi-GB checkpoint fills the cache, but the kernel frees it under pressure
+    rather than OOM-killing us. `shmem` is the same tmpfs working set `_work_dir_mb`
+    otherwise estimates by statvfs, measured directly — it covers every tmpfs charged to
+    the container rather than one named mount, which in this image means `/work` plus an
+    unused `/dev/shm`, and is the conservative direction to err in anyway.
+
+    Gated on a cgroup memory limit actually being set: without one we may be reading the
+    *root* cgroup — a bare Linux dev box or CI runner — where these numbers describe the
+    whole machine, not this app."""
+    if _cgroup_mem_limit_mb() is None:
+        return None
+    for path, anon_key, shmem_key in _CGROUP_MEM_STAT:
+        try:
+            raw = Path(path).read_text()
+        except OSError:
+            continue
+        stat = {}
+        for line in raw.splitlines():
+            key, _, value = line.partition(" ")
+            if key in (anon_key, shmem_key):
+                stat[key] = int(value)
+        if anon_key in stat and shmem_key in stat:
+            return stat[anon_key] / 1e6, stat[shmem_key] / 1e6
+    return None
+
+
 def _host_mem_mb() -> int | None:
     """Total physical RAM in MiB, or None if it can't be read."""
     try:
