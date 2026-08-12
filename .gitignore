@@ -13,9 +13,11 @@ frontend/test-results/
 frontend/blob-report/
 frontend/*.tsbuildinfo
 
-# Data (large; fetched via scripts/prepare_test_data.py)
-test-data/
-data/
+# Data (large; fetched via scripts/prepare_test_data.py). Anchored to the repo root:
+# unanchored, `data/` also swallowed source directories named data (e.g.
+# frontend/src/data/), which then silently never got committed.
+/test-data/
+/data/
 checkpoints/
 *.zarr/
 *.zarr.zip

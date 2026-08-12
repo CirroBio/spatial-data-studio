@@ -1,8 +1,12 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { useAppStore } from './store/sessionStore';
 import { getSessions, getFunctions, getCirroStatus, getCirroUploads, getReadyz } from './api';
 import { isSpatialDisplay, isEmbeddingDisplay } from './types';
 import { resolveRegionSetColumn } from './lib/regions';
+import { DataSourceProvider, useApiSource } from './data/context';
+import { checkpointUrlFromLocation, useCheckpointSession } from './data/useCheckpointSession';
+import { fetchCheckpointIndex } from './data/checkpointIndex';
+import CheckpointIndexPage from './components/CheckpointIndexPage';
 import { useSSE } from './hooks/useSSE';
 import { useSession } from './hooks/useSession';
 import { usePresence, useEditGate } from './hooks/usePresence';
@@ -27,7 +31,16 @@ import StartupSplash from './components/StartupSplash';
 import { TourAnchors } from './tours';
 
 export default function App() {
-  useSSE();
+  // Serverless mode: no backend at all — no session list, no event stream, no
+  // presence, no function registry. Entered either by `?checkpoint=<url>` naming one
+  // file, or by a sibling `index.json` listing a collection (see the bootstrap effect
+  // below, and DESIGN §14.3).
+  const checkpointUrl = useMemo(checkpointUrlFromLocation, []);
+  const { checkpointIndex, setCheckpointIndex } = useAppStore();
+  const serverless = checkpointUrl !== null || (checkpointIndex?.entries.length ?? 0) > 0;
+  const checkpoint = useCheckpointSession(checkpointUrl);
+
+  useSSE(!serverless);
 
   const {
     setSessions,
@@ -51,36 +64,65 @@ export default function App() {
     jobLogs,
   } = useAppStore();
 
-  useSession(activeSessionId);
+  useSession(activeSessionId, !serverless);
   // Announce this viewer on the session it is looking at, which also takes that
-  // session's edit lock when nobody holds it (hooks/usePresence.ts).
-  usePresence(activeSessionId);
+  // session's edit lock when nobody holds it (hooks/usePresence.ts). Nobody to
+  // announce to in serverless mode.
+  usePresence(activeSessionId, !serverless);
   const { canEdit } = useEditGate();
+
+  // The canvas reads through whichever source backs the active session.
+  const apiSource = useApiSource(serverless ? null : activeSessionId);
+  const dataSource = serverless ? checkpoint.source : apiSource;
 
   const [showNewSession, setShowNewSession] = useState(false);
   const [backendReady, setBackendReady] = useState(false);
   const [sessionsLoading, setSessionsLoading] = useState(true);
 
-  // Gates the initial render on the backend's own readiness signal, so the
-  // multi-second squidpy import + registry introspection at startup shows a
-  // splash instead of an app that looks empty.
+  // Resolves which mode the app is in, and gates the initial render on it. For a live
+  // app that means the backend's own readiness signal, so the multi-second squidpy
+  // import + registry introspection at startup shows a splash instead of an app that
+  // looks empty. When nothing answers, a sibling `index.json` is what distinguishes a
+  // static deployment from a backend that is merely still booting — probed once, so a
+  // slow boot doesn't retry it every tick.
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      if (checkpointUrl) {
+        setBackendReady(true);
+        const index = await fetchCheckpointIndex();
+        if (!cancelled && index.entries.length) setCheckpointIndex(index);
+        return;
+      }
+      let probedIndex = false;
       while (!cancelled) {
         try {
           await getReadyz();
           if (!cancelled) setBackendReady(true);
           return;
         } catch {
+          if (!probedIndex) {
+            probedIndex = true;
+            const index = await fetchCheckpointIndex();
+            if (cancelled) return;
+            if (index.entries.length) {
+              setCheckpointIndex(index);
+              setBackendReady(true);
+              return;
+            }
+          }
           await new Promise((r) => setTimeout(r, 500));
         }
       }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [checkpointUrl, setCheckpointIndex]);
 
   useEffect(() => {
+    if (serverless || !backendReady) {
+      if (serverless) setSessionsLoading(false);
+      return;
+    }
     getSessions()
       .then(({ sessions: s }) => {
         setSessions(s);
@@ -112,7 +154,7 @@ export default function App() {
     getCirroUploads().then(setCirroUploads).catch(() => {});
 
     return () => { cancelled = true; };
-  }, [setSessions, setFunctions, activeSessionId, setActiveSessionId, setCirroEnabled, setCirroUploads]);
+  }, [serverless, backendReady, setSessions, setFunctions, activeSessionId, setActiveSessionId, setCirroEnabled, setCirroUploads]);
 
   const display = sessionState?.app_state.displays.find(isSpatialDisplay) ?? null;
   const embeddingDisplay = sessionState?.app_state.displays.find(isEmbeddingDisplay) ?? null;
@@ -126,10 +168,11 @@ export default function App() {
   const detail = selectedComputeId ? <ComputeDetail /> : selectedPlotId ? <PlotDetail /> : null;
 
   // Canvas mode is set by which tab is active — never a drawing mode when this viewer
-  // can't change the session (a read-only snapshot, or another viewer holds the edit
-  // lock). Sidebar also resets off a mutating tab, but the canvas checks the gate
-  // directly too rather than depending on that timing.
-  const canvasMode = !canEdit ? null
+  // can neither change the session nor make browser-only changes (another viewer holds
+  // the edit lock, say). A checkpoint qualifies via `serverless`: its region/shape/
+  // subset tools all resolve locally. Sidebar also resets off a mutating tab, but the
+  // canvas checks the gate directly too rather than depending on that timing.
+  const canvasMode = !(canEdit || serverless) ? null
     : sidebarTab === 'regions'
     ? 'regions'
     : sidebarTab === 'annotations'
@@ -153,6 +196,19 @@ export default function App() {
       : null;
 
   function renderMain() {
+    if (serverless && (checkpoint.loading || checkpoint.error)) {
+      return checkpoint.error ? (
+        <div className="flex flex-col items-center justify-center h-full gap-2 text-muted px-6 text-center">
+          <span className="text-lg text-text">Could not open this checkpoint</span>
+          <span className="text-sm">{checkpoint.error}</span>
+        </div>
+      ) : (
+        <div className="flex flex-col items-center justify-center h-full gap-3 text-muted">
+          <div className="w-6 h-6 rounded-full border-2 border-border border-t-accent animate-spin" />
+          <span className="text-sm">Opening checkpoint…</span>
+        </div>
+      );
+    }
     if (!activeSessionId) {
       if (sessionsLoading) {
         return (
@@ -238,7 +294,9 @@ export default function App() {
     }
 
     // The viewer mode switch toggles between the canvas, embeddings, and the table inspector.
-    if (mainView === 'tables') return <DataInspector />;
+    // `mainView` persists across sessions, so a checkpoint opened while Tables was
+    // the last view must not land on the (backend-only) inspector.
+    if (mainView === 'tables' && !serverless) return <DataInspector />;
 
     if (mainView === 'embedding') {
       return (
@@ -275,8 +333,15 @@ export default function App() {
   }
 
   if (!backendReady) return <StartupSplash />;
+  // A serverless deployment opened without `?checkpoint=` shows its collection and
+  // nothing else — there is no session yet, so the sidebar, display settings and
+  // resource strip would all be empty chrome.
+  if (serverless && !checkpointUrl && checkpointIndex) {
+    return <CheckpointIndexPage index={checkpointIndex} />;
+  }
 
   return (
+    <DataSourceProvider source={dataSource}>
     <div className="flex flex-col h-full bg-bg text-text">
       <Header />
       <div className="flex flex-1 overflow-hidden">
@@ -293,7 +358,9 @@ export default function App() {
               {([
                 ['canvas', 'Spatial'],
                 ['embedding', 'Embeddings'],
-                ['tables', 'Tables'],
+                // The table inspector pages dataframes through the backend
+                // (`/elements`, `/table-preview`), which a checkpoint has none of.
+                ...(serverless ? [] : [['tables', 'Tables'] as const]),
               ] as const).map(([mode, label]) => (
                 <button
                   key={mode}
@@ -317,7 +384,8 @@ export default function App() {
         </main>
         <SettingsPanel onNewSession={() => setShowNewSession(true)} />
       </div>
-      <ResourceStrip />
+      {/* Resource telemetry arrives over SSE from the backend; a checkpoint has none. */}
+      {!serverless && <ResourceStrip />}
       <Toaster />
       <BlockingOverlay />
       {showNewSession && (
@@ -331,5 +399,6 @@ export default function App() {
         />
       )}
     </div>
+    </DataSourceProvider>
   );
 }

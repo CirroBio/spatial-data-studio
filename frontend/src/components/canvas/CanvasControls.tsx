@@ -14,7 +14,6 @@ import type { Channel } from './useImageChannels';
 
 interface CanvasControlsProps {
   display: SpatialDisplaySpec;
-  sessionId: string;
   obsFields: ObsField[];
   layers: string[];
   colorByName: string;
@@ -116,7 +115,6 @@ function contrastDigits(range: [number, number]): number {
 
 export default function CanvasControls({
   display,
-  sessionId,
   obsFields,
   layers,
   colorByName,
@@ -367,8 +365,7 @@ export default function CanvasControls({
           <div className="flex flex-col gap-1">
             <label className={FIELD_LABEL}>Color by</label>
             <ColorBySelect
-              sessionId={sessionId}
-              value={display.encoding.color_by}
+              value={display.encoding.color_by ?? ''}
               obsFields={obsFields}
               layers={layers}
               onChange={(color_by) => updateEncoding({ color_by })}

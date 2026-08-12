@@ -4,12 +4,13 @@ import { ScatterplotLayer, PolygonLayer, PathLayer } from '@deck.gl/layers';
 import { LinearInterpolator } from '@deck.gl/core';
 import type { Layer, OrthographicViewState, PickingInfo } from '@deck.gl/core';
 import { useAppStore } from '../../store/sessionStore';
+import { useDataSource } from '../../data/context';
 import { useArrowField } from '../../hooks/useArrowField';
 import { useEditGate } from '../../hooks/usePresence';
-import {
-  getImageInfo, getElements, getImageThumbnailUrl, fetchWhenIdle,
-} from '../../api';
-import { countPointsInRings } from '../../lib/pointInPolygon';
+import { fetchWhenIdle } from '../../api';
+import { countPointsInRings, indicesInRings } from '../../lib/pointInPolygon';
+import { downloadCanvasPng } from '../../lib/canvasCapture';
+import { reportError } from '../../lib/errors';
 import TransformEditor from '../TransformEditor';
 import { isSpatialDisplay, type SpatialDisplaySpec, type ImageInfo } from '../../types';
 import { useDisplayPersistence } from './useDisplayPersistence';
@@ -59,22 +60,25 @@ interface Props {
 }
 
 export default function SpatialCanvas({ display, sessionId, canvasMode, annotationTarget }: Props) {
-  const { sessionState, isolatedCategory, openSnapshotExport, setSnapshotHandler } = useAppStore();
+  const { sessionState, isolatedCategory, hiddenCells, openSnapshotExport, setSnapshotHandler } = useAppStore();
+  const source = useDataSource();
   const fields = sessionState?.fields;
   const dataVersions = sessionState?.data_versions ?? {};
   const { canEdit, reason: editBlockedReason } = useEditGate();
 
   const coordsPath = display.encoding.coords;
   const coordsVersion = dataVersions[coordsPath] ?? 0;
-  const colorByPath = display.encoding.color_by;
+  // '' when the display has no colouring, which reads as falsy everywhere below
+  // (no field fetch, no colour source, no legend) instead of crashing on null.
+  const colorByPath = display.encoding.color_by ?? '';
   // Gene colorings (`X:<gene>`) can't be versioned per gene — the backend tracks the
   // expression matrix by whole-array identity and bumps the coarse `X:` path — so fold
   // that in, else a normalize/log1p/scale/filter compute leaves the canvas on stale colors.
   const colorVersion = (dataVersions[colorByPath] ?? 0)
     + (colorByPath.startsWith('X:') ? (dataVersions['X:'] ?? 0) : 0);
 
-  const { table: coordsTable, loading: coordsLoading } = useArrowField(sessionId, coordsPath, coordsVersion);
-  const { table: colorTable, loading: colorLoading } = useArrowField(sessionId, colorByPath, colorVersion);
+  const { table: coordsTable, loading: coordsLoading } = useArrowField(coordsPath, coordsVersion);
+  const { table: colorTable, loading: colorLoading } = useArrowField(colorByPath, colorVersion);
 
   const [imageInfo, setImageInfo] = useState<ImageInfo | null>(null);
 
@@ -163,9 +167,23 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   // rings are both in world coords (draw captures apply toWorld), so the test is direct.
   useEffect(() => {
     const rings = currentRing.length >= 3 ? [...polygons, currentRing] : polygons;
-    setRegionCellCount(positions ? countPointsInRings(positions.positions, positions.numRows, rings) : 0);
-    setRegionCellIndices(null);  // spatial resolves the lasso server-side via polygon_query
-  }, [positions, polygons, currentRing, setRegionCellCount, setRegionCellIndices]);
+    if (!positions) {
+      setRegionCellCount(0);
+      setRegionCellIndices(null);
+      return;
+    }
+    // A checkpoint has no backend to run polygon_query, so resolve membership here —
+    // the same client-side test the embedding canvas already uses. A live session
+    // still sends the rings and lets the backend do it against the real geometry.
+    if (source?.kind === 'checkpoint') {
+      const inside = indicesInRings(positions.positions, positions.numRows, rings);
+      setRegionCellCount(inside.length);
+      setRegionCellIndices(inside);
+      return;
+    }
+    setRegionCellCount(countPointsInRings(positions.positions, positions.numRows, rings));
+    setRegionCellIndices(null);
+  }, [source, positions, polygons, currentRing, setRegionCellCount, setRegionCellIndices]);
 
   const { containerRef, canvasSize, viewState, setViewState, fitToData } = useCanvasViewState({
     positions,
@@ -193,6 +211,13 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   const canvasSizeRef = useRef(canvasSize);
   canvasSizeRef.current = canvasSize;
   const handleSnapshot = useCallback(() => {
+    // A checkpoint has no backend to render the figure, so the snapshot action
+    // captures the canvas as a PNG instead (see lib/canvasCapture).
+    if (source?.kind === 'checkpoint') {
+      void downloadCanvasPng(containerRef.current, sessionState?.summary.name ?? 'view')
+        .catch((err) => reportError('PNG export failed', err));
+      return;
+    }
     const vs = viewStateRef.current;
     if (!vs || typeof vs.zoom !== 'number') return;
     const size = canvasSizeRef.current ?? { width: 1200, height: 900 };
@@ -205,7 +230,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
       label: sessionState?.summary.name ?? 'snapshot',
       minimap: showMinimap,
     });
-  }, [sessionId, display.id, openSnapshotExport, sessionState?.summary.name, showMinimap]);
+  }, [source, containerRef, sessionId, display.id, openSnapshotExport, sessionState?.summary.name, showMinimap]);
   useEffect(() => {
     setSnapshotHandler(handleSnapshot);
     return () => setSnapshotHandler(null);
@@ -230,11 +255,11 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   // it). Null when the image is off — the inset then draws the cell scatter instead.
   const minimapImageUrl = useMemo(() => {
     const element = display.encoding.image_layer;
-    if (!element || !showImage) return null;
+    if (!element || !showImage || !source) return null;
     const visible = channels.filter((c) => c.visible)
       .map((c) => `${c.index}:${c.color.replace('#', '')}`).join(',');
-    return getImageThumbnailUrl(sessionId, element, visible || undefined, MINIMAP_THUMB_PX);
-  }, [display.encoding.image_layer, showImage, channels, sessionId]);
+    return source.imageThumbnailUrl(element, visible || undefined, MINIMAP_THUMB_PX);
+  }, [display.encoding.image_layer, showImage, channels, source]);
 
   const navigateTo = useCallback((target: [number, number]) => {
     const vs = viewStateRef.current;
@@ -363,13 +388,13 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   // since nothing else re-runs this effect after the session becomes ready.
   useEffect(() => {
     const element = display.encoding.image_layer;
-    if (!element || !sessionId) return;
+    if (!element || !source) return;
     const controller = new AbortController();
-    fetchWhenIdle(() => getImageInfo(sessionId, element), { signal: controller.signal })
+    fetchWhenIdle(() => source.getImageInfo(element), { signal: controller.signal })
       .then((info) => { if (!controller.signal.aborted) setImageInfo(info); })
       .catch((err) => { if (!controller.signal.aborted) console.error(err); });
     return () => controller.abort();
-  }, [sessionId, display.encoding.image_layer]);
+  }, [source, display.encoding.image_layer]);
 
   const colorSource = useMemo(() => arrowToColorSource(colorTable), [colorTable]);
   const categoryColors = display.encoding.category_colors?.[colorByPath];
@@ -378,6 +403,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
     positions,
     opacity: display.encoding.opacity,
     isolatedCategory,
+    hiddenCells,
     categoryColors,
   });
 
@@ -430,13 +456,14 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   const boundaryLineWidth = display.encoding.boundary_line_width ?? 1;
 
   // Polygon shape sets available for this session (elements inventory filtered to
-  // polygonal geom types). Empty → the whole shapes path stays dormant.
+  // polygonal geom types). Empty → the whole shapes path stays dormant, which is
+  // also what a source with no element inventory (a checkpoint) gets.
   const [polygonElements, setPolygonElements] = useState<string[]>([]);
   useEffect(() => {
     setPolygonElements([]);
-    if (!sessionId) return;
+    if (!source?.getElements) return;
     let stale = false;
-    getElements(sessionId)
+    source.getElements()
       .then((inv) => {
         if (stale) return;
         setPolygonElements(
@@ -447,7 +474,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
       })
       .catch(() => { if (!stale) setPolygonElements([]); });
     return () => { stale = true; };
-  }, [sessionId, coordsVersion]);
+  }, [source, coordsVersion]);
 
   // Effective shape set: the persisted choice if it still exists, else the first
   // available polygon element (e.g. cell_boundaries). null when none exist.
@@ -470,7 +497,6 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   const zoomedInForShapes = meanSpacing > 0 && zoom >= shapesFetchZoomThreshold(meanSpacing * radiusScale);
   const shapesOverlay = renderMode === 'points+shapes' && shapesElement !== null;
   const { layer: polygonLayer, loading: polygonsLoading } = usePolygonBbox({
-    sessionId,
     element: shapesElement,
     version: coordsVersion,
     viewState,
@@ -642,7 +668,6 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
 
       <CanvasControls
         display={display}
-        sessionId={sessionId}
         obsFields={obsFields}
         layers={layerNames}
         colorByName={colorByName}

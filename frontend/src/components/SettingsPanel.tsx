@@ -1,8 +1,9 @@
-import { lazy, Suspense, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useMemo, useState, type ReactNode } from 'react';
 import { useAppStore } from '../store/sessionStore';
 import { saveSession } from '../api';
 import { reportError } from '../lib/errors';
 import { useEditGate } from '../hooks/usePresence';
+import { checkpointUrlFromLocation } from '../data/useCheckpointSession';
 import AcknowledgementsDialog from './AcknowledgementsDialog';
 import CirroUploadDialog from './CirroUploadDialog';
 const SnapshotBrowser = lazy(() => import('./SnapshotBrowser'));
@@ -57,7 +58,16 @@ export default function SettingsPanel({ onNewSession }: Props) {
   } = useAppStore();
   const unsaved = !!activeSessionId && sessionState?.summary.saved === false;
   const { canEdit, reason: editReason } = useEditGate();
-  const { start: startTour } = useTour(spatialDataStudioTour.id, true);
+  // Read from the URL, not the data source: the source is opened asynchronously, and
+  // the tour's first-visit effect below fires on mount — it would have started before
+  // a `kind === 'checkpoint'` check could say otherwise. Every serverless view that
+  // renders this panel has `?checkpoint=` set (the collection landing page renders on
+  // its own). A checkpoint has no backend to render a figure, so the snapshot action
+  // becomes a plain canvas capture.
+  const captureOnly = useMemo(() => checkpointUrlFromLocation() !== null, []);
+  // The tour walks the analysis workflow (function picker, compute, saving), most of
+  // which a checkpoint doesn't have — so neither auto-start it nor offer it there.
+  const { start: startTour } = useTour(spatialDataStudioTour.id, !captureOnly);
   const uploadsActive = cirroUploads.uploading + cirroUploads.pending;
   const uploadTitle = uploadsActive > 0
     ? `Cirro: ${cirroUploads.uploading} uploading`
@@ -73,12 +83,14 @@ export default function SettingsPanel({ onNewSession }: Props) {
   // A snapshot renders whatever's on the active canvas — it needs a session with a
   // Spatial or Embeddings view open, but no saved checkpoint (the figure is a
   // standalone artifact with embedded provenance, not a pointer to stored data).
+  const snapshotLabel = captureOnly ? 'Export PNG' : 'Save snapshot';
+  const snapshotNoun = captureOnly ? 'export a PNG' : 'save a snapshot';
   const snapshotDisabledReason = !activeSessionId
-    ? 'Load a session to save a snapshot.'
-    : !canEdit
+    ? `Load a session to ${snapshotNoun}.`
+    : !canEdit && !captureOnly
     ? `${editReason} — the figure is rendered from the session's own display settings.`
     : !snapshotHandler
-    ? 'Open the Spatial or Embeddings view to save a snapshot.'
+    ? `Open the Spatial or Embeddings view to ${snapshotNoun}.`
     : null;
 
   function handleSave() {
@@ -108,6 +120,10 @@ export default function SettingsPanel({ onNewSession }: Props) {
           </div>
 
           <div className="flex flex-col py-1">
+            {/* Session management and the snapshot gallery are backend features; a
+                checkpoint opened over HTTP has no backend, so they are omitted
+                rather than shown as controls that would 404. */}
+            {!captureOnly && (
             <PanelItem
               label="New session"
               onClick={onNewSession}
@@ -119,6 +135,8 @@ export default function SettingsPanel({ onNewSession }: Props) {
                 </svg>
               }
             />
+            )}
+            {!captureOnly && (
             <PanelItem
               label="Save session"
               onClick={handleSave}
@@ -132,8 +150,9 @@ export default function SettingsPanel({ onNewSession }: Props) {
                 </svg>
               }
             />
+            )}
             <PanelItem
-              label="Save snapshot"
+              label={snapshotLabel}
               onClick={() => snapshotHandler?.()}
               disabled={snapshotDisabledReason !== null}
               title={snapshotDisabledReason ?? undefined}
@@ -144,6 +163,7 @@ export default function SettingsPanel({ onNewSession }: Props) {
                 </svg>
               }
             />
+            {!captureOnly && (
             <PanelItem
               label="Browse snapshots"
               onClick={() => openSnapshots()}
@@ -155,6 +175,7 @@ export default function SettingsPanel({ onNewSession }: Props) {
                 </svg>
               }
             />
+            )}
 
             <div className="my-1 h-px bg-border" />
 
@@ -172,6 +193,7 @@ export default function SettingsPanel({ onNewSession }: Props) {
                 </svg>
               )}
             />
+            {!captureOnly && (
             <PanelItem
               label="Take the tour"
               onClick={startTour}
@@ -182,6 +204,7 @@ export default function SettingsPanel({ onNewSession }: Props) {
                 </svg>
               }
             />
+            )}
             <PanelItem
               label="About / Acknowledgements"
               onClick={() => setShowAbout(true)}

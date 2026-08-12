@@ -8,14 +8,28 @@ export is implemented as write-dir-then-zip, and load as unzip-then-read.
 `_save_zip`/`_save_dir` relocate the (potentially multi-MB) per-compute worker logs
 out of `attrs["app_state"]` — which is inlined into the store's root `zarr.json`
 and would otherwise be downloaded in full on open — into gzipped files under
-`logs/`, read back lazily by `session.get_log`. Raster (image/label) arrays are
-saved as-is: `rasters.normalize_rasters` already tile-chunks them at load time
-(`TILE_SIZE`-sized chunks), so a save just persists whatever chunking is already
-live — no separate repack step is needed (checkpoints no longer need to be
-independently browser-readable without this backend; see DESIGN §14).
+`logs/`, read back lazily by `session.get_log`.
+
+A checkpoint is **directly browser-readable** over HTTP Range without this backend
+(DESIGN §14): the serverless viewer opens the `.zarr.zip` with zarrita and renders
+from it. Three write-time steps exist only to serve that reader. They are what make
+it readable at all, not an optimization — a Zarr v3 store carries no child index, so
+a checkpoint written before them is rejected by the viewer with a re-save message:
+
+- `_shard_rasters` rewrites image/label arrays with the Zarr v3 sharding codec, so a
+  multi-gigabyte level contributes tens of entries to the zip central directory
+  instead of tens of thousands (the browser downloads that directory in full before
+  the first tile).
+- `_write_viewer_sidecar` writes a `viewer/` group holding what the browser cannot
+  cheaply derive: the per-image manifest from `imaging.image_info`, the points->global
+  affine, and a gene-major (CSC) mirror of each table's `X` so coloring by one gene is
+  a couple of range reads instead of a download of the whole CSR `data`+`indices` pair.
+- `_consolidate` re-runs consolidated metadata last, so the tree the browser reads
+  reports the sharded codec and includes `viewer/`.
 """
 import gzip
 import hashlib
+import json
 import logging
 import os
 import re
@@ -27,6 +41,7 @@ from pathlib import Path
 
 import numpy as np
 import spatialdata as sd
+import zarr
 
 from ..config import config
 from ..sessions import appstate
@@ -55,6 +70,28 @@ _HASH_SUFFIX_RE = re.compile(rf"-[0-9a-f]{{{HASH_LEN}}}$")
 # infix. Longest-first so `.sdata.zarr.zip` wins over `.zarr.zip`/`.zarr`.
 CHECKPOINT_EXT = ".sdata.zarr.zip"
 _READ_EXTS = (".sdata.zarr.zip", ".zarr.zip", ".zarr.tar.gz", ".zarr.tgz", ".zarr")
+
+# Raster sharding (see module docstring). Inner chunk stays at the tile size the
+# canvas requests so a tile is still one decompress; the shard groups 8x8 of them,
+# which keeps the per-shard index tiny ((SHARD/INNER)^2 * 16 bytes).
+_SHARD_INNER = 512
+_SHARD_SIZE = 4096
+
+# Top-level group holding the browser-only sidecar. Not a SpatialData element —
+# `sd.read_zarr` ignores unknown root groups, which the save/reload round trip in
+# `test_e2e.run_full_flow` covers.
+VIEWER_GROUP = "viewer"
+# Bumped when the sidecar layout changes so a viewer can refuse a shape it predates.
+VIEWER_SIDECAR_VERSION = 1
+# Chunk length for the CSC mirror's `data`/`indices`, in elements. Sized from the data
+# so one gene column lands in one or two chunks whatever the table's shape: a Visium
+# gene holds a few hundred non-zeros, a Xenium gene hundreds of thousands, and a fixed
+# size would either split every Xenium column across many chunks or make a Visium gene
+# read drag in megabytes it doesn't need. Smaller chunks cost total size (zstd has less
+# to work with): on the Visium test checkpoint the mirror is 66 MB at 16k vs 51 MB at
+# 256k, against 72 KB vs 843 KB per gene read — latency is what this mirror exists for.
+_CSC_CHUNK_MIN = 16384
+_CSC_CHUNK_MAX = 1 << 20
 
 
 def strip_checkpoint_ext(name: str) -> str:
@@ -298,6 +335,7 @@ def _save_dir(sdata, path: str, logs: dict[str, str]) -> str:
         # Don't adopt `tmp` as the backing path — it's renamed to `p` below, which would
         # leave sdata.path dangling; point the object at the final `p` after the swap.
         sdata.write(str(tmp), overwrite=True, update_sdata_path=False)
+        _write_browser_reader_support(str(tmp), sdata)
         _write_logs(str(tmp), logs)
         # Keep the original until the new store is fully written, then swap via two
         # atomic renames so a crash mid-save can't destroy the only copy.
@@ -310,6 +348,7 @@ def _save_dir(sdata, path: str, logs: dict[str, str]) -> str:
         sdata.path = p
     else:
         sdata.write(path, overwrite=True)
+        _write_browser_reader_support(path, sdata)
         _write_logs(path, logs)
     return path
 
@@ -323,6 +362,7 @@ def _save_zip(sdata, path: str, hash_name: bool, logs: dict[str, str]) -> str:
         # later str(sdata) — e.g. the SpatialData manifest contributor — fails once
         # the temp dir is gone.
         sdata.write(zarr_dir, overwrite=True, update_sdata_path=False)
+        _write_browser_reader_support(zarr_dir, sdata)
         _write_logs(zarr_dir, logs)
         return _zip_from_dir(zarr_dir, path, hash_name)
     finally:
@@ -375,6 +415,11 @@ def update_checkpoint(sdata, path: str, app_state: dict, *, tables: set[str],
             sdata.write_transformations(name)
         sdata.write_attrs()
         _write_logs(work_dir, logs)
+        # Rasters are untouched here so they need no re-shard, but the sidecar does
+        # need refreshing: a changed table invalidates its CSC mirror, and a changed
+        # transform moves `pixel_to_world`. The image manifest is cheap, so it is
+        # always rebuilt; the CSC rebuild is limited to the dirty tables.
+        _write_viewer_sidecar(work_dir, sdata, tables=tables)
         sdata.write_consolidated_metadata()
         written = _zip_from_dir(work_dir, path, hash_name)
     finally:
@@ -426,6 +471,193 @@ def _zip_dir(src_dir: str, dest_zip: str) -> str:
                     h.update(chunk)
                     dst.write(chunk)
     return h.hexdigest()[:HASH_LEN]
+
+
+# ---- browser-readable checkpoint support (DESIGN §14) -----------------------
+def _write_browser_reader_support(zarr_dir: str, sdata) -> None:
+    """Make a freshly-written store directly readable by the serverless viewer.
+    Order matters: consolidation runs last so the tree the browser fetches reports
+    the sharded codec and lists the `viewer/` sidecar."""
+    _shard_rasters(zarr_dir)
+    _write_viewer_sidecar(zarr_dir, sdata)
+    _consolidate(zarr_dir)
+
+
+def _consolidate(zarr_dir: str) -> None:
+    """Re-run consolidated metadata over a store at an arbitrary path. Reuses
+    spatialdata's own helper — it silences the `ZarrUserWarning` the `.parquet` shape
+    files provoke — rather than calling `zarr.consolidate_metadata` directly.
+    `SpatialData.write_consolidated_metadata` can't be used here because it reads
+    `sdata.path`, which these save paths deliberately leave pointing elsewhere."""
+    from spatialdata._io.io_zarr import _write_consolidated_metadata
+    _write_consolidated_metadata(zarr_dir)
+
+
+def _write_viewer_sidecar(zarr_dir: str, sdata, tables: set[str] | None = None) -> None:
+    """Write the `viewer/` group: what the browser needs but cannot cheaply derive
+    from the SpatialData elements themselves.
+
+    - `viewer` attrs carry the per-image manifest from `imaging.image_info`, keyed
+      `[element][table_key]` because `pixel_to_world` reconciles the image against a
+      table's spots. Every table is baked (plus `""` for none) so the viewer looks up
+      whichever it settles on instead of re-deriving the reconciliation in JS.
+    - `coords_transform` is the points->global affine `GET /data/obsm:spatial`
+      applies, so the viewer places cells identically without re-deriving it from the
+      region element's `coordinateTransformations`.
+    - `viewer/tables/<key>/X_csc` is a gene-major mirror of a sparse `X`. This
+      duplicates `X` on disk; the alternative is the browser downloading the whole
+      CSR `data`+`indices` pair to read one gene column, which is worse exactly when
+      the table is large.
+
+    `tables` limits the CSC rebuild to those keys (the incremental save path knows
+    which tables changed); None rebuilds all of them.
+    """
+    from .. import imaging
+    from ..sessions import transform
+
+    root = zarr.open_group(zarr_dir, mode="r+", use_consolidated=False)
+    group = root.require_group(VIEWER_GROUP)
+    table_keys = list(getattr(sdata, "tables", {}))
+    group.attrs.update({
+        "sidecar_version": VIEWER_SIDECAR_VERSION,
+        "table_keys": table_keys,
+        "images": {
+            element: {
+                key: imaging.image_info(sdata, element, sdata.tables[key] if key else None)
+                for key in [""] + table_keys
+            }
+            for element in getattr(sdata, "images", {})
+        },
+        "coords_transform": {
+            key: transform.get_affine6(sdata, sdata.tables[key]) for key in table_keys
+        },
+    })
+    for key in table_keys if tables is None else (tables & set(table_keys)):
+        _write_csc_mirror(group, key, sdata.tables[key])
+
+
+def _write_csc_mirror(group, key: str, adata) -> None:
+    """Column-major (CSC) copy of `adata.X` under `viewer/tables/<key>/X_csc`, so one
+    gene's column is a contiguous `data[indptr[g]:indptr[g+1]]` slice covered by one
+    or two `_CSC_CHUNK` chunks. Written only for a sparse `X`: a dense one is already
+    column-sliceable by the chunk grid AnnData wrote. Cell order matches `obs`, gene
+    order matches `var/_index`, so neither is duplicated here."""
+    import scipy.sparse as sp
+
+    x = getattr(adata, "X", None)
+    if x is None or not sp.issparse(x):
+        return
+    csc = x.tocsc()
+    chunk = _csc_chunk(csc.indptr)
+    dest = group.require_group("tables").require_group(key).require_group("X_csc")
+    dest.attrs.update({"shape": [int(csc.shape[0]), int(csc.shape[1])]})
+    for name, values, length in (("data", csc.data, chunk),
+                                 ("indices", csc.indices, chunk),
+                                 ("indptr", csc.indptr, len(csc.indptr))):
+        arr = dest.create_array(name, shape=values.shape, dtype=values.dtype,
+                                chunks=(max(1, min(length, len(values))),), overwrite=True)
+        arr[:] = values
+
+
+def _csc_chunk(indptr: np.ndarray) -> int:
+    """Chunk length keeping a gene column inside one or two chunks: the next power of
+    two at or above twice the 95th-percentile column length, clamped to
+    [`_CSC_CHUNK_MIN`, `_CSC_CHUNK_MAX`]. The p95 rather than the max so one unusually
+    dense gene doesn't inflate every chunk."""
+    lengths = np.diff(indptr)
+    if lengths.size == 0:
+        return _CSC_CHUNK_MIN
+    target = max(1.0, float(np.percentile(lengths, 95))) * 2
+    return int(min(_CSC_CHUNK_MAX, max(_CSC_CHUNK_MIN, 1 << int(np.ceil(np.log2(target))))))
+
+
+# ---- raster sharding --------------------------------------------------------
+def _shard_rasters(zarr_dir: str) -> None:
+    """Rewrite every image/label array in a freshly-written store with the Zarr v3
+    sharding codec. spatialdata 0.7.3 has no write-time sharding option, so each
+    raster level is recreated (inner chunks `_SHARD_INNER`, shards `_SHARD_SIZE`),
+    copying region-by-region so peak memory is ~one shard rather than a whole
+    (possibly multi-GB) level."""
+    for arr_dir in _raster_array_dirs(zarr_dir):
+        _reshard_array(arr_dir)
+
+
+def _raster_array_dirs(zarr_dir: str):
+    """Directories of array nodes (2-D or 3-D) under images/ and labels/."""
+    for group in ("images", "labels"):
+        base = os.path.join(zarr_dir, group)
+        if not os.path.isdir(base):
+            continue
+        for root, _, files in os.walk(base):
+            if "zarr.json" not in files:
+                continue
+            meta = _read_meta(root)
+            if meta.get("node_type") == "array" and len(meta.get("shape", [])) in (2, 3):
+                yield root
+
+
+def _reshard_array(store_path: str) -> None:
+    meta = _read_meta(store_path)
+    if "sharding_indexed" in [c.get("name") for c in meta.get("codecs", [])]:
+        return  # already sharded (idempotent)
+    src = zarr.open_array(store_path, mode="r")
+    shape, dtype = tuple(src.shape), src.dtype
+    zstd_level = _zstd_level(meta)
+    if len(shape) == 3:
+        # One channel per inner chunk, matching what `rasters.normalize_rasters`
+        # writes: Viv requests tiles per channel, so a multi-channel inner chunk would
+        # decode every channel to serve one. The shard spans all channels, which only
+        # groups them into one file — the sharding index still addresses each inner
+        # chunk's byte range individually.
+        ih, iw = min(_SHARD_INNER, shape[1]), min(_SHARD_INNER, shape[2])
+        inner = (1, ih, iw)
+        shard = (shape[0], _shard_dim(shape[1], ih), _shard_dim(shape[2], iw))
+    else:
+        ih, iw = min(_SHARD_INNER, shape[0]), min(_SHARD_INNER, shape[1])
+        inner = (ih, iw)
+        shard = (_shard_dim(shape[0], ih), _shard_dim(shape[1], iw))
+
+    tmp = store_path + ".resharded"
+    if os.path.exists(tmp):
+        shutil.rmtree(tmp)
+    dst = zarr.create_array(store=tmp, shape=shape, chunks=inner, shards=shard, dtype=dtype,
+                            dimension_names=meta.get("dimension_names"),
+                            compressors=zarr.codecs.ZstdCodec(level=zstd_level))
+    for k, v in dict(src.attrs).items():
+        dst.attrs[k] = v
+    for y in range(0, shape[-2], shard[-2]):
+        ys = slice(y, min(y + shard[-2], shape[-2]))
+        for x in range(0, shape[-1], shard[-1]):
+            xs = slice(x, min(x + shard[-1], shape[-1]))
+            if len(shape) == 3:
+                dst[:, ys, xs] = src[:, ys, xs]
+            else:
+                dst[ys, xs] = src[ys, xs]
+    shutil.rmtree(store_path)
+    shutil.move(tmp, store_path)
+
+
+def _shard_dim(dim: int, inner: int) -> int:
+    """Shard extent along one axis: a whole number of inner chunks (zarr requires the
+    shard shape to be divisible by the inner chunk shape), sized ~`_SHARD_SIZE` but
+    never more inner chunks than the axis actually has. Deriving it from `inner`
+    (not from a fixed 512) keeps it divisible even when a small pyramid level makes
+    `inner` < `_SHARD_INNER` (e.g. a 430-px level -> inner 430, shard 430)."""
+    n_chunks = -(-dim // inner)  # ceil(dim / inner)
+    return inner * max(1, min(_SHARD_SIZE // inner, n_chunks))
+
+
+def _zstd_level(meta: dict) -> int:
+    for codec in meta.get("codecs", []):
+        if codec.get("name") == "zstd":
+            return int(codec.get("configuration", {}).get("level", 0))
+    return 0
+
+
+def _read_meta(node_dir: str) -> dict:
+    """Parse a zarr node's `zarr.json` (v3 metadata)."""
+    with open(os.path.join(node_dir, "zarr.json")) as f:
+        return json.load(f)
 
 
 # ---- worker-log relocation --------------------------------------------------

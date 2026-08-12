@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useAppStore } from '../store/sessionStore';
 import { postPresence } from '../api';
 import { clientName, editBlockReason } from '../lib/presence';
+import { useDataSource } from '../data/context';
 
 // Heartbeat cadence. The backend drops a viewer, releasing its lock, after
 // SDS_PRESENCE_TIMEOUT_S (20 s — four beats) of silence, so this must stay well under it.
@@ -11,10 +12,11 @@ const HEARTBEAT_MS = 5000;
  * keeps the store's presence map seeded from each response. Live changes arrive over
  * SSE as `presence.updated`; the heartbeat's own response is what makes a fresh tab —
  * and the tab that just took a lock — correct before the next event. */
-export function usePresence(activeSessionId: string | null): void {
+export function usePresence(activeSessionId: string | null, enabled = true): void {
   const setPresence = useAppStore((s) => s.setPresence);
 
   useEffect(() => {
+    if (!enabled) return;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -40,7 +42,16 @@ export function usePresence(activeSessionId: string | null): void {
       if (timer !== undefined) clearTimeout(timer);
       window.removeEventListener('pagehide', leave);
     };
-  }, [activeSessionId, setPresence]);
+  }, [enabled, activeSessionId, setPresence]);
+}
+
+/** Whether this viewer may make changes that stay in the browser — lasso labels,
+ * drawn shapes, hidden cells. True for a checkpoint, where nothing can be written to
+ * the dataset anyway so there is nothing to guard, and where these actions have
+ * client-side implementations. False for a live session, whose equivalents go through
+ * the backend and are governed by `useEditGate`. */
+export function useLocalEditsOnly(): boolean {
+  return useDataSource()?.kind === 'checkpoint';
 }
 
 /** Whether this viewer may change the active session, and why not when they can't.

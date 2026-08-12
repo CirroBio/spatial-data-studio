@@ -50,6 +50,9 @@ interface Params {
   positions: ScatterPositions | null;
   opacity: number;
   isolatedCategory: string | null;
+  // Rows to draw fully transparent (the serverless viewer's hide-cells mask). Unlike
+  // an isolated category, which dims to a visible 30, these vanish.
+  hiddenCells?: Set<number> | null;
   // Per-category `#rrggbb` overrides for the current categorical field; a level
   // absent here falls back to the default palette. Undefined for numeric fields.
   categoryColors?: Record<string, string>;
@@ -69,7 +72,7 @@ function resolveCategoryColors(
 }
 
 export function useSpotColors(
-  { colorSource, positions, opacity, isolatedCategory, categoryColors }: Params,
+  { colorSource, positions, opacity, isolatedCategory, categoryColors, hiddenCells }: Params,
 ): { colors: Uint8Array | null; colorLegend: ColorLegend | null } {
   // Build color array — respects isolated category by dimming non-matching points
   const colors = useMemo((): Uint8Array | null => {
@@ -77,6 +80,7 @@ export function useSpotColors(
     const n = positions.numRows;
     const result = new Uint8Array(n * 4);
     const alpha = Math.round(opacity * 255);
+    const alphaAt = (i: number) => (hiddenCells?.has(i) ? 0 : alpha);
 
     if (colorSource.kind === 'categorical') {
       const { codes, categories } = colorSource;
@@ -87,7 +91,7 @@ export function useSpotColors(
           result[i * 4] = 128;
           result[i * 4 + 1] = 128;
           result[i * 4 + 2] = 128;
-          result[i * 4 + 3] = alpha;
+          result[i * 4 + 3] = alphaAt(i);
         }
         return result;
       }
@@ -101,7 +105,7 @@ export function useSpotColors(
         result[i * 4] = r;
         result[i * 4 + 1] = g;
         result[i * 4 + 2] = b;
-        result[i * 4 + 3] = dimmed ? 30 : alpha;
+        result[i * 4 + 3] = hiddenCells?.has(i) ? 0 : dimmed ? 30 : alpha;
       }
     } else {
       const rgba = buildNumericColormap(colorSource.values);
@@ -109,11 +113,11 @@ export function useSpotColors(
         result[i * 4] = rgba[i * 4];
         result[i * 4 + 1] = rgba[i * 4 + 1];
         result[i * 4 + 2] = rgba[i * 4 + 2];
-        result[i * 4 + 3] = rgba[i * 4 + 3] === 0 ? 0 : alpha;
+        result[i * 4 + 3] = rgba[i * 4 + 3] === 0 ? 0 : alphaAt(i);
       }
     }
     return result;
-  }, [colorSource, positions, opacity, isolatedCategory, categoryColors]);
+  }, [colorSource, positions, opacity, isolatedCategory, categoryColors, hiddenCells]);
 
   // Legend for the current cell coloring: category swatches (categorical) or a
   // colorbar with the value range (numeric). Mirrors the palette/ramp used above.

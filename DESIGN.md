@@ -1206,13 +1206,137 @@ looked on the canvas at the chosen framing.
 
 The checkpoint format is shared by saves, snapshots, and Cirro uploads —
 `.zarr.zip` (Zarr v3 + consolidated metadata, `ZIP_STORED`), write-dir-then-zip /
-unzip-then-read (`backend/app/persistence/store.py`). Raster (image/label) arrays
-are saved as-is: `rasters.normalize_rasters` already tile-chunks them at load time
-(`TILE_SIZE`-sized chunks, §9.3), so a save just persists whatever chunking is
-already live — no repack step. Worker logs are relocated out of `attrs["app_state"]`
-(inlined into the store's root `zarr.json`, downloaded in full on open) into
-gzipped `logs/<record_id>.log.gz`, read back lazily by `session.get_log` (the
-`/jobs/{id}/log` endpoint).
+unzip-then-read (`backend/app/persistence/store.py`). Worker logs are relocated out
+of `attrs["app_state"]` (inlined into the store's root `zarr.json`, downloaded in
+full on open) into gzipped `logs/<record_id>.log.gz`, read back lazily by
+`session.get_log` (the `/jobs/{id}/log` endpoint).
+
+A checkpoint is **directly readable by a browser** over HTTP Range, with no backend
+(§14.2). `ZIP_STORED` is what makes that possible — a zarr chunk is a contiguous byte
+span — and three write-time steps in `_write_browser_reader_support` serve it. They
+are what the serverless viewer needs to exist at all, not an optimization: a
+checkpoint written before them is rejected on open (§14.2), because a Zarr v3 store
+carries no child index and the reader could not even name the table.
+
+- **`_shard_rasters`** rewrites image/label arrays with the Zarr v3 sharding codec
+  (inner chunk `_SHARD_INNER` 512, shard `_SHARD_SIZE` 4096), region-by-region so
+  peak memory is one shard rather than a whole multi-GB level. The inner chunk stays
+  **one channel** (`(1, 512, 512)`), matching what `rasters.normalize_rasters` writes
+  (§9.3): Viv requests tiles per channel, and a multi-channel inner chunk would
+  decode every channel to serve one. Sharding is about the *zip central directory* —
+  the browser downloads it in full before the first tile, and an unsharded Xenium s0
+  puts tens of thousands of entries in it. On the Visium test checkpoint it took the
+  image from 2172 entries to 22, and slightly *reduced* total size.
+- **`_write_viewer_sidecar`** writes a top-level `viewer/` group (not a SpatialData
+  element — `sd.read_zarr` ignores unknown root groups) holding what the browser
+  can't cheaply derive: the per-image manifest from `imaging.image_info`, keyed
+  `[element][table_key]` because `pixel_to_world` reconciles the image against a
+  table's spots; `coords_transform`, the points->global affine `GET /data/obsm:spatial`
+  applies; and `tables/<key>/X_csc`, a gene-major mirror of a sparse `X`.
+  The CSC mirror is the one place this trades disk for latency: it duplicates `X`
+  (+66 MB on the 372 MB Visium checkpoint), but without it coloring by one gene means
+  downloading the whole CSR `data`+`indices` pair — worse exactly when the table is
+  large. Its chunk length is sized from the data (`_csc_chunk`) so one gene column
+  lands in one or two chunks whether a gene holds hundreds of non-zeros (Visium) or
+  hundreds of thousands (Xenium).
+- **`_consolidate`** re-runs consolidated metadata **last**, so the tree the browser
+  reads reports the sharded codec (or zarrita would decode the pre-shard layout) and
+  lists `viewer/`. The incremental path (`update_checkpoint`) refreshes the sidecar
+  and re-consolidates too, limiting the CSC rebuild to the dirty tables.
+
+### 14.2 Serverless viewer
+
+Opening the SPA with `?checkpoint=<url>` reads a `.zarr.zip` directly and renders it
+with no backend at all — the same bundle, the same canvas, the same display controls.
+This is one app with two data sources, not a second viewer: `frontend/src/data/`
+defines a `DataSource` interface over the render path (`getFieldData`,
+`getImageInfo`, `openImageLoader`, `getShapesGeoArrow`, `getElements`,
+`searchVarNames`, `imageThumbnailUrl`), implemented by `apiSource` (live session) and
+`checkpointSource` (zarrita over `ZipFileStore`). The handful of hooks that used to
+call `api.ts` directly — `useArrowField`, `useVivImageLayer`, `usePolygonBbox`,
+`VarNameSelect`, `SpatialCanvas` — read the source from `DataSourceProvider` instead.
+Everything downstream (palettes, point styling, channel shaders, legends, minimap,
+invert axes, backdrop) already worked off plain typed arrays and is untouched.
+
+Details that make it work:
+
+- `checkpointSource` materializes the **same Arrow schemas** `transport/arrow.py`
+  emits, so `useArrowPositions` and `arrowToColorSource` consume either source
+  unchanged.
+- `RangeGetReader` never issues a HEAD. Cirro serves checkpoints as method-specific
+  presigned S3 GET URLs which reject HEAD with 403, so zarrita's built-in
+  `HTTPRangeReader` would abort the open before reading a chunk; the total length
+  comes from the `Content-Range` of a one-byte GET.
+- The image is Viv's own `loadOmeZarrFromStore` over a prefix view of the zip store,
+  so the native `MultiscaleImageLayer` path (§9.4) — tiling, cache budget, prefetch,
+  channel shader uniforms — is shared verbatim.
+- Consolidated metadata makes every `zarr.open` a memory lookup and is what supplies
+  the group listing that `SessionFields` (the obs/obsm pickers) is derived from;
+  Zarr v3 stores carry no child index.
+- The checkpoint is presented as a synthetic **read-only session**, so
+  `editBlockReason`'s existing `summary.read_only` gate disables compute, regions,
+  annotations, subsetting and transform edits with no second notion of "can't write".
+  `useSSE`/`useSession`/`usePresence` take an `enabled` flag and stay dormant.
+
+**Local-only interaction.** Three things the live app does through the backend have
+browser-only equivalents here, offered because they change only what you see:
+
+- **Lasso labelling.** `SpatialCanvas` resolves the rings with `indicesInRings`
+  instead of sending them for `polygon_query` (the embedding canvas already did this),
+  and `applyLocalRegion` turns the result into a categorical column installed on the
+  source via `setLocalColumn`, plus a `RegionSet` and an `ObsField` in the session
+  state. From there the ordinary `obs:<col>` colouring, legend and per-category colour
+  controls work unchanged — the column simply lives in the tab.
+- **Hiding cells** (`hiddenCells`) stands in for subsetting, which really opens a child
+  session. Presentation only, and reversible.
+- **Drawn shapes** keep their optimistic local update and skip the job. The gate is
+  `summary.read_only` (`shapesAreLocalOnly`): a session that cannot be written to can
+  only be edited locally. For a *live* read-only session the tools are disabled, so
+  that branch is unreachable there.
+
+The sidebar opens those tabs on `useLocalEditsOnly()`; `useEditGate` still says no, so
+nothing tries to write. **Snapshot export** becomes a canvas PNG capture
+(`lib/canvasCapture.ts`) — deck.gl 9 keeps `preserveDrawingBuffer` on, so the
+backbuffer is readable — and the backend-only menu entries (new/save session, snapshot
+gallery) are omitted rather than shown broken.
+
+### 14.3 Deploying a collection — `index.json`
+
+A serverless deployment is three things in one directory: the built SPA, the
+`.zarr.zip` files, and an `index.json` listing them.
+
+```
+index.html          the Vite build, unchanged — nothing deployment-specific in it
+assets/…
+index.json          { "title"?, "checkpoints": [ { "path", "label"?, "description"? } ] }
+*.sdata.zarr.zip
+```
+
+`index.html` is deliberately boilerplate, so one build serves any collection and a
+deployment is a copy plus a manifest. `path` resolves against the manifest's own URL,
+so entries can name siblings, subfolders, or absolute URLs on another host.
+
+Mode resolution (`App`): `?checkpoint=<url>` opens that file. With no parameter, the
+app polls `/api/readyz`; a sibling `index.json` is what distinguishes a static
+deployment from a backend that is merely still booting, so it is probed **once** on
+the first failed poll — a live app never pays for it, and a slow backend boot doesn't
+retry it every tick. A collection with no checkpoint chosen renders
+`CheckpointIndexPage` alone (no sidebar, settings panel or resource strip — there is
+no session yet). Inside a checkpoint, `CheckpointPicker` replaces `SessionPicker` in
+the header. Selecting an entry **navigates** rather than swapping state in place: a
+checkpoint carries its own displays, fields and locally-made labels, and a reload is
+the one way to guarantee none of the previous one's state leaks into the next — the
+bundle is already cached, so it costs a parse, not a download.
+
+`cirro._write_viewer_index` writes the same manifest into an upload bundle, so an
+uploaded set of checkpoints describes itself whether or not a viewer is pointed at it.
+
+Not possible without the backend, by construction: compute (squidpy/scanpy/recipes),
+real subsetting (`sd.polygon_query`), saving, and the matplotlib vector-PDF snapshot
+export. Cell-boundary overlays are also absent — `shapes/<name>/shapes.parquet` is
+GeoParquet, which zarrita cannot decode, so `getShapesGeoArrow`/`getElements` are
+optional on the interface and the Cells layer stays on its points-only path (the same
+fallback as a display with no shapes element). Nothing local survives a reload.
 
 ---
 

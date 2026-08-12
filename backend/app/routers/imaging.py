@@ -16,10 +16,9 @@ async def image_info(sid: str, element: str):
 
     def _info():
         table = sess.active_table() if sess.active_table_key else None
-        # Base manifest (dims/levels/pixel_to_world/channels) from imaging.image_info;
-        # the client-compositing fields below are layered on only at this live endpoint.
+        # Base manifest (dims/levels/pixel_to_world/channels/contrast) from
+        # imaging.image_info; only the session-specific fields below are added here.
         info = imaging.image_info(sess.sdata, element, table)
-        is_rgb = imaging._is_rgb(sess.sdata, element)
         # Client (Viv) compositing is possible when the feature is on AND we have an
         # on-disk store to serve for this element — normalize_rasters registers one for
         # every image, whether freshly rebuilt (non-canonical) or already tile-chunked
@@ -33,11 +32,6 @@ async def image_info(sid: str, element: str):
         info["client_compositing"] = client_compositing
         info["raster_base_url"] = f"/api/sessions/{sid}/raster/{element}"
         info["zarr_group_path"] = f"images/{element}"
-        info["contrast_limits"] = [[0.0, hi] for hi in
-                                   imaging.channel_contrast_limits(sess.sdata, element)]
-        info["contrast_range"] = [[lo, hi] for lo, hi in
-                                  imaging.channel_value_range(sess.sdata, element)]
-        info["is_rgb"] = is_rgb
         return info
 
     try:

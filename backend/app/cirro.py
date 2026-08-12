@@ -8,9 +8,14 @@ deliverables, the `.figure.thumb.png` thumbnail, and the `.figure.json` provenan
 sidecar) colocated at the bundle root — so nothing is copied, then hands that folder
 to the Cirro SDK's own directory uploader. The figure files are self-contained
 deliverables (each embeds the same provenance metadata as the sidecar).
+
+The bundle also carries an `index.json` listing the checkpoints, which is what the
+serverless viewer reads to offer them as a switchable collection (DESIGN §14.3). It
+describes the upload whether or not the viewer is ever pointed at it.
 """
 from __future__ import annotations
 
+import json
 import tempfile
 from pathlib import Path
 
@@ -145,7 +150,8 @@ def build_upload_folder(session_paths: list[str], snapshot_names: list[str]) -> 
     """A temp folder of symlinks: each selected saved checkpoint under `sessions/`,
     and each selected snapshot's figure artifacts colocated at the bundle root. Never
     symlinks a directory itself (most upload walkers skip symlinked dirs' contents) —
-    only real directories of per-file symlinks."""
+    only real directories of per-file symlinks. Adds `index.json` when the upload
+    carries checkpoints (see `_write_viewer_index`)."""
     tmp = Path(tempfile.mkdtemp(prefix="cirro-upload-"))
     session_dir = tmp / "sessions"
     session_dir.mkdir()
@@ -157,7 +163,27 @@ def build_upload_folder(session_paths: list[str], snapshot_names: list[str]) -> 
 
     if not any(session_dir.iterdir()):
         session_dir.rmdir()  # no sessions selected
+    else:
+        _write_viewer_index(tmp, session_paths)
     return tmp
+
+
+def _write_viewer_index(bundle: Path, session_paths: list[str]) -> None:
+    """List the bundled checkpoints in `index.json`, the manifest the serverless
+    viewer reads (`frontend/src/data/checkpointIndex.ts`). Paths are relative to the
+    manifest, so the listing works wherever the bundle is served from. The label is
+    the checkpoint's own name with the content hash and extension stripped — what the
+    user named the session, rather than the storage filename."""
+    from .persistence.store import strip_checkpoint_ext, strip_content_hash
+
+    entries = [
+        {
+            "path": f"sessions/{Path(path).name}",
+            "label": strip_content_hash(strip_checkpoint_ext(Path(path).name)),
+        }
+        for path in session_paths
+    ]
+    (bundle / "index.json").write_text(json.dumps({"checkpoints": entries}, indent=2))
 
 
 def upload_selection(*, project_id: str, dataset_name: str, session_paths: list[str],

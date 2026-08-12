@@ -1,21 +1,22 @@
 import { useState, useEffect, useRef } from 'react';
 import * as arrow from 'apache-arrow';
-import { getFieldData, fetchWhenIdle } from '../api';
+import { fetchWhenIdle } from '../api';
+import { useDataSource } from '../data/context';
 import { formatError } from '../lib/format';
 
-type CacheKey = string; // `${sessionId}:${fieldPath}:${version}`
+type CacheKey = string; // `${sourceId}:${fieldPath}:${version}`
 
 const cache = new Map<CacheKey, arrow.Table>();
 const CACHE_MAX = 24; // Arrow tables are large; keep only a small working set.
 
-function cacheKey(sessionId: string, fieldPath: string, version: number): CacheKey {
-  return `${sessionId}:${fieldPath}:${version}`;
+function cacheKey(sourceId: string, fieldPath: string, version: number): CacheKey {
+  return `${sourceId}:${fieldPath}:${version}`;
 }
 
 // Insert, evicting superseded versions of the same field and capping total size, so
 // the module cache can't grow unbounded as data_versions bump over a long session.
-function cacheSet(sessionId: string, fieldPath: string, key: CacheKey, table: arrow.Table): void {
-  const prefix = `${sessionId}:${fieldPath}:`;
+function cacheSet(sourceId: string, fieldPath: string, key: CacheKey, table: arrow.Table): void {
+  const prefix = `${sourceId}:${fieldPath}:`;
   for (const k of cache.keys()) {
     if (k !== key && k.startsWith(prefix)) cache.delete(k);
   }
@@ -28,22 +29,23 @@ function cacheSet(sessionId: string, fieldPath: string, key: CacheKey, table: ar
 }
 
 export function useArrowField(
-  sessionId: string | null,
   fieldPath: string | null,
   version: number
 ): { table: arrow.Table | null; loading: boolean; error: string | null } {
+  const source = useDataSource();
   const [table, setTable] = useState<arrow.Table | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const sourceId = source?.id ?? null;
 
   useEffect(() => {
-    if (!sessionId || !fieldPath) {
+    if (!source || !sourceId || !fieldPath) {
       setTable(null);
       return;
     }
 
-    const key = cacheKey(sessionId, fieldPath, version);
+    const key = cacheKey(sourceId, fieldPath, version);
     const cached = cache.get(key);
     if (cached) {
       setTable(cached);
@@ -62,10 +64,10 @@ export function useArrowField(
     // holding the write lock on first open) so coords/colors converge once the lock
     // frees, instead of leaving the canvas stuck on "Loading…" until an unrelated
     // data_versions bump happens to re-trigger this effect.
-    fetchWhenIdle(() => getFieldData(sessionId, fieldPath), { signal: controller.signal })
+    fetchWhenIdle(() => source.getFieldData(fieldPath), { signal: controller.signal })
       .then((t) => {
         if (controller.signal.aborted) return;
-        cacheSet(sessionId, fieldPath, key, t);
+        cacheSet(sourceId, fieldPath, key, t);
         setTable(t);
         setLoading(false);
       })
@@ -78,7 +80,7 @@ export function useArrowField(
     return () => {
       controller.abort();
     };
-  }, [sessionId, fieldPath, version]);
+  }, [source, sourceId, fieldPath, version]);
 
   return { table, loading, error };
 }

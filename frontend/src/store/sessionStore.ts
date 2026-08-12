@@ -10,13 +10,27 @@ import type {
   SpatialDisplaySpec,
   HistEntry,
   PlotEntry,
+  RegionSet,
 } from '../types';
 import { isSpatialDisplay } from '../types';
+import type { DataSource } from '../data/types';
 import { clientName, setClientName, editBlockReason } from '../lib/presence';
 import { putDisplay, getSession, listShapeAnnotations, createShapeAnnotation, updateShapeAnnotation, deleteShapeAnnotation, postPresence, ApiError, fetchWhenIdle } from '../api';
 import type { ShapeAnnotation, ShapeGeometry, ShapeKind } from '../schemas/annotations';
 import { defaultStroke, defaultFill } from '../schemas/annotations';
 import type { SnapshotExportParams } from '../lib/snapshots';
+import type { LocalCategorical } from '../data/types';
+import type { CheckpointIndex } from '../data/checkpointIndex';
+
+// Level 0 of a locally-labelled column: every cell starts here and stays here
+// until a lasso claims it, so unlabelled cells still render (greyed) instead of
+// vanishing from the colouring.
+const UNLABELLED = 'unlabelled';
+
+// The locally-labelled columns themselves, keyed by field path. Kept outside
+// reactive state — the codes array is large and nothing renders off it directly;
+// the canvas reads it back through the data source like any other column.
+const localRegionColumns = new Map<string, LocalCategorical>();
 
 // A job's status lands in whichever collection holds it; these narrow the shared
 // status union so setEntryStatus can update the right record type without a cast.
@@ -48,7 +62,21 @@ function bumpShapePending(shapeId: string, delta: number) {
   else pendingShapeJobs.set(shapeId, n);
 }
 
+// A read-only session cannot be written to, so any shape edit that happens against
+// one stays in this tab: keep the optimistic update and skip the job. That is the
+// serverless viewer's whole annotation story (the sidebar only offers the tools
+// there — see useLocalEditsOnly); for a live read-only session the tools are
+// disabled, so this branch is simply never reached.
+function shapesAreLocalOnly(state: { sessionState: SessionState | null }): boolean {
+  return state.sessionState?.summary.read_only === true;
+}
+
 interface AppStore {
+  // The `index.json` collection backing a serverless deployment, once discovered.
+  // Null in a live app (there is none) and until the probe finishes.
+  checkpointIndex: CheckpointIndex | null;
+  setCheckpointIndex: (index: CheckpointIndex | null) => void;
+
   // sessions list
   sessions: SessionSummary[];
   setSessions: (sessions: SessionSummary[]) => void;
@@ -141,6 +169,23 @@ interface AppStore {
   // polygon_query — so a non-null value tells the Regions/Subset panels to send
   // cell_indices instead of polygons.
   regionCellIndices: number[] | null;
+  // Cells hidden from the canvas, by row index. Presentation only — the serverless
+  // viewer's stand-in for subsetting, which really creates a new session from a
+  // `polygon_query` and so needs the backend. Null means nothing is hidden.
+  hiddenCells: Set<number> | null;
+  setHiddenCells: (cells: Set<number> | null) => void;
+  // Label cells entirely in the browser (serverless viewer). Writes a local
+  // categorical column onto the data source and mirrors it into the session state
+  // the pickers and legend read, so the result is indistinguishable from a
+  // backend-assigned region set — except that it lives only in this tab.
+  applyLocalRegion: (args: {
+    source: DataSource;
+    cellIndices: number[];
+    nCells: number;
+    obsColumn: string;
+    category: string;
+    color: string;
+  }) => void;
   setRegionCellIndices: (idx: number[] | null) => void;
   addDrawVertex: (pt: [number, number]) => void;
   commitDrawRing: () => void;
@@ -330,10 +375,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set((s) =>
       id === s.activeSessionId
         ? { activeSessionId: id }
-        : { activeSessionId: id, isolatedCategory: null, drawPolygons: [], drawRing: [],
+        : { activeSessionId: id, isolatedCategory: null, hiddenCells: null, drawPolygons: [], drawRing: [],
             activeJobIds: new Set(), shapeAnnotations: [], activeShapeTool: null,
             selectedShapeId: null, draftVertices: [] }
     ),
+  checkpointIndex: null,
+  setCheckpointIndex: (index) => set({ checkpointIndex: index }),
   sessionState: null,
   setSessionState: (state) => set({ sessionState: state }),
   registerDisplayFlush: (flush) => {
@@ -486,6 +533,74 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setRegionCellCount: (n) => set({ regionCellCount: n }),
   regionCellIndices: null,
   setRegionCellIndices: (idx) => set({ regionCellIndices: idx }),
+  hiddenCells: null,
+  setHiddenCells: (cells) => set({ hiddenCells: cells && cells.size ? cells : null }),
+  applyLocalRegion: ({ source, cellIndices, nCells, obsColumn, category, color }) =>
+    set((s) => {
+      if (!s.sessionState || !source.setLocalColumn) return {};
+      const path = `obs:${obsColumn}`;
+      const regions = s.sessionState.app_state.regions ?? [];
+      const existing = regions.find((r) => r.obs_column === obsColumn);
+
+      // Categories carry an explicit "unlabelled" level at code 0 so cells outside
+      // every lasso stay visible (and greyed) rather than dropping out of the
+      // colouring. Re-labelling a cell overwrites its previous category.
+      const previous = localRegionColumns.get(path);
+      const categories = previous ? [...previous.categories] : [UNLABELLED];
+      let code = categories.indexOf(category);
+      if (code < 0) {
+        code = categories.length;
+        categories.push(category);
+      }
+      const codes = previous ? Int32Array.from(previous.codes) : new Int32Array(nCells);
+      for (const i of cellIndices) {
+        if (i >= 0 && i < codes.length) codes[i] = code;
+      }
+      localRegionColumns.set(path, { categories, codes });
+      source.setLocalColumn(path, { categories, codes });
+
+      // Recount every category from the codes, so re-labelling over an earlier
+      // selection reports the truth rather than accumulating.
+      const counts = new Map<string, number>();
+      for (const c of codes) {
+        const label = categories[c];
+        if (label !== UNLABELLED) counts.set(label, (counts.get(label) ?? 0) + 1);
+      }
+      const colorOf = new Map(existing?.categories.map((c) => [c.label, c.color]) ?? []);
+      colorOf.set(category, color);
+      const regionSet: RegionSet = {
+        id: existing?.id ?? `local:${obsColumn}`,
+        name: existing?.name ?? obsColumn,
+        obs_column: obsColumn,
+        categories: [...counts].map(([label, n_cells]) => ({
+          label, n_cells, color: colorOf.get(label) ?? color,
+        })),
+      };
+
+      const fields = s.sessionState.fields;
+      const obs = fields.obs.some((f) => f.name === obsColumn)
+        ? fields.obs
+        : [...fields.obs, { name: obsColumn, kind: 'categorical' as const }];
+
+      return {
+        sessionState: {
+          ...s.sessionState,
+          fields: { ...fields, obs },
+          app_state: {
+            ...s.sessionState.app_state,
+            regions: existing
+              ? regions.map((r) => (r.id === regionSet.id ? regionSet : r))
+              : [...regions, regionSet],
+          },
+          // Bumping the version is what invalidates useArrowField's cache entry for
+          // this column, so the canvas re-reads it from the source.
+          data_versions: {
+            ...s.sessionState.data_versions,
+            [path]: (s.sessionState.data_versions[path] ?? 0) + 1,
+          },
+        },
+      };
+    }),
   addDrawVertex: (pt) => set((s) => ({ drawRing: [...s.drawRing, pt] })),
   commitDrawRing: () =>
     set((s) => (s.drawRing.length >= 3
@@ -543,6 +658,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       fill: geometry.kind === 'line' || geometry.kind === 'text' ? undefined : defaultFill(),
     };
     get().upsertShapeAnnotation(shape); // optimistic — the job.completed refetch reconciles
+    get().setSelectedShapeId(shape.id);
+    if (shapesAreLocalOnly(get())) return;
     bumpShapePending(shape.id, 1);
     createShapeAnnotation(sessionId, shape)
       .then(({ job_id }) => { shapeJobShape.set(job_id, shape.id); })
@@ -551,13 +668,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
         get().pushNotification({ kind: 'error', message: `Create shape failed: ${err instanceof Error ? err.message : String(err)}` });
         get().removeShapeAnnotationLocal(shape.id);
       });
-    get().setSelectedShapeId(shape.id); // also clears activeShapeTool + draft (see setSelectedShapeId)
   },
   sendShapeUpdate: (shapeId) => {
     const sessionId = get().activeSessionId;
     if (!sessionId) return;
     const shape = get().shapeAnnotations.find((s) => s.id === shapeId);
     if (!shape) return; // deleted meanwhile
+    if (shapesAreLocalOnly(get())) return;  // already upserted; nowhere to persist it
     bumpShapePending(shapeId, 1);
     updateShapeAnnotation(sessionId, shapeId, shape)
       .then(({ job_id }) => { shapeJobShape.set(job_id, shapeId); })
@@ -571,6 +688,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     if (!sessionId) return;
     get().removeShapeAnnotationLocal(id);
     if (get().selectedShapeId === id) get().setSelectedShapeId(null);
+    if (shapesAreLocalOnly(get())) return;
     bumpShapePending(id, 1);
     deleteShapeAnnotation(sessionId, id)
       .then(({ job_id }) => { shapeJobShape.set(job_id, id); })

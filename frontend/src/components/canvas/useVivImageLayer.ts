@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Layer, OrthographicViewState } from '@deck.gl/core';
-import { loadOmeZarr } from '@vivjs/loaders';
 import { MultiscaleImageLayer, XRLayer } from '@vivjs/layers';
 import { ColorPaletteExtension } from '@vivjs/extensions';
+import { useDataSource } from '../../data/context';
+import type { ImageLoader } from '../../data/types';
 import type { ImageInfo } from '../../types';
 import { MAX_VISIBLE_CHANNELS, type Channel } from './useImageChannels';
 import { transparentBlackExtension } from './transparentBlackExtension';
@@ -60,7 +61,7 @@ function bytesPerSample(dtype: string): number {
   return Number.isFinite(bits) && bits > 0 ? bits / 8 : 2;
 }
 
-type Loader = Awaited<ReturnType<typeof loadOmeZarr>>['data'];
+type Loader = ImageLoader;
 
 // Sublayer props deck.gl's TileLayer hands `renderSubLayers`: the tile's index/bbox plus the
 // fetched content, on top of every forwarded layer prop.
@@ -115,19 +116,16 @@ interface Params {
 export function useVivImageLayer(
   { imageInfo, element, channels, viewState, size, show }: Params,
 ): { layers: Layer[]; active: boolean; tileProgress: TileLoadProgress } {
+  const source = useDataSource();
   const enabled = show
     && !!element
+    && !!source
     && !!imageInfo?.client_compositing
-    && !!imageInfo.raster_base_url
-    && !!imageInfo.zarr_group_path
     && !clientCompositingDisabled();
 
-  // Absolute store URL: zarrita's FetchStore does `new URL(root)`, which rejects a
-  // root-relative path, so resolve against the current origin (the dev proxy and prod
-  // both serve /api on the same origin).
-  const storeUrl = enabled
-    ? new URL(`${imageInfo!.raster_base_url}/${imageInfo!.zarr_group_path}`, window.location.origin).href
-    : null;
+  // Identifies the store the loader was opened against, so the effect re-runs when
+  // the element or the data source changes and the prefetcher can reset with it.
+  const storeKey = enabled ? `${source!.id}:${element}` : null;
 
   const [loader, setLoader] = useState<Loader | null>(null);
   const [failed, setFailed] = useState(false);
@@ -135,13 +133,13 @@ export function useVivImageLayer(
   useEffect(() => {
     setLoader(null);
     setFailed(false);
-    if (!storeUrl) return;
+    if (!storeKey || !source || !element) return;
     let stale = false;
-    loadOmeZarr(storeUrl, { type: 'multiscales' })
-      .then(({ data }) => { if (!stale) setLoader(data); })
-      .catch((e) => { if (!stale) { console.error('Viv loadOmeZarr failed', e); setFailed(true); } });
+    source.openImageLoader(element)
+      .then((data) => { if (!stale) setLoader(data); })
+      .catch((e) => { if (!stale) { console.error('opening the image pyramid failed', e); setFailed(true); } });
     return () => { stale = true; };
-  }, [storeUrl]);
+  }, [storeKey, source, element]);
 
   const numChannels = imageInfo?.channels ?? 0;
   const isRgb = !!imageInfo?.is_rgb;
@@ -180,7 +178,7 @@ export function useVivImageLayer(
     viewState,
     size,
     enabled: enabled && !failed,
-    resetKey: storeUrl,
+    resetKey: storeKey,
   });
 
   // Progress of the current tile-loading session, for the on-canvas loading bar.

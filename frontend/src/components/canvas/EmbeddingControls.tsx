@@ -6,7 +6,6 @@ import type { EmbeddingDisplaySpec, ObsField, ObsmField } from '../../types';
 
 interface Props {
   display: EmbeddingDisplaySpec;
-  sessionId: string;
   obsFields: ObsField[];
   layers: string[];
   obsmFields: ObsmField[];
@@ -49,7 +48,6 @@ function AxisComponentSelect({
 
 export default function EmbeddingControls({
   display,
-  sessionId,
   obsFields,
   layers,
   obsmFields,
@@ -115,8 +113,7 @@ export default function EmbeddingControls({
       <div className="flex flex-col gap-1">
         <label className="text-[10px] text-muted font-mono uppercase tracking-wide">Color by</label>
         <ColorBySelect
-          sessionId={sessionId}
-          value={display.encoding.color_by}
+          value={display.encoding.color_by ?? ''}
           obsFields={obsFields}
           layers={layers}
           onChange={(color_by) => updateEncoding({ color_by })}

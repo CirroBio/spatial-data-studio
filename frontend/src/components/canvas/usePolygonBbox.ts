@@ -6,14 +6,20 @@ import type { Matrix4 } from '@math.gl/core';
 // Pinned here because 0.4.x may drift the API and needs re-testing; not migrated.
 import { GeoArrowPolygonLayer } from '@geoarrow/deck.gl-layers';
 import type { GeoArrowPolygonLayerProps } from '@geoarrow/deck.gl-layers';
-import { getShapesGeoArrow } from '../../api';
+import { useDataSource } from '../../data/context';
+import type { DataSource } from '../../data/types';
 import { wx, wy, type Affine } from './imageAffine';
 
+// The boundary fetch, once a source is known to provide one. Neither implementation
+// closes over `this`, so detaching it from the source is safe.
+type FetchShapes = NonNullable<DataSource['getShapesGeoArrow']>;
+
 // Cap features per viewport request so the main-thread earcut triangulation can't
-// stall on a pathological bbox. The backend returns an EMPTY table when the
+// stall on a pathological bbox. The source returns an EMPTY table when the
 // viewport holds more than this — so the shapes overlay stays absent (the points
 // remain the view) until the user zooms in far enough that the visible set fits,
-// rather than showing a partial subset.
+// rather than showing a partial subset. A source with no boundary support at all
+// (a checkpoint, whose shapes are GeoParquet) is the same no-layer case.
 const POLYGON_LIMIT = 20000;
 // Debounce viewport moves before firing a fetch, and pad the fetched bbox past the
 // viewport so a small pan reuses the cached table instead of refetching.
@@ -28,7 +34,7 @@ const CACHE_MAX = 48;
 const cache = new Map<string, arrow.Table>();
 const pending = new Set<string>();
 
-function getTable(key: string, sessionId: string, element: string, bbox: Bbox, onLoad: () => void): arrow.Table | null {
+function getTable(key: string, fetchShapes: FetchShapes, element: string, bbox: Bbox, onLoad: () => void): arrow.Table | null {
   const hit = cache.get(key);
   if (hit) {
     cache.delete(key);
@@ -37,7 +43,7 @@ function getTable(key: string, sessionId: string, element: string, bbox: Bbox, o
   }
   if (!pending.has(key)) {
     pending.add(key);
-    getShapesGeoArrow(sessionId, element, bbox, POLYGON_LIMIT)
+    fetchShapes(element, bbox, POLYGON_LIMIT)
       .then((t) => {
         pending.delete(key);
         cache.set(key, t);
@@ -99,7 +105,6 @@ function bboxToWorld(b: Bbox, pixelToWorld?: Affine): Bbox {
 }
 
 interface Params {
-  sessionId: string;
   element: string | null;
   version: number;
   viewState: OrthographicViewState | null;
@@ -123,8 +128,10 @@ interface Params {
 // fetch re-renders. Not enabled (points mode) / no
 // polygon element → { layer: null }, so the points path is a no-op.
 export function usePolygonBbox(
-  { sessionId, element, version, viewState, size, colors, opacity, outline, lineWidth, enabled, modelMatrix, pixelToWorld }: Params,
+  { element, version, viewState, size, colors, opacity, outline, lineWidth, enabled, modelMatrix, pixelToWorld }: Params,
 ): { layer: Layer | null; loading: boolean } {
+  const source = useDataSource();
+  const sourceId = source?.id ?? '';
   const [tick, bump] = useReducer((x: number) => x + 1, 0);
   const [settled, setSettled] = useState<Bbox | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -150,15 +157,19 @@ export function usePolygonBbox(
   }, [enabled, zoom, tx, ty, size?.width, size?.height]);
 
   return useMemo(() => {
-    const identity = `${sessionId}:${element}:${version}`;
+    const identity = `${sourceId}:${element}:${version}`;
     if (lastIdentity.current !== identity) lastLayer.current = null;  // new dataset/element → drop stale geometry
-    if (!enabled || !element || !colors) { lastLayer.current = null; return { layer: null, loading: false }; }
+    const fetchShapes = source?.getShapesGeoArrow;
+    if (!enabled || !element || !colors || !fetchShapes) {
+      lastLayer.current = null;
+      return { layer: null, loading: false };
+    }
     // While the next bbox is settling or fetching, keep the previous polygons up.
     if (!settled) return { layer: lastLayer.current, loading: false };
     // Round the (world-space) bbox to integers so sub-unit jitter doesn't churn the key.
     const b = bboxToWorld(settled, pixelToWorld).map(Math.round) as Bbox;
-    const key = `${sessionId}:${element}:${version}:${b.join(',')}`;
-    const table = getTable(key, sessionId, element, b, bump);
+    const key = `${sourceId}:${element}:${version}:${b.join(',')}`;
+    const table = getTable(key, fetchShapes, element, b, bump);
     if (!table) return { layer: lastLayer.current, loading: true };
     // Over budget (viewport holds > POLYGON_LIMIT cells) → the backend returns a
     // 0-row table. Report no layer (not an empty one) so the caller shows just the
@@ -191,5 +202,5 @@ export function usePolygonBbox(
     lastIdentity.current = identity;
     return { layer, loading: false };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, element, settled, colors, version, sessionId, opacity, outline, lineWidth, tick, modelMatrix, pixelToWorld]);
+  }, [enabled, element, settled, colors, version, source, sourceId, opacity, outline, lineWidth, tick, modelMatrix, pixelToWorld]);
 }

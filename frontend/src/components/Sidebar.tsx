@@ -4,7 +4,7 @@ import PanelTabs, { type PanelTab } from './PanelTabs';
 import { useAppStore } from '../store/sessionStore';
 import { deleteHistoryEntry, getRecipe, importRecipe, getSession, runAllPending } from '../api';
 import { reportError } from '../lib/errors';
-import { useEditGate } from '../hooks/usePresence';
+import { useEditGate, useLocalEditsOnly } from '../hooks/usePresence';
 import StatusBadge, { type Status } from './StatusBadge';
 import FunctionPicker from './FunctionPicker';
 import RecipeGallery from './RecipeGallery';
@@ -150,6 +150,10 @@ export default function Sidebar() {
     leftMenuOpen,
   } = useAppStore();
   const { canEdit, reason } = useEditGate();
+  // A checkpoint can't write to the dataset, but the region/annotation/subset tabs
+  // all have browser-only implementations there, so they stay available.
+  const localEdits = useLocalEditsOnly();
+  const canUseMutatingTabs = canEdit || localEdits;
   const editReason = (reason ?? '').toLowerCase();
 
   const [showPicker, setShowPicker] = useState(false);
@@ -225,8 +229,8 @@ export default function Sidebar() {
   // lock) — its trigger disables, but Radix Tabs.Content still renders whatever `value`
   // already is.
   useEffect(() => {
-    if (!canEdit && MUTATING_TABS.includes(sidebarTab)) setSidebarTab('compute');
-  }, [canEdit, sidebarTab, setSidebarTab]);
+    if (!canUseMutatingTabs && MUTATING_TABS.includes(sidebarTab)) setSidebarTab('compute');
+  }, [canUseMutatingTabs, sidebarTab, setSidebarTab]);
 
   return (
     <aside className={`shrink-0 overflow-hidden border-r border-border bg-surface transition-[width] duration-200 ease-in-out ${leftMenuOpen ? 'w-60' : 'w-0'}`}>
@@ -238,7 +242,7 @@ export default function Sidebar() {
       >
         <PanelTabs
           tabs={SIDEBAR_TABS.map((t) => {
-            const disabled = !canEdit && MUTATING_TABS.includes(t.id);
+            const disabled = !canUseMutatingTabs && MUTATING_TABS.includes(t.id);
             return {
               ...t,
               disabled,

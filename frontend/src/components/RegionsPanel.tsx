@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useAppStore } from '../store/sessionStore';
 import { annotateSession, createShapeAnnotation } from '../api';
+import { useDataSource } from '../data/context';
 import { defaultStroke, defaultFill, type ShapeAnnotation } from '../schemas/annotations';
 import { reportError } from '../lib/errors';
 import { resolveRegionSetColumn } from '../lib/regions';
@@ -60,17 +61,24 @@ export default function RegionsPanel() {
     setRegionTarget,
     regionCellCount,
     regionCellIndices,
+    applyLocalRegion,
   } = useAppStore();
+  const source = useDataSource();
   const { drawPolygons, drawRing, regionCount, allPolygons, commitDrawRing, clearDraw } = useDrawSelection();
 
   const regions: RegionSet[] = sessionState?.app_state.regions ?? [];
   const obsFields = sessionState?.fields.obs ?? [];
 
   const [applying, setApplying] = useState(false);
+  // A checkpoint labels cells in the browser: the lasso is already resolved to
+  // indices by the canvas, and the label becomes a local column the colouring reads
+  // back. It lives in this tab only — nothing is written to the file.
+  const isLocal = source?.kind === 'checkpoint';
   // When set, applying a label also draws the region as a shape annotation (outline +
   // a text label at its centre). Only offered on the spatial canvas — shape annotations
   // live in tissue coordinates, so they don't apply to an embedding selection.
   const [annotateRegion, setAnnotateRegion] = useState(false);
+  // Region outlines are shape annotations, which a checkpoint can't persist.
   const canAnnotateRegion = regionCellIndices == null;
 
   const activeSet = regions.find((r) => r.id === activeRegionSetId) ?? regions[0] ?? null;
@@ -85,6 +93,22 @@ export default function RegionsPanel() {
     if (!activeSessionId || !canApply) return;
     setApplying(true);
     try {
+      if (isLocal) {
+        if (source && regionCellIndices) {
+          applyLocalRegion({
+            source,
+            cellIndices: regionCellIndices,
+            nCells: sessionState?.fields.n_obs ?? 0,
+            obsColumn: regionSetTarget,
+            category: regionCategoryName,
+            color: regionColor,
+          });
+        }
+        clearDraw();
+        const next = NEW_CAT_COLORS[(NEW_CAT_COLORS.indexOf(regionColor) + 1) % NEW_CAT_COLORS.length];
+        setRegionTarget(regionNewSetName, regionCategoryName, next);
+        return;
+      }
       await annotateSession(activeSessionId, {
         // Embedding view resolves the lasso to cell indices client-side; spatial sends
         // the rings for the backend polygon_query.

@@ -5,7 +5,6 @@ import type { ObsField } from '../../types';
 import { parseColorBy, type ColorBySlot } from './colorBy';
 
 interface Props {
-  sessionId: string;
   value: string;          // color_by path
   obsFields: ObsField[];
   layers: string[];
@@ -18,7 +17,7 @@ const SELECT_CLASS =
 // Picks the cell value that colors the points: first a slot (obs / X / layer),
 // then the column within it. The slot is tracked locally so a user can switch to
 // X or a layer and search for a gene before the color_by path is committed.
-export default function ColorBySelect({ sessionId, value, obsFields, layers, onChange }: Props) {
+export default function ColorBySelect({ value, obsFields, layers, onChange }: Props) {
   const cur = parseColorBy(value);
   const [slot, setSlot] = useState<ColorBySlot>(cur.slot);
   const [layer, setLayer] = useState(cur.layer || layers[0] || '');
@@ -58,7 +57,6 @@ export default function ColorBySelect({ sessionId, value, obsFields, layers, onC
 
       {slot === 'X' && (
         <VarNameSelect
-          sessionId={sessionId}
           value={cur.slot === 'X' ? cur.gene : ''}
           onChange={(gene) => onChange(`X:${gene}`)}
         />
@@ -81,7 +79,6 @@ export default function ColorBySelect({ sessionId, value, obsFields, layers, onC
             ))}
           </select>
           <VarNameSelect
-            sessionId={sessionId}
             value={cur.slot === 'layers' ? cur.gene : ''}
             onChange={(gene) => onChange(`layers:${layer}/${gene}`)}
           />

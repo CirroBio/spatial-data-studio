@@ -1,6 +1,8 @@
 import { useAppStore } from '../store/sessionStore';
 import CirroMark from './CirroMark';
 import SessionPicker from './SessionPicker';
+import CheckpointPicker from './CheckpointPicker';
+import { useDataSource } from '../data/context';
 import LockBadge from './LockBadge';
 import { TourAnchors } from '../tours';
 
@@ -8,9 +10,13 @@ const ICON_BTN ='p-1.5 rounded border border-border bg-bg text-text hover:border
 
 export default function Header() {
   const {
-    activeSessionId, activeJobIds, sessionState, cirroUploads,
+    activeSessionId, activeJobIds, sessionState, cirroUploads, checkpointIndex,
     menuOpen, setMenuOpen, leftMenuOpen, setLeftMenuOpen,
   } = useAppStore();
+  // A checkpoint's "sessions" are the files listed by index.json, switched by
+  // navigation — a different thing from the live session list, so a different picker.
+  // The synthetic session's id is the checkpoint's own URL (useCheckpointSession).
+  const isCheckpoint = useDataSource()?.kind === 'checkpoint';
   const runningCount = activeJobIds.size;
   const readOnly = sessionState?.summary.read_only ?? false;
   const unsaved = !!activeSessionId && sessionState?.summary.saved === false;
@@ -40,7 +46,13 @@ export default function Header() {
           <span className="text-accent tracking-wide text-sm">Spatial Data Studio</span>
         </span>
         <span data-tour={TourAnchors.SessionPicker}>
-          <SessionPicker />
+          {isCheckpoint
+            ? (checkpointIndex?.entries.length
+              ? <CheckpointPicker index={checkpointIndex} currentUrl={sessionState?.summary.id ?? null} />
+              : <span className="px-2 py-1 text-xs text-text/80 truncate max-w-[240px] inline-block align-middle">
+                  {sessionState?.summary.name}
+                </span>)
+            : <SessionPicker />}
         </span>
         <LockBadge />
         {fields?.n_obs != null && (

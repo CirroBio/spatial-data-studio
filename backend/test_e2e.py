@@ -406,6 +406,44 @@ def run_recipe_params_flow(client):
     print("[ok] recipe param_values override step params; defaults apply otherwise")
 
 
+def run_csc_mirror_check(client, sid, checkpoint_path):
+    """The `viewer/tables/<t>/X_csc` mirror is what the serverless viewer reads to color
+    by a gene, in place of `/data/X:<gene>`. Densify a few of its columns straight from
+    the zip and require them to equal what the live endpoint serves from the CSR `X`,
+    including a gene whose column is empty."""
+    import zipfile as _zip
+
+    import numpy as np
+    import zarr
+
+    with tempfile.TemporaryDirectory() as tmp:
+        with _zip.ZipFile(checkpoint_path) as zf:
+            zf.extractall(tmp)
+        group = zarr.open_group(tmp, mode="r")
+        csc = group["viewer/tables/adata/X_csc"]
+        data, indices, indptr = csc["data"][:], csc["indices"][:], csc["indptr"][:]
+        n_cells, n_genes = csc.attrs["shape"]
+        # Gene order is `var/_index`, not duplicated into the sidecar — the same
+        # lookup the viewer does to turn a gene name into a column index.
+        var_names = [str(v) for v in group["tables/adata/var/_index"][:]]
+
+    assert len(var_names) == n_genes, f"CSC gene count {n_genes} != var/_index {len(var_names)}"
+    # Densest and sparsest columns plus a spread of others: an empty column is the case
+    # a naive reader gets wrong (indptr[g] == indptr[g+1]).
+    lengths = np.diff(indptr)
+    probes = {int(lengths.argmax()), int(lengths.argmin()), 0, n_genes - 1, n_genes // 2}
+    for gene_index in sorted(probes):
+        gene = var_names[gene_index]
+        column = np.zeros(n_cells, dtype=np.float64)
+        span = slice(indptr[gene_index], indptr[gene_index + 1])
+        column[indices[span]] = data[span]
+        served = fetch_arrow(client, sid, f"X:{gene}").column("value").to_numpy()
+        assert np.allclose(column, served, rtol=1e-5, atol=1e-6), \
+            f"CSC column for {gene} (index {gene_index}, nnz {lengths[gene_index]}) != /data/X:{gene}"
+    print(f"[ok] CSC mirror matches /data/X:<gene> for {len(probes)} genes "
+          f"(nnz {lengths.min()}..{lengths.max()}, chunk {csc['data'].chunks[0]})")
+
+
 def run_snapshot_flow(client, sid):
     """A snapshot is now a rendered figure (vector PDF + raster PNG) of a display, with
     provenance metadata embedded in each file and a sidecar `.figure.json`. Verify
@@ -1362,30 +1400,78 @@ def main():
         assert resp.status_code == 200
         print("[ok] computed obsp survived reload")
 
-        # --- checkpoint format: plain tile-chunked rasters (no shard repack — the
-        # backend always mediates access to a checkpoint now, so the browser-range-read
-        # optimization sharding existed for no longer applies), logs relocated ---
+        # --- checkpoint format: sharded rasters with per-channel inner chunks,
+        # consolidated metadata, the `viewer/` sidecar, logs relocated. All of this
+        # exists so the serverless viewer can read the checkpoint over HTTP Range
+        # without this backend (DESIGN §14). ---
         import json as _json
         import zipfile as _zip
         name = os.path.basename(out)
         with _zip.ZipFile(out) as zf:
+            root = _json.loads(zf.read("zarr.json"))
+            consolidated = root.get("consolidated_metadata", {}).get("metadata", {})
+            assert consolidated, "checkpoint root has no consolidated metadata"
+
             raster_entry = next(n for n in sorted(zf.namelist())
                                 if n.startswith("images/") and n.endswith("zarr.json")
                                 and _json.loads(zf.read(n)).get("node_type") == "array")
             raster_meta = _json.loads(zf.read(raster_entry))
             codecs = [c.get("name") for c in raster_meta.get("codecs", [])]
-            assert "sharding_indexed" not in codecs, f"{raster_entry} unexpectedly sharded: {codecs}"
-            chunk_shape = raster_meta["chunk_grid"]["configuration"]["chunk_shape"]
-            assert chunk_shape[-1] <= 512 and chunk_shape[-2] <= 512, \
-                f"{raster_entry} not tile-chunked: {chunk_shape}"
+            assert "sharding_indexed" in codecs, f"{raster_entry} not sharded: {codecs}"
+            # The sharding codec's own chunk_shape is the inner chunk; the array's
+            # chunk_grid reports the shard. Viv fetches one channel at a time, so the
+            # inner chunk must stay a single-channel tile.
+            inner = next(c for c in raster_meta["codecs"]
+                         if c["name"] == "sharding_indexed")["configuration"]["chunk_shape"]
+            assert inner[-1] <= 512 and inner[-2] <= 512, \
+                f"{raster_entry} inner chunk not tile-sized: {inner}"
+            assert len(inner) < 3 or inner[0] == 1, \
+                f"{raster_entry} inner chunk spans channels: {inner}"
+            # The consolidated tree must report the sharded layout, or a browser
+            # reading it would decode the pre-shard byte layout.
+            assert "sharding_indexed" in [
+                c.get("name") for c in
+                consolidated[raster_entry[: -len("/zarr.json")]]["codecs"]
+            ], "consolidated metadata does not report sharding"
+
+            sidecar = consolidated["viewer"]["attributes"]
+            assert sidecar["sidecar_version"] >= 1, sidecar
+            hne = sidecar["images"]["hne"]
+            assert set(hne) == {""} | set(sidecar["table_keys"]), \
+                f"image manifest not baked per table: {list(hne)}"
+            baked = hne[sidecar["table_keys"][0]]
+            for field in ("pixel_to_world", "levels", "contrast_limits", "contrast_range",
+                          "is_rgb", "channel_names"):
+                assert field in baked, f"sidecar image manifest missing {field}"
+
+            live_affine = client.get(f"/api/sessions/{sid}/points-transform").json()["affine"]
+            assert sidecar["coords_transform"]["adata"] == live_affine, \
+                f"sidecar coords_transform != live points-transform: {sidecar['coords_transform']}"
+
+            csc = "viewer/tables/adata/X_csc"
+            assert f"{csc}/data" in consolidated and f"{csc}/indices" in consolidated \
+                and f"{csc}/indptr" in consolidated, "CSC mirror missing from sidecar"
+
             # app_state present but with no inline worker logs (relocated to logs/)
-            root = _json.loads(zf.read("zarr.json"))
             saved_state = root["attributes"]["app_state"]
             assert all("_log" not in r for r in
                        saved_state["compute_history"] + saved_state["plots"]), "logs not relocated"
             logfiles = [n for n in zf.namelist() if n.startswith("logs/")]
-        print(f"[ok] unsharded tile-chunked checkpoint: {raster_entry} chunks={chunk_shape}; "
+        print(f"[ok] browser-readable checkpoint: {raster_entry} sharded inner={inner}; "
+              f"{len(consolidated)} consolidated nodes; sidecar v{sidecar['sidecar_version']}; "
               f"logs relocated={len(logfiles)}")
+
+        # The sidecar's baked manifest must agree with what the live route computes —
+        # it is the same imaging.image_info call, and the viewer relies on that.
+        live_info = client.get(f"/api/sessions/{sid}/image/hne/info").json()
+        for field in ("pixel_to_world", "bounds", "is_rgb", "contrast_limits",
+                      "contrast_range", "channel_names", "width", "height"):
+            assert baked[field] == live_info[field], \
+                f"sidecar {field} disagrees with live image_info: {baked[field]} != {live_info[field]}"
+        print("[ok] sidecar image manifest matches live image_info")
+
+        # The CSC mirror must densify to exactly what /data/X:<gene> serves from CSR.
+        run_csc_mirror_check(client, sid, out)
 
         # Regression check: reopening a saved checkpoint must still advertise the
         # intended GPU-compositing path, not silently fall back to server-composited

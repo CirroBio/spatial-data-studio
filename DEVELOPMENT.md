@@ -79,7 +79,8 @@ backend/    FastAPI app
                   annotations (shape-annotation read/JSON conversion), sse, livelog
                   (streams a running reader's log to the client live during import)
   app/recipes/    curated analysis recipes — JSON bundle files, discovered at startup
-  app/persistence/ store (.zarr / .zarr.zip)
+  app/persistence/ store (.zarr / .zarr.zip; also the raster sharding + `viewer/` sidecar
+                  that make a checkpoint readable by the serverless viewer)
   app/imaging.py  tiled image pyramid + channel compositing + coordinate reconciliation;
                   the /image/{element}/info manifest also advertises the client-compositing
                   path (raster_base_url, zarr_group_path, contrast_limits, is_rgb)
@@ -92,6 +93,10 @@ backend/    FastAPI app
   app/cirro.py    Cirro dataset upload (client-credentials auth, symlink-based upload folder)
   cli.py          offline recipe runner — reuses the registry/session engine headlessly
 frontend/   React + TS + Vite + Tailwind + deck.gl SPA
+  src/data/       the DataSource abstraction the canvas renders through: apiSource (live
+                  session over HTTP) and checkpointSource (a .zarr.zip read directly with
+                  zarrita over HTTP Range — the serverless viewer, DESIGN §14.2), plus
+                  checkpointIndex (the index.json deployment manifest, §14.3)
 nextflow/   Nextflow workflow wrapping backend/cli.py (uv installs deps at runtime; no image build)
 docker/     single-image build (multi-stage), nginx edge, supervisor
 docs/       CONTRACT.md (REST/SSE/Arrow API), images/ (README screenshots)
@@ -116,7 +121,11 @@ Component-level notes: [`backend/README.md`](backend/README.md),
 | Change what streams live during import | `backend/app/transport/livelog.py` (+ `capture_log` in `registry/base.py`) | below |
 | Change session/queue/worker behavior | `backend/app/sessions/` | [DESIGN.md](DESIGN.md) §5–6 |
 | Change who may edit a session (presence, the edit lock, viewer names) | `backend/app/sessions/presence.py` + `deps.py` (`_claim_lock`) + `frontend/src/lib/presence.ts` (identity + gate) + `hooks/usePresence.ts` (heartbeat) + `components/LockBadge.tsx` | [DESIGN.md](DESIGN.md) §16.5 |
-| Change the checkpoint/persistence format | `backend/app/persistence/store.py` | [DESIGN.md](DESIGN.md) §3 |
+| Change the checkpoint/persistence format | `backend/app/persistence/store.py` | [DESIGN.md](DESIGN.md) §3, §14.1 |
+| Change what the serverless viewer can read from a checkpoint | `backend/app/persistence/store.py` (`_write_viewer_sidecar`, the writer half) + `frontend/src/data/checkpointSource.ts` (the reader half) — the two must move together | [DESIGN.md](DESIGN.md) §14.1–14.2 |
+| Add a render-path call the canvas makes | `frontend/src/data/types.ts` (the `DataSource` interface), then **both** `apiSource.ts` and `checkpointSource.ts` | [DESIGN.md](DESIGN.md) §14.2 |
+| Change what the serverless viewer lets a user *do* (lasso labels, hiding cells, drawn shapes, PNG export) | `hooks/usePresence.ts` (`useLocalEditsOnly` — the gate), `store/sessionStore.ts` (`applyLocalRegion`, `hiddenCells`, `shapesAreLocalOnly`), `lib/canvasCapture.ts` | [DESIGN.md](DESIGN.md) §14.2 |
+| Change the `index.json` deployment manifest or the checkpoint switcher | `frontend/src/data/checkpointIndex.ts` (format + navigation), `components/CheckpointIndexPage.tsx` (landing), `components/CheckpointPicker.tsx` (header), `backend/app/cirro.py` (`_write_viewer_index`) | [DESIGN.md](DESIGN.md) §14.3 |
 | Change the deck.gl canvas / rendering | `frontend/src/components/canvas/` | [frontend/README.md](frontend/README.md) |
 | Retune the palette, theme tokens, fonts, or the Cirro mark | `frontend/src/index.css` (tokens) + `frontend/tailwind.config.js` (names) + `frontend/src/components/CirroMark.tsx` / `public/favicon.svg` (logo) | [frontend/README.md](frontend/README.md) |
 | Change the canvas minimap (overview inset) | `frontend/src/components/canvas/Minimap.tsx` (overlay + navigation) + `SpatialCanvas.tsx` (extent/thumbnail wiring) + `backend/app/snapshots.py` `_draw_minimap` (figure inset) | [DESIGN.md](DESIGN.md) §9.11 |
@@ -179,6 +188,44 @@ and its usage is folded into the admission accounting (see DESIGN §23.4). If a 
 exists at the repo root, `run.sh` sources it before launching uvicorn, so `CIRRO_*`
 config set there reaches the backend the same way docker compose's auto-loaded
 `.env` does.
+
+### Driving the serverless viewer locally
+
+`?checkpoint=<url>` opens a `.zarr.zip` directly with no backend (DESIGN §14.2). For a
+local round trip, save a checkpoint into `SDS_DATA_DIR` and point the running app at
+the existing checkpoint route, which already serves Range + HEAD:
+
+```bash
+open 'http://localhost:5173/?checkpoint=/api/checkpoints/<name>.sdata.zarr.zip'
+```
+
+That still runs the backend, but only as a static byte server — nothing under
+`/api/sessions` is touched, which you can confirm in the network panel.
+
+To test the genuinely serverless case, assemble a deployment and serve it with no
+backend at all. `vite preview` works because it honors Range:
+
+```bash
+cd frontend && npm run build && cp /path/to/*.sdata.zarr.zip dist/ && npx vite preview --port 5190
+```
+
+with a `dist/index.json` listing them (DESIGN §14.3):
+
+```json
+{ "title": "Demo checkpoints",
+  "checkpoints": [{ "path": "my-run.sdata.zarr.zip", "label": "Visium H&E" }] }
+```
+
+Opening `/` then shows the collection; picking one opens it, and the header switcher
+moves between them. A host qualifies if it honors HTTP **Range on GET** and returns
+`Content-Range` (no HEAD is ever issued — see `RangeGetReader`); cross-origin
+additionally needs CORS exposing `Content-Range`.
+
+Only checkpoints written by the current code carry the `viewer/` sidecar, and the
+viewer **requires** it: a Zarr v3 store has no child index, so without the sidecar (and
+the consolidated metadata written with it) the reader can't even name the table. An
+older checkpoint is rejected on open with a message saying to re-save it, rather than
+opening to an empty session. Re-saving through the app is the fix.
 
 Client-side (Viv) image compositing is the sole canvas image path, **on by default**
 (disable with the `sds:disableClientCompositing` localStorage key, which turns the canvas

@@ -378,6 +378,11 @@ def _levels_meta(sdata, element) -> list[dict]:
 
 
 def image_info(sdata, element, table=None) -> dict:
+    """Everything about an image element that is derivable from `sdata` alone: dims,
+    channel names, pyramid levels, the level-0-pixel -> world affine, and the contrast
+    domain the client compositor needs. Session-specific fields (the raster store URL,
+    the `client_compositing` gate) are layered on by the live route; the checkpoint
+    sidecar (`persistence.store._write_viewer_sidecar`) bakes this dict as-is."""
     arr = _level_array(sdata.images[element], 0)
     w, h = int(arr.shape[-1]), int(arr.shape[-2])
     m = pixel_to_world(sdata, element, table)
@@ -392,7 +397,10 @@ def image_info(sdata, element, table=None) -> dict:
             "bounds": _world_bounds(m, w, h),
             "pixel_to_world": affine6,
             "levels": _levels_meta(sdata, element),
-            "tile_size": TILE_SIZE}
+            "tile_size": TILE_SIZE,
+            "contrast_limits": [[0.0, hi] for hi in channel_contrast_limits(sdata, element)],
+            "contrast_range": [[lo, hi] for lo, hi in channel_value_range(sdata, element)],
+            "is_rgb": _is_rgb(sdata, element)}
 
 
 def thumbnail_image(

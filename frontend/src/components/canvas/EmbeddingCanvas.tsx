@@ -8,6 +8,8 @@ import { useArrowField } from '../../hooks/useArrowField';
 import { useEditGate } from '../../hooks/usePresence';
 import { addDisplay as postDisplay } from '../../api';
 import { reportError } from '../../lib/errors';
+import { downloadCanvasPng } from '../../lib/canvasCapture';
+import { useDataSource } from '../../data/context';
 import { indicesInRings } from '../../lib/pointInPolygon';
 import { isEmbeddingDisplay, type EmbeddingDisplaySpec, type ObsField, type ObsmField } from '../../types';
 import { useArrowPositions } from './useArrowPositions';
@@ -145,7 +147,6 @@ function EmbeddingEmptyState({
         <div className="flex flex-col gap-1">
           <label className={labelClass}>Color by</label>
           <ColorBySelect
-            sessionId={sessionId}
             value={colorBy}
             obsFields={obsFields}
             layers={layers}
@@ -184,25 +185,28 @@ function EmbeddingCanvasView({
   annotationTarget: { regionSetId: string; category: string; color: string } | null;
 }) {
   const {
-    sessionState, isolatedCategory, openSnapshotExport, setSnapshotHandler,
+    sessionState, isolatedCategory, hiddenCells, openSnapshotExport, setSnapshotHandler,
     drawPolygons, drawRing, addDrawVertex, clearDraw, setRegionCellCount, setRegionCellIndices,
     theme,
   } = useAppStore();
+  const source = useDataSource();
   const dataVersions = sessionState?.data_versions ?? {};
   const { canEdit } = useEditGate();
 
   const { is_3d, x_component, y_component, z_component } = display.encoding;
   const coordsPath = `obsm:${display.encoding.obsm_key}`;
   const coordsVersion = dataVersions[coordsPath] ?? 0;
-  const colorByPath = display.encoding.color_by;
+  // '' when the display has no colouring, which reads as falsy everywhere below
+  // (no field fetch, no colour source, no legend) instead of crashing on null.
+  const colorByPath = display.encoding.color_by ?? '';
   // Gene colorings (`X:<gene>`) can't be versioned per gene — the backend tracks the
   // expression matrix by whole-array identity and bumps the coarse `X:` path — so fold
   // that in, else a normalize/log1p/scale/filter compute leaves the canvas on stale colors.
   const colorVersion = (dataVersions[colorByPath] ?? 0)
     + (colorByPath.startsWith('X:') ? (dataVersions['X:'] ?? 0) : 0);
 
-  const { table: coordsTable, loading: coordsLoading } = useArrowField(sessionId, coordsPath, coordsVersion);
-  const { table: colorTable, loading: colorLoading } = useArrowField(sessionId, colorByPath, colorVersion);
+  const { table: coordsTable, loading: coordsLoading } = useArrowField(coordsPath, coordsVersion);
+  const { table: colorTable, loading: colorLoading } = useArrowField(colorByPath, colorVersion);
 
   const [panelCollapsed, setPanelCollapsed] = useState(false);
 
@@ -223,6 +227,7 @@ function EmbeddingCanvasView({
     positions,
     opacity: display.encoding.opacity,
     isolatedCategory,
+    hiddenCells,
     categoryColors: display.encoding.category_colors?.[colorByPath],
   });
 
@@ -232,6 +237,13 @@ function EmbeddingCanvasView({
   const viewStateRef = useRef(viewState);
   viewStateRef.current = viewState;
   const handleSnapshot = useCallback(() => {
+    // See SpatialCanvas: a checkpoint captures the canvas rather than asking the
+    // backend for a rendered figure.
+    if (source?.kind === 'checkpoint') {
+      void downloadCanvasPng(containerRef.current, sessionState?.summary.name ?? 'view')
+        .catch((err) => reportError('PNG export failed', err));
+      return;
+    }
     const vs = viewStateRef.current;
     const target = vs?.target as number[] | undefined;
     if (!vs || !target || typeof vs.zoom !== 'number') return;
@@ -245,7 +257,7 @@ function EmbeddingCanvasView({
       canvasSize: size,
       label: sessionState?.summary.name ?? 'snapshot',
     });
-  }, [sessionId, display.id, openSnapshotExport, containerRef, sessionState?.summary.name]);
+  }, [source, sessionId, display.id, openSnapshotExport, containerRef, sessionState?.summary.name]);
   useEffect(() => {
     setSnapshotHandler(handleSnapshot);
     return () => setSnapshotHandler(null);
@@ -440,7 +452,6 @@ function EmbeddingCanvasView({
 
       <EmbeddingControls
         display={display}
-        sessionId={sessionId}
         obsFields={obsFields}
         layers={layerNames}
         obsmFields={obsmFields}

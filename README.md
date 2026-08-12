@@ -66,6 +66,23 @@ the analysis history that produced this view.*
   [Cirro](https://cirro.bio/). Saved snapshots are collected in a gallery you can
   browse, download, or delete; each file embeds the provenance (view, settings, and the
   analysis steps that produced the data).
+- **Open a checkpoint without the app running.** A saved checkpoint is a single
+  `.zarr.zip` the viewer can read on its own. Open the app with `?checkpoint=<url>`
+  and it reads that file directly over HTTP range requests: the tissue image, the
+  cells, and every display setting (color by any obs column or gene, palettes and
+  per-category colors, point size and shape, channel colors and contrast, legends,
+  layer visibility, pan and zoom) work exactly as they do live, with no backend and no
+  server to run. It streams only what the current view needs rather than downloading
+  the file — opening a 438 MB checkpoint and coloring by a gene costs under a
+  megabyte. Any host that serves the file with HTTP range requests will do — put the
+  built app, your `.zarr.zip` files, and a small `index.json` listing them in one
+  folder and the page becomes a browsable collection you can switch between.
+  You can also explore hands-on: lasso cells to label a region and color by it, hide
+  cells to declutter, draw shapes and text on the view, and export what you see as a
+  PNG. Those edits stay in your browser — the checkpoint is never modified and nothing
+  is kept when you reload. Running an analysis, a real subset, saving, and the
+  publication-quality PDF figure all still need the app; cell-boundary outlines aren't
+  available this way.
 
 <table>
 <tr>

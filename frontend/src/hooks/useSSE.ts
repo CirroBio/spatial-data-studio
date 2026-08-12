@@ -24,7 +24,9 @@ import { editBlockReason } from '../lib/presence';
 // of latency is the accepted trade for updates arriving at all.
 const POLL_INTERVAL_MS = 2000;
 
-export function useSSE(): void {
+/** Subscribes to the backend's event stream. `enabled` is false in serverless
+ * (checkpoint) mode, where there is no backend and nothing can change. */
+export function useSSE(enabled = true): void {
   const {
     upsertSession,
     setResourceSample,
@@ -70,6 +72,7 @@ export function useSSE(): void {
   }
 
   useEffect(() => {
+    if (!enabled) return;
     let lastMemoryWarnAt = 0;
 
     // One handler per event type, driven identically by the SSE stream and by the
@@ -331,5 +334,5 @@ export function useSSE(): void {
       if (pollTimer !== undefined) clearTimeout(pollTimer);
       if (refreshTimer.current) clearTimeout(refreshTimer.current);
     };
-  }, [activeSessionId, upsertSession, setResourceSample, updateDataVersions, updateDisplay, addActiveJob, removeActiveJob, addQueuedEntry, setEntryStatus, setSessionState, refreshSessionState, refreshShapeAnnotations, resolveShapeJob, pushNotification, setActiveSessionId, setSessions, removeSession, setCirroUploads, setLoadProgress, appendLoadLog, appendJobLog, clearJobLog, setPresence]);
+  }, [enabled, activeSessionId, upsertSession, setResourceSample, updateDataVersions, updateDisplay, addActiveJob, removeActiveJob, addQueuedEntry, setEntryStatus, setSessionState, refreshSessionState, refreshShapeAnnotations, resolveShapeJob, pushNotification, setActiveSessionId, setSessions, removeSession, setCirroUploads, setLoadProgress, appendLoadLog, appendJobLog, clearJobLog, setPresence]);
 }

@@ -137,7 +137,9 @@ export interface ChannelState {
 
 export interface DisplayEncoding {
   coords: string;
-  color_by: string;
+  // Null when the dataset offered nothing to colour by — `manager.auto_displays`
+  // leaves it unset unless it finds a categorical obs column.
+  color_by: string | null;
   image_layer: string | null;
   shapes_layer: string | null;
   point_size: number;
@@ -185,7 +187,7 @@ export interface EmbeddingEncoding {
   y_component: number;
   z_component: number;  // used only when is_3d
   is_3d: boolean;
-  color_by: string;
+  color_by: string | null;
   point_size: number;
   opacity: number;
   colormap: string;

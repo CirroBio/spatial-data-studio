@@ -80,11 +80,14 @@ async def delete_snapshot_endpoint(name: str):
 
 @router.api_route("/api/checkpoints/{name}", methods=["GET", "HEAD"])
 async def get_checkpoint(name: str):
-    """Serve a saved checkpoint `.zarr.zip` for direct browser reads (zarrita.js over
-    HTTP range). FileResponse honors Range (206) and HEAD (zarrita probes the size
-    before range-reading). Scoped to a single `*.zarr.zip` file name inside DATA_DIR —
-    the transient `.rasters`/`.save-` caches (directories) and the `.figure.*` snapshot
-    artifacts are never matched by name here."""
+    """Serve a saved checkpoint `.zarr.zip` for direct browser reads. This is what the
+    serverless viewer (`?checkpoint=<url>`, DESIGN §14.2) reads when the app happens to
+    be running; hosted anywhere else, any static server honoring Range on GET plays the
+    same part. FileResponse honors Range (206) and HEAD — the viewer's own reader never
+    issues HEAD (see `RangeGetReader`), but zarrita's built-in one does. Scoped to a
+    single `*.zarr.zip` file name inside DATA_DIR — the transient `.rasters`/`.save-`
+    caches (directories) and the `.figure.*` snapshot artifacts are never matched by
+    name here."""
     if not name.endswith(".zarr.zip") or "/" in name or "\\" in name:
         raise HTTPException(404, "not found")
     target = (config.DATA_DIR / name).resolve()
