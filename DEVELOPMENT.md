@@ -38,6 +38,14 @@ core, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
   `POST /api/presence`, attaching to an unlocked session takes its lock, and every
   mutating route refuses a request from anyone else (423). Presence and locks are
   process-memory only, keyed by a client-minted id — no accounts, no auth (DESIGN §16.5).
+- **An MCP assistant surface** (`app/mcp/`, mounted at `POST /api/mcp`) lets an AI
+  agent drive the same machinery: its tools are thin wrappers over the functions the
+  REST routes call, so agent mutations flow through the ordinary job queue + SSE bus
+  and appear live in every browser. The agent is a first-class presence viewer
+  ("Claude (assistant)") that can take a watched session's lock explicitly and
+  releases it when done. `view_display` renders a display through the snapshot core
+  with a world-labeled grid and a pixel→world affine, so the agent can act (annotate/
+  subset) on exactly what it saw (DESIGN §29).
 
 **Foundational principle — zero hardcoded library functions.** No part of the app
 names a specific library function. Operations are discovered by reflection at
@@ -68,7 +76,10 @@ backend/    FastAPI app
                   executor for squidpy/scanpy/spatialdata-io), custom/ (non-squidpy functions),
                   library_catalog.yaml (opt-in library manifests), terms.yaml + dictionary.py
                   (Parameter Term Dictionary), introspect.py (Registry)
-  app/manifest/   data manifest contributor registry + seed contributors
+  app/mcp/        the MCP assistant surface: server.py (FastMCP tool definitions),
+                  vision.py (display render + pixel->world coordinate contract + overlays +
+                  selection membership), agent.py (the assistant's presence identity/lock),
+                  guides/ (domain + app guidance served to the connecting agent)
   app/sessions/   manager, session (queue/worker), presence (viewer list + per-session edit lock),
                   adapter (routes to Function.execute), regions,
                   shape_annotations (arrows/lines/boxes/polygons/ellipses/text -> sdata.shapes["annotations"]),
@@ -121,6 +132,7 @@ Component-level notes: [`backend/README.md`](backend/README.md),
 | Change what streams live during import | `backend/app/transport/livelog.py` (+ `capture_log` in `registry/base.py`) | below |
 | Change session/queue/worker behavior | `backend/app/sessions/` | [DESIGN.md](DESIGN.md) §5–6 |
 | Change who may edit a session (presence, the edit lock, viewer names) | `backend/app/sessions/presence.py` + `deps.py` (`_claim_lock`) + `frontend/src/lib/presence.ts` (identity + gate) + `hooks/usePresence.ts` (heartbeat) + `components/LockBadge.tsx` | [DESIGN.md](DESIGN.md) §16.5 |
+| Change the MCP assistant surface (tools, vision render, agent guidance) | `backend/app/mcp/server.py` (tools) + `vision.py` (render/coords/membership) + `agent.py` (presence/lock) + `guides/*.md` (guidance text); mounted in `main.py` | [DESIGN.md](DESIGN.md) §29 |
 | Change the checkpoint/persistence format | `backend/app/persistence/store.py` | [DESIGN.md](DESIGN.md) §3, §14.1, [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) |
 | Change what the serverless viewer can read from a checkpoint | `backend/app/persistence/store.py` (`_write_viewer_sidecar`, the writer half) + `frontend/src/data/checkpointSource.ts` (the reader half) — the two must move together | [DESIGN.md](DESIGN.md) §14.1–14.2, [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) §4 |
 | Change the shape of `app_state`, the `viewer/` sidecar, `X_csc`, or `index.json` | `backend/app/schemas/checkpoint/*.schema.json` (the JSON Schema is validated against on every write) + [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) in the same commit — `sds-governance/checks/check_checkpoint_schema_docs.py` fails the build otherwise | [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) |
@@ -176,6 +188,14 @@ and snapshots all live there; `run.sh` sets it to `data/` (or `test-data/` with
 `--test`) and it can be overridden to point at any other folder. When unset it
 defaults to `$HOME` (the container image relies on this, running from `$HOME`
 where the deployment environment mounts datasets, e.g. `$HOME/datasets`).
+
+`SDS_APP_URL` is the URL a *person* opens the app at; the MCP assistant quotes it
+when directing the user to a session. `run.sh` defaults it to the Vite dev server
+(`http://localhost:5173`); docker-compose sets it to the published port. The MCP
+endpoint itself rides the backend (`POST /api/mcp` on :8000 in dev) — the repo's
+`.mcp.json` points a Claude Code session started in this repo at it, and
+`SDS_MCP_IDLE_RELEASE_S` (default 900) is how long the assistant's presence (and any
+edit lock it holds) survives without a tool call.
 
 The *working set* — the unpacked `.zarr.zip` extract dir and per-session normalized
 raster caches (each up to a few hundred MB) — lives separately under `SDS_WORK_DIR`,
@@ -321,7 +341,14 @@ and fails open to the mount-time `size=` otherwise.
   eight spatial/multi-sample custom methods on `xenium_tma.zarr`, the
   cell-segmentation `/shapes/{element}/geoarrow` polygons on `xenium.zarr`, viewer
   presence + the per-session edit lock (auto-lock on attach, 423 for everyone else,
-  release → take, and the heartbeat timeout freeing a lock — `run_session_lock_flow`), the
+  release → take, and the heartbeat timeout freeing a lock — `run_session_lock_flow`),
+  the MCP assistant surface over the real `/api/mcp` transport (`run_mcp_flow`:
+  initialize/tools, reader-backed create_session, lock takeover etiquette,
+  compute+plot+`view_plot` PNG, and the vision coordinate contract — the
+  `view_display` pixel→world affine is proven by mapping a pixel rectangle to world
+  polygons whose `inspect_region`/`annotate_region` membership equals an independent
+  numpy count, plus embedding-space selection, shape annotations, save, figure
+  export, and a subset that evicts the parent), the
   client-compositing raster route + `/info` manifest (raw zarr served with Range
   206) on `xenium.zarr`, an image tile keeping its signal after a reshaping compute
   (filter_cells) — i.e. the per-session raster store isn't deleted while the

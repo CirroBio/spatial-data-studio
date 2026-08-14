@@ -252,6 +252,18 @@ class Config:
     # throttled background tab isn't mistaken for a departure.
     PRESENCE_TIMEOUT_S = float(os.environ.get("SDS_PRESENCE_TIMEOUT_S", "20"))
 
+    # ---- MCP assistant surface (app/mcp/) ----
+    # The URL a *person* opens the studio at, quoted verbatim by assistant tool
+    # output so the agent can direct the user to the right place ("open <url> and
+    # switch to session X"). run.sh sets the local dev URL; empty means the agent
+    # is told to ask the user for it.
+    APP_URL = os.environ.get("SDS_APP_URL", "")
+    # How long the assistant's presence (and any edit lock it holds) outlives its
+    # last tool call. Generous by default: a long compute is normal thinking time
+    # for the agent. After this idle window the agent's heartbeat stops and its
+    # locks release via the ordinary PRESENCE_TIMEOUT_S expiry.
+    MCP_IDLE_RELEASE_S = float(os.environ.get("SDS_MCP_IDLE_RELEASE_S", "900"))
+
     RESOURCE_HZ = float(os.environ.get("SDS_RESOURCE_HZ", "2"))   # resource sample cadence
     LONG_RUNNING_S = float(os.environ.get("SDS_LONG_RUNNING_S", "120"))  # watchdog threshold
 

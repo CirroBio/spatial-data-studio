@@ -12,6 +12,7 @@ fastapi==0.138.1
 pydantic==2.13.4     # request-body validation for the shape-annotations schema (schemas/annotations.py)
 jsonschema==4.26.0   # validates checkpoint .zarr.zip app-defined structures against schemas/checkpoint/*.schema.json
 uvicorn[standard]==0.49.0
+mcp==1.29.0          # the MCP assistant surface (app/mcp/), mounted at /api/mcp
 pyarrow==24.0.0
 psutil==7.2.2
 pillow==12.3.0

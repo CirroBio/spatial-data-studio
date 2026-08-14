@@ -112,6 +112,8 @@ read. The example above passes it just to illustrate the override.
 | `SDS_RESOURCE_HZ`        | `2`       | Resource-sample broadcast cadence (Hz) for the RAM/CPU strip. |
 | `SDS_PRESENCE_TIMEOUT_S` | `20`      | How long a viewer may go without a heartbeat (the browser sends one every 5 s) before it drops out of the viewer list and its session **edit lock** is released — so a closed tab never leaves a session locked. Raise it on a high-latency deployment; keep it several heartbeats wide. |
 | `SDS_LONG_RUNNING_S`     | `120`     | Long-running-job watchdog threshold (seconds). |
+| `SDS_APP_URL`            | _(unset; compose: `http://localhost:8080`)_ | The URL a *person* opens the app at, quoted by the MCP assistant (`POST /api/mcp`) when it directs the user to a session. Set it to the published host/port of this deployment; unset, the assistant asks the user for the URL instead. |
+| `SDS_MCP_IDLE_RELEASE_S` | `900`     | How long the MCP assistant's presence (and any session edit lock it holds) survives without a tool call before its heartbeat stops and the lock releases via the normal presence expiry. |
 | `CIRRO_BASE_URL`         | _(unset)_ | Cirro API base URL. Upload is dark unless all three `CIRRO_*` are set. |
 | `CIRRO_CLIENT_ID`        | _(unset)_ | Cirro service-account (client-credentials) id. |
 | `CIRRO_CLIENT_SECRET`    | _(unset)_ | Cirro service-account secret. |

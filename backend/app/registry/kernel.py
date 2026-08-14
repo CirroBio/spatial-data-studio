@@ -122,6 +122,7 @@ def _child_plot(fn, injected, bound, adata, sdata):
     changed, fields = diff(before, after)
     return {"status": result.status, "log": result.log,
             "figure_svg": result.figure_svg, "figure_pdf": result.figure_pdf,
+            "figure_png": result.figure_png,
             "changed_facets": _facet_values(adata, sdata, changed), "changed_fields": fields}
 
 

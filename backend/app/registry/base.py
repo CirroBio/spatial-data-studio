@@ -133,6 +133,7 @@ class CallResult:
     changed_facets: dict = field(default_factory=dict)
     figure_svg: bytes | None = None
     figure_pdf: bytes | None = None
+    figure_png: bytes | None = None
     new_object: object | None = None
     error: str | None = None
 
@@ -420,7 +421,8 @@ def run_plot(session, fn, injected: list | None = None, bound: dict | None = Non
         return CallResult(status="failed", error=env.get("error"), log=env.get("log", ""))
     return CallResult(status=env["status"], log=env.get("log", ""),
                       changed_facets=env.get("changed_facets", {}),
-                      figure_svg=env.get("figure_svg"), figure_pdf=env.get("figure_pdf"))
+                      figure_svg=env.get("figure_svg"), figure_pdf=env.get("figure_pdf"),
+                      figure_png=env.get("figure_png"))
 
 
 def render_plot(fn, injected: list, bound: dict, buf) -> CallResult:
@@ -450,12 +452,16 @@ def render_plot(fn, injected: list, bound: dict, buf) -> CallResult:
             plt.close("all")
             ret = fn(*injected, **bound)
             fig = _figure_from(ret)
-            svg, pdf = io.BytesIO(), io.BytesIO()
+            svg, pdf, png = io.BytesIO(), io.BytesIO(), io.BytesIO()
             fig.savefig(svg, format="svg", bbox_inches="tight")
             fig.savefig(pdf, format="pdf", bbox_inches="tight")
+            # Raster copy for consumers that can't rasterize SVG/PDF themselves —
+            # chiefly the MCP assistant's view_plot (vision models read PNG).
+            fig.savefig(png, format="png", dpi=130, bbox_inches="tight")
             plt.close("all")
             return CallResult(status="drawn", log=buf.getvalue(),
-                              figure_svg=svg.getvalue(), figure_pdf=pdf.getvalue())
+                              figure_svg=svg.getvalue(), figure_pdf=pdf.getvalue(),
+                              figure_png=png.getvalue())
         except Exception as e:
             plt.close("all")
             return CallResult(status="failed", log=buf.getvalue() + "\n" + traceback.format_exc(),

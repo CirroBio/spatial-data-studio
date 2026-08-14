@@ -19,7 +19,12 @@ app/
     library_catalog.yaml opt-in library manifests; library_meta.py + .yaml supply per-library provenance
     terms.yaml + dictionary.py   Parameter Term Dictionary — THE ONLY library-specific knowledge, keyed by term
     custom/              hand-written non-squidpy Function subclasses (+ _vendor/ numerical code, README.md)
-  manifest/              data-manifest contributor registry + seed contributors (§Part 3)
+  mcp/
+    server.py            the MCP assistant surface: FastMCP tool definitions, mounted at POST /api/mcp (§29)
+    vision.py            display render for the agent: pixel->world coordinate contract, grid/marker overlays,
+                         selection membership + region stats
+    agent.py             the assistant's presence identity ("Claude (assistant)") + lock etiquette
+    guides/              domain + app guidance markdown served to the connecting agent (read_guide)
   sessions/
     manager.py           SessionManager: load/create, subset->child, memory admission, resource sampling (§8,§11)
     session.py           Session: SpatialData + FIFO queue + worker thread + RW lock + app_state (§6,§20.2)
@@ -36,7 +41,7 @@ app/
   recipes/               curated analysis recipes (JSON, discovered at startup) + catalog/apply
   imaging.py             tiled image pyramid + channel compositing + coordinate reconciliation (§9.2)
   rasters.py             ingest-time re-tiling into a tile-chunked pyramid
-  snapshots.py           JSON snapshot-config write/list/open (read-only session, no standalone viewer)
+  snapshots.py           matplotlib figure render (vector PDF / raster PNG) + gallery list/delete (§14)
   datasets.py            saved-checkpoint scan for the load/upload pickers (prewarmed cache)
   prewarm.py             background queue that warms slow first-open menu lists off the event loop
   cirro.py               Cirro dataset upload (client-credentials auth, symlink bundle)

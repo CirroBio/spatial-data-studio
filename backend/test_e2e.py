@@ -1404,6 +1404,305 @@ def run_filter_rank_genes_save_flow(client):
     assert client.delete(f"/api/sessions/{sid}").status_code == 200
 
 
+# ---- MCP assistant surface (app/mcp/) ---------------------------------------
+_MCP_HEADERS = {"Accept": "application/json, text/event-stream"}
+_mcp_rpc_id = 0
+
+
+def mcp_call(client, name, arguments=None):
+    """One tools/call over the real stateless-JSON transport (POST /api/mcp).
+    Returns (structured, content): the tool's structured dict (parsed from the text
+    block when the SDK didn't attach structuredContent) and the raw content list.
+    A tool error raises RuntimeError with the error text."""
+    global _mcp_rpc_id
+    _mcp_rpc_id += 1
+    r = client.post("/api/mcp", headers=_MCP_HEADERS, json={
+        "jsonrpc": "2.0", "id": _mcp_rpc_id, "method": "tools/call",
+        "params": {"name": name, "arguments": arguments or {}}})
+    assert r.status_code == 200, f"{name}: {r.status_code} {r.text[:300]}"
+    result = r.json()["result"]
+    content = result.get("content", [])
+    if result.get("isError"):
+        raise RuntimeError(content[0]["text"] if content else "tool error")
+    structured = result.get("structuredContent")
+    if structured is None:
+        texts = [c["text"] for c in content if c.get("type") == "text"]
+        if texts:
+            try:
+                structured = json.loads(texts[-1])
+            except ValueError:
+                structured = None
+    return structured, content
+
+
+def mcp_png(content):
+    """Decode the image block of a view_display/view_plot response with PIL."""
+    import base64
+    from PIL import Image as PILImage
+    img_block = next(c for c in content if c.get("type") == "image")
+    assert img_block["mimeType"] == "image/png"
+    return PILImage.open(io.BytesIO(base64.b64decode(img_block["data"])))
+
+
+def _strict_inside(xy, x0, x1, y0, y1):
+    import numpy as np
+    return int(((xy[:, 0] > x0) & (xy[:, 0] < x1) & (xy[:, 1] > y0) & (xy[:, 1] < y1)).sum())
+
+
+def _untied_bounds(vals, lo_q, hi_q):
+    """A (lo, hi) pair at ~the given percentiles that cannot coincide with any data
+    value: midpoints between adjacent unique values. Visium spots sit on a grid, so a
+    raw percentile CAN land exactly on a coordinate and make point-in-polygon edge
+    behavior ambiguous."""
+    import numpy as np
+    uniq = np.unique(vals)
+    lo_i = max(1, int(len(uniq) * lo_q))
+    hi_i = min(len(uniq) - 1, int(len(uniq) * hi_q))
+    return (float((uniq[lo_i - 1] + uniq[lo_i]) / 2), float((uniq[hi_i - 1] + uniq[hi_i]) / 2))
+
+
+def run_mcp_flow(client):
+    """The MCP assistant surface end to end over the real transport: initialize +
+    tools/list, session creation via a reader, lock etiquette (take_control steals a
+    viewer's lock), compute + plot + view_plot PNG, view_display's pixel<->world
+    coordinate contract proven against annotate_region/inspect_region membership,
+    display updates, data access, shape annotations, checkpoint save, figure export,
+    and a subset that replaces the session."""
+    import numpy as np
+    from app.deps import MANAGER
+    from app.mcp import agent as mcp_agent
+
+    # transport smoke: initialize + tools/list on the mounted stateless endpoint
+    r = client.post("/api/mcp", headers=_MCP_HEADERS, json={
+        "jsonrpc": "2.0", "id": 9000, "method": "initialize",
+        "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+                   "clientInfo": {"name": "e2e", "version": "0"}}})
+    assert r.status_code == 200, r.text
+    init = r.json()["result"]
+    assert init["serverInfo"]["name"] == "spatial-data-studio"
+    assert "view_display" in init.get("instructions", "")
+    r = client.post("/api/mcp", headers=_MCP_HEADERS, json={
+        "jsonrpc": "2.0", "id": 9001, "method": "tools/list", "params": {}})
+    tool_names = {t["name"] for t in r.json()["result"]["tools"]}
+    for expected in ("read_guide", "create_session", "run_function", "view_display",
+                     "annotate_region", "inspect_region", "subset_to_region", "view_plot"):
+        assert expected in tool_names, f"missing tool {expected}"
+    print(f"[ok] mcp transport: initialize + tools/list ({len(tool_names)} tools)")
+
+    for topic in ("studio", "spatial-biology", "analysis-playbooks", "vision-and-selection"):
+        _, content = mcp_call(client, "read_guide", {"topic": topic})
+        assert content and len(content[0]["text"]) > 500, f"guide {topic} too thin"
+    print("[ok] mcp guides readable")
+
+    # discovery tools
+    listing, _ = mcp_call(client, "search_functions", {"query": "spatial_neighbors"})
+    assert any(f["key"] == "gr.spatial_neighbors" for f in listing["functions"])
+    desc, _ = mcp_call(client, "describe_function", {"key": "gr.spatial_neighbors"})
+    assert desc["json_schema"]["properties"] and desc["citation"] and desc["documentation"]
+    readers, _ = mcp_call(client, "list_readers")
+    assert any(e["key"] == "io.read_zarr" for e in readers["readers"])
+    recs, _ = mcp_call(client, "list_recipes")
+    assert recs["recipes"], "no recipes listed"
+    print("[ok] mcp discovery: search_functions/describe_function/list_readers/list_recipes")
+
+    # create a session through the reader path; it becomes the assistant's active session
+    created, _ = mcp_call(client, "create_session", {
+        "reader": {"namespace": "io", "function": "read_zarr", "params": {"store": DATA}},
+        "name": "mcp-e2e"})
+    assert created["status"] == "ready", created
+    sid = created["id"]
+    listing, _ = mcp_call(client, "list_sessions")
+    assert listing["active_session_id"] == sid
+    row = next(s for s in listing["sessions"] if s["id"] == sid)
+    assert mcp_agent.AGENT_NAME in row["viewers"] and row["locked_by"] == mcp_agent.AGENT_NAME
+    print(f"[ok] mcp create_session -> ready, active, lock held by {row['locked_by']}")
+
+    st, _ = mcp_call(client, "get_session")
+    assert any(f["name"] == "leiden" for f in st["fields"]["obs"])
+    spatial_display = next(d for d in st["displays"] if d["type"] == "spatial_canvas")
+    emb_display = next(d for d in st["displays"] if d["type"] == "embedding_canvas")
+
+    # lock etiquette: hand the lock to a "browser viewer", watch a mutation refuse,
+    # then take control back explicitly.
+    mcp_call(client, "release_control")
+    client.post("/api/presence", json={"client_id": "e2e-browser", "name": "test viewer",
+                                       "session_id": sid})
+    try:
+        mcp_call(client, "run_function", {"namespace": "gr", "function": "spatial_neighbors",
+                                          "params": {}, "session_id": sid})
+        raise AssertionError("mutation succeeded while a viewer held the lock")
+    except RuntimeError as e:
+        assert "locked by test viewer" in str(e), str(e)
+    taken, _ = mcp_call(client, "set_active_session", {"session_id": sid, "take_control": True})
+    assert taken["ok"] and taken["locked_by"] == mcp_agent.AGENT_NAME
+    print("[ok] mcp lock etiquette: 423 surfaced with hint, takeover works")
+
+    # compute + plot through the assistant, then look at the plot
+    done, _ = mcp_call(client, "run_function", {
+        "namespace": "gr", "function": "spatial_neighbors",
+        "params": {"coord_type": "generic", "n_neighs": 6}})
+    assert done["status"] == "completed" and "obsp" in done["entry"]["structural_diff"]
+    done, _ = mcp_call(client, "run_function", {
+        "namespace": "gr", "function": "nhood_enrichment",
+        "params": {"cluster_key": "leiden", "seed": 0, "show_progress_bar": False}})
+    assert done["status"] == "completed"
+    plotted, _ = mcp_call(client, "run_function", {
+        "namespace": "pl", "function": "nhood_enrichment", "params": {"cluster_key": "leiden"}})
+    assert plotted["status"] == "drawn", plotted
+    plot_id = plotted["job_id"]
+    plots, _ = mcp_call(client, "list_plots")
+    row = next(p for p in plots["plots"] if p["id"] == plot_id)
+    assert row["status"] == "drawn" and row["figure_available"], row
+    _, content = mcp_call(client, "view_plot", {"plot_id": plot_id})
+    img = mcp_png(content)
+    assert img.size[0] > 100 and img.size[1] > 100
+    print(f"[ok] mcp compute+plot: nhood_enrichment drawn, view_plot PNG {img.size}")
+
+    jobs, _ = mcp_call(client, "list_jobs")
+    assert any(h["function"] == "spatial_neighbors" for h in jobs["compute_history"])
+    job, _ = mcp_call(client, "get_job", {"job_id": plot_id})
+    assert job["entry"]["function"] == "nhood_enrichment" and isinstance(job["log"], str)
+    print("[ok] mcp list_jobs/get_job (params + log)")
+
+    # ---- the coordinate contract: pixels <-> world <-> membership ----------------
+    _, content = mcp_call(client, "view_display", {"viewport": "fit"})
+    img = mcp_png(content)
+    meta = json.loads(next(c["text"] for c in content if c.get("type") == "text"))
+    W, H = meta["image_px"]
+    assert img.size == (W, H) == (1024, 768)
+    assert meta["space"].startswith("world"), meta["space"]
+    A, B, C, D, E, F = meta["pixel_to_world"]
+
+    # world coords of the cells, exactly as the app defines them (spatial + affine)
+    from app.sessions import transform as sd_transform
+    sess_obj = MANAGER.get(sid)
+    adata = sess_obj.active_table()
+    xy = np.asarray(adata.obsm["spatial"])[:, :2].astype(float)
+    xy = sd_transform.apply_affine6_xy(sd_transform.get_affine6(sess_obj.sdata, adata), xy)
+
+    # every cell must fall inside the fit window
+    ww = meta["world_window"]
+    assert (xy[:, 0] > ww["x"][0]).all() and (xy[:, 0] < ww["x"][1]).all()
+    assert (xy[:, 1] > ww["y"][0]).all() and (xy[:, 1] < ww["y"][1]).all()
+
+    # a world rectangle whose bounds cannot tie with any data value
+    x0, x1 = _untied_bounds(xy[:, 0], 0.35, 0.6)
+    y0, y1 = _untied_bounds(xy[:, 1], 0.35, 0.6)
+    ring = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+    expected = _strict_inside(xy, x0, x1, y0, y1)
+    assert expected > 50, f"degenerate test rectangle ({expected} cells)"
+
+    stats, _ = mcp_call(client, "inspect_region", {"polygons": [ring]})
+    assert stats["n_selected"] == expected, (stats["n_selected"], expected)
+    assert stats["n_total"] == adata.n_obs
+
+    # marked render round-trips the same world coordinates (exercises overlays)
+    _, content = mcp_call(client, "view_display", {
+        "viewport": "fit", "mark_polygons": [{"points": ring, "label": "sel"}],
+        "mark_points": [{"x": (x0 + x1) / 2, "y": (y0 + y1) / 2, "label": "c"}]})
+    mcp_png(content)
+
+    annotated, _ = mcp_call(client, "annotate_region", {
+        "region_set": "mcp_region", "category": "picked",
+        "polygons": [ring], "color": "#ff00ff"})
+    assert annotated["status"] == "completed"
+    assert annotated["region_set_counts"]["picked"] == expected, annotated
+    st, _ = mcp_call(client, "get_session")
+    assert all(d["encoding"]["color_by"] == "obs:mcp_region" for d in st["displays"])
+    print(f"[ok] mcp world-space selection: inspect == annotate == numpy ({expected} cells)")
+
+    # pixel-space loop: pick a PIXEL rectangle, map through the returned affine,
+    # and prove membership matches an independent count in world space.
+    px0, px1, py0, py1 = 300, 640, 180, 520
+    corners = np.array([[A * px + B * py + C, D * px + E * py + F]
+                        for px, py in ((px0, py0), (px1, py0), (px1, py1), (px0, py1))])
+    wx0, wx1 = corners[:, 0].min(), corners[:, 0].max()
+    wy0, wy1 = corners[:, 1].min(), corners[:, 1].max()
+    expected_px = _strict_inside(xy, wx0, wx1, wy0, wy1)
+    stats, _ = mcp_call(client, "inspect_region", {"polygons": [corners.tolist()]})
+    assert stats["n_selected"] == expected_px, (stats["n_selected"], expected_px)
+    assert expected_px > 20, "pixel-rect landed off the tissue; check the affine"
+    print(f"[ok] mcp pixel->world affine verified by membership ({expected_px} cells)")
+
+    # embedding-space selection resolves against the display's obsm components
+    emb_key = emb_display["encoding"]["obsm_key"]
+    exi, eyi = emb_display["encoding"].get("x_component", 0), emb_display["encoding"].get("y_component", 1)
+    emb = np.asarray(adata.obsm[emb_key])
+    ex0, ex1 = _untied_bounds(emb[:, exi], 0.3, 0.7)
+    ey0, ey1 = _untied_bounds(emb[:, eyi], 0.3, 0.7)
+    e_ring = [[ex0, ey0], [ex1, ey0], [ex1, ey1], [ex0, ey1]]
+    e_expected = _strict_inside(np.column_stack([emb[:, exi], emb[:, eyi]]), ex0, ex1, ey0, ey1)
+    stats, _ = mcp_call(client, "inspect_region", {
+        "polygons": [e_ring], "space": "embedding", "display_id": emb_display["id"]})
+    assert stats["n_selected"] == e_expected, (stats["n_selected"], e_expected)
+    _, content = mcp_call(client, "view_display", {"display_id": emb_display["id"],
+                                                   "viewport": "fit"})
+    e_meta = json.loads(next(c["text"] for c in content if c.get("type") == "text"))
+    assert e_meta["space"].startswith(f"embedding obsm:{emb_key}")
+    print(f"[ok] mcp embedding-space selection ({e_expected} cells in {emb_key})")
+
+    # display updates + data access
+    upd, _ = mcp_call(client, "update_display", {"encoding": {"color_by": "X:Sox17",
+                                                              "point_size": 6}})
+    assert upd["display"]["encoding"]["color_by"] == "X:Sox17"
+    genes, _ = mcp_call(client, "search_genes", {"query": "Sox1"})
+    assert any(n == "Sox17" for n in genes["names"])
+    summary, _ = mcp_call(client, "get_obs_summary", {"column": "leiden"})
+    assert summary["kind"] == "categorical" and \
+        sum(v["count"] for v in summary["values"]) == adata.n_obs
+    page, _ = mcp_call(client, "get_table", {"path": "obs", "limit": 5})
+    assert page["rows"] and any(c["name"] == "mcp_region" for c in page["columns"])
+    ds, _ = mcp_call(client, "list_datasets")
+    assert isinstance(ds["datasets"], list)
+    tree, _ = mcp_call(client, "browse_data_dir")
+    assert tree["entries"], tree
+    print("[ok] mcp display update + data access tools")
+
+    # shape annotations round trip (missing stroke fields filled by the tool)
+    added, _ = mcp_call(client, "add_shape_annotation", {"shape": {
+        "label": "look here",
+        "geometry": {"kind": "line", "vertices": [[x0, y0], [x1, y1]]},
+        "stroke": {"color": "#ffcc00", "width": 2, "arrowEnd": True}}})
+    assert added["status"] == "completed", added
+    shapes, _ = mcp_call(client, "list_shape_annotations")
+    assert len(shapes["shapes"]) == 1
+    deleted, _ = mcp_call(client, "delete_shape_annotation",
+                          {"shape_id": shapes["shapes"][0]["id"]})
+    assert deleted["status"] == "completed"
+    print("[ok] mcp shape annotations add/list/delete")
+
+    # persistence: checkpoint + gallery figure
+    saved, _ = mcp_call(client, "save_checkpoint")
+    assert saved["status"] == "completed" and os.path.exists(saved["path"]), saved
+    fig, _ = mcp_call(client, "export_figure", {"formats": ["png"], "label": "mcp-e2e"})
+    assert fig["status"] == "completed" and fig["name"].endswith(".figure.json")
+    print(f"[ok] mcp save_checkpoint ({os.path.basename(saved['path'])}) + export_figure")
+
+    # subset replaces the session with a child holding the selection. Unlike the
+    # centroid-based annotate/inspect membership, subset goes through
+    # sd.polygon_query, which keeps a cell whose *geometry* (e.g. the Visium spot
+    # circle) intersects the polygon — so the child may hold slightly more cells
+    # than the centroid count, bounded by centroids within a spot-diameter pad.
+    pad = 0.0
+    for gdf in getattr(sess_obj.sdata, "shapes", {}).values():
+        if "radius" in gdf.columns:
+            pad = max(pad, 2.0 * float(gdf["radius"].max()))
+    upper = _strict_inside(xy, x0 - pad, x1 + pad, y0 - pad, y1 + pad)
+    sub, _ = mcp_call(client, "subset_to_region", {"polygons": [ring]})
+    assert sub["status"] == "completed" and sub["child_session"], sub
+    child_id = sub["child_session"]["id"]
+    assert sub["child_session"]["parent_id"] == sid
+    assert MANAGER.get(sid) is None, "subset should close the parent"
+    child_n = MANAGER.get(child_id).active_table().n_obs
+    assert expected <= child_n <= upper, (expected, child_n, upper)
+    listing, _ = mcp_call(client, "list_sessions")
+    assert listing["active_session_id"] == child_id
+    closed, _ = mcp_call(client, "close_session", {"session_id": child_id})
+    assert closed["ok"] and MANAGER.get(child_id) is None
+    mcp_call(client, "release_control")
+    print(f"[ok] mcp subset -> child with {child_n} cells, parent evicted, child closed")
+
+
 def main():
     with TestClient(app) as client:
         assert client.get("/api/readyz").json()["functions"] > 0
@@ -1678,6 +1977,7 @@ def main():
         run_filter_reshape_flow(client)
         run_filter_rank_genes_save_flow(client)
         run_raster_locality_flow(client)
+        run_mcp_flow(client)
         if have_fixture(XENIUM_TMA, "zarr-import flow"):
             run_zarr_import_flow(client)
         if have_fixture(XENIUM, "segmentation flow"):

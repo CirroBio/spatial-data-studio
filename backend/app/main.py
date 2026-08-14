@@ -22,6 +22,7 @@ from .deps import (_session, _writable_session, _claim_lock, _mgr, _in_executor,
                    _read_locked, bind_client_id, CLIENT_ID)
 from .routers import imaging as imaging_router, cirro as cirro_router
 from .routers import snapshots as snapshots_router, recipes as recipes_router
+from .mcp.server import mcp_server
 
 _log = logging.getLogger(__name__)
 
@@ -43,11 +44,15 @@ async def lifespan(app: FastAPI):
     sampler = asyncio.create_task(_resource_loop())
     PREWARM.start()
     _submit_prewarm_tasks()
-    try:
-        yield
-    finally:
-        sampler.cancel()
-        PREWARM.stop()
+    # The MCP sub-app (mounted at /api/mcp below) has its own session manager whose
+    # run() must bracket the serving lifetime — Starlette does not run a mounted
+    # app's lifespan, so it nests here.
+    async with mcp_server.session_manager.run():
+        try:
+            yield
+        finally:
+            sampler.cancel()
+            PREWARM.stop()
 
 
 def _submit_prewarm_tasks():
@@ -379,7 +384,9 @@ async def figure(sid: str, plot_id: str, fmt: str = "svg"):
     figs = _session(sid).plot_figures.get(plot_id)
     if not figs or figs.get(fmt) is None:
         raise HTTPException(404, "figure not drawn")
-    media = "image/svg+xml" if fmt == "svg" else "application/pdf"
+    media = {"svg": "image/svg+xml", "pdf": "application/pdf", "png": "image/png"}.get(fmt)
+    if media is None:
+        raise HTTPException(400, "fmt must be svg, pdf, or png")
     return Response(content=figs[fmt], media_type=media)
 
 
@@ -631,6 +638,16 @@ async def events_poll(after: int | None = None):
 async def reject_websocket(websocket: WebSocket, _path: str):
     await websocket.close(code=1000)
 
+
+# The MCP assistant surface (app/mcp/): the same session/job/display machinery as
+# the REST routes, spoken over the Model Context Protocol for an AI agent at
+# POST /api/mcp (stateless JSON — one POST per exchange). The sub-app serves the
+# single Route "/mcp" and is mounted at "/api" so the endpoint matches exactly (no
+# trailing-slash redirect, which MCP clients don't reliably follow). Registered
+# HERE — after every real /api route, before the static mount — because a Starlette
+# Mount matches by prefix in registration order: any earlier and it would swallow
+# the /api/* routes defined above it.
+app.mount("/api", mcp_server.streamable_http_app())
 
 # Snapshot figure artifacts (`*.figure.pdf/.png/.thumb.png` + the `.figure.json`
 # sidecar) and `*.zarr.zip` checkpoints are served by the name-validated

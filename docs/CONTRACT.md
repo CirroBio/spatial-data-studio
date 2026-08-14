@@ -5,6 +5,13 @@ server→client updates are SSE. Bulk field data is Apache Arrow IPC (binary).
 Base path for the API behind the edge server: `/api`. SSE stream: `/api/events`;
 JSON polling fallback `/api/events/poll` (see below) for proxies that block SSE.
 
+A separate **MCP surface** for AI agents is mounted at `POST /api/mcp` (Model
+Context Protocol, streamable-HTTP in stateless JSON mode — one POST per exchange, no
+SSE). It is not REST and not documented in the tables below: the tool list and
+schemas are served by the protocol itself (`tools/list`) and defined in
+`backend/app/mcp/server.py`; design in DESIGN.md §29. Same trust model as the rest
+of the API (unauthenticated; anything that can reach the port may call it).
+
 Pinned versions: squidpy 1.8.2, spatialdata 0.7.3, anndata, pyarrow.
 
 ---
@@ -65,10 +72,10 @@ ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_cate
 | PUT  | `/api/sessions/{id}/pending/{stepId}` | `{params}` | `{ok:true}` |
 | DELETE | `/api/sessions/{id}/history/{entryId}` | — | `{ok:true}` (delete a compute/plot history entry, incl. discarding a pending step; queued/running entries can't be deleted) |
 | POST | `/api/sessions/{id}/plots/{plotId}/redraw` | — | `{ok:true}` |
-| GET  | `/api/sessions/{id}/plots/{plotId}/figure?fmt=svg\|pdf` | — | figure bytes (image/svg+xml or application/pdf) |
+| GET  | `/api/sessions/{id}/plots/{plotId}/figure?fmt=svg\|pdf\|png` | — | figure bytes (image/svg+xml, application/pdf, or image/png — the raster copy consumed by the MCP assistant's `view_plot`) |
 | PUT  | `/api/sessions/{id}/displays/{displayId}` | `DisplaySpec` | `{ok:true}` |
 | POST | `/api/sessions/{id}/displays` | `DisplaySpec` (no id) | `DisplaySpec` (with id) — lazily add a display (e.g. an `embedding_canvas` for a dataset/obsm gained after session creation) |
-| POST | `/api/sessions/{id}/subset` | `{polygons:[[[x,y]...]] \| cell_indices:[int], coordinate_system, save_parent:bool, name?, invert?:bool}` | `{job_id}` (queued; the child session arrives via a `session.created` SSE event). `invert:true` keeps the cells OUTSIDE the region. `cell_indices` (in place of `polygons`) subsets by explicit table rows — the embedding view's client-resolved selection, filtered via `match_sdata_to_table` |
+| POST | `/api/sessions/{id}/subset` | `{polygons:[[[x,y]...]] \| cell_indices:[int], coordinate_system?, invert?:bool}` | `{job_id}` (queued; the child session arrives via a `session.created` SSE event and the parent is closed — `session.removed` with `reason:"subset"`). `coordinate_system` defaults to the object's first system. `invert:true` keeps the cells OUTSIDE the region. `cell_indices` (in place of `polygons`) subsets by explicit table rows — the embedding view's client-resolved selection, filtered via `match_sdata_to_table` |
 | POST | `/api/sessions/{id}/annotate` | `{polygons \| cell_indices:[int], region_set, category, color?}` | `{job_id}` (label the lassoed cells — spatial `polygons`, or the embedding view's `cell_indices` — into a region set). Side effects on `app_state`: every display's `color_by` switches to `obs:<region_set>`, and `color` (if given) is written as that category's `category_colors` override on every display so the labelled cells render in it |
 | GET  | `/api/sessions/{id}/shape-annotations` | — | `{shapes:[ShapeAnnotation]}` (arrows/lines/boxes/polygons/ellipses/text from `sdata.shapes["annotations"]`) |
 | POST | `/api/sessions/{id}/shape-annotations` | `ShapeAnnotation` (no id) | `{job_id}` (create one shape) |

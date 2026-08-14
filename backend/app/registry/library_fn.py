@@ -99,7 +99,8 @@ class LibraryFunction(Function):
         facets = env.get("changed_facets", {})
         if self.effect_class == "plot":
             return CallResult(status=env["status"], log=log, changed_facets=facets,
-                              figure_svg=env.get("figure_svg"), figure_pdf=env.get("figure_pdf"))
+                              figure_svg=env.get("figure_svg"), figure_pdf=env.get("figure_pdf"),
+                              figure_png=env.get("figure_png"))
         structural_diff = {facet: sorted(values) for facet, values in facets.items()}
         return CallResult(status="completed", log=log, changed_facets=facets,
                           structural_diff=structural_diff, changed_fields=env.get("changed_fields", []))

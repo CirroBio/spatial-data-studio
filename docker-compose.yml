@@ -45,6 +45,10 @@ services:
       # The /work tmpfs is folded into that admission accounting (SDS_WORK_DIR_IN_RAM).
       SDS_MAX_SESSIONS: "4"
       SDS_ADMISSION_PCT: "0.80"
+      # Where a person watches the app (the 8080 mapping above) — quoted by the MCP
+      # assistant (POST /api/mcp) when it directs the user to a session. Override
+      # when the container is published at a different host/port.
+      SDS_APP_URL: "${SDS_APP_URL:-http://localhost:8080}"
       MPLBACKEND: "Agg"
       PYTHONUNBUFFERED: "1"
       # Cirro upload. Users sign in from the browser with their own Cirro account

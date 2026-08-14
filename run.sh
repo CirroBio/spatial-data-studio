@@ -37,6 +37,9 @@ fi
 # live here (read-write). Defaults to data/ (or test-data/ with --test).
 export SDS_DATA_DIR="${SDS_DATA_DIR:-$PWD/$DATA_SUBDIR}"
 export SDS_CONTAINER_MEM_MB="${SDS_CONTAINER_MEM_MB:-16384}"
+# Where a person watches the app — quoted by the MCP assistant (POST /api/mcp) when
+# it tells the user which session to open. Vite's dev server below.
+export SDS_APP_URL="${SDS_APP_URL:-http://localhost:5173}"
 mkdir -p "$SDS_DATA_DIR"
 
 # Transient working set (unpacked archives + per-session raster caches, each up to a

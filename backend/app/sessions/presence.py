@@ -89,6 +89,20 @@ class Presence:
                 self._touch()
             return None
 
+    def takeover(self, session_id: str, client_id: str) -> None:
+        """Transfer `session_id`'s lock to `client_id` even if another viewer holds
+        it — the MCP assistant's explicit `take_control(force=True)`. A browser
+        viewer auto-holds the lock of the session it is watching (see heartbeat), so
+        without a takeover the assistant could never edit a watched session. The
+        displaced viewer keeps watching (reads are never gated) and their LockBadge
+        flips to the new holder's name; they reclaim it the same way once released.
+        The caller must already be a registered viewer (heartbeating)."""
+        with self._mutex:
+            self._expire()
+            if client_id in self._viewers:
+                self._locks[session_id] = client_id
+                self._touch()
+
     def release(self, session_id: str, client_id: str) -> bool:
         """Give up a lock this client holds. False if it holds no lock here."""
         with self._mutex:

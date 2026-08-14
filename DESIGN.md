@@ -1135,7 +1135,9 @@ every call — assembled from a registry of contributors under
 `backend/app/manifest/` — to feed a planned AI-agent loop. That loop was never
 built, so the manifest (its only consumer) was removed along with the envelope's
 `manifest_*` fields and `keep_failures` flag (§4.7). Session state is inspected
-directly through the data inspector and the element/table APIs.
+directly through the data inspector and the element/table APIs. The agent loop
+itself was later realized differently — as the MCP assistant surface (§29), where
+the agent pulls state through tools instead of being fed a manifest.
 
 ---
 
@@ -2149,3 +2151,89 @@ so there is **no custom image to build**. The output folder is published via
 `publishDir`. A `test` profile runs the bundled neighborhood-enrichment recipe against
 `test-data/visium_hne.zarr` in `zarr` mode. Python 3.11 is required (squidpy does not
 support 3.13+).
+
+---
+
+## 29. The assistant surface (MCP)
+
+An AI agent (e.g. Claude) can drive the studio through a **Model Context Protocol
+server inside the backend** — `backend/app/mcp/`, mounted at `POST /api/mcp`. This
+realizes the agent loop that §13's data manifest was originally sketched for, with
+the context problem inverted: instead of the backend assembling a manifest to replay
+into a model, the agent *pulls* what it needs through tools (state, tables, renders)
+and carries its own context. The retired rules R11/R12 governed that earlier design
+and stay retired.
+
+### 29.1 Shape and trust model
+
+- **In-process, thin tools.** The FastMCP server's tools wrap the same functions the
+  REST routes call (`deps` guards, `Session.enqueue_*`, `regions`, `recipes`,
+  `snapshots`, `tables`) — no duplicated logic, and every mutation flows through the
+  ordinary job queue and SSE bus, so humans watching the session in a browser see the
+  agent's work live. Anything new the agent needed (vision, membership dry-runs) is
+  additive in `app/mcp/vision.py`, not a parallel code path.
+- **Transport**: streamable HTTP in **stateless + JSON-response** mode — every
+  exchange is one `POST /api/mcp`, no SSE dependency (survives buffering gateways,
+  cf. §16's polling fallback rationale), trivially testable with the in-process
+  TestClient. The sub-app serves the single route `/mcp` and is mounted at `/api`
+  *after* every REST route (a Starlette mount matches by prefix in registration
+  order), so the endpoint is exact and nothing is shadowed. The SDK's DNS-rebinding
+  Host allowlist is explicitly disabled: the studio's trust model (here and on REST)
+  is that anything able to reach the port is authorized.
+- **The agent is a viewer.** `app/mcp/agent.py` gives the assistant a fixed client id
+  and the display name "Claude (assistant)", heartbeating `PRESENCE` while it has an
+  active session, so it appears in viewer lists and the LockBadge like anyone else.
+  Mutating tools bind `deps.CLIENT_ID` to it, so the §16.5 lock guard applies
+  unchanged. Because a browser auto-holds the lock of the session it watches, the
+  agent can never edit a watched session silently: it must call
+  `set_active_session(take_control=True)`, which transfers the lock via
+  `Presence.takeover` — the human's badge flips to the assistant's name, they keep
+  watching (reads are never gated), and they reclaim the lock after the agent's
+  `release_control` (or after `SDS_MCP_IDLE_RELEASE_S` without tool calls, when the
+  agent's heartbeat stops and the lock expires normally).
+
+### 29.2 Vision and the coordinate contract
+
+The hard requirement is that the agent can *see* a display, *reason* about a pattern,
+and then *act* on it (annotate/subset) in coordinates provably consistent with the
+pixels it saw. `view_display` renders through the §14 snapshot core
+(`snapshots._render_figure`) and returns two content blocks: the PNG, and a metadata
+JSON carrying a `pixel_to_world` affine (composing the deck viewport window, the
+PNG's y-down rows, `invert_x/y`, and — when the display renders in image-pixel space,
+§9.4 — the image's own `pixel_to_world`), the world window and corner coordinates,
+and grid intervals. Three mechanisms close the loop:
+
+- a **world-labeled gridline overlay** drawn inside the render (vision models ground
+  far better against labeled rulers; lines are generated in world space and mapped
+  through the affine, so a rotating image transform stays correct);
+- **verification overlays** — `mark_points`/`mark_polygons` draw the agent's own
+  world coordinates back onto a render so it can check its math before mutating;
+- **`inspect_region`** — a read-only membership dry-run (same point-in-polygon math
+  as §region-annotation) reporting cell count, composition, and per-gene means.
+
+"World" is always the space `annotate`/`subset` polygons use (`obsm['spatial']`
+after the points→global affine). Embedding displays report their component space
+instead, and selections there resolve to `cell_indices` server-side — mirroring what
+the SPA does client-side. One asymmetry is documented rather than hidden: annotate/
+inspect test cell *centroids*, while subset (via `polygon_query`) keeps any cell
+whose *geometry* intersects the selection, so a subset can hold slightly more cells
+than the matching inspect count. `test_e2e.run_mcp_flow` proves the contract end to
+end: a pixel rectangle mapped through the returned affine must produce
+inspect/annotate membership equal to an independent numpy count.
+
+Plots gained a raster copy for the same reason: `render_plot` (§base) now saves PNG
+alongside SVG/PDF, threaded through the kernel envelope into `plot_figures` and
+`GET /plots/{id}/figure?fmt=png`, so `view_plot` can hand the agent an image it can
+actually read (redrawing first when the figure is missing after a checkpoint reload,
+or invalidated).
+
+### 29.3 Guidance
+
+Any connecting client receives instructions naming four bundled guides served by
+`read_guide` (`app/mcp/guides/`): **studio** (sessions, jobs, displays, plots,
+regions, locks — the app's mental model), **spatial-biology** (platforms, QC,
+interpretation, pitfalls), **analysis-playbooks** (research question → recipe/
+function workflows, what to ask the user), and **vision-and-selection** (the
+coordinate contract and the survey → zoom → mark → inspect → act → verify loop).
+Keeping the guidance server-side means every MCP client gets the same, versioned
+knowledge as the code it drives; there is nothing to install on the agent side.

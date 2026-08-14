@@ -560,7 +560,8 @@ class Session:
             # table (see the write-lock note above), so that element is now dirty.
             if self.active_table_key:
                 self.dirty_tables.add(self.active_table_key)
-            self.plot_figures[job_id] = {"svg": result.figure_svg, "pdf": result.figure_pdf}
+            self.plot_figures[job_id] = {"svg": result.figure_svg, "pdf": result.figure_pdf,
+                                         "png": result.figure_png}
             self._set_status(job_id, kind, "drawn", log=result.log)
             BUS.publish("plot.drawn", {"session_id": self.id, "plot_id": job_id})
             BUS.publish("job.completed", {"session_id": self.id, "job_id": job_id, "kind": "plot",

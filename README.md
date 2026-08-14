@@ -66,6 +66,24 @@ the analysis history that produced this view.*
   [Cirro](https://cirro.bio/). Saved snapshots are collected in a gallery you can
   browse, download, or delete; each file embeds the provenance (view, settings, and the
   analysis steps that produced the data).
+- **Work with an AI assistant.** The backend speaks the
+  [Model Context Protocol](https://modelcontextprotocol.io/) at `/api/mcp`, so an AI
+  agent (e.g. Claude) can drive the same studio you're looking at: load data, run
+  analyses and recipes, draw and *look at* plots and the tissue view (renders come
+  back with a world-coordinate grid and an exact pixel→coordinate mapping), restyle
+  displays, label regions of cells, subset, and save — every change appears in your
+  browser live. The agent joins the same per-session edit lock you do (it shows up as
+  *Claude (assistant)* on the padlock while it works, and hands control back when
+  done), and connects with built-in guidance covering the studio and spatial-omics
+  analysis. From this repo, `claude` picks the server up automatically via
+  [`.mcp.json`](.mcp.json); from anywhere else:
+  `claude mcp add --transport http spatial-data-studio http://127.0.0.1:8000/api/mcp`
+  (use your deployment's own host/port for a Docker install, e.g. `:8080`; prefer
+  `127.0.0.1` over `localhost` locally — the dev backend binds IPv4 only, and
+  `localhost` can resolve to `::1` and reach some other process squatting the port).
+  The MCP
+  endpoint is unauthenticated like the rest of the API — expose the port only to
+  people and processes you'd let edit your sessions.
 - **Open a checkpoint without the app running.** A saved checkpoint is a single
   `.zarr.zip` the viewer can read on its own. Open the app with `?checkpoint=<url>`
   and it reads that file directly over HTTP range requests: the tissue image, the
