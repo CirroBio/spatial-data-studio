@@ -1,0 +1,14 @@
+# Install once per clone: `pip install pre-commit && pre-commit install`.
+# Local hooks only — no third-party hook repos, so this works offline.
+repos:
+  - repo: local
+    hooks:
+      - id: checkpoint-schema-docs
+        name: checkpoint schema <-> docs sync (R17)
+        description: >-
+          Blocks a commit that changes a backend/app/schemas/checkpoint/*.schema.json
+          file without also updating docs/CHECKPOINT_FORMAT.md.
+        entry: python3 sds-governance/checks/check_checkpoint_schema_docs.py
+        language: system
+        pass_filenames: false
+        files: ^(backend/app/schemas/checkpoint/.*\.schema\.json|docs/CHECKPOINT_FORMAT\.md)$

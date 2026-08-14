@@ -24,6 +24,7 @@ incrementally.
 | R14 | *Retired.* Required a widget **and** a `describe_function` resolver per binding type; the resolver was the AI agent's, which was removed. The widget requirement (`FunctionForm.tsx`) still applies but is enforced by review, not this gate. | v3 | — |
 | R15 | Deps permissive or adjudicated; no torch/scvi; scan + SBOM before distribution. | v2/v3 | `scan_licenses.py` |
 | R16 | Term-dictionary coverage must not regress below the floor. | v3 | `lint_term_dictionary.py` |
+| R17 | A checkpoint schema (`backend/app/schemas/checkpoint/*.schema.json`) and `docs/CHECKPOINT_FORMAT.md` change together. | v3 | `check_checkpoint_schema_docs.py` |
 
 Run the gate: `make check` (use `PYTHON=<backend interpreter>` to enforce the
 import-dependent rules rather than skip them).

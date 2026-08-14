@@ -1204,6 +1204,14 @@ looked on the canvas at the chosen framing.
 
 ### 14.1 Checkpoint on-disk format
 
+See [docs/CHECKPOINT_FORMAT.md](../docs/CHECKPOINT_FORMAT.md) for the field-level
+reference (every attrs key, its type, and the JSON Schema that enforces it) — this
+section is the design rationale, that document is what a third party building a
+different reader/writer needs. Every app-defined structure below (`app_state`, the
+`viewer/` sidecar, the `X_csc` mirror, `index.json`) has a JSON Schema under
+`backend/app/schemas/checkpoint/`, validated on every write, so a checkpoint this
+app produces is always conformant to that document.
+
 The checkpoint format is shared by saves, snapshots, and Cirro uploads —
 `.zarr.zip` (Zarr v3 + consolidated metadata, `ZIP_STORED`), write-dir-then-zip /
 unzip-then-read (`backend/app/persistence/store.py`). Worker logs are relocated out
@@ -1554,11 +1562,11 @@ session picker's delete) keys off that row's own lock instead.
   session rewrites only the elements that changed since the last save — a changed
   table element (delete its on-disk dir, then `write_element`, since spatialdata 0.7.3
   refuses to overwrite an element inside its own store), an edited coordinate transform
-  (`write_transformations`), and always `attrs` (`write_attrs`) — then re-consolidates
-  metadata and re-zips the directory. Rasters are Dask-backed from these same files and
-  are never touched at all (no repack pass of any kind — checkpoints are no longer
-  independently browser-readable, so there's nothing about their on-disk raster layout
-  a save needs to preserve or rebuild). This is gated on the object still being backed
+  (`write_transformations`), and always `attrs` (`write_attrs`) — then refreshes the
+  `viewer/` sidecar (§14.1) and re-consolidates metadata and re-zips the directory.
+  Rasters are Dask-backed from these same files and are never touched at all (no
+  reshard pass of any kind — a raster's sharding codec doesn't change once written, so
+  an incremental save has nothing to redo there). This is gated on the object still being backed
   by a writable directory store (`can_update_incrementally`); a compute that changes a
   raster or other non-table element, or a fresh import with no backing directory store
   yet, falls back to the full write (`save_spatialdata`). The session tracks which

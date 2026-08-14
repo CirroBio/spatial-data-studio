@@ -37,3 +37,7 @@ MIN_TERM_COVERAGE = 0.45
 # R15: dependency licenses.
 LICENSE_ALLOWLIST = REPO / "sds-governance" / "license_allowlist.yaml"
 FORBIDDEN_PACKAGES = {"torch", "torchvision", "scvi-tools", "scvi"}
+
+# R17: checkpoint schema <-> docs sync.
+CHECKPOINT_SCHEMA_DIR = BACKEND / "schemas" / "checkpoint"
+CHECKPOINT_FORMAT_DOC = REPO / "docs" / "CHECKPOINT_FORMAT.md"

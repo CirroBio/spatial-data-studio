@@ -1,0 +1,201 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spatial-data-studio/schemas/checkpoint/app_state.schema.json",
+  "title": "AppState",
+  "description": "Persisted shape of sdata.attrs[\"app_state\"] (backend/app/sessions/appstate.py, SCHEMA_VERSION 3). Documented field-for-field in docs/CHECKPOINT_FORMAT.md.",
+  "type": "object",
+  "required": ["schema_version", "compute_history", "plots", "displays", "data_versions", "regions"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": 3 },
+    "compute_history": { "type": "array", "items": { "$ref": "#/$defs/compute_history_entry" } },
+    "plots": { "type": "array", "items": { "$ref": "#/$defs/plot_entry" } },
+    "displays": { "type": "array", "items": { "$ref": "#/$defs/display" } },
+    "data_versions": {
+      "type": "object",
+      "description": "field_path -> monotonic counter, bumped on every structural diff touching that field.",
+      "additionalProperties": { "type": "integer", "minimum": 0 }
+    },
+    "regions": { "type": "array", "items": { "$ref": "#/$defs/region_set" } }
+  },
+  "$defs": {
+    "structural_diff": {
+      "type": "object",
+      "description": "facet -> sorted list of changed names. 'X' is deliberately never a key.",
+      "propertyNames": {
+        "enum": ["obs", "var", "obsm", "obsp", "layers", "uns", "images", "labels", "points", "shapes", "tables"]
+      },
+      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+    },
+    "library_versions": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "compute_history_entry": {
+      "type": "object",
+      "description": "One queued/run compute step. Worker stdout/stderr (`_log`) is never persisted - it is relocated to logs/<id>.log.gz before save.",
+      "required": ["id", "namespace", "function", "params", "status", "library_versions", "structural_diff"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "namespace": { "type": "string" },
+        "function": { "type": "string" },
+        "params": { "type": "object" },
+        "status": { "enum": ["pending", "queued", "running", "completed", "failed"] },
+        "library_versions": { "$ref": "#/$defs/library_versions" },
+        "structural_diff": { "$ref": "#/$defs/structural_diff" },
+        "started_at": { "type": "string", "format": "date-time" },
+        "finished_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "plot_entry": {
+      "type": "object",
+      "description": "One plot step. On load, a persisted drawn/failed/running/queued status is remapped to invalidated - all five plus pending/completed's plot analogue can appear on disk.",
+      "required": ["id", "namespace", "function", "params", "status", "library_versions", "references"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "namespace": { "type": "string" },
+        "function": { "type": "string" },
+        "params": { "type": "object" },
+        "status": { "enum": ["pending", "queued", "running", "drawn", "invalidated", "failed"] },
+        "library_versions": { "$ref": "#/$defs/library_versions" },
+        "references": {
+          "type": "array",
+          "description": "Field paths the plot depends on, e.g. \"obs:leiden\" or \"X:GENE\".",
+          "items": { "type": "string" }
+        },
+        "started_at": { "type": "string", "format": "date-time" },
+        "finished_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "channel_state": {
+      "type": "object",
+      "required": ["visible", "name"],
+      "additionalProperties": false,
+      "properties": {
+        "visible": { "type": "boolean" },
+        "name": { "type": "string" },
+        "color": { "type": "string" },
+        "contrast_limits": {
+          "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2
+        }
+      }
+    },
+    "category_colors": {
+      "type": "object",
+      "description": "color_by field path -> { category label -> #rrggbb }.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": { "type": "string" }
+      }
+    },
+    "spatial_canvas_encoding": {
+      "type": "object",
+      "required": ["coords", "color_by", "image_layer", "shapes_layer", "point_size", "opacity", "colormap"],
+      "additionalProperties": false,
+      "properties": {
+        "coords": { "type": "string" },
+        "color_by": { "type": ["string", "null"] },
+        "image_layer": { "type": ["string", "null"] },
+        "shapes_layer": { "type": ["string", "null"] },
+        "point_size": { "type": "number" },
+        "opacity": { "type": "number" },
+        "colormap": { "type": "string" },
+        "channels": {
+          "type": "object",
+          "description": "Keyed by the stringified channel index (\"0\", \"1\", ...).",
+          "propertyNames": { "pattern": "^[0-9]+$" },
+          "additionalProperties": { "$ref": "#/$defs/channel_state" }
+        },
+        "legend_visible": { "type": "boolean" },
+        "legend_title": { "type": "string" },
+        "show_points": { "type": "boolean" },
+        "show_image": { "type": "boolean" },
+        "show_channel_legend": { "type": "boolean" },
+        "show_minimap": { "type": "boolean" },
+        "isolated_category": { "type": ["string", "null"] },
+        "category_colors": { "$ref": "#/$defs/category_colors" },
+        "render_mode": { "enum": ["points", "points+shapes", "shapes"] },
+        "boundary_style": { "enum": ["filled", "outline"] },
+        "boundary_line_width": { "type": "number" },
+        "point_marker": { "enum": ["circle", "square", "hexagon"] },
+        "invert_x": { "type": "boolean" },
+        "invert_y": { "type": "boolean" },
+        "background": { "enum": ["light", "dark"] }
+      }
+    },
+    "embedding_encoding": {
+      "type": "object",
+      "required": ["obsm_key", "x_component", "y_component", "z_component", "is_3d", "color_by", "point_size", "opacity", "colormap"],
+      "additionalProperties": false,
+      "properties": {
+        "obsm_key": { "type": "string" },
+        "x_component": { "type": "integer" },
+        "y_component": { "type": "integer" },
+        "z_component": { "type": "integer" },
+        "is_3d": { "type": "boolean" },
+        "color_by": { "type": ["string", "null"] },
+        "point_size": { "type": "number" },
+        "opacity": { "type": "number" },
+        "colormap": { "type": "string" },
+        "legend_visible": { "type": "boolean" },
+        "legend_title": { "type": "string" },
+        "category_colors": { "$ref": "#/$defs/category_colors" }
+      }
+    },
+    "viewport": {
+      "type": ["object", "null"],
+      "required": ["target", "zoom"],
+      "additionalProperties": false,
+      "properties": {
+        "target": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 3 },
+        "zoom": { "type": "number" },
+        "rotationX": { "type": "number" },
+        "rotationOrbit": { "type": "number" }
+      }
+    },
+    "display": {
+      "type": "object",
+      "required": ["id", "type", "encoding", "viewport"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "enum": ["spatial_canvas", "embedding_canvas"] },
+        "encoding": { "type": "object" },
+        "viewport": { "$ref": "#/$defs/viewport" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "spatial_canvas" } } },
+          "then": { "properties": { "encoding": { "$ref": "#/$defs/spatial_canvas_encoding" } } }
+        },
+        {
+          "if": { "properties": { "type": { "const": "embedding_canvas" } } },
+          "then": { "properties": { "encoding": { "$ref": "#/$defs/embedding_encoding" } } }
+        }
+      ]
+    },
+    "region_category": {
+      "type": "object",
+      "required": ["label", "color", "n_cells"],
+      "additionalProperties": false,
+      "properties": {
+        "label": { "type": "string" },
+        "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+        "n_cells": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "region_set": {
+      "type": "object",
+      "required": ["id", "name", "obs_column", "categories"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "obs_column": { "type": "string" },
+        "categories": { "type": "array", "items": { "$ref": "#/$defs/region_category" } }
+      }
+    }
+  }
+}

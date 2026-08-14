@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spatial-data-studio/schemas/checkpoint/checkpoint_index.schema.json",
+  "title": "CheckpointIndex",
+  "description": "index.json manifest for a deployed collection of checkpoints (DESIGN.md §14.3, backend/app/cirro.py:_write_viewer_index, frontend/src/data/checkpointIndex.ts). Documented in docs/CHECKPOINT_FORMAT.md.",
+  "type": "object",
+  "required": ["checkpoints"],
+  "additionalProperties": false,
+  "properties": {
+    "title": { "type": "string" },
+    "checkpoints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path"],
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Resolved relative to this index.json's own URL."
+          },
+          "label": { "type": "string" },
+          "description": { "type": "string" }
+        }
+      }
+    }
+  }
+}

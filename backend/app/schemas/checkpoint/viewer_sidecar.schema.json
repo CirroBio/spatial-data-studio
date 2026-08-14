@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spatial-data-studio/schemas/checkpoint/viewer_sidecar.schema.json",
+  "title": "ViewerSidecar",
+  "description": "Attributes on the top-level `viewer` zarr group (backend/app/persistence/store.py:_write_viewer_sidecar). Mirrored on read by frontend/src/data/checkpointSource.ts's ViewerSidecar interface. Documented in docs/CHECKPOINT_FORMAT.md.",
+  "type": "object",
+  "required": ["sidecar_version", "table_keys", "images", "coords_transform"],
+  "additionalProperties": false,
+  "properties": {
+    "sidecar_version": { "const": 1 },
+    "table_keys": { "type": "array", "items": { "type": "string" } },
+    "images": {
+      "type": "object",
+      "description": "image element name -> (table key, or \"\" for none) -> ImageInfo.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": { "$ref": "#/$defs/image_info" }
+      }
+    },
+    "coords_transform": {
+      "type": "object",
+      "description": "table key -> 6-float affine applied to that table's obsm:spatial to reach the global coordinate system.",
+      "additionalProperties": { "$ref": "#/$defs/affine6" }
+    }
+  },
+  "$defs": {
+    "affine6": {
+      "type": "array",
+      "description": "[a,b,c,d,e,f]: x' = a*x + b*y + c, y' = d*x + e*y + f.",
+      "items": { "type": "number" },
+      "minItems": 6,
+      "maxItems": 6
+    },
+    "image_level": {
+      "type": "object",
+      "required": ["level", "width", "height"],
+      "additionalProperties": false,
+      "properties": {
+        "level": { "type": "integer", "minimum": 0 },
+        "width": { "type": "integer", "minimum": 0 },
+        "height": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "contrast_pair": {
+      "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2
+    },
+    "image_info": {
+      "type": "object",
+      "description": "backend/app/imaging.py:image_info(), baked as-is. Byte-for-byte comparable to GET /api/sessions/{id}/image/{element}/info's pixel_to_world/bounds/is_rgb/contrast_limits/contrast_range/channel_names/width/height.",
+      "required": [
+        "element", "height", "width", "channels", "channel_names", "bounds",
+        "pixel_to_world", "levels", "tile_size", "contrast_limits", "contrast_range", "is_rgb"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "element": { "type": "string" },
+        "height": { "type": "integer", "minimum": 0 },
+        "width": { "type": "integer", "minimum": 0 },
+        "channels": { "type": "integer", "minimum": 1 },
+        "channel_names": { "type": "array", "items": { "type": "string" } },
+        "bounds": {
+          "type": "array",
+          "description": "[x0, y0, x1, y1], axis-aligned world bounds of the full image.",
+          "items": { "type": "number" }, "minItems": 4, "maxItems": 4
+        },
+        "pixel_to_world": { "$ref": "#/$defs/affine6" },
+        "levels": {
+          "type": "array",
+          "description": "Pyramid levels, finest first.",
+          "items": { "$ref": "#/$defs/image_level" }
+        },
+        "tile_size": { "type": "integer", "minimum": 1 },
+        "contrast_limits": {
+          "type": "array",
+          "description": "Per-channel [0.0, hi] compositing range.",
+          "items": { "$ref": "#/$defs/contrast_pair" }
+        },
+        "contrast_range": {
+          "type": "array",
+          "description": "Per-channel [lo, hi] observed data range.",
+          "items": { "$ref": "#/$defs/contrast_pair" }
+        },
+        "is_rgb": { "type": "boolean" }
+      }
+    }
+  }
+}

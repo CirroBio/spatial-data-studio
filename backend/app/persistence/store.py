@@ -44,6 +44,7 @@ import spatialdata as sd
 import zarr
 
 from ..config import config
+from ..schemas import checkpoint as checkpoint_schemas
 from ..sessions import appstate
 
 _log = logging.getLogger(__name__)
@@ -306,6 +307,7 @@ def save_spatialdata(sdata, path: str, app_state: dict, hash_name: bool = False)
     written under `logs/` instead (see module docstring); the caller's live
     `app_state` is left untouched."""
     persisted, logs = _split_logs(app_state)
+    checkpoint_schemas.validate_app_state(persisted)
     original = sdata.attrs.get("app_state")
     sdata.attrs["app_state"] = persisted
     uns_swaps = _stringify_uns_recarrays(sdata)
@@ -403,6 +405,7 @@ def update_checkpoint(sdata, path: str, app_state: dict, *, tables: set[str],
     `can_update_incrementally` first."""
     work_dir = str(sdata.path)
     persisted, logs = _split_logs(app_state)
+    checkpoint_schemas.validate_app_state(persisted)
     original = sdata.attrs.get("app_state")
     sdata.attrs["app_state"] = persisted
     try:
@@ -518,7 +521,7 @@ def _write_viewer_sidecar(zarr_dir: str, sdata, tables: set[str] | None = None) 
     root = zarr.open_group(zarr_dir, mode="r+", use_consolidated=False)
     group = root.require_group(VIEWER_GROUP)
     table_keys = list(getattr(sdata, "tables", {}))
-    group.attrs.update({
+    sidecar = {
         "sidecar_version": VIEWER_SIDECAR_VERSION,
         "table_keys": table_keys,
         "images": {
@@ -531,7 +534,9 @@ def _write_viewer_sidecar(zarr_dir: str, sdata, tables: set[str] | None = None) 
         "coords_transform": {
             key: transform.get_affine6(sdata, sdata.tables[key]) for key in table_keys
         },
-    })
+    }
+    checkpoint_schemas.validate_viewer_sidecar(sidecar)
+    group.attrs.update(sidecar)
     for key in table_keys if tables is None else (tables & set(table_keys)):
         _write_csc_mirror(group, key, sdata.tables[key])
 
@@ -550,7 +555,9 @@ def _write_csc_mirror(group, key: str, adata) -> None:
     csc = x.tocsc()
     chunk = _csc_chunk(csc.indptr)
     dest = group.require_group("tables").require_group(key).require_group("X_csc")
-    dest.attrs.update({"shape": [int(csc.shape[0]), int(csc.shape[1])]})
+    csc_attrs = {"shape": [int(csc.shape[0]), int(csc.shape[1])]}
+    checkpoint_schemas.validate_csc_table_attrs(csc_attrs)
+    dest.attrs.update(csc_attrs)
     for name, values, length in (("data", csc.data, chunk),
                                  ("indices", csc.indices, chunk),
                                  ("indptr", csc.indptr, len(csc.indptr))):
@@ -671,8 +678,11 @@ def _split_logs(app_state: dict) -> tuple[dict, dict[str, str]]:
         recs = app_state.get(coll_key) or []
         new_recs = []
         for rec in recs:
-            if isinstance(rec, dict) and rec.get("_log"):
-                logs[rec["id"]] = rec["_log"]
+            if isinstance(rec, dict) and "_log" in rec:
+                # Strip `_log` unconditionally (even an empty string) - only a
+                # non-empty one is worth relocating to logs/<id>.log.gz.
+                if rec["_log"]:
+                    logs[rec["id"]] = rec["_log"]
                 rec = {k: v for k, v in rec.items() if k != "_log"}
             new_recs.append(rec)
         out[coll_key] = new_recs

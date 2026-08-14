@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spatial-data-studio/schemas/checkpoint/csc_table.schema.json",
+  "title": "CscTableAttrs",
+  "description": "Attributes on viewer/tables/<table_key>/X_csc, the gene-major mirror of a sparse table's X (backend/app/persistence/store.py:_write_csc_mirror). The group also holds sibling data/indices/indptr arrays not covered by this attrs schema. Documented in docs/CHECKPOINT_FORMAT.md.",
+  "type": "object",
+  "required": ["shape"],
+  "additionalProperties": false,
+  "properties": {
+    "shape": {
+      "type": "array",
+      "description": "[n_cells, n_genes], matching the mirrored table's X.shape.",
+      "items": { "type": "integer", "minimum": 0 },
+      "minItems": 2,
+      "maxItems": 2
+    }
+  }
+}

@@ -121,11 +121,12 @@ Component-level notes: [`backend/README.md`](backend/README.md),
 | Change what streams live during import | `backend/app/transport/livelog.py` (+ `capture_log` in `registry/base.py`) | below |
 | Change session/queue/worker behavior | `backend/app/sessions/` | [DESIGN.md](DESIGN.md) §5–6 |
 | Change who may edit a session (presence, the edit lock, viewer names) | `backend/app/sessions/presence.py` + `deps.py` (`_claim_lock`) + `frontend/src/lib/presence.ts` (identity + gate) + `hooks/usePresence.ts` (heartbeat) + `components/LockBadge.tsx` | [DESIGN.md](DESIGN.md) §16.5 |
-| Change the checkpoint/persistence format | `backend/app/persistence/store.py` | [DESIGN.md](DESIGN.md) §3, §14.1 |
-| Change what the serverless viewer can read from a checkpoint | `backend/app/persistence/store.py` (`_write_viewer_sidecar`, the writer half) + `frontend/src/data/checkpointSource.ts` (the reader half) — the two must move together | [DESIGN.md](DESIGN.md) §14.1–14.2 |
+| Change the checkpoint/persistence format | `backend/app/persistence/store.py` | [DESIGN.md](DESIGN.md) §3, §14.1, [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) |
+| Change what the serverless viewer can read from a checkpoint | `backend/app/persistence/store.py` (`_write_viewer_sidecar`, the writer half) + `frontend/src/data/checkpointSource.ts` (the reader half) — the two must move together | [DESIGN.md](DESIGN.md) §14.1–14.2, [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) §4 |
+| Change the shape of `app_state`, the `viewer/` sidecar, `X_csc`, or `index.json` | `backend/app/schemas/checkpoint/*.schema.json` (the JSON Schema is validated against on every write) + [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) in the same commit — `sds-governance/checks/check_checkpoint_schema_docs.py` fails the build otherwise | [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) |
 | Add a render-path call the canvas makes | `frontend/src/data/types.ts` (the `DataSource` interface), then **both** `apiSource.ts` and `checkpointSource.ts` | [DESIGN.md](DESIGN.md) §14.2 |
 | Change what the serverless viewer lets a user *do* (lasso labels, hiding cells, drawn shapes, PNG export) | `hooks/usePresence.ts` (`useLocalEditsOnly` — the gate), `store/sessionStore.ts` (`applyLocalRegion`, `hiddenCells`, `shapesAreLocalOnly`), `lib/canvasCapture.ts` | [DESIGN.md](DESIGN.md) §14.2 |
-| Change the `index.json` deployment manifest or the checkpoint switcher | `frontend/src/data/checkpointIndex.ts` (format + navigation), `components/CheckpointIndexPage.tsx` (landing), `components/CheckpointPicker.tsx` (header), `backend/app/cirro.py` (`_write_viewer_index`) | [DESIGN.md](DESIGN.md) §14.3 |
+| Change the `index.json` deployment manifest or the checkpoint switcher | `frontend/src/data/checkpointIndex.ts` (format + navigation), `components/CheckpointIndexPage.tsx` (landing), `components/CheckpointPicker.tsx` (header), `backend/app/cirro.py` (`_write_viewer_index`) | [DESIGN.md](DESIGN.md) §14.3, [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) §8 |
 | Change the deck.gl canvas / rendering | `frontend/src/components/canvas/` | [frontend/README.md](frontend/README.md) |
 | Retune the palette, theme tokens, fonts, or the Cirro mark | `frontend/src/index.css` (tokens) + `frontend/tailwind.config.js` (names) + `frontend/src/components/CirroMark.tsx` / `public/favicon.svg` (logo) | [frontend/README.md](frontend/README.md) |
 | Change the canvas minimap (overview inset) | `frontend/src/components/canvas/Minimap.tsx` (overlay + navigation) + `SpatialCanvas.tsx` (extent/thumbnail wiring) + `backend/app/snapshots.py` `_draw_minimap` (figure inset) | [DESIGN.md](DESIGN.md) §9.11 |
@@ -308,7 +309,11 @@ and fails open to the mount-time `size=` otherwise.
   [CONTRIBUTING.md](CONTRIBUTING.md)).
 - `cd backend && python test_e2e.py` — full in-process round trip (load → compute →
   Arrow → plot → save `.zarr.zip` → reload), asserting app state + computed fields
-  survive. Also covers staged/pending recipe steps + preflight, region annotate and
+  survive. Every checkpoint write along the way is validated against
+  `backend/app/schemas/checkpoint/*.schema.json` (see
+  [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md)) — a save that produces a
+  structure the schema doesn't allow fails the job rather than writing a
+  non-conformant file. Also covers staged/pending recipe steps + preflight, region annotate and
   its persistence, the shape-annotation editor, the editable points-transform,
   content-hashed checkpoint naming, plot invalidation/redraw, the data-inspector
   endpoints, cross-session isolation, saving a session that ran
@@ -453,6 +458,9 @@ PR against `main`.
 
 ## Governance
 
-Repo invariants (RULES.md R1–R16) are enforced by `sds-governance/` (`make check`).
+Repo invariants (RULES.md R1–R17) are enforced by `sds-governance/` (`make check`).
 Read [`sds-governance/AGENTS.md`](sds-governance/AGENTS.md) before changing the
-function catalog, the term dictionary, or the license allowlist.
+function catalog, the term dictionary, or the license allowlist. R17 (a checkpoint
+JSON Schema and [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) change
+together) also runs as a local pre-commit hook — `pip install pre-commit &&
+pre-commit install` once per clone (`.pre-commit-config.yaml`).

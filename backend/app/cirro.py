@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .config import config
+from .schemas import checkpoint as checkpoint_schemas
 
 _log = logging.getLogger(__name__)
 
@@ -306,7 +307,9 @@ def _write_viewer_index(bundle: Path, session_paths: list[str]) -> None:
         }
         for path in session_paths
     ]
-    (bundle / "index.json").write_text(json.dumps({"checkpoints": entries}, indent=2))
+    manifest = {"checkpoints": entries}
+    checkpoint_schemas.validate_checkpoint_index(manifest)
+    (bundle / "index.json").write_text(json.dumps(manifest, indent=2))
 
 
 def build_upload_folder(session_paths: list[str]) -> Path:

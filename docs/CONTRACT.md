@@ -307,3 +307,15 @@ Each event: `event: <type>`, `data: <json>`, every payload carries `session_id` 
 | `session.errored` | `{session_id, error}` |
 | `resource.sample` | `{global:{rss_mb, work_dir_mb, rss_pct, cpu_pct, cpu_count, rasters_mb}, per_session:{<id>:rss_mb}}` (`rss_pct`: effective memory = RSS + RAM-backed working set, as % of the limit — the fraction the admission boundary gates on; `work_dir_mb`: WORK_DIR usage when RAM-backed, else 0; `cpu_pct`: CPU% summed across the API process and its compute-worker children, where 100% is one fully-used core; `cpu_count`: cores the container may use — the `cpu_pct` denominator; `rasters_mb`: total size of all sessions' normalized-raster caches) |
 | `memory.warning` | `{session_id?, message}` |
+
+---
+
+## Checkpoint file format (`.zarr.zip`)
+
+Not a REST/SSE shape — a **file format**. See
+[docs/CHECKPOINT_FORMAT.md](CHECKPOINT_FORMAT.md) for the full field-level spec
+of the `.zarr.zip` checkpoint (the `app_state` blob whose live shape is
+documented above under `DisplaySpec`/`SessionState`, plus the browser-only
+`viewer/` sidecar and the `index.json` collection manifest). Every app-defined
+structure in it has a canonical JSON Schema under
+`backend/app/schemas/checkpoint/*.schema.json`, validated on every write.
