@@ -1323,7 +1323,9 @@ index.json          { "title"?, "checkpoints": [ { "path", "label"?, "descriptio
 ```
 
 `index.html` is deliberately boilerplate, so one build serves any collection and a
-deployment is a copy plus a manifest. `path` resolves against the manifest's own URL,
+deployment is a copy plus a manifest. All asset URLs in the build are relative
+(Vite `base: './'`), so the directory works hosted at any path prefix, not just
+a domain root. `path` resolves against the manifest's own URL,
 so entries can name siblings, subfolders, or absolute URLs on another host.
 
 Mode resolution (`App`): `?checkpoint=<url>` opens that file. With no parameter, the

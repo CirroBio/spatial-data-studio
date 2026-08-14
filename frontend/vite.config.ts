@@ -14,6 +14,9 @@ const DEDUPE = [
 ];
 
 export default defineConfig({
+  // Relative asset URLs so the built SPA works when hosted under any path
+  // prefix (e.g. a Cirro bundle behind a signed-URL subpath), not just "/".
+  base: './',
   plugins: [react()],
   resolve: { dedupe: DEDUPE },
   optimizeDeps: {
