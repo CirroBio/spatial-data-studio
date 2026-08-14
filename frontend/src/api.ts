@@ -505,39 +505,112 @@ export async function getThirdPartyLicenses(): Promise<{ python: ThirdPartyLicen
 }
 
 // ---- Cirro upload -----------------------------------------------------------
-export interface CirroStatus { enabled: boolean }
-export interface CirroProject { id: string; name: string }
+// Each browser logs into Cirro with its own identity (OAuth device code). The
+// backend mints an unguessable token naming that credential; it is sent on every
+// Cirro call below. Deliberately not CLIENT_ID, which is a plain (non-secret)
+// localStorage value used for presence — anyone who learned it could otherwise
+// upload as that user. Kept in localStorage so a reload stays connected.
+const CIRRO_TOKEN_KEY = 'sds.cirro.token';
 
-export interface CirroUploads { uploading: number; pending: number }
-
-export async function getCirroStatus(): Promise<CirroStatus> {
-  const res = await apiFetch('/api/cirro/status');
-  return res.json() as Promise<CirroStatus>;
+export function cirroToken(): string | null {
+  return localStorage.getItem(CIRRO_TOKEN_KEY);
 }
 
+function setCirroToken(token: string | null) {
+  if (token) localStorage.setItem(CIRRO_TOKEN_KEY, token);
+  else localStorage.removeItem(CIRRO_TOKEN_KEY);
+}
+
+function cirroFetch(path: string, init?: RequestInit): Promise<Response> {
+  const token = cirroToken();
+  return apiFetch(path, token
+    ? { ...init, headers: { ...init?.headers, 'X-SDS-Cirro-Token': token } }
+    : init);
+}
+
+export type CirroAuthState = 'disconnected' | 'pending' | 'connected' | 'failed';
+
+export interface CirroAuth {
+  state: CirroAuthState;
+  domain: string | null;
+  username: string | null;
+  /** Present only while `state` is 'pending' — the URL the user opens to log in. */
+  login_url: string | null;
+  error: string | null;
+  /** Prefill for the connect dialog's domain field (backend CIRRO_BASE_URL). */
+  default_domain: string;
+  /** Whether a built SPA is on disk to bundle into uploads (false in local dev). */
+  viewer_bundled: boolean;
+}
+
+export interface CirroProject { id: string; name: string }
+
+export interface CirroUpload {
+  id: number;
+  dataset_name: string;
+  state: 'pending' | 'uploading' | 'completed' | 'failed';
+  error: string | null;
+}
+
+export interface CirroUploads { uploads: CirroUpload[] }
+
+export async function getCirroAuth(): Promise<CirroAuth> {
+  const res = await cirroFetch('/api/cirro/auth');
+  return res.json() as Promise<CirroAuth>;
+}
+
+/** Start a device-code login. Resolves as soon as Cirro issues the login URL; the
+ *  state flips to 'connected' once the user finishes in their browser. */
+export async function connectToCirro(domain: string): Promise<CirroAuth> {
+  // Carries the current token, if any, so the backend replaces this browser's
+  // credential instead of orphaning it when a login is retried.
+  const res = await cirroFetch('/api/cirro/auth', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ domain }),
+  });
+  const body = await res.json() as CirroAuth & { token: string };
+  setCirroToken(body.token);
+  return body;
+}
+
+export async function disconnectFromCirro(): Promise<void> {
+  try {
+    await cirroFetch('/api/cirro/auth', { method: 'DELETE' });
+  } finally {
+    setCirroToken(null);
+  }
+}
+
+// Upload rows are scoped to the credential that started them — they name a Cirro
+// project and dataset, so they are not served to every browser sharing the app.
 export async function getCirroUploads(): Promise<CirroUploads> {
-  const res = await apiFetch('/api/cirro/uploads');
+  const res = await cirroFetch('/api/cirro/uploads');
+  return res.json() as Promise<CirroUploads>;
+}
+
+export async function dismissCirroUpload(id: number): Promise<CirroUploads> {
+  const res = await cirroFetch(`/api/cirro/uploads/${id}`, { method: 'DELETE' });
   return res.json() as Promise<CirroUploads>;
 }
 
 export async function getCirroProjects(): Promise<{ projects: CirroProject[] }> {
-  const res = await apiFetch('/api/cirro/projects');
+  const res = await cirroFetch('/api/cirro/projects');
   return res.json() as Promise<{ projects: CirroProject[] }>;
 }
 
 export async function getCirroFolders(projectId: string): Promise<{ folders: string[] }> {
-  const res = await apiFetch(`/api/cirro/projects/${projectId}/folders`);
+  const res = await cirroFetch(`/api/cirro/projects/${projectId}/folders`);
   return res.json() as Promise<{ folders: string[] }>;
 }
 
 export async function uploadToCirro(
-  body: { project_id: string; dataset_name: string; session_paths: string[]; snapshot_names: string[]; folder?: string }
-): Promise<{ status: string }> {
-  const res = await apiFetch('/api/cirro/upload', {
+  body: { project_id: string; dataset_name: string; description: string; session_paths: string[]; folder?: string }
+): Promise<{ status: string; id: number }> {
+  const res = await cirroFetch('/api/cirro/upload', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  return res.json() as Promise<{ status: string }>;
+  return res.json() as Promise<{ status: string; id: number }>;
 }
 
 export async function getPointsTransform(

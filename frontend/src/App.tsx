@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { useAppStore } from './store/sessionStore';
-import { getSessions, getFunctions, getCirroStatus, getCirroUploads, getReadyz } from './api';
+import { getSessions, getFunctions, getCirroAuth, getReadyz } from './api';
 import { isSpatialDisplay, isEmbeddingDisplay } from './types';
 import { resolveRegionSetColumn } from './lib/regions';
 import { DataSourceProvider, useApiSource } from './data/context';
@@ -59,8 +59,8 @@ export default function App() {
     regionCategoryName,
     regionColor,
     activeRegionSetId,
-    setCirroEnabled,
-    setCirroUploads,
+    setCirroAuth,
+    refreshCirroUploads,
     jobLogs,
   } = useAppStore();
 
@@ -148,13 +148,16 @@ export default function App() {
       }
     })();
 
-    getCirroStatus().then((s) => setCirroEnabled(s.enabled)).catch(() => setCirroEnabled(false));
-    // Initial upload-queue depth so a reload mid-upload shows the indicator before
-    // the next SSE state event; live updates arrive via cirro.upload.state.
-    getCirroUploads().then(setCirroUploads).catch(() => {});
+    // This browser's Cirro login, so a reload stays connected (the credential token
+    // is in localStorage; the credential itself lives in backend memory and may have
+    // expired, in which case this comes back disconnected).
+    getCirroAuth().then(setCirroAuth).catch(() => setCirroAuth(null));
+    // Initial upload rows so a reload mid-upload shows the indicator before the next
+    // SSE state event; live updates arrive via cirro.upload.state.
+    void refreshCirroUploads().catch(() => {});
 
     return () => { cancelled = true; };
-  }, [serverless, backendReady, setSessions, setFunctions, activeSessionId, setActiveSessionId, setCirroEnabled, setCirroUploads]);
+  }, [serverless, backendReady, setSessions, setFunctions, activeSessionId, setActiveSessionId, setCirroAuth, refreshCirroUploads]);
 
   const display = sessionState?.app_state.displays.find(isSpatialDisplay) ?? null;
   const embeddingDisplay = sessionState?.app_state.displays.find(isEmbeddingDisplay) ?? null;

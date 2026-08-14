@@ -265,15 +265,12 @@ class Config:
 
     STATIC_DIR = Path(os.environ.get("SDS_STATIC_DIR", "")) or None  # built SPA, optional
 
-    # ---- Cirro upload. Strictly additive; off unless all three vars are set. ----
-    CIRRO_BASE_URL = os.environ.get("CIRRO_BASE_URL", "")
-    CIRRO_CLIENT_ID = os.environ.get("CIRRO_CLIENT_ID", "")
-    CIRRO_CLIENT_SECRET = os.environ.get("CIRRO_CLIENT_SECRET", "")
-
-    def cirro_enabled(self) -> bool:
-        """True only when a service-account (client-credentials) identity is fully
-        configured. No partial/interactive fallback — dark unless all three are set."""
-        return bool(self.CIRRO_BASE_URL and self.CIRRO_CLIENT_ID and self.CIRRO_CLIENT_SECRET)
+    # ---- Cirro upload. Each browser logs in with its own Cirro identity (device-code
+    # flow, see cirro.py), so there is no server-side credential — this only prefills
+    # the domain field in the connect dialog. ----
+    # Not the SDK's own `cirro.bio` default, which no longer answers
+    # `/api/info/system` (403) — the discovery call every login starts with.
+    CIRRO_BASE_URL = os.environ.get("CIRRO_BASE_URL", "app.cirro.bio")
 
 
 config = Config()

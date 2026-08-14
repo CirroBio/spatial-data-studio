@@ -2,14 +2,13 @@
 the value is ready the moment the user first opens the menu that needs it.
 
 Input readers are already built at startup (the function registry, see
-`registry/introspect.py`), but two menu lists are otherwise paid lazily on first
-open: the Cirro project list (network + OAuth) and the saved-dataset scan
-(recursive filesystem walk). A single background worker drains an `asyncio.Queue`,
-running each blocking warm task in the default executor so a slow network/auth
-call or filesystem walk never blocks the loop. Warm tasks are best-effort: a
-failure is logged and the endpoint still computes the value on demand the first
-time it is asked, so a missing Cirro credential or an unmounted checkpoint dir
-just means no speed-up, never a broken startup.
+`registry/introspect.py`), but the saved-dataset scan (a recursive filesystem walk)
+is otherwise paid lazily on first open of the menu that lists them. A single
+background worker drains an `asyncio.Queue`, running each blocking warm task in the
+default executor so a slow filesystem walk never blocks the loop. Warm tasks are
+best-effort: a failure is logged and the endpoint still computes the value on demand
+the first time it is asked, so an unmounted checkpoint dir just means no speed-up,
+never a broken startup.
 """
 from __future__ import annotations
 

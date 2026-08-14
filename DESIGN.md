@@ -1328,8 +1328,9 @@ checkpoint carries its own displays, fields and locally-made labels, and a reloa
 the one way to guarantee none of the previous one's state leaks into the next — the
 bundle is already cached, so it costs a parse, not a download.
 
-`cirro._write_viewer_index` writes the same manifest into an upload bundle, so an
-uploaded set of checkpoints describes itself whether or not a viewer is pointed at it.
+A Cirro upload bundle **is** this layout (§15): `cirro._write_viewer_index` writes the
+manifest and `_symlink_viewer` colocates the built SPA, so an uploaded set of
+checkpoints is a complete, self-hosting deployment rather than just a pile of files.
 
 Not possible without the backend, by construction: compute (squidpy/scanpy/recipes),
 real subsetting (`sd.polygon_query`), saving, and the matplotlib vector-PDF snapshot
@@ -1342,30 +1343,55 @@ fallback as a display with no shapes element). Nothing local survives a reload.
 
 ## 15. Cirro upload
 
-Optionally upload saved sessions and/or rendered snapshot figures to
-[Cirro](https://cirro.bio/) as a dataset (`backend/app/cirro.py`). Strictly additive:
-dark unless `CIRRO_BASE_URL`, `CIRRO_CLIENT_ID`, and `CIRRO_CLIENT_SECRET` are all set.
+Upload saved checkpoint sessions to [Cirro](https://cirro.bio/) as a dataset
+(`backend/app/cirro.py`), under **each user's own Cirro identity**.
 
-- **Auth:** a service-account (OAuth client-credentials) identity — **no interactive
-  login**, gated by `config.cirro_enabled()`.
-- **Flow:** at least one session or snapshot must be selected (a session must be
-  **saved first** to appear). `build_upload_folder()` builds a temp folder from
-  **symlinks**: each selected `.zarr.zip` under `sessions/`, and each selected
-  snapshot's figure artifacts — the `.figure.pdf`/`.png` deliverables, the
-  `.figure.thumb.png` thumbnail, and the `.figure.json` provenance sidecar — colocated
-  as siblings at the bundle root, so nothing is copied. Figures are self-contained
-  (each embeds the same provenance as the sidecar), so a snapshot can travel with any
-  session or on its own. `upload()` calls the Cirro SDK's `project.upload_dataset`.
-  Driven by a `cirro_upload` worker job.
-- **UI:** a dialog listing Cirro projects, a dataset name, an optional folder (free-text
-  with typeahead, see below), saved sessions (multi-select), and snapshot figures
-  (multi-select). Uploads always use the generic "Files" ingest process
-  (`custom_dataset`), so there is no process picker.
+- **Auth:** the OAuth **device code** flow, per browser. `POST /api/cirro/auth` with a
+  domain starts a flow and returns Cirro's login URL immediately; the user opens it and
+  signs in, while a background thread blocks on `DeviceCodeAuth.await_completion()` and
+  flips the credential to `connected`. `AppConfig(base_url=<domain>)` discovers the
+  OAuth client id, region and auth endpoint, so the domain is the only user input.
+  `CIRRO_BASE_URL` only prefills that field — the server holds no Cirro credential of
+  its own.
+- **Credential scoping:** this is a multiuser app, so a credential is keyed by a
+  backend-minted secret (`cirro.CredentialStore`, `X-SDS-Cirro-Token`), held in process
+  memory and dropped after `IDLE_EXPIRY_S` (8 h) without use. Deliberately **not** keyed
+  by the presence `client_id`, which is a plain non-secret localStorage value — anyone
+  who learned it could otherwise upload as that user. `enable_cache=False` on
+  `DeviceCodeAuth` is load-bearing: the SDK's cache would persist one shared token file
+  under `~/.cirro/` for every user of the process. The SDK refreshes its own access
+  token; when the *refresh* token expires the credential turns into a 401 that the
+  frontend renders as "reconnect".
+- **Auth status is polled, not pushed.** The SSE bus is a broadcast to every connected
+  client, so publishing a login state carrying a Cirro username would hand one user's
+  identity to everyone else's browser. `CirroConnectDialog` polls `GET /api/cirro/auth`
+  (token-scoped) while a flow is pending. Upload state has no such problem and rides
+  the existing SSE stream + its polling fallback.
+- **Flow:** at least one saved session must be selected (a session must be **saved
+  first** to appear). `build_upload_folder()` builds a temp folder from **symlinks**:
+  each selected `.zarr.zip` under `sessions/`, the `index.json` manifest, and the built
+  SPA (`index.html` + `assets/`) — so the uploaded dataset is exactly the serverless
+  deployment layout of §14.3 and renders itself. Never symlinks a directory itself
+  (most upload walkers skip a symlinked directory's contents) — only real directories
+  of per-file symlinks. `upload()` calls the Cirro SDK's `project.upload_dataset`.
+- **The viewer rides along only when there is one to bundle.** `viewer_available()`
+  tests `SDS_STATIC_DIR/index.html`, which is set in the Docker image but **unset in
+  local dev**, where Vite serves the frontend. The upload still works there; it just
+  carries the checkpoints and `index.json` alone, and the dialog says so rather than
+  shipping a collection that silently won't open.
+- **UI:** one sidebar entry that reads "Connect to Cirro" until this browser is signed
+  in and "Upload to Cirro" (subtitled with the Cirro username and domain) after, plus a
+  "Disconnect from Cirro" entry. The upload dialog lists Cirro projects, a dataset name,
+  a description, an optional folder (free-text with typeahead, see below), and saved
+  sessions (multi-select). Uploads always use the generic "Files" ingest process
+  (`custom_dataset`), so there is no process picker. In-flight uploads survive a
+  disconnect.
 - **Folder:** Cirro's portal groups datasets into folders via a plain dataset tag whose
   value is `folder://<path>` (nested paths use `/`) — there's no dedicated folder API, so
   `list_folders()` derives the known folder list for a project by scanning
-  `project.list_datasets()` tags, same as the portal UI itself does. Backend-cached per
-  project (`GET /api/cirro/projects/{id}/folders`) since a full dataset scan is expensive;
+  `datasets.list` tags, same as the portal UI itself does. Cached **per credential**
+  (`GET /api/cirro/projects/{id}/folders`) since a full dataset scan is expensive, and
+  since two users may see different projects;
   a successful upload with a new folder updates the cache directly instead of forcing a
   rescan. The field is free text with a browser `<datalist>` typeahead, not a plain
   picker — the folder need not already exist.
@@ -1599,7 +1625,8 @@ Arrow IPC (binary). See `docs/CONTRACT.md` for the full contract.
 | `GET` | `/api/snapshots/{name}/thumbnail` | Gallery thumbnail (PNG) |
 | `DELETE` | `/api/snapshots/{name}` | Delete a snapshot and all its sibling artifacts |
 | `GET`/`HEAD` | `/api/checkpoints/{name}` | Serve a saved checkpoint `.zarr.zip` for direct browser reads (Range) |
-| `POST` | `/api/cirro/upload` | Upload selected checkpoints + snapshots to Cirro (session-independent) |
+| `POST` | `/api/cirro/auth` | Start this browser's Cirro device-code login; returns the login URL |
+| `POST` | `/api/cirro/upload` | Upload selected checkpoints + the viewer to Cirro (session-independent) |
 | `GET` | `/api/about/licenses` | Third-party licenses (from SBOMs) |
 
 ### 19.2 SSE event types
@@ -1677,7 +1704,8 @@ closed (a 406 does not auto-reconnect), so SSE remains the path wherever it work
   the holder's name, or "Unlocked", which opens the panel that takes/releases the lock,
   lists who is viewing, and edits your own display name (§16.5). The menu holds
   New/Save session, snapshots, the theme toggle (light/dark via CSS variables, persisted
-  in `localStorage`), About (Acknowledgements), and Cirro upload (only when configured).
+  in `localStorage`), About (Acknowledgements), and Cirro — one entry that connects
+  this browser's own Cirro account and then becomes the upload action (§15).
 - **Forms:** the introspection layer emits JSON Schema; `forms/FunctionFields.tsx` renders
   the field widgets (react-hook-form + a custom widget map: obs-key picker, var-name
   search/multiselect, layer/obsm/obsp pickers, enum dropdowns, `obs_value_map` old→new
@@ -1847,7 +1875,8 @@ corollary: this one process is a single point of failure.
 - **Config (env):** container memory limit, max concurrent sessions,
   working-dir location + RAM-backing (`SDS_WORK_DIR` / `SDS_WORK_DIR_IN_RAM`), Viv chunk
   cache size (`SDS_RASTER_CHUNK_CACHE_MB`), checkpoint policy, liveness tuning, edge SSE
-  buffering, Cirro credentials.
+  buffering, the default Cirro domain (`CIRRO_BASE_URL`; users supply their own
+  credentials from the browser, §15).
 - **Accepted residual risk:** with one container per box, a native segfault takes down
   all co-resident sessions until restart. Mitigated by fast supervised restart + the
   checkpoint policy (the primary durability lever), not eliminated. A max-concurrent-

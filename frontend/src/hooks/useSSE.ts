@@ -45,7 +45,7 @@ export function useSSE(enabled = true): void {
     setActiveSessionId,
     setSessions,
     removeSession,
-    setCirroUploads,
+    refreshCirroUploads,
     setLoadProgress,
     appendLoadLog,
     appendJobLog,
@@ -224,22 +224,12 @@ export function useSSE(enabled = true): void {
       },
 
       // Cirro upload isn't tied to a session (it uploads selected checkpoint files),
-      // so its result events are NOT session-gated — the toast always reaches the
-      // user who started the upload, even after switching sessions.
-      'cirro.upload.state': (data) => {
-        const d = data as { uploading: number; pending: number };
-        setCirroUploads({ uploading: d.uploading, pending: d.pending });
-      },
-
-      'cirro.upload.completed': (data) => {
-        const d = data as { dataset_name: string };
-        pushNotification({ kind: 'info', message: `Uploaded to Cirro as "${d.dataset_name}".` });
-      },
-
-      'cirro.upload.failed': (data) => {
-        const d = data as { error: string };
-        pushNotification({ kind: 'error', message: `Cirro upload failed: ${d.error}` });
-      },
+      // so this is NOT session-gated — the toast reaches the user who started the
+      // upload even after switching sessions. The event carries no payload on
+      // purpose: upload rows name a Cirro project and dataset, and this bus is
+      // broadcast to every client, so each one re-fetches its own rows instead
+      // (backend: UploadQueue). Toasts come from diffing those rows.
+      'cirro.upload.state': () => { void refreshCirroUploads(); },
 
       'plot.drawn': (data) => {
         const d = data as PlotDrawnEvent;
@@ -334,5 +324,5 @@ export function useSSE(enabled = true): void {
       if (pollTimer !== undefined) clearTimeout(pollTimer);
       if (refreshTimer.current) clearTimeout(refreshTimer.current);
     };
-  }, [enabled, activeSessionId, upsertSession, setResourceSample, updateDataVersions, updateDisplay, addActiveJob, removeActiveJob, addQueuedEntry, setEntryStatus, setSessionState, refreshSessionState, refreshShapeAnnotations, resolveShapeJob, pushNotification, setActiveSessionId, setSessions, removeSession, setCirroUploads, setLoadProgress, appendLoadLog, appendJobLog, clearJobLog, setPresence]);
+  }, [enabled, activeSessionId, upsertSession, setResourceSample, updateDataVersions, updateDisplay, addActiveJob, removeActiveJob, addQueuedEntry, setEntryStatus, setSessionState, refreshSessionState, refreshShapeAnnotations, resolveShapeJob, pushNotification, setActiveSessionId, setSessions, removeSession, refreshCirroUploads, setLoadProgress, appendLoadLog, appendJobLog, clearJobLog, setPresence]);
 }

@@ -47,10 +47,9 @@ services:
       SDS_ADMISSION_PCT: "0.80"
       MPLBACKEND: "Agg"
       PYTHONUNBUFFERED: "1"
-      # Cirro upload. Off unless all three are set (service-account/client-credentials).
+      # Cirro upload. Users sign in from the browser with their own Cirro account
+      # (device code), so no server-side credential — this only prefills the domain.
       CIRRO_BASE_URL: "${CIRRO_BASE_URL:-}"
-      CIRRO_CLIENT_ID: "${CIRRO_CLIENT_ID:-}"
-      CIRRO_CLIENT_SECRET: "${CIRRO_CLIENT_SECRET:-}"
 
     # Hard OS memory limit: the container is OOM-killed if it exceeds this. Keep
     # in sync with SDS_CONTAINER_MEM_MB above (12288 MiB == 12g) so the app's soft

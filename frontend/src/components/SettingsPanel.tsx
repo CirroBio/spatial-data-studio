@@ -1,11 +1,12 @@
 import { lazy, Suspense, useMemo, useState, type ReactNode } from 'react';
 import { useAppStore } from '../store/sessionStore';
-import { saveSession } from '../api';
+import { saveSession, disconnectFromCirro, getCirroAuth } from '../api';
 import { reportError } from '../lib/errors';
 import { useEditGate } from '../hooks/usePresence';
 import { checkpointUrlFromLocation } from '../data/useCheckpointSession';
 import AcknowledgementsDialog from './AcknowledgementsDialog';
 import CirroUploadDialog from './CirroUploadDialog';
+import CirroConnectDialog from './CirroConnectDialog';
 const SnapshotBrowser = lazy(() => import('./SnapshotBrowser'));
 const SnapshotExportModal = lazy(() => import('./SnapshotExportModal'));
 import { useTour, spatialDataStudioTour } from '../tours';
@@ -15,10 +16,12 @@ interface Props {
 }
 
 // One row of the settings panel: icon + label, greyed and non-clickable when
-// `disabled` (with `title` explaining why), optional trailing status marker.
-function PanelItem({ icon, label, onClick, disabled, title, trailing }: {
+// `disabled` (with `title` explaining why), optional second line (`sublabel`, used
+// to name the connected Cirro account) and optional trailing status marker.
+function PanelItem({ icon, label, sublabel, onClick, disabled, title, trailing }: {
   icon: ReactNode;
   label: string;
+  sublabel?: string;
   onClick: () => void;
   disabled?: boolean;
   title?: string;
@@ -36,7 +39,10 @@ function PanelItem({ icon, label, onClick, disabled, title, trailing }: {
       ].join(' ')}
     >
       <span className="shrink-0">{icon}</span>
-      <span className="flex-1">{label}</span>
+      <span className="flex-1 min-w-0">
+        <span className="block">{label}</span>
+        {sublabel && <span className="block text-[10px] text-muted/70 truncate">{sublabel}</span>}
+      </span>
       {trailing}
     </button>
   );
@@ -50,9 +56,10 @@ function PanelItem({ icon, label, onClick, disabled, title, trailing }: {
 export default function SettingsPanel({ onNewSession }: Props) {
   const [showAbout, setShowAbout] = useState(false);
   const [showCirroUpload, setShowCirroUpload] = useState(false);
+  const [showCirroConnect, setShowCirroConnect] = useState(false);
   const {
     activeSessionId, sessionState, theme, setTheme, blockingJob,
-    cirroEnabled, cirroUploads, snapshotHandler, menuOpen, setMenuOpen,
+    cirroAuth, setCirroAuth, cirroUploads, snapshotHandler, menuOpen, setMenuOpen,
     snapshotsOpen, snapshotsInitialSelect, openSnapshots, closeSnapshots,
     snapshotExport, closeSnapshotExport,
   } = useAppStore();
@@ -68,11 +75,21 @@ export default function SettingsPanel({ onNewSession }: Props) {
   // The tour walks the analysis workflow (function picker, compute, saving), most of
   // which a checkpoint doesn't have — so neither auto-start it nor offer it there.
   const { start: startTour } = useTour(spatialDataStudioTour.id, !captureOnly);
-  const uploadsActive = cirroUploads.uploading + cirroUploads.pending;
-  const uploadTitle = uploadsActive > 0
-    ? `Cirro: ${cirroUploads.uploading} uploading`
-      + (cirroUploads.pending ? `, ${cirroUploads.pending} pending` : '')
-    : 'Upload to Cirro';
+  const cirroConnected = cirroAuth?.state === 'connected';
+  // Uploads keep running after a disconnect, so this counts rows regardless of auth.
+  const running = cirroUploads.filter((u) => u.state === 'pending' || u.state === 'uploading');
+  const failed = cirroUploads.filter((u) => u.state === 'failed');
+  const uploadsActive = running.length;
+  const uploadTitle = [
+    running.length ? `${running.length} uploading` : null,
+    failed.length ? `${failed.length} failed` : null,
+  ].filter(Boolean).join(', ') || undefined;
+
+  function handleCirroDisconnect() {
+    disconnectFromCirro()
+      .catch((err) => reportError('Cirro disconnect failed', err))
+      .finally(() => getCirroAuth().then(setCirroAuth).catch(() => setCirroAuth(null)));
+  }
 
   const saveDisabledReason = !activeSessionId || canEdit
     ? undefined
@@ -216,12 +233,16 @@ export default function SettingsPanel({ onNewSession }: Props) {
               }
             />
 
-            {/* Cirro upload — only when a service-account identity is configured */}
-            {cirroEnabled && (
+            {/* Cirro — one entry that connects this browser's own Cirro account, then
+                becomes the upload action. Absent with no backend to talk to. */}
+            {cirroAuth && (
               <PanelItem
-                label="Upload to Cirro"
-                onClick={() => setShowCirroUpload(true)}
-                title={uploadsActive > 0 ? uploadTitle : undefined}
+                label={cirroConnected ? 'Upload to Cirro' : 'Connect to Cirro'}
+                sublabel={cirroConnected
+                  ? [cirroAuth.username, cirroAuth.domain].filter(Boolean).join(' · ')
+                  : cirroAuth.state === 'pending' ? 'Authentication pending…' : undefined}
+                onClick={() => (cirroConnected ? setShowCirroUpload(true) : setShowCirroConnect(true))}
+                title={uploadTitle}
                 trailing={uploadsActive > 0 ? (
                   <span className="w-2 h-2 rounded-full border border-accent border-t-transparent animate-spin" />
                 ) : undefined}
@@ -229,6 +250,19 @@ export default function SettingsPanel({ onNewSession }: Props) {
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M7 18a4.5 4.5 0 0 1-1.44-8.77A5.5 5.5 0 0 1 16.3 6.03 4.5 4.5 0 0 1 17.5 15H17" />
                     <path d="M12 12v9M9 15l3-3 3 3" />
+                  </svg>
+                }
+              />
+            )}
+
+            {cirroConnected && (
+              <PanelItem
+                label="Disconnect from Cirro"
+                onClick={handleCirroDisconnect}
+                icon={
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                    <path d="M16 17l5-5-5-5M21 12H9" />
                   </svg>
                 }
               />
@@ -249,6 +283,13 @@ export default function SettingsPanel({ onNewSession }: Props) {
         </Suspense>
       )}
       {showCirroUpload && <CirroUploadDialog onClose={() => setShowCirroUpload(false)} />}
+      {showCirroConnect && (
+        <CirroConnectDialog
+          onClose={() => setShowCirroConnect(false)}
+          // Sign-in is only ever a step towards uploading, so hand straight over.
+          onConnected={() => { setShowCirroConnect(false); setShowCirroUpload(true); }}
+        />
+      )}
     </>
   );
 }

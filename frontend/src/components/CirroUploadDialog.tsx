@@ -1,14 +1,12 @@
 import { useEffect, useId, useState } from 'react';
 import { useAppStore } from '../store/sessionStore';
 import {
-  getCirroFolders, getCirroProjects, getDatasets, getSnapshots, uploadToCirro,
+  getCirroFolders, getCirroProjects, getDatasets, uploadToCirro,
   type CirroProject, type DatasetEntry,
 } from '../api';
 import { formatError } from '../lib/format';
 import { reportError } from '../lib/errors';
-import type { Snapshot } from '../lib/snapshots';
 import { ModalOverlay, ModalHeader } from './DetailModal';
-import SnapshotList from './SnapshotList';
 
 interface Props {
   onClose: () => void;
@@ -25,27 +23,25 @@ function savedAt(mtime: number): string {
 }
 
 export default function CirroUploadDialog({ onClose }: Props) {
-  const { pushNotification } = useAppStore();
+  const { pushNotification, cirroAuth } = useAppStore();
   const folderListId = useId();
 
   const [projects, setProjects] = useState<CirroProject[] | null>(null);
-  const [snapshots, setSnapshots] = useState<Snapshot[] | null>(null);
   const [sessions, setSessions] = useState<DatasetEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [projectId, setProjectId] = useState('');
   const [datasetName, setDatasetName] = useState('');
+  const [description, setDescription] = useState('');
   const [folder, setFolder] = useState('');
   const [folders, setFolders] = useState<string[]>([]);
   const [selectedSessions, setSelectedSessions] = useState<Set<string>>(new Set());
-  const [selectedSnapshots, setSelectedSnapshots] = useState<Set<string>>(new Set());
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    Promise.all([getCirroProjects(), getSnapshots(), getDatasets()])
-      .then(([p, s, d]) => {
+    Promise.all([getCirroProjects(), getDatasets()])
+      .then(([p, d]) => {
         setProjects(p.projects);
-        setSnapshots(s.snapshots);
         setSessions(d.datasets);
       })
       .catch((err) => setError(formatError(err)));
@@ -56,20 +52,12 @@ export default function CirroUploadDialog({ onClose }: Props) {
     getCirroFolders(projectId).then((f) => setFolders(f.folders)).catch((err) => setError(formatError(err)));
   }, [projectId]);
 
-  // Snapshot figures are self-contained artifacts — upload them alongside any
-  // session(s), or on their own.
-  const availableSnapshots = snapshots ?? [];
-
-  function toggleSession(path: string) {
-    setSelectedSessions(toggle(selectedSessions, path));
-  }
-
   async function handleSubmit() {
     setSubmitting(true);
     try {
       await uploadToCirro({
         project_id: projectId, dataset_name: datasetName.trim(),
-        session_paths: [...selectedSessions], snapshot_names: [...selectedSnapshots],
+        description: description.trim(), session_paths: [...selectedSessions],
         folder: folder.trim() || undefined,
       });
       pushNotification({ kind: 'info', message: `Uploading "${datasetName.trim()}" to Cirro…` });
@@ -80,9 +68,8 @@ export default function CirroUploadDialog({ onClose }: Props) {
     }
   }
 
-  const loaded = projects && snapshots && sessions;
-  const canSubmit = !!projectId && !!datasetName.trim()
-    && (selectedSessions.size > 0 || selectedSnapshots.size > 0) && !submitting;
+  const loaded = projects && sessions;
+  const canSubmit = !!projectId && !!datasetName.trim() && selectedSessions.size > 0 && !submitting;
 
   const fieldClass = 'w-full bg-bg border border-border rounded px-3 py-2 text-sm text-text placeholder-muted/50 focus:outline-none focus:border-accent';
 
@@ -90,7 +77,9 @@ export default function CirroUploadDialog({ onClose }: Props) {
     <ModalOverlay onClose={onClose} widthClassName="w-[860px] max-w-[94vw] h-[620px] max-h-[90vh]">
       <ModalHeader
         title="Upload to Cirro"
-        subtitle="Upload saved sessions and/or rendered snapshot figures as one dataset."
+        subtitle={cirroAuth?.username
+          ? `Signed in as ${cirroAuth.username} at ${cirroAuth.domain}.`
+          : 'Upload saved sessions as one dataset.'}
         onClose={onClose}
       />
 
@@ -136,6 +125,16 @@ export default function CirroUploadDialog({ onClose }: Props) {
               </div>
 
               <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-mono text-muted">Description</label>
+                <textarea
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  rows={3}
+                  className={`${fieldClass} resize-y`}
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-mono text-muted">Destination folder</label>
                 <input
                   type="text"
@@ -162,56 +161,41 @@ export default function CirroUploadDialog({ onClose }: Props) {
           )}
         </aside>
 
-        {/* Right: pick any sessions and/or snapshot figures to bundle */}
+        {/* Right: pick the saved sessions to bundle */}
         {loaded && (
           <section className="flex-1 min-w-0 flex flex-col bg-bg/40">
-            <div className="flex-1 min-h-0 flex flex-col border-b border-border">
-              <div className="shrink-0 border-b border-border px-3 py-2 flex items-baseline gap-2">
-                <span className="text-xs font-semibold text-text">Saved sessions</span>
-                <span className="text-[11px] text-muted/70">select any to include</span>
-              </div>
-              <div className="flex-1 overflow-y-auto">
-                {sessions.length === 0 && (
-                  <div className="px-3 py-6 text-center text-xs text-muted/60">No saved sessions.</div>
-                )}
-                {sessions.map((d) => (
-                  <button
-                    key={d.path}
-                    onClick={() => toggleSession(d.path)}
-                    title={d.path}
-                    className={`w-full text-left px-3 py-2 border-b border-border/50 transition-colors flex items-center gap-2 ${
-                      selectedSessions.has(d.path) ? 'bg-accent/20 text-accent' : 'text-text hover:bg-accent-lo/30'
-                    }`}
-                  >
-                    <input type="checkbox" checked={selectedSessions.has(d.path)} readOnly tabIndex={-1} className="shrink-0 pointer-events-none" />
-                    <span className="flex flex-col min-w-0 flex-1">
-                      <span className="text-xs font-medium truncate">{d.name}</span>
-                      {savedAt(d.mtime) && <span className="text-[10px] text-muted/70 mt-0.5">{savedAt(d.mtime)}</span>}
-                    </span>
-                  </button>
-                ))}
-              </div>
+            <div className="shrink-0 border-b border-border px-3 py-2 flex items-baseline gap-2">
+              <span className="text-xs font-semibold text-text">Saved sessions</span>
+              <span className="text-[11px] text-muted/70">select any to include</span>
             </div>
-
-            <div className="flex-1 min-h-0 flex flex-col">
-              <div className="shrink-0 border-b border-border px-3 py-2 flex items-baseline gap-2">
-                <span className="text-xs font-semibold text-text">Snapshot figures</span>
-                <span className="text-[11px] text-muted/70">select any to include</span>
-              </div>
-              <div className="flex-1 overflow-y-auto">
-                {availableSnapshots.length === 0 ? (
-                  <div className="px-3 py-6 text-center text-xs text-muted/60">
-                    No saved snapshots.
-                  </div>
-                ) : (
-                  <SnapshotList
-                    snapshots={availableSnapshots}
-                    multi
-                    isSelected={(s) => selectedSnapshots.has(s.name)}
-                    onSelect={(s) => setSelectedSnapshots((prev) => toggle(prev, s.name))}
-                  />
-                )}
-              </div>
+            <div className="flex-1 overflow-y-auto">
+              {sessions.length === 0 && (
+                <div className="px-3 py-6 text-center text-xs text-muted/60">No saved sessions.</div>
+              )}
+              {sessions.map((d) => (
+                <button
+                  key={d.path}
+                  onClick={() => setSelectedSessions(toggle(selectedSessions, d.path))}
+                  title={d.path}
+                  className={`w-full text-left px-3 py-2 border-b border-border/50 transition-colors flex items-center gap-2 ${
+                    selectedSessions.has(d.path) ? 'bg-accent/20 text-accent' : 'text-text hover:bg-accent-lo/30'
+                  }`}
+                >
+                  <input type="checkbox" checked={selectedSessions.has(d.path)} readOnly tabIndex={-1} className="shrink-0 pointer-events-none" />
+                  <span className="flex flex-col min-w-0 flex-1">
+                    <span className="text-xs font-medium truncate">{d.name}</span>
+                    {savedAt(d.mtime) && <span className="text-[10px] text-muted/70 mt-0.5">{savedAt(d.mtime)}</span>}
+                  </span>
+                </button>
+              ))}
+            </div>
+            {/* The bundle is a serverless deployment (DESIGN 14.3): the checkpoints, an
+                index.json listing them, and the viewer itself — but only where a built
+                SPA is on disk, which it isn't in local dev. Say which upload this is. */}
+            <div className="shrink-0 border-t border-border px-3 py-2 text-[10px] text-muted/70">
+              {cirroAuth?.viewer_bundled
+                ? 'The viewer (index.html) and an index.json manifest are uploaded alongside the sessions, so the dataset opens as a browsable collection.'
+                : 'No built viewer is available on this server, so only the sessions and an index.json manifest are uploaded.'}
             </div>
           </section>
         )}

@@ -2,7 +2,9 @@
 Exercises: load -> compute -> compute -> Arrow fetch -> plot -> save -> reload.
 """
 import io
+import json
 import os
+import pathlib
 import shutil
 import sys
 import tempfile
@@ -784,6 +786,165 @@ def run_encoding_persistence_flow(client):
     print("[ok] canvas encoding (toggles, isolated category, camera) survives save + reload")
 
 
+def run_cirro_auth_flow(client):
+    """Cirro's per-browser credential scoping and upload bundle (DESIGN §15), without
+    talking to Cirro: the device-code flow itself needs a real domain and a human, so
+    this covers everything around it — the auth state machine, the fact that every
+    Cirro call is refused without a valid credential token, the path-traversal guard on
+    the selected checkpoints, and the shape of the bundle that gets uploaded."""
+    from app import cirro
+
+    # ---- state machine. Unknown/absent token reads as disconnected, never as an error.
+    auth = client.get("/api/cirro/auth").json()
+    assert auth["state"] == "disconnected", auth
+    assert auth["default_domain"], "connect dialog has nothing to prefill"
+    assert client.get("/api/cirro/auth", headers={"X-SDS-Cirro-Token": "bogus"}).json()["state"] \
+        == "disconnected"
+    assert client.post("/api/cirro/auth", json={}).status_code == 400  # no domain
+
+    # ---- every Cirro call needs a credential, and a credential is only ever named by
+    # the minted secret — a presence client id must not stand in for one.
+    for path in ("/api/cirro/projects", "/api/cirro/projects/p1/folders"):
+        assert client.get(path).status_code == 401, path
+        assert client.get(path, headers={"X-SDS-Client-Id": "viewer-a"}).status_code == 401, path
+    assert client.post("/api/cirro/upload", json={
+        "project_id": "p", "dataset_name": "d", "session_paths": ["x"]}).status_code == 401
+    print("[ok] cirro: unauthenticated calls refused (401), client id is not a credential")
+
+    # ---- store: mint, look up, expire, drop. Two tokens never collide.
+    cred = cirro.Credential(domain="example.cirro.bio", login_url="https://x/login", auth=None)
+    token = cirro.CREDENTIALS.put(cred)
+    other = cirro.CREDENTIALS.put(cirro.Credential(domain="d2", login_url="u2", auth=None))
+    assert token != other and len(token) > 20, "credential token must be unguessable"
+    assert cirro.CREDENTIALS.get(token) is cred
+    assert client.get("/api/cirro/auth", headers={"X-SDS-Cirro-Token": token}).json() \
+        == {**cred.public(), "default_domain": config.CIRRO_BASE_URL,
+            "viewer_bundled": cirro.viewer_available()}
+    # A pending credential is not yet usable for anything but reading its own state.
+    assert client.get("/api/cirro/projects",
+                      headers={"X-SDS-Cirro-Token": token}).status_code == 401
+
+    cred.last_used -= cirro.IDLE_EXPIRY_S + 1
+    assert cirro.CREDENTIALS.get(token) is None, "idle credential not expired"
+    assert cirro.CREDENTIALS.get(other) is not None, "expiry dropped an active credential"
+    cirro.CREDENTIALS.drop(other)
+    assert cirro.CREDENTIALS.get(other) is None
+    print("[ok] cirro: credential store mints, scopes, expires and drops")
+
+    # ---- login URL is extracted from the SDK's human-readable auth message.
+    assert cirro._login_url("To authenticate, visit https://x.cirro.bio/device and enter AB-CD.") \
+        == "https://x.cirro.bio/device"
+
+    # ---- a connected credential still can't reach outside DATA_DIR.
+    live = cirro.Credential(domain="d", login_url="u", auth=None, state="connected")
+    live_token = cirro.CREDENTIALS.put(live)
+    hdr = {"X-SDS-Cirro-Token": live_token}
+    for bad in ("/etc/passwd", str(config.DATA_DIR / ".." / "escape.zarr.zip")):
+        r = client.post("/api/cirro/upload", headers=hdr, json={
+            "project_id": "p", "dataset_name": "d", "session_paths": [bad]})
+        assert r.status_code == 400, (bad, r.status_code)
+    # ...and the required fields are enforced before any work starts.
+    assert client.post("/api/cirro/upload", headers=hdr, json={
+        "project_id": "p", "dataset_name": "d", "session_paths": []}).status_code == 400
+    assert client.post("/api/cirro/upload", headers=hdr, json={
+        "project_id": "", "dataset_name": "", "session_paths": ["x"]}).status_code == 400
+    print("[ok] cirro: upload rejects paths outside DATA_DIR and incomplete requests")
+
+    # ---- upload rows are owned by the credential that started them. A row names a
+    # Cirro project and dataset, so another browser must not see it. Driven through
+    # the real endpoint; the upload itself fails in the background (this credential
+    # has no live Cirro session), which is the failure path and settles the row.
+    from app.routers.cirro import _uploads
+    decoy = os.path.join(str(config.DATA_DIR), "cirro_scope_probe.sdata.zarr.zip")
+    with open(decoy, "wb") as fh:
+        fh.write(b"not-a-real-zip")
+    mine = None
+    try:
+        r = client.post("/api/cirro/upload", headers=hdr, json={
+            "project_id": "p", "dataset_name": "My Dataset", "session_paths": [decoy]})
+        assert r.status_code == 200, r.text
+        mine = r.json()["id"]
+        assert [u["dataset_name"] for u in
+                client.get("/api/cirro/uploads", headers=hdr).json()["uploads"]] == ["My Dataset"]
+        # Another browser's credential — and an anonymous caller — see nothing.
+        assert client.get("/api/cirro/uploads").json()["uploads"] == []
+        assert client.get("/api/cirro/uploads",
+                          headers={"X-SDS-Cirro-Token": "other"}).json()["uploads"] == []
+        assert all("token" not in u for u in
+                   client.get("/api/cirro/uploads", headers=hdr).json()["uploads"]), \
+            "credential token leaked into an upload row"
+
+        # ...and only its owner can dismiss it, once settled.
+        deadline = time.time() + 30
+        while _uploads._uploads[mine]["state"] not in ("completed", "failed"):
+            assert time.time() < deadline, "cirro upload row never settled"
+            time.sleep(0.1)
+        client.delete(f"/api/cirro/uploads/{mine}", headers={"X-SDS-Cirro-Token": "other"})
+        assert len(client.get("/api/cirro/uploads", headers=hdr).json()["uploads"]) == 1, \
+            "dismissed another user's upload"
+        assert client.delete(f"/api/cirro/uploads/{mine}",
+                             headers=hdr).json()["uploads"] == []
+    finally:
+        _uploads._uploads.pop(mine, None)
+        os.remove(decoy)
+    print("[ok] cirro: upload rows are scoped to their owner's credential")
+
+    cirro.CREDENTIALS.drop(live_token)
+
+    # ---- the bundle is a serverless deployment (DESIGN §14.3): checkpoints under
+    # sessions/, an index.json naming them, and the built SPA as real dirs of symlinks.
+    staging = tempfile.mkdtemp()
+    ckpt = os.path.join(staging, "Demo Session-3fa21c9b8e4d.sdata.zarr.zip")
+    with open(ckpt, "wb") as fh:
+        fh.write(b"not-a-real-zip")
+    static = os.path.join(staging, "spa")
+    os.makedirs(os.path.join(static, "assets"))
+    for rel in ("index.html", "assets/index-abc.js", "assets/index-abc.css"):
+        with open(os.path.join(static, rel), "w") as fh:
+            fh.write("x")
+
+    saved_static = config.STATIC_DIR
+    try:
+        config.STATIC_DIR = pathlib.Path(static)
+        assert cirro.viewer_available()
+        bundle = cirro.build_upload_folder([ckpt])
+        try:
+            names = {os.path.relpath(os.path.join(dirpath, f), bundle)
+                     for dirpath, _, files in os.walk(bundle) for f in files}
+            assert names == {
+                "index.json", "index.html",
+                os.path.join("assets", "index-abc.js"), os.path.join("assets", "index-abc.css"),
+                os.path.join("sessions", os.path.basename(ckpt)),
+            }, names
+            # Real directories of per-file symlinks — a symlinked *directory* would be
+            # skipped wholesale by the SDK's upload walker.
+            for d in ("sessions", "assets"):
+                assert not os.path.islink(os.path.join(bundle, d)), d
+            assert os.path.islink(os.path.join(bundle, "sessions", os.path.basename(ckpt)))
+            with open(os.path.join(bundle, "index.json")) as fh:
+                index = json.load(fh)
+            assert index["checkpoints"] == [{
+                "path": f"sessions/{os.path.basename(ckpt)}",
+                "label": "Demo Session",  # storage hash + extension stripped
+            }], index
+        finally:
+            shutil.rmtree(bundle, ignore_errors=True)
+
+        # With no built SPA the upload still works, minus the viewer — the local-dev case.
+        config.STATIC_DIR = None
+        assert not cirro.viewer_available()
+        bundle = cirro.build_upload_folder([ckpt])
+        try:
+            assert os.path.exists(os.path.join(bundle, "index.json"))
+            assert not os.path.exists(os.path.join(bundle, "index.html"))
+        finally:
+            shutil.rmtree(bundle, ignore_errors=True)
+    finally:
+        config.STATIC_DIR = saved_static
+        shutil.rmtree(staging, ignore_errors=True)
+    print("[ok] cirro: upload bundle is a self-hosting serverless deployment")
+
+
 def run_session_lock_flow(client):
     """Viewer presence + the per-session edit lock (sessions/presence.py): attaching
     takes an unlocked session's lock, a second viewer is refused every mutation but
@@ -1512,6 +1673,7 @@ def main():
         run_encoding_persistence_flow(client)
         run_inspector_flow(client)
         run_session_lock_flow(client)
+        run_cirro_auth_flow(client)
         run_isolation_flow(client)
         run_filter_reshape_flow(client)
         run_filter_rank_genes_save_flow(client)

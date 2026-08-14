@@ -15,7 +15,8 @@ import type {
 import { isSpatialDisplay } from '../types';
 import type { DataSource } from '../data/types';
 import { clientName, setClientName, editBlockReason } from '../lib/presence';
-import { putDisplay, getSession, listShapeAnnotations, createShapeAnnotation, updateShapeAnnotation, deleteShapeAnnotation, postPresence, ApiError, fetchWhenIdle } from '../api';
+import { putDisplay, getSession, listShapeAnnotations, createShapeAnnotation, updateShapeAnnotation, deleteShapeAnnotation, postPresence, getCirroUploads, ApiError, fetchWhenIdle } from '../api';
+import type { CirroAuth, CirroUpload } from '../api';
 import type { ShapeAnnotation, ShapeGeometry, ShapeKind } from '../schemas/annotations';
 import { defaultStroke, defaultFill } from '../schemas/annotations';
 import type { SnapshotExportParams } from '../lib/snapshots';
@@ -279,11 +280,16 @@ interface AppStore {
   leftMenuOpen: boolean;
   setLeftMenuOpen: (open: boolean) => void;
 
-  // Cirro upload
-  cirroEnabled: boolean;
-  setCirroEnabled: (on: boolean) => void;
-  cirroUploads: { uploading: number; pending: number };
-  setCirroUploads: (u: { uploading: number; pending: number }) => void;
+  // Cirro upload. `cirroAuth` is this browser's own Cirro login (device code), null
+  // until the first status fetch resolves.
+  cirroAuth: CirroAuth | null;
+  setCirroAuth: (a: CirroAuth | null) => void;
+  cirroUploads: CirroUpload[];
+  setCirroUploads: (u: CirroUpload[]) => void;
+  // Re-fetch this browser's own upload rows and toast the ones that just settled.
+  // The `cirro.upload.state` event is a bare ping (rows name a Cirro project and
+  // dataset, and that bus is broadcast), so the rows are pulled, not pushed.
+  refreshCirroUploads: () => Promise<void>;
   // Live progress of a checkpoint load, keyed by the New Session dialog's load_id.
   // useSSE writes it from `session.loading`; the dialog reads the entry for its own
   // load_id and clears it when the load resolves.
@@ -765,10 +771,23 @@ export const useAppStore = create<AppStore>((set, get) => ({
   leftMenuOpen: true,
   setLeftMenuOpen: (open) => set({ leftMenuOpen: open }),
 
-  cirroEnabled: false,
-  setCirroEnabled: (on) => set({ cirroEnabled: on }),
-  cirroUploads: { uploading: 0, pending: 0 },
+  cirroAuth: null,
+  setCirroAuth: (a) => set({ cirroAuth: a }),
+  cirroUploads: [],
   setCirroUploads: (u) => set({ cirroUploads: u }),
+  refreshCirroUploads: async () => {
+    const previous = new Map(get().cirroUploads.map((u) => [u.id, u.state]));
+    const { uploads } = await getCirroUploads();
+    for (const u of uploads) {
+      if (previous.get(u.id) === u.state) continue;
+      if (u.state === 'completed') {
+        get().pushNotification({ kind: 'info', message: `Uploaded to Cirro as "${u.dataset_name}".` });
+      } else if (u.state === 'failed') {
+        get().pushNotification({ kind: 'error', message: `Cirro upload failed: ${u.error}` });
+      }
+    }
+    set({ cirroUploads: uploads });
+  },
   loadProgress: null,
   setLoadProgress: (p) => set({ loadProgress: p }),
   loadLog: '',

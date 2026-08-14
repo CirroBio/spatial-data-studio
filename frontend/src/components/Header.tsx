@@ -20,7 +20,7 @@ export default function Header() {
   const runningCount = activeJobIds.size;
   const readOnly = sessionState?.summary.read_only ?? false;
   const unsaved = !!activeSessionId && sessionState?.summary.saved === false;
-  const uploadsActive = cirroUploads.uploading + cirroUploads.pending;
+  const uploadsActive = cirroUploads.filter((u) => u.state === 'pending' || u.state === 'uploading').length;
   const fields = sessionState?.fields;
   // `fields` is an empty object while a session is still loading (the backend has
   // no table yet), so guard every access — image_dims/n_obs are absent until ready.

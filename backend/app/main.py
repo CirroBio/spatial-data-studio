@@ -55,9 +55,6 @@ def _submit_prewarm_tasks():
     already built by REGISTRY.build above). Best-effort and off the event loop —
     see prewarm.py."""
     PREWARM.submit("datasets", lambda: datasets.list_datasets(data_roots()))
-    if config.cirro_enabled():
-        from . import cirro
-        PREWARM.submit("cirro.projects", cirro.list_projects)
 
 
 async def _resource_loop():

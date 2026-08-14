@@ -62,7 +62,7 @@ the analysis history that produced this view.*
 - **Save and share.** Save a checkpoint you can reopen later, save a **snapshot** — a
   high-quality figure of the current view exported as a vector PDF and/or raster PNG,
   framed and sized in a dialog with a live preview, optionally with the minimap inset
-  included in the figure — or (optionally) upload results to
+  included in the figure — or upload saved checkpoints to
   [Cirro](https://cirro.bio/). Saved snapshots are collected in a gallery you can
   browse, download, or delete; each file embeds the provenance (view, settings, and the
   analysis steps that produced the data).
@@ -144,15 +144,40 @@ open http://localhost:8080              # New Session -> /data/visium_hne.zarr
 The compose file bind-mounts a single read-write data directory at `/data`, holding
 inputs, saved checkpoints, and snapshots together. It defaults to `test-data/`;
 point it at your own folder with `SDS_DATA_HOST_DIR` (env var or `.env` entry), e.g.
-`SDS_DATA_HOST_DIR=/path/to/data docker compose up`. Enable the optional Cirro upload
-by setting `CIRRO_BASE_URL`,
-`CIRRO_CLIENT_ID`, and `CIRRO_CLIENT_SECRET` from an OAuth token in a `.env` file
-(with any unset, the upload button stays hidden and the app runs normally).
+`SDS_DATA_HOST_DIR=/path/to/data docker compose up`. Cirro upload needs no server-side
+configuration — each user signs in with their own Cirro account from the browser (see
+[Upload to Cirro](#upload-to-cirro) below). Set `CIRRO_BASE_URL` in a `.env` file to
+prefill a domain other than `app.cirro.bio`.
 Memory limits, the manual `docker run` form, and the full environment contract are in
 [`docker/README.md`](docker/README.md).
 
 To run the app from source for development instead, see
 [`DEVELOPMENT.md`](DEVELOPMENT.md#local-dev-environment).
+
+## Upload to Cirro
+
+You can publish saved checkpoints to [Cirro](https://cirro.bio/) from the menu in the
+right-hand sidebar. Each person signs in with their own Cirro account, so several
+people can use the same running app without sharing credentials.
+
+1. **Connect to Cirro** asks for your Cirro domain (for example `app.cirro.bio`) and gives
+   you a login link. Open it, sign in as you normally would, and the dialog updates
+   itself when you're done — closing it won't cancel the login. Everything else about
+   your account is discovered from the domain.
+2. The menu entry then reads **Upload to Cirro** and shows which account you're signed
+   in as. **Disconnect from Cirro** signs you out of this browser.
+3. The upload dialog asks for a project, a dataset name, an optional description and
+   destination folder, and which saved sessions to include. Uploading runs in the
+   background — you can keep working, and the sidebar shows progress.
+
+Alongside your checkpoints, the upload includes the viewer itself (`index.html`) and an
+`index.json` listing them, so the resulting Cirro dataset opens as a browsable
+collection that anyone with access can view without running this app. (Uploads made
+from a development server, which has no built viewer on disk, carry the checkpoints and
+`index.json` only; the dialog tells you which kind of upload you're making.)
+
+Your Cirro sign-in lives only in the running app's memory and is dropped after 8 hours
+of inactivity or when you disconnect.
 
 ## For developers
 
