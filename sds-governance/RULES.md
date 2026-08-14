@@ -13,7 +13,7 @@ incrementally.
 | R2 | The term dictionary defines parameter *terms*, never functions. | v2 | `lint_term_dictionary.py` |
 | R3 | One schema-of-record (JSON Schema) drives form + Pydantic. | v3 | `test_invariants.py::test_r3_*` |
 | R4 | Library functions are declarative manifest entries; custom functions declare a `params` schema-of-record + an `execute`. | v3 | `lint_function_folders.py` |
-| R5 | Every function returns the contract envelope and respects `keep_failures`. | v3 | `test_contracts.py` (skip-until-`SYNTH_FIXTURE`) |
+| R5 | Every function returns the contract envelope (`CallResult`). | v3 | `test_contracts.py` (skip-until-`SYNTH_FIXTURE`) |
 | R6/R7 | Compute history is append-only; never `COMPLETED→QUEUED`; rerun appends. | v1 | `test_invariants.py` (R6/R7 needs a run harness) |
 | R8 | Effect class is explicit; plotting render params are managed. | v2 | `test_invariants.py::test_r8_*` |
 | R9 | One uvicorn worker; sessions never span worker processes. | v1 | supervisord `--workers 1` |
