@@ -275,7 +275,9 @@ class Config:
     # the job completes (via SSE). Keep comfortably below the proxy's timeout.
     READ_LOCK_TIMEOUT_S = float(os.environ.get("SDS_READ_LOCK_TIMEOUT_S", "25"))
 
-    STATIC_DIR = Path(os.environ.get("SDS_STATIC_DIR", "")) or None  # built SPA, optional
+    # Built SPA, optional. Note Path("") is PosixPath(".") and truthy, so guard the
+    # env var itself — otherwise an unset SDS_STATIC_DIR would serve the process cwd.
+    STATIC_DIR = Path(os.environ["SDS_STATIC_DIR"]) if os.environ.get("SDS_STATIC_DIR") else None
 
     # ---- Cirro upload. Each browser logs in with its own Cirro identity (device-code
     # flow, see cirro.py), so there is no server-side credential — this only prefills

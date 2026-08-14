@@ -33,6 +33,22 @@ if [[ -f .env ]]; then
   set +a
 fi
 
+# Cirro uploads bundle the built SPA as the serverless viewer (DESIGN §14.3), so
+# keep a fresh build on disk and point the backend at it. Rebuilt only when frontend
+# sources are newer than the last build, so routine restarts stay fast. A failed
+# build leaves SDS_STATIC_DIR unset — uploads then omit the viewer (the upload
+# dialog says so) instead of bundling a stale build or blocking the launch.
+if [[ -z "${SDS_STATIC_DIR:-}" ]]; then
+  if [[ -f frontend/dist/index.html ]] && \
+     [[ -z "$(find frontend/src frontend/public frontend/index.html frontend/package.json frontend/vite.config.ts frontend/tailwind.config.js -newer frontend/dist/index.html -print -quit 2>/dev/null)" ]]; then
+    export SDS_STATIC_DIR="$PWD/frontend/dist"
+  elif (cd frontend && npm run build); then
+    export SDS_STATIC_DIR="$PWD/frontend/dist"
+  else
+    echo "warning: frontend build failed; Cirro uploads will not include the viewer" >&2
+  fi
+fi
+
 # Single data directory: inputs to import/load AND saved checkpoints/snapshots all
 # live here (read-write). Defaults to data/ (or test-data/ with --test).
 export SDS_DATA_DIR="${SDS_DATA_DIR:-$PWD/$DATA_SUBDIR}"

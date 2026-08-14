@@ -211,11 +211,13 @@ exists at the repo root, `run.sh` sources it before launching uvicorn, so `CIRRO
 config set there reaches the backend the same way docker compose's auto-loaded
 `.env` does.
 
-Cirro upload works in local dev — each browser signs in with its own account — but
-`SDS_STATIC_DIR` is unset here (Vite serves the frontend), so uploads carry the
-checkpoints and `index.json` without the viewer itself. To exercise the full bundle,
-run `npm run build` in `frontend/` and start uvicorn with
-`SDS_STATIC_DIR=$PWD/frontend/dist`.
+Cirro upload works in local dev — each browser signs in with its own account — and
+carries the full serverless bundle: `run.sh` builds the SPA into `frontend/dist`
+(skipped when the build is already newer than the frontend sources) and sets
+`SDS_STATIC_DIR` to it, so uploads include `index.html` + `assets/` alongside the
+checkpoints and `index.json`. If the build fails, `run.sh` still launches but leaves
+`SDS_STATIC_DIR` unset — uploads then omit the viewer and the upload dialog says so.
+Starting uvicorn by hand without `SDS_STATIC_DIR` behaves the same way.
 
 ### Driving the serverless viewer locally
 

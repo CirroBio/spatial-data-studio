@@ -269,9 +269,11 @@ def _symlink(dest: Path, src: Path) -> None:
 
 
 def viewer_available() -> bool:
-    """Whether a built SPA is on disk to bundle. False in local dev, where Vite serves
-    the frontend and `SDS_STATIC_DIR` is unset — the upload still works, it just can't
-    carry the viewer, and the client says so rather than shipping a broken collection."""
+    """Whether a built SPA is on disk to bundle. `run.sh` builds one and sets
+    `SDS_STATIC_DIR`, and Docker bakes one in; this is False only when uvicorn is
+    started by hand without it (or the dev build failed) — the upload still works,
+    it just can't carry the viewer, and the client says so rather than shipping a
+    broken collection."""
     return bool(config.STATIC_DIR and (config.STATIC_DIR / "index.html").is_file())
 
 
