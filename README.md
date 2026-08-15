@@ -95,12 +95,12 @@ the analysis history that produced this view.*
   megabyte. Any host that serves the file with HTTP range requests will do — put the
   built app, your `.zarr.zip` files, and a small `index.json` listing them in one
   folder and the page becomes a browsable collection you can switch between.
-  You can also explore hands-on: lasso cells to label a region and color by it, hide
-  cells to declutter, draw shapes and text on the view, and export what you see as a
-  PNG. Those edits stay in your browser — the checkpoint is never modified and nothing
-  is kept when you reload. Running an analysis, a real subset, saving, and the
-  publication-quality PDF figure all still need the app; cell-boundary outlines aren't
-  available this way.
+  The left panel opens collapsed and holds one thing: the history of the analysis
+  that produced the checkpoint — expand it to see each function that was run, and
+  click an entry for its parameters and timing. Anything that would act on the data
+  (running an analysis, annotating, subsetting, plotting, saving) needs the live app.
+  You can still export what you see as a PNG; the publication-quality PDF figure and
+  cell-boundary outlines aren't available this way.
 
 <table>
 <tr>

@@ -21,7 +21,7 @@ import type { ShapeAnnotation, ShapeGeometry, ShapeKind } from '../schemas/annot
 import { defaultStroke, defaultFill } from '../schemas/annotations';
 import type { SnapshotExportParams } from '../lib/snapshots';
 import type { LocalCategorical } from '../data/types';
-import type { CheckpointIndex } from '../data/checkpointIndex';
+import { checkpointUrlFromLocation, type CheckpointIndex } from '../data/checkpointIndex';
 
 // Level 0 of a locally-labelled column: every cell starts here and stays here
 // until a lasso claims it, so unlabelled cells still render (greyed) instead of
@@ -768,7 +768,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   menuOpen: false,
   setMenuOpen: (open) => set({ menuOpen: open }),
-  leftMenuOpen: true,
+  // A checkpoint viewer opens with the sidebar collapsed — the visualization is the
+  // point there, and the sidebar holds only the analysis history (Sidebar.tsx).
+  leftMenuOpen: checkpointUrlFromLocation() === null,
   setLeftMenuOpen: (open) => set({ leftMenuOpen: open }),
 
   cirroAuth: null,

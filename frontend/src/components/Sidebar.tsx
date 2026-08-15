@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as Tabs from '@radix-ui/react-tabs';
 import PanelTabs, { type PanelTab } from './PanelTabs';
 import { useAppStore } from '../store/sessionStore';
+import { checkpointUrlFromLocation } from '../data/checkpointIndex';
 import { deleteHistoryEntry, getRecipe, importRecipe, getSession, runAllPending } from '../api';
 import { reportError } from '../lib/errors';
-import { useEditGate, useLocalEditsOnly } from '../hooks/usePresence';
+import { useEditGate } from '../hooks/usePresence';
 import StatusBadge, { type Status } from './StatusBadge';
 import FunctionPicker from './FunctionPicker';
 import RecipeGallery from './RecipeGallery';
@@ -150,11 +151,12 @@ export default function Sidebar() {
     leftMenuOpen,
   } = useAppStore();
   const { canEdit, reason } = useEditGate();
-  // A checkpoint can't write to the dataset, but the region/annotation/subset tabs
-  // all have browser-only implementations there, so they stay available.
-  const localEdits = useLocalEditsOnly();
-  const canUseMutatingTabs = canEdit || localEdits;
   const editReason = (reason ?? '').toLowerCase();
+  // Read from the URL, not the data source: the source opens asynchronously, and the
+  // tab strip would flash in before a `kind === 'checkpoint'` check could remove it.
+  // A checkpoint has no backend to run anything, so the sidebar reduces to the record
+  // of the analysis that produced it.
+  const serverless = useMemo(() => checkpointUrlFromLocation() !== null, []);
 
   const [showPicker, setShowPicker] = useState(false);
   const [showRecipes, setShowRecipes] = useState(false);
@@ -229,8 +231,35 @@ export default function Sidebar() {
   // lock) — its trigger disables, but Radix Tabs.Content still renders whatever `value`
   // already is.
   useEffect(() => {
-    if (!canUseMutatingTabs && MUTATING_TABS.includes(sidebarTab)) setSidebarTab('compute');
-  }, [canUseMutatingTabs, sidebarTab, setSidebarTab]);
+    if (!canEdit && MUTATING_TABS.includes(sidebarTab)) setSidebarTab('compute');
+  }, [canEdit, sidebarTab, setSidebarTab]);
+
+  const computeHistoryList = (
+    <HistoryList
+      items={computeItems}
+      selectedId={selectedComputeId}
+      onSelect={(id) => setSelectedComputeId(selectedComputeId === id ? null : id)}
+      onDelete={handleDelete}
+      emptyLabel="No compute history"
+      canEdit={canEdit}
+    />
+  );
+
+  // A checkpoint is a finished analysis: nothing can be run, plotted, or subset, so
+  // the tab strip and recipe footer would be dead chrome. Show the one thing it does
+  // carry — the history of what produced it.
+  if (serverless) {
+    return (
+      <aside className={`shrink-0 overflow-hidden border-r border-border bg-surface transition-[width] duration-200 ease-in-out ${leftMenuOpen ? 'w-60' : 'w-0'}`}>
+        <div className="w-60 h-full flex flex-col">
+          <div className="px-3 py-2 border-b border-border shrink-0 text-xs font-mono text-muted uppercase tracking-wide">
+            Analysis history
+          </div>
+          <div className="flex-1 overflow-y-auto">{computeHistoryList}</div>
+        </div>
+      </aside>
+    );
+  }
 
   return (
     <aside className={`shrink-0 overflow-hidden border-r border-border bg-surface transition-[width] duration-200 ease-in-out ${leftMenuOpen ? 'w-60' : 'w-0'}`}>
@@ -242,7 +271,7 @@ export default function Sidebar() {
       >
         <PanelTabs
           tabs={SIDEBAR_TABS.map((t) => {
-            const disabled = !canUseMutatingTabs && MUTATING_TABS.includes(t.id);
+            const disabled = !canEdit && MUTATING_TABS.includes(t.id);
             return {
               ...t,
               disabled,
@@ -255,14 +284,7 @@ export default function Sidebar() {
         />
 
         <Tabs.Content value="compute" className="flex-1 overflow-y-auto">
-          <HistoryList
-            items={computeItems}
-            selectedId={selectedComputeId}
-            onSelect={(id) => setSelectedComputeId(selectedComputeId === id ? null : id)}
-            onDelete={handleDelete}
-            emptyLabel="No compute history"
-            canEdit={canEdit}
-          />
+          {computeHistoryList}
         </Tabs.Content>
 
         <Tabs.Content value="plots" className="flex-1 overflow-y-auto">

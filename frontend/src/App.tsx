@@ -4,8 +4,8 @@ import { getSessions, getFunctions, getCirroAuth, getReadyz } from './api';
 import { isSpatialDisplay, isEmbeddingDisplay } from './types';
 import { resolveRegionSetColumn } from './lib/regions';
 import { DataSourceProvider, useApiSource } from './data/context';
-import { checkpointUrlFromLocation, useCheckpointSession } from './data/useCheckpointSession';
-import { fetchCheckpointIndex } from './data/checkpointIndex';
+import { useCheckpointSession } from './data/useCheckpointSession';
+import { checkpointUrlFromLocation, fetchCheckpointIndex } from './data/checkpointIndex';
 import CheckpointIndexPage from './components/CheckpointIndexPage';
 import { useSSE } from './hooks/useSSE';
 import { useSession } from './hooks/useSession';
@@ -171,11 +171,10 @@ export default function App() {
   const detail = selectedComputeId ? <ComputeDetail /> : selectedPlotId ? <PlotDetail /> : null;
 
   // Canvas mode is set by which tab is active — never a drawing mode when this viewer
-  // can neither change the session nor make browser-only changes (another viewer holds
-  // the edit lock, say). A checkpoint qualifies via `serverless`: its region/shape/
-  // subset tools all resolve locally. Sidebar also resets off a mutating tab, but the
-  // canvas checks the gate directly too rather than depending on that timing.
-  const canvasMode = !(canEdit || serverless) ? null
+  // can't change the session (a read-only checkpoint, or another viewer holds the edit
+  // lock). Sidebar also resets off a mutating tab, but the canvas checks the gate
+  // directly too rather than depending on that timing.
+  const canvasMode = !canEdit ? null
     : sidebarTab === 'regions'
     ? 'regions'
     : sidebarTab === 'annotations'

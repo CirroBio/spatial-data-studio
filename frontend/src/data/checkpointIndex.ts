@@ -19,6 +19,17 @@
 
 export const CHECKPOINT_INDEX_FILE = 'index.json';
 
+// Query parameter naming the checkpoint to open, resolved against the page URL so a
+// checkpoint sitting next to index.html can be referenced relatively. Lives in this
+// leaf module so the store can read it at initialization without importing anything
+// that imports the store back.
+export const CHECKPOINT_PARAM = 'checkpoint';
+
+export function checkpointUrlFromLocation(): string | null {
+  const raw = new URLSearchParams(window.location.search).get(CHECKPOINT_PARAM);
+  return raw ? new URL(raw, document.baseURI).href : null;
+}
+
 export interface CheckpointEntry {
   // As written in the manifest — what goes back into `?checkpoint=`, so the address
   // bar stays as short and portable as the manifest itself.
@@ -77,6 +88,6 @@ export async function fetchCheckpointIndex(): Promise<CheckpointIndex> {
  * the next. The bundle is already cached, so this costs a parse, not a download. */
 export function openCheckpointPath(path: string): void {
   const url = new URL(window.location.href);
-  url.search = `?checkpoint=${encodeURIComponent(path)}`;
+  url.search = `?${CHECKPOINT_PARAM}=${encodeURIComponent(path)}`;
   window.location.assign(url.href);
 }

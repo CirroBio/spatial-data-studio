@@ -3,7 +3,7 @@ import { useAppStore } from '../store/sessionStore';
 import { saveSession, disconnectFromCirro, getCirroAuth } from '../api';
 import { reportError } from '../lib/errors';
 import { useEditGate } from '../hooks/usePresence';
-import { checkpointUrlFromLocation } from '../data/useCheckpointSession';
+import { checkpointUrlFromLocation } from '../data/checkpointIndex';
 import AcknowledgementsDialog from './AcknowledgementsDialog';
 import CirroUploadDialog from './CirroUploadDialog';
 import CirroConnectDialog from './CirroConnectDialog';

@@ -11,15 +11,6 @@ import { isSpatialDisplay, type AppState, type SessionState } from '../types';
 import { openCheckpoint } from './checkpointSource';
 import type { DataSource } from './types';
 
-// Query parameter naming the checkpoint to open, resolved against the page URL so a
-// checkpoint sitting next to index.html can be referenced relatively.
-export const CHECKPOINT_PARAM = 'checkpoint';
-
-export function checkpointUrlFromLocation(): string | null {
-  const raw = new URLSearchParams(window.location.search).get(CHECKPOINT_PARAM);
-  return raw ? new URL(raw, document.baseURI).href : null;
-}
-
 function displayName(url: string): string {
   const last = url.split('/').pop() ?? url;
   return decodeURIComponent(last.split('?')[0]) || 'Checkpoint';

@@ -1288,27 +1288,19 @@ Details that make it work:
   annotations, subsetting and transform edits with no second notion of "can't write".
   `useSSE`/`useSession`/`usePresence` take an `enabled` flag and stay dormant.
 
-**Local-only interaction.** Three things the live app does through the backend have
-browser-only equivalents here, offered because they change only what you see:
-
-- **Lasso labelling.** `SpatialCanvas` resolves the rings with `indicesInRings`
-  instead of sending them for `polygon_query` (the embedding canvas already did this),
-  and `applyLocalRegion` turns the result into a categorical column installed on the
-  source via `setLocalColumn`, plus a `RegionSet` and an `ObsField` in the session
-  state. From there the ordinary `obs:<col>` colouring, legend and per-category colour
-  controls work unchanged — the column simply lives in the tab.
-- **Hiding cells** (`hiddenCells`) stands in for subsetting, which really opens a child
-  session. Presentation only, and reversible.
-- **Drawn shapes** keep their optimistic local update and skip the job. The gate is
-  `summary.read_only` (`shapesAreLocalOnly`): a session that cannot be written to can
-  only be edited locally. For a *live* read-only session the tools are disabled, so
-  that branch is unreachable there.
-
-The sidebar opens those tabs on `useLocalEditsOnly()`; `useEditGate` still says no, so
-nothing tries to write. **Snapshot export** becomes a canvas PNG capture
-(`lib/canvasCapture.ts`) — deck.gl 9 keeps `preserveDrawingBuffer` on, so the
-backbuffer is readable — and the backend-only menu entries (new/save session, snapshot
-gallery) are omitted rather than shown broken.
+**UI in this mode.** The left sidebar opens collapsed (`leftMenuOpen` defaults off
+when `?checkpoint=` is present — `store/sessionStore.ts`) and, when expanded, shows
+only the record of the analysis that produced the checkpoint: the compute-history
+list with no tab strip and no recipe footer (`Sidebar.tsx`'s serverless branch,
+gated on the URL rather than the async data source so the tab strip never flashes
+in). Plots, regions, annotations and subsetting are not offered — nothing can run.
+The browser-only edit plumbing those tabs once used on checkpoints
+(`applyLocalRegion`/`setLocalColumn`, `hiddenCells`, `shapesAreLocalOnly`) is still
+in the store and `DataSource`, but no UI reaches it in this mode. **Snapshot
+export** becomes a canvas PNG capture (`lib/canvasCapture.ts`) — deck.gl 9 keeps
+`preserveDrawingBuffer` on, so the backbuffer is readable — and the backend-only
+menu entries (new/save session, snapshot gallery) are omitted rather than shown
+broken.
 
 ### 14.3 Deploying a collection — `index.json`
 
