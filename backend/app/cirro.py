@@ -21,8 +21,12 @@ deployment layout (DESIGN §14.3), so an uploaded dataset renders itself.
 """
 from __future__ import annotations
 
+import asyncio
+import ipaddress
+import itertools
 import json
 import logging
+import re
 import secrets
 import shutil
 import tempfile
@@ -30,9 +34,12 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from .config import config
+from .deps import _in_executor
 from .schemas import checkpoint as checkpoint_schemas
+from .transport.sse import BUS
 
 _log = logging.getLogger(__name__)
 
@@ -142,15 +149,64 @@ class CredentialStore:
 CREDENTIALS = CredentialStore()
 
 
+# DNS labels: 1-63 chars of [a-z0-9-], no leading/trailing hyphen. Lowercase only —
+# validate_domain lowercases the host before matching.
+_HOSTNAME_RE = re.compile(r"^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))*$")
+
+
+def validate_domain(raw: str) -> str:
+    """Normalize a client-supplied Cirro domain to a bare hostname, or raise ValueError.
+
+    The domain is the one fully client-controlled input to the device-code flow, so
+    anything that could steer the backend's outbound requests somewhere unintended
+    (SSRF) is rejected: only a plain DNS name is accepted — given bare
+    ("app.cirro.bio") or as an https:// URL with an empty path — never a non-https
+    scheme, userinfo, explicit port, path/query/fragment, or an IP-literal host.
+    Every message here describes the required input format only, never reachability;
+    it is safe to show to the client (the router reflects it as a 400)."""
+    candidate = raw.strip()
+    # A bare hostname parses as a path under urlsplit, so give it a scheme first.
+    # "//host" inputs deliberately fall through to the empty-hostname rejection.
+    if "://" not in candidate:
+        candidate = "https://" + candidate
+    parts = urlsplit(candidate)
+    if parts.scheme != "https":
+        raise ValueError("the Cirro domain must be a bare hostname or an https:// URL")
+    if parts.username is not None or parts.password is not None:
+        raise ValueError("the Cirro domain must not include credentials")
+    try:
+        port = parts.port  # raises ValueError on a non-numeric port
+    except ValueError:
+        port = -1
+    if port is not None:
+        raise ValueError("the Cirro domain must not include a port")
+    if parts.path not in ("", "/") or parts.query or parts.fragment:
+        raise ValueError("the Cirro domain must not include a path or query")
+    host = (parts.hostname or "").lower()
+    if not host:
+        raise ValueError("the Cirro domain must include a hostname")
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        raise ValueError("the Cirro domain must be a hostname, not an IP address")
+    if not _HOSTNAME_RE.fullmatch(host):
+        raise ValueError(f"'{host}' is not a valid hostname")
+    return host
+
+
 def start_login(domain: str) -> tuple[str, Credential]:
     """Begin a device-code flow against `domain` and return (browser token, credential).
     Returns as soon as Cirro issues the login URL; completion is awaited on a background
-    thread, which flips the credential to connected/failed."""
+    thread, which flips the credential to connected/failed. Raises ValueError (before
+    any network I/O) when `domain` is not an acceptable Cirro domain."""
+    domain = validate_domain(domain)
     from cirro.auth.device_code import DeviceCodeAuth
     from cirro.config import AppConfig
 
     # AppConfig discovers the OAuth client id, region and auth endpoint from the
-    # domain alone, so the domain is the only thing the user has to supply.
+    # domain alone, so the (validated) domain is the only thing the user supplies.
     app_config = AppConfig(base_url=domain)
     auth = DeviceCodeAuth(
         client_id=app_config.client_id,
@@ -340,3 +396,82 @@ def upload_selection(*, cred: Credential, project_id: str, dataset_name: str,
                       description=description, upload_folder=upload_dir, folder=folder)
     finally:
         shutil.rmtree(upload_dir, ignore_errors=True)
+
+
+class UploadQueue:
+    """Background Cirro uploads behind a small concurrency cap so several large uploads
+    don't all realize at once; anything over the cap waits (pending). Each upload is
+    tracked as a row (id, dataset name, state, error) rather than a bare count, so the
+    frontend can name what is uploading and what failed.
+
+    Rows are **owned by the credential token that started them** and only ever served
+    to that caller. A row names a Cirro project and dataset, so in a multiuser app it
+    is not something to hand to every browser. That is also why a state change is
+    announced over SSE as a bare ping with no payload — the SSE bus is a broadcast, so
+    anything published on it reaches every client. Listeners re-fetch their own rows
+    from `GET /api/cirro/uploads`, which works identically under the SSE polling
+    fallback used where a deployment's gateway blocks event streams."""
+
+    def __init__(self, concurrency: int = 2):
+        self._concurrency = concurrency
+        self._sem: asyncio.Semaphore | None = None  # lazily bound to the running loop
+        self._ids = itertools.count(1)
+        self._uploads: dict[int, dict] = {}   # id -> row (carries its owner token)
+        # The event loop holds only weak references to tasks, so each one is pinned
+        # here until done — otherwise an in-flight upload task could be GC'd mid-run.
+        self._tasks: set[asyncio.Task] = set()
+
+    def _publish(self) -> None:
+        BUS.publish("cirro.upload.state", {})
+
+    def state(self, token: str | None) -> dict:
+        return {"uploads": [{k: v for k, v in row.items() if k != "token"}
+                            for row in self._uploads.values() if row["token"] == token]}
+
+    def submit(self, token: str | None, cred: Credential, project_id: str,
+               dataset_name: str, description: str, session_paths: list[str],
+               folder: str | None) -> int:
+        upload_id = next(self._ids)
+        self._uploads[upload_id] = {"id": upload_id, "token": token,
+                                    "dataset_name": dataset_name,
+                                    "state": "pending", "error": None}
+        task = asyncio.create_task(self._run(upload_id, cred, project_id, dataset_name,
+                                             description, session_paths, folder))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return upload_id
+
+    async def _run(self, upload_id, cred, project_id, dataset_name, description,
+                   session_paths, folder):
+        if self._sem is None:
+            self._sem = asyncio.Semaphore(self._concurrency)  # bind to the running loop
+
+        def _do():
+            return upload_selection(cred=cred, project_id=project_id,
+                                    dataset_name=dataset_name, description=description,
+                                    session_paths=session_paths, folder=folder)
+        row = self._uploads[upload_id]
+        self._publish()
+        async with self._sem:
+            row["state"] = "uploading"
+            self._publish()
+            try:
+                await _in_executor(_do)
+                row["state"] = "completed"
+            except Exception as e:
+                row["state"] = "failed"
+                row["error"] = str(e)
+            finally:
+                self._publish()
+
+    def dismiss(self, upload_id: int, token: str | None) -> None:
+        """Drop a settled row once its owner has seen it. Only the caller who started
+        an upload can dismiss it, and only once it has settled — an in-flight one keeps
+        reporting until it finishes."""
+        row = self._uploads.get(upload_id)
+        if row and row["token"] == token and row["state"] in ("completed", "failed"):
+            del self._uploads[upload_id]
+            self._publish()
+
+
+UPLOADS = UploadQueue()

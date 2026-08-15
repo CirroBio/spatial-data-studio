@@ -451,7 +451,6 @@ def run_snapshot_flow(client, sid):
     provenance metadata embedded in each file and a sidecar `.figure.json`. Verify
     preview -> render (both formats) -> list (with thumbnail) -> download PDF/PNG ->
     embedded metadata -> delete removes every artifact."""
-    import json
     disp = client.get(f"/api/sessions/{sid}").json()["app_state"]["displays"]
     spatial = next((d for d in disp if d["type"] == "spatial_canvas"), None)
     assert spatial, "no spatial display to snapshot"
@@ -854,7 +853,7 @@ def run_cirro_auth_flow(client):
     # Cirro project and dataset, so another browser must not see it. Driven through
     # the real endpoint; the upload itself fails in the background (this credential
     # has no live Cirro session), which is the failure path and settles the row.
-    from app.routers.cirro import _uploads
+    from app.cirro import UPLOADS
     decoy = os.path.join(str(config.DATA_DIR), "cirro_scope_probe.sdata.zarr.zip")
     with open(decoy, "wb") as fh:
         fh.write(b"not-a-real-zip")
@@ -876,7 +875,7 @@ def run_cirro_auth_flow(client):
 
         # ...and only its owner can dismiss it, once settled.
         deadline = time.time() + 30
-        while _uploads._uploads[mine]["state"] not in ("completed", "failed"):
+        while UPLOADS._uploads[mine]["state"] not in ("completed", "failed"):
             assert time.time() < deadline, "cirro upload row never settled"
             time.sleep(0.1)
         client.delete(f"/api/cirro/uploads/{mine}", headers={"X-SDS-Cirro-Token": "other"})
@@ -885,7 +884,7 @@ def run_cirro_auth_flow(client):
         assert client.delete(f"/api/cirro/uploads/{mine}",
                              headers=hdr).json()["uploads"] == []
     finally:
-        _uploads._uploads.pop(mine, None)
+        UPLOADS._uploads.pop(mine, None)
         os.remove(decoy)
     print("[ok] cirro: upload rows are scoped to their owner's credential")
 

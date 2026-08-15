@@ -68,6 +68,19 @@ def _frame_for(adata, sdata, path: str) -> pd.DataFrame:
         return adata.obs
     if element == "var":
         return adata.var
+    if element == "tables":
+        # "tables:<name>:obs|var" names a specific table so the inspector can preview
+        # a non-active one; bare "obs"/"var" above keeps meaning the active table.
+        # rpartition: the facet is always the last segment, whatever the table name.
+        table_name, _, field = name.rpartition(":")
+        if sdata is None or table_name not in sdata.tables:
+            raise KeyError(f"no table named {table_name!r}")
+        table = sdata.tables[table_name]
+        if field == "obs":
+            return table.obs
+        if field == "var":
+            return table.var
+        raise ValueError(f"unsupported table path: {path}")
     if element in ("shapes", "points"):
         if sdata is None:
             raise ValueError(f"no SpatialData object; cannot read {path}")

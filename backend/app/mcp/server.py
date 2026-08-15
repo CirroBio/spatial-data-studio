@@ -37,7 +37,7 @@ from ..registry.introspect import REGISTRY
 from ..transport import tables
 from ..transport.sse import BUS
 from .. import deps
-from ..deps import _in_executor, _read_locked
+from ..deps import _in_executor, _read_locked, default_save_path, search_var_names
 
 GUIDES_DIR = Path(__file__).parent / "guides"
 GUIDE_TOPICS = {
@@ -158,11 +158,10 @@ def _log_tail(sess, job_id: str) -> str | None:
 
 
 def _record(sess, job_id: str) -> dict | None:
-    for kind in ("compute", "plot"):
-        rec = sess._find_record(job_id, kind)
-        if rec is not None:
-            return {k: v for k, v in rec.items() if k != "_log"}
-    return None
+    rec = sess.find_record(job_id)
+    if rec is None:
+        return None
+    return {k: v for k, v in rec.items() if k != "_log"}
 
 
 def _job_report(sess, job_id: str, status: str) -> dict:
@@ -280,7 +279,7 @@ async def create_session(checkpoint_path: str | None = None, reader: dict | None
     if sess.status == "loading":
         out["note"] = "still loading; poll list_sessions until status is 'ready'"
     if sess.status == "errored":
-        job_ids = list(sess._jobs)
+        job_ids = sess.job_ids()
         out["log_tail"] = _log_tail(sess, job_ids[0]) if job_ids else None
     return out
 
@@ -317,8 +316,7 @@ async def save_checkpoint(session_id: str | None = None, path: str | None = None
     Default path: <data dir>/<session name> with a content-hash suffix."""
     agent.bind_agent()
     sess = _writable(session_id)
-    from ..main import _default_save_path
-    target = path or _default_save_path(sess)
+    target = path or default_save_path(sess)
     job_id = sess.enqueue_special("save", {"path": target, "hash_name": not path})
     status = await _await_job(sess, job_id, timeout_s) if wait else "queued"
     out = {"job_id": job_id, "status": status, "path": sess.store_path if status == "completed" else target}
@@ -361,11 +359,7 @@ async def browse_data_dir(path: str | None = None, include_files: bool = False) 
     Entries are dirs, loadable datasets (.zarr/.zarr.zip), and — with include_files —
     plain files. Use to locate a raw vendor bundle for a reader import."""
     agent.bind_agent()
-    from ..main import fs_browse
-    try:
-        return await fs_browse(path, include_files)
-    except HTTPException as e:
-        raise ValueError(str(e.detail))
+    return await _in_executor(datasets.browse, data_roots(), path, include_files)
 
 
 @mcp_server.tool()
@@ -521,7 +515,7 @@ async def view_plot(plot_id: str, session_id: str | None = None,
     it first (a queued job) unless redraw_if_missing=False."""
     agent.bind_agent()
     sess = _sess(session_id)
-    rec = sess._find_record(plot_id, "plot")
+    rec = sess.find_record(plot_id)
     if rec is None:
         raise ValueError("no such plot (see list_plots)")
     png = (sess.plot_figures.get(plot_id) or {}).get("png")
@@ -534,7 +528,7 @@ async def view_plot(plot_id: str, session_id: str | None = None,
             report = _job_report(sess, plot_id, status)
             raise ValueError(f"redraw did not complete: {json.dumps(report)}")
         png = (sess.plot_figures.get(plot_id) or {}).get("png")
-        rec = sess._find_record(plot_id, "plot") or rec
+        rec = sess.find_record(plot_id) or rec
     if png is None:
         raise ValueError("figure not available (status: %s); pass redraw_if_missing=True"
                          % rec.get("status"))
@@ -579,7 +573,7 @@ async def update_display(encoding: dict | None = None, viewport: dict | None = N
     `viewport` ({target, zoom}) repositions the saved camera."""
     agent.bind_agent()
     sess = _writable(session_id)
-    display = snapshots._display(sess, display_id)
+    display = snapshots.resolve_display(sess, display_id)
     if display is None:
         raise ValueError("display not found (see get_session)")
     spec = {**display, "encoding": {**display.get("encoding", {}), **(encoding or {})}}
@@ -608,6 +602,23 @@ async def add_display(type: str, encoding: dict, session_id: str | None = None) 
 
 
 # ---- selections: inspect / annotate / subset ----------------------------------------
+async def _selection_payload(sess, polygons: list | None, cell_indices: list | None,
+                             space: str, display_id: str | None) -> dict:
+    """The selection half of an annotate/subset job payload: enforces the
+    exactly-one-of contract, coerces explicit indices, and resolves an
+    embedding-space polygon selection to cell indices here (the worker resolves
+    world-space polygons itself)."""
+    if (polygons is None) == (cell_indices is None):
+        raise ValueError("give exactly one of polygons or cell_indices")
+    if cell_indices is not None:
+        return {"cell_indices": [int(i) for i in cell_indices]}
+    if space == "embedding":
+        display = snapshots.resolve_display(sess, display_id)
+        mask = await _read_locked(sess, vision.cells_in_polygons, sess, display, polygons, "embedding")
+        return {"cell_indices": [int(i) for i in mask.nonzero()[0]]}
+    return {"polygons": polygons}
+
+
 @mcp_server.tool()
 async def inspect_region(polygons: list, space: str = "spatial",
                          session_id: str | None = None, display_id: str | None = None,
@@ -619,7 +630,7 @@ async def inspect_region(polygons: list, space: str = "spatial",
     space='embedding': polygons are embedding coordinates of display_id's axes."""
     agent.bind_agent()
     sess = _sess(session_id)
-    display = snapshots._display(sess, display_id) if space == "embedding" else None
+    display = snapshots.resolve_display(sess, display_id) if space == "embedding" else None
 
     def _run():
         mask = vision.cells_in_polygons(sess, display, polygons, space)
@@ -643,19 +654,10 @@ async def annotate_region(region_set: str, category: str, polygons: list | None 
     cell_indices) or cell_indices directly. Verify with inspect_region first."""
     agent.bind_agent()
     sess = _writable(session_id)
-    if (polygons is None) == (cell_indices is None):
-        raise ValueError("give exactly one of polygons or cell_indices")
     payload: dict = {"region_set": region_set, "category": category}
     if color:
         payload["color"] = color
-    if cell_indices is not None:
-        payload["cell_indices"] = [int(i) for i in cell_indices]
-    elif space == "embedding":
-        display = snapshots._display(sess, display_id)
-        mask = await _read_locked(sess, vision.cells_in_polygons, sess, display, polygons, "embedding")
-        payload["cell_indices"] = [int(i) for i in mask.nonzero()[0]]
-    else:
-        payload["polygons"] = polygons
+    payload.update(await _selection_payload(sess, polygons, cell_indices, space, display_id))
     job_id = sess.enqueue_special("annotate", payload)
     status = await _await_job(sess, job_id, timeout_s) if wait else "queued"
     out = {"job_id": job_id, "status": status}
@@ -682,17 +684,8 @@ async def subset_to_region(polygons: list | None = None, cell_indices: list | No
     cell_indices. The child becomes the assistant's active session."""
     agent.bind_agent()
     sess = _writable(session_id)
-    if (polygons is None) == (cell_indices is None):
-        raise ValueError("give exactly one of polygons or cell_indices")
-    payload: dict = {"invert": bool(invert)}
-    if cell_indices is not None:
-        payload["cell_indices"] = [int(i) for i in cell_indices]
-    elif space == "embedding":
-        display = snapshots._display(sess, display_id)
-        mask = await _read_locked(sess, vision.cells_in_polygons, sess, display, polygons, "embedding")
-        payload["cell_indices"] = [int(i) for i in mask.nonzero()[0]]
-    else:
-        payload["polygons"] = polygons
+    payload: dict = {"invert": bool(invert),
+                     **await _selection_payload(sess, polygons, cell_indices, space, display_id)}
     parent_id = sess.id
     job_id = sess.enqueue_special("subset", payload)
     if not wait:
@@ -791,8 +784,9 @@ async def get_obs_summary(column: str, session_id: str | None = None) -> dict:
 @mcp_server.tool()
 async def get_table(path: str, offset: int = 0, limit: int = 50,
                     session_id: str | None = None) -> dict:
-    """Page through a dataframe: path is 'obs', 'var', 'shapes:<name>', or
-    'points:<name>'. Returns columns with dtypes and the requested row page —
+    """Page through a dataframe: path is 'obs', 'var', 'tables:<name>:obs',
+    'tables:<name>:var', 'shapes:<name>', or 'points:<name>' (bare obs/var read
+    the active table). Returns columns with dtypes and the requested row page —
     e.g. read QC metrics from obs or gene stats from var."""
     agent.bind_agent()
     sess = _sess(session_id)
@@ -813,8 +807,7 @@ async def search_genes(query: str = "", session_id: str | None = None,
     """Search the session's gene names (var_names); prefix matches rank first. Use a
     hit as 'X:<gene>' in a display's color_by, or in analysis params."""
     agent.bind_agent()
-    from ..main import var_names
-    return await var_names(_sid(session_id), query, limit)
+    return {"names": await search_var_names(_sess(session_id), query, limit)}
 
 
 # ---- publication figures --------------------------------------------------------------

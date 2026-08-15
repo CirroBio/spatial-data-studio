@@ -22,23 +22,26 @@ from ..transport.sse import BUS
 
 
 class RWLock:
-    """Many readers OR one writer (DESIGN §20.2)."""
+    """Many readers OR one writer, writer-preferring (DESIGN §20.2): a waiting writer
+    blocks NEW readers while in-flight ones drain, so sustained overlapping reads
+    (deck.gl tile bursts) can't starve a compute commit/save indefinitely."""
     def __init__(self):
         self._cond = threading.Condition()
         self._readers = 0
         self._writer = False
+        self._writers_waiting = 0
 
     def acquire_read(self, timeout=None):
-        """Block until the write lock is free, then register a reader. With `timeout`
-        (seconds), give up and return False if a writer still holds the lock when it
-        elapses; return True once the read lock is held."""
+        """Block until no writer holds — or is waiting for — the lock, then register a
+        reader. With `timeout` (seconds), give up and return False if the writer side
+        still blocks entry when it elapses; return True once the read lock is held."""
         with self._cond:
             if timeout is None:
-                while self._writer:
+                while self._writer or self._writers_waiting > 0:
                     self._cond.wait()
             else:
                 deadline = time.monotonic() + timeout
-                while self._writer:
+                while self._writer or self._writers_waiting > 0:
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         return False
@@ -54,9 +57,20 @@ class RWLock:
 
     def acquire_write(self):
         with self._cond:
-            while self._writer or self._readers > 0:
-                self._cond.wait()
-            self._writer = True
+            # Register as waiting BEFORE blocking so acquire_read stops admitting new
+            # readers (writer preference). try/finally: an interrupted wait must not
+            # leak the count, or readers would be locked out forever.
+            self._writers_waiting += 1
+            try:
+                while self._writer or self._readers > 0:
+                    self._cond.wait()
+                self._writer = True
+            finally:
+                self._writers_waiting -= 1
+                if not self._writer:
+                    # Interrupted before taking ownership: readers this waiting
+                    # writer held back may have no other notifier left, wake them.
+                    self._cond.notify_all()
 
     def release_write(self):
         with self._cond:
@@ -496,13 +510,23 @@ class Session:
 
         with self.lock.writing():
             if result.new_object is not None:
+                new_object = result.new_object
+                import anndata
+                if isinstance(new_object, anndata.AnnData):
+                    # Reflected read.* squidpy readers (visium/vizgen/nanostring) return
+                    # a bare AnnData, which has no .tables: adopting it as-is leaves
+                    # _default_table_key None and the session "ready" but silently dead.
+                    # Wrap it here, at the single adoption point, so the raster-collision
+                    # guard and everything downstream sees a SpatialData.
+                    from spatialdata import SpatialData
+                    new_object = SpatialData(tables={"table": new_object})
                 # Adopt a returned object (read bootstrap / Edge B) under the write lock
                 # so readers never see a new sdata with a stale table key.
-                replaced = self.sdata is not None and self.sdata is not result.new_object
+                replaced = self.sdata is not None and self.sdata is not new_object
                 if replaced:
                     from .. import imaging
                     imaging.evict_caches(self.sdata)  # old id() is about to be freed
-                self.sdata = result.new_object
+                self.sdata = new_object
                 self.force_full = True  # a freshly adopted object must be written whole once
                 # A reader's images/labels can be single-scale or huge-chunked; tile
                 # them now so the canvas never realizes a multi-GB chunk per tile.
@@ -552,6 +576,13 @@ class Session:
                         # entry. An ordinary in-session mutation, never a re-import, so
                         # the existing known_stores map is always trusted.
                         self._adopt_rasters(self.raster_stores)
+                        # imaging's chunk/norm caches key on (id(sdata), element, ...),
+                        # and an in-place facet merge keeps the same object identity —
+                        # so without an eviction, raster_store would keep serving
+                        # pre-compute chunk bytes under the new ETag and thumbnails
+                        # would keep the stale channel norm.
+                        from .. import imaging
+                        imaging.evict_caches(self.sdata)
 
         self.saved = False  # a completed compute/plot changed the object or its cached state
 
@@ -690,14 +721,12 @@ class Session:
                                          hash_name=hash_name)
             return save_spatialdata(self.sdata, path, self.app_state, hash_name=hash_name)
 
-    def _run_set_transform(self, job_id, payload):
-        """Set the points->global transform on the active table's region element and
-        persist to disk so it survives a session restart (§3.1 mutating job)."""
-        from . import transform
-        with self.lock.writing():
-            region = transform.set_affine6(self.sdata, self.active_table(), payload["affine"])
-        if region:
-            self.dirty_transforms.add(region)
+    def _save_and_finish(self, job_id: str, payload: dict, kind: str,
+                         bump_fields: list | None = None) -> None:
+        """Shared completion tail for the checkpoint-writing jobs (save, set_transform):
+        validate the target path, write the checkpoint under the read lock (data reads
+        keep flowing during a multi-GB zip), then flip the saved-state bookkeeping and
+        publish the job's terminal event."""
         target = Path(payload["path"]).resolve()
         if not within_data_dir(target):
             raise ValueError("save path is outside the data directory")
@@ -706,23 +735,24 @@ class Session:
         self.saved = True
         self._clear_dirty()
         self._jobs[job_id]["status"] = "completed"
-        appstate.bump_versions(self.app_state, ["obsm:spatial"])
-        BUS.publish("job.completed", {"session_id": self.id, "job_id": job_id, "kind": "set_transform",
+        if bump_fields:
+            appstate.bump_versions(self.app_state, bump_fields)
+        BUS.publish("job.completed", {"session_id": self.id, "job_id": job_id, "kind": kind,
                                       "path": self.store_path,
                                       "data_versions": self.app_state["data_versions"]})
 
+    def _run_set_transform(self, job_id, payload):
+        """Set the points->global transform on the active table's region element and
+        persist to disk so it survives a session restart (§3.1 mutating job)."""
+        from . import transform
+        with self.lock.writing():
+            region = transform.set_affine6(self.sdata, self.active_table(), payload["affine"])
+        if region:
+            self.dirty_transforms.add(region)
+        self._save_and_finish(job_id, payload, "set_transform", bump_fields=["obsm:spatial"])
+
     def _run_save(self, job_id, payload):
-        target = Path(payload["path"]).resolve()
-        if not within_data_dir(target):
-            raise ValueError("save path is outside the data directory")
-        with self.lock.reading():
-            path = self._write_checkpoint(payload["path"], payload.get("hash_name", False))
-        self.store_path = path
-        self.saved = True
-        self._clear_dirty()
-        self._jobs[job_id]["status"] = "completed"
-        BUS.publish("job.completed", {"session_id": self.id, "job_id": job_id, "kind": "save",
-                                      "path": path, "data_versions": self.app_state["data_versions"]})
+        self._save_and_finish(job_id, payload, "save")
 
     def _run_subset(self, job_id, payload):
         # No lock held here: perform_subset reads self.sdata under its own read lock
@@ -817,6 +847,16 @@ class Session:
                 return r
         return None
 
+    def find_record(self, job_id: str) -> dict | None:
+        """Look up a job's durable history record in either collection. Public wrapper
+        over `_find_record` for callers outside this package (e.g. the MCP surface),
+        mirroring the is_table_facet precedent in registry/base.py."""
+        for kind in ("compute", "plot"):
+            rec = self._find_record(job_id, kind)
+            if rec is not None:
+                return rec
+        return None
+
     def _fail(self, job_id, kind, error, log=""):
         self._jobs[job_id]["status"] = "failed"
         self._failed_logs[job_id] = log or error
@@ -878,6 +918,13 @@ class Session:
     def job_status(self, job_id: str):
         job = self._jobs.get(job_id)
         return job["status"] if job else None
+
+    def job_ids(self) -> list[str]:
+        """Ids of every job in the bookkeeping table, whatever its status
+        (`queue_view` shows only queued/running). Public for callers outside this
+        package — the MCP surface reads an errored load's job id to fetch its log
+        tail — mirroring `find_record`."""
+        return list(self._jobs)
 
     def get_log(self, job_id: str):
         for kind in ("compute", "plot"):

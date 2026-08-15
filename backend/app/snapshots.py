@@ -37,7 +37,7 @@ from pathlib import Path
 import numpy as np
 
 from .config import config, within_data_dir
-from . import imaging
+from . import imaging, recipes
 
 # One snapshot is a set of sibling files sharing a base name `<slug>-<hash>`:
 #   <base>.figure.json        sidecar metadata (the gallery lists these)
@@ -120,7 +120,9 @@ def _viridis_lut() -> np.ndarray:
     return _VIRIDIS
 
 
-def _display(session, display_id: str | None):
+def resolve_display(session, display_id: str | None):
+    """The display to render: by id, else the spatial canvas, else the first.
+    Public: also the resolver mcp/server.py's display-addressed tools use."""
     displays = session.app_state.get("displays", [])
     if display_id:
         for d in displays:
@@ -447,12 +449,18 @@ def _draw_minimap(fig, session, enc, element, pts, bbox, facecolor, dpi) -> bool
 
 # ---- the render core ---------------------------------------------------------
 def _render_figure(session, spec: dict):
-    """Render into an in-memory matplotlib Figure. Returns (fig, render_meta)."""
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
+    """Render into an in-memory matplotlib Figure. Returns (fig, render_meta).
 
-    display = _display(session, spec.get("display_id"))
+    Deliberately never pyplot: pyplot's Gcf figure registry is process-global and
+    unlocked (registry/base.py's _PLOT_LOCK exists for that hazard on the plot path),
+    and this runs on concurrent FastAPI executor threads — the export modal re-renders
+    a preview per setting change. A directly constructed Figure touches no global
+    state, so renders are thread-safe with no lock and need no plt.close(); savefig
+    swaps in the right canvas class per format (pdf/png) on its own."""
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+
+    display = resolve_display(session, spec.get("display_id"))
     if display is None:
         raise ValueError("no display to snapshot")
     enc = display.get("encoding", {})
@@ -490,7 +498,8 @@ def _render_figure(session, spec: dict):
     background = enc.get("background") or "dark"
     facecolor = PLOT_BACKGROUNDS.get(background, PLOT_BACKGROUNDS["dark"])
 
-    fig = plt.figure(figsize=(width_px / dpi, height_px / dpi), dpi=dpi)
+    fig = Figure(figsize=(width_px / dpi, height_px / dpi), dpi=dpi)
+    FigureCanvasAgg(fig)  # a bare Figure has no canvas; savefig needs one attached
     fig.patch.set_facecolor(facecolor)
     ax = fig.add_axes([0, 0, 1, 1])
     ax.set_facecolor(facecolor)
@@ -558,19 +567,16 @@ def _render_figure(session, spec: dict):
 def render_preview(session, spec: dict) -> bytes:
     """A low-cost PNG of the framing for the modal preview. Same core, no file writes
     and no embedded metadata."""
-    import matplotlib.pyplot as plt
     with session.lock.reading():
         fig, _ = _render_figure(session, spec)
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=fig.dpi)
-    plt.close(fig)
     return buf.getvalue()
 
 
 def _metadata(session, spec: dict, display, render_meta: dict, formats: list[str]) -> dict:
     enc = display.get("encoding", {})
-    recipe = [{"namespace": r["namespace"], "function": r["function"], "params": r["params"]}
-              for r in session.app_state.get("compute_history", []) if r.get("status") == "completed"]
+    recipe = recipes.steps_from_history(session.app_state)
     return {
         "schema_version": SNAPSHOT_SCHEMA_VERSION,
         "label": spec.get("label") or session.name,
@@ -592,10 +598,9 @@ def save_snapshot(session, spec: dict) -> dict:
     {viewport:{target,zoom}, width_px, height_px, dpi, formats:['pdf'|'png'], label?,
      display_id?, include_minimap?}. Writes the chosen formats + a thumbnail + a sidecar
      `.figure.json`, each embedding the provenance metadata."""
-    import matplotlib.pyplot as plt
     if session.sdata is None:
         return {"status": "failed", "error": "no data to snapshot"}
-    display = _display(session, spec.get("display_id"))
+    display = resolve_display(session, spec.get("display_id"))
     if display is None:
         return {"status": "failed", "error": "no display to snapshot"}
     formats = [f for f in (spec.get("formats") or ["pdf"]) if f in ("pdf", "png")] or ["pdf"]
@@ -621,7 +626,6 @@ def save_snapshot(session, spec: dict) -> dict:
         # Thumbnail (always) — a small PNG the gallery grid reads.
         thumb_dpi = max(1, int(THUMB_MAX_PX / max(fig.get_size_inches())))
         fig.savefig(os.path.join(d, f"{base}{THUMB_SUFFIX}"), format="png", dpi=thumb_dpi)
-        plt.close(fig)
 
         with open(os.path.join(d, f"{base}{FIGURE_EXT}"), "w") as f:
             f.write(meta_json)

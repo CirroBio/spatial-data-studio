@@ -2,6 +2,8 @@
 session-lookup / executor / read-lock / image-render helpers used by both main.py
 and every router module. Kept out of main.py so routers can import them without a
 circular dependency on the app object (main.py imports the routers, not vice versa).
+Session-scoped business logic shared between a route and the MCP surface (the
+default checkpoint path, the var-name search) lives here too, for the same reason.
 """
 import asyncio
 from contextvars import ContextVar
@@ -79,6 +81,34 @@ async def bind_client_id(x_sds_client_id: str | None = Header(default=None)) -> 
 
 async def _in_executor(fn, *a):
     return await asyncio.get_running_loop().run_in_executor(None, fn, *a)
+
+
+def default_save_path(sess) -> str:
+    """Checkpoint path to use when the caller doesn't give one explicitly — shared by
+    the save/points-transform routes and the MCP save_checkpoint tool. The filename's
+    content-hash suffix is (re)computed from the written bytes on every save (see
+    `_save_zip`), so this only needs the checkpoint's clean base name - stripping any
+    hash a previous save already appended keeps it from stacking a new one on top."""
+    from .persistence.store import strip_content_hash, CHECKPOINT_EXT
+    return str(config.DATA_DIR / f"{strip_content_hash(sess.name)}{CHECKPOINT_EXT}")
+
+
+async def search_var_names(sess, q: str = "", limit: int = 50) -> list[str]:
+    """Search the session's var_names (genes) — the color-by gene picker route and
+    the MCP search_genes tool. adata can carry tens of thousands of genes, so match
+    server-side and cap the result; prefix hits rank first, then substring hits."""
+    def _search():
+        names = [str(v) for v in sess.active_table().var_names]
+        ql = q.strip().lower()
+        if not ql:
+            return names[:limit]
+        starts = [s for s in names if s.lower().startswith(ql)]
+        if len(starts) >= limit:
+            return starts[:limit]
+        contains = [s for s in names if ql in s.lower() and not s.lower().startswith(ql)]
+        return (starts + contains)[:limit]
+
+    return await _read_locked(sess, _search)
 
 
 async def _read_locked(sess, fn, *a):

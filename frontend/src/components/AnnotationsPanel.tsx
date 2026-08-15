@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { useAppStore } from '../store/sessionStore';
 import ColorSwatchPicker from './ColorSwatchPicker';
 import ShapeToolbar from './ShapeToolbar';
@@ -39,14 +39,32 @@ export default function AnnotationsPanel() {
   // coalescing pattern SpatialCanvas uses for display-encoding edits, so a
   // slider drag doesn't fire a job per tick. The upsert is immediate (canvas tracks the
   // drag live); the flush re-reads the latest stored shape via sendShapeUpdate, so a
-  // captured-early snapshot can't revert a concurrent drag/edit.
-  const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // captured-early snapshot can't revert a concurrent drag/edit. One timer per shape
+  // id: editing shape B inside shape A's window must not cancel A's pending flush.
+  const persistTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   function persistShape(shape: ShapeAnnotation) {
     upsertShapeAnnotation(shape);
     if (!activeSessionId) return;
-    if (persistTimer.current) clearTimeout(persistTimer.current);
-    persistTimer.current = setTimeout(() => sendShapeUpdate(shape.id), 500);
+    const timers = persistTimers.current;
+    clearTimeout(timers.get(shape.id));
+    timers.set(shape.id, setTimeout(() => {
+      timers.delete(shape.id);
+      sendShapeUpdate(shape.id);
+    }, 500));
   }
+  useEffect(() => {
+    const timers = persistTimers.current;
+    return () => {
+      // Flush rather than drop on unmount: an edit still inside its debounce window
+      // must persist. Safe after unmount — sendShapeUpdate reads the store, not
+      // component state, and no-ops for a shape deleted meanwhile.
+      for (const [id, timer] of timers) {
+        clearTimeout(timer);
+        sendShapeUpdate(id);
+      }
+      timers.clear();
+    };
+  }, [sendShapeUpdate]);
 
   const selectedShape = shapeAnnotations.find((s) => s.id === selectedShapeId) ?? null;
 

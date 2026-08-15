@@ -65,12 +65,19 @@ def _guess_n(vals: pd.Series, max_n=16, min_n=2) -> int:
 def _find_grid(vals: pd.Series, n: int) -> np.ndarray:
     gm, _ = _gaussian_mixture(vals, n)
     grid = np.sort(gm.means_[:, 0])
-    dists = np.diff(grid)
-    median_dist = np.median(dists)
-    for i in range(1, len(grid)):
-        if dists[i - 1] > 1.75 * median_dist:
-            grid = np.insert(grid, i, (grid[i - 1] + grid[i]) / 2)
-    return grid
+    median_dist = np.median(np.diff(grid))
+    # A gap much wider than the median spacing means the mixture skipped an empty
+    # grid line (a row/column with a missing core); fill it with the midpoint.
+    # Rebuilt in one pass over adjacent pairs: mutating `grid` with np.insert while
+    # iterating shifts every later index, so a second wide gap would get its
+    # midpoint computed from the wrong pair of lines.
+    lines = []
+    for lo, hi in zip(grid[:-1], grid[1:]):
+        lines.append(lo)
+        if hi - lo > 1.75 * median_dist:
+            lines.append((lo + hi) / 2)
+    lines.append(grid[-1])
+    return np.array(lines)
 
 
 def _closest_core(cells: pd.DataFrame, cores: pd.DataFrame) -> pd.DataFrame:

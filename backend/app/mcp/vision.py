@@ -200,14 +200,10 @@ def render_view(session, display_id: str | None = None, viewport=None,
     """Render one display to (png_bytes, coordinate_meta). `viewport` is
     {target, zoom}, the string "fit", or None (the display's own viewport, falling
     back to fit)."""
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
     width_px = int(min(max(width_px, 64), MAX_RENDER_PX))
     height_px = int(min(max(height_px, 64), MAX_RENDER_PX))
 
-    display = snapshots._display(session, display_id)
+    display = snapshots.resolve_display(session, display_id)
     if display is None:
         raise ValueError("session has no display to render" if display_id is None
                          else f"display {display_id} not found")
@@ -221,32 +217,31 @@ def render_view(session, display_id: str | None = None, viewport=None,
             viewport = display["viewport"]
         spec = {"display_id": display.get("id"), "viewport": viewport,
                 "width_px": width_px, "height_px": height_px, "dpi": RENDER_DPI}
+        # _render_figure builds a bare (non-pyplot) Figure — no Gcf registration, so
+        # nothing to close and concurrent renders can't corrupt shared figure state.
         fig, render_meta = snapshots._render_figure(session, spec)
-        try:
-            ax = fig.axes[0]
-            target, zoom = viewport["target"], float(viewport["zoom"])
-            bbox = snapshots._window(target, zoom, width_px, height_px)
+        ax = fig.axes[0]
+        target, zoom = viewport["target"], float(viewport["zoom"])
+        bbox = snapshots._window(target, zoom, width_px, height_px)
 
-            # view -> world: identity unless the display renders in image-pixel space.
-            element = snapshots._image_element(session, enc) if kind == "spatial" else None
-            p2w = (imaging.pixel_to_world(session.sdata, element, session.active_table())
-                   if element is not None else np.eye(3))
-            w2v = np.linalg.inv(p2w)
+        # view -> world: identity unless the display renders in image-pixel space.
+        element = snapshots._image_element(session, enc) if kind == "spatial" else None
+        p2w = (imaging.pixel_to_world(session.sdata, element, session.active_table())
+               if element is not None else np.eye(3))
+        w2v = np.linalg.inv(p2w)
 
-            grid_meta = None
-            if include_grid:
-                is_dark = (enc.get("background") or "dark") == "dark"
-                grid_meta = _draw_grid(ax, bbox, p2w, w2v, "white" if is_dark else "black")
-            if mark_points or mark_polygons:
-                _draw_marks(ax, w2v, mark_points, mark_polygons)
+        grid_meta = None
+        if include_grid:
+            is_dark = (enc.get("background") or "dark") == "dark"
+            grid_meta = _draw_grid(ax, bbox, p2w, w2v, "white" if is_dark else "black")
+        if mark_points or mark_polygons:
+            _draw_marks(ax, w2v, mark_points, mark_polygons)
 
-            buf = io.BytesIO()
-            fig.savefig(buf, format="png", dpi=fig.dpi)
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", dpi=fig.dpi)
 
-            meta = _coordinate_meta(ax, p2w, width_px, height_px, viewport, enc, kind,
-                                    render_meta, grid_meta)
-        finally:
-            plt.close(fig)
+        meta = _coordinate_meta(ax, p2w, width_px, height_px, viewport, enc, kind,
+                                render_meta, grid_meta)
     return buf.getvalue(), meta
 
 

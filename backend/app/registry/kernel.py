@@ -82,7 +82,8 @@ def _restore_transforms(env: dict, pre: dict | None = None) -> dict:
     `pre` is the parent's pre-call snapshot (correct for a reshaped object that came
     *from* the parent, where the transform is stripped on the way into the child);
     the child's own snapshot covers a freshly-created object (the read bootstrap).
-    The parent snapshot wins where both exist."""
+    The parent snapshot wins where both exist — so callers must pass `pre` only when
+    `new_object` derives from the parent's own dataset (see `run_library_call`)."""
     from spatialdata.transformations import set_transformation
     sdata = env.get("new_object")
     captured = {**(env.pop("element_transforms", None) or {}), **(pre or {})}
@@ -201,7 +202,15 @@ def _child_mutate(mutate, adata, sdata):
 
 def run_library_call(*, library, path, effect_class, injected_order, bound, adata, sdata, image) -> dict:
     from ..transport import livelog
-    pre = _capture_transforms(sdata) if sdata is not None else {}
+    # Transform snapshots are keyed by element NAME, not dataset identity (the same
+    # trap as session.py's known_stores reset on re-import): a read effect re-run on
+    # an already-open session replaces the dataset wholesale, so the parent's
+    # pre-call snapshot describes the PREVIOUS dataset — letting it win would stamp
+    # the old dataset's transforms onto same-named elements of the new one (whose
+    # own transforms were lost to dask pickling). Restore a read's new object from
+    # the child snapshot only; `pre` is legitimate solely on compute paths, where
+    # the returned object derives from the parent's own dataset.
+    pre = _capture_transforms(sdata) if sdata is not None and effect_class != "read" else {}
     # Stream a read bootstrap's log to the client as it runs; nothing else streams.
     sink = livelog.current_sink() if effect_class == "read" else None
     with livelog.child_log_stream(sink) as log_queue:

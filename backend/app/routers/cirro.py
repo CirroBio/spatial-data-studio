@@ -5,16 +5,16 @@ Every endpoint here is scoped to the calling browser's own Cirro identity, named
 the `X-SDS-Cirro-Token` header the connect call mints (see `cirro.CredentialStore`).
 There is no server-side Cirro credential and nothing is shared between browsers.
 """
-import asyncio
-import itertools
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, Header, HTTPException
 
-from ..cirro import CREDENTIALS, CirroAuthError, Credential
+from ..cirro import CREDENTIALS, UPLOADS, CirroAuthError, Credential
 from ..config import config, within_data_dir
-from ..transport.sse import BUS
 from ..deps import _in_executor
+
+_log = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -33,80 +33,6 @@ def _require(token: str | None) -> Credential:
         return cred
     except CirroAuthError as e:
         raise HTTPException(401, str(e))
-
-
-class UploadQueue:
-    """Background Cirro uploads behind a small concurrency cap so several large uploads
-    don't all realize at once; anything over the cap waits (pending). Each upload is
-    tracked as a row (id, dataset name, state, error) rather than a bare count, so the
-    frontend can name what is uploading and what failed.
-
-    Rows are **owned by the credential token that started them** and only ever served
-    to that caller. A row names a Cirro project and dataset, so in a multiuser app it
-    is not something to hand to every browser. That is also why a state change is
-    announced over SSE as a bare ping with no payload — the SSE bus is a broadcast, so
-    anything published on it reaches every client. Listeners re-fetch their own rows
-    from `GET /api/cirro/uploads`, which works identically under the SSE polling
-    fallback used where a deployment's gateway blocks event streams."""
-
-    def __init__(self, concurrency: int = 2):
-        self._concurrency = concurrency
-        self._sem: asyncio.Semaphore | None = None  # lazily bound to the running loop
-        self._ids = itertools.count(1)
-        self._uploads: dict[int, dict] = {}   # id -> row (carries its owner token)
-
-    def _publish(self):
-        BUS.publish("cirro.upload.state", {})
-
-    def state(self, token: str | None) -> dict:
-        return {"uploads": [{k: v for k, v in row.items() if k != "token"}
-                            for row in self._uploads.values() if row["token"] == token]}
-
-    def submit(self, token, cred, project_id, dataset_name, description, session_paths,
-               folder) -> int:
-        upload_id = next(self._ids)
-        self._uploads[upload_id] = {"id": upload_id, "token": token,
-                                    "dataset_name": dataset_name,
-                                    "state": "pending", "error": None}
-        asyncio.create_task(self._run(upload_id, cred, project_id, dataset_name,
-                                      description, session_paths, folder))
-        return upload_id
-
-    async def _run(self, upload_id, cred, project_id, dataset_name, description,
-                   session_paths, folder):
-        from .. import cirro
-        if self._sem is None:
-            self._sem = asyncio.Semaphore(self._concurrency)  # bind to the running loop
-
-        def _do():
-            return cirro.upload_selection(cred=cred, project_id=project_id,
-                                          dataset_name=dataset_name, description=description,
-                                          session_paths=session_paths, folder=folder)
-        row = self._uploads[upload_id]
-        self._publish()
-        async with self._sem:
-            row["state"] = "uploading"
-            self._publish()
-            try:
-                await _in_executor(_do)
-                row["state"] = "completed"
-            except Exception as e:
-                row["state"] = "failed"
-                row["error"] = str(e)
-            finally:
-                self._publish()
-
-    def dismiss(self, upload_id: int, token: str | None) -> None:
-        """Drop a settled row once its owner has seen it. Only the caller who started
-        an upload can dismiss it, and only once it has settled — an in-flight one keeps
-        reporting until it finishes."""
-        row = self._uploads.get(upload_id)
-        if row and row["token"] == token and row["state"] in ("completed", "failed"):
-            del self._uploads[upload_id]
-            self._publish()
-
-
-_uploads = UploadQueue()
 
 
 # ---- auth ------------------------------------------------------------------
@@ -133,9 +59,19 @@ async def cirro_auth_start(body: dict, x_sds_cirro_token: str | None = Header(de
     if not domain:
         raise HTTPException(400, "a Cirro domain is required")
     try:
+        domain = cirro.validate_domain(domain)
+    except ValueError as e:
+        # Safe to reflect: validate_domain's messages describe the required input
+        # format only, never whether anything was reachable.
+        raise HTTPException(400, str(e))
+    try:
         token, cred = await _in_executor(cirro.start_login, domain)
     except Exception as e:
-        raise HTTPException(502, f"could not reach Cirro at '{domain}': {e}")
+        # Never echo the failure detail (or the domain) back to the client — for an
+        # attacker-supplied domain it would act as a reachability oracle. The real
+        # error goes to the server log instead.
+        _log.warning("could not start Cirro login against %s: %s", domain, e)
+        raise HTTPException(502, "could not reach Cirro")
     # Retrying (or switching domains) replaces this browser's credential rather than
     # leaving the abandoned one to sit until it idles out.
     CREDENTIALS.drop(x_sds_cirro_token)
@@ -178,14 +114,14 @@ async def cirro_folders(project_id: str, refresh: bool = False,
 async def cirro_uploads(x_sds_cirro_token: str | None = Header(default=None)):
     """The caller's own uploads. Scoped rather than global: a row names a Cirro project
     and dataset, which is not something to hand to every browser sharing this app."""
-    return _uploads.state(x_sds_cirro_token)
+    return UPLOADS.state(x_sds_cirro_token)
 
 
 @router.delete("/api/cirro/uploads/{upload_id}")
 async def cirro_dismiss_upload(upload_id: int,
                                x_sds_cirro_token: str | None = Header(default=None)):
-    _uploads.dismiss(upload_id, x_sds_cirro_token)
-    return _uploads.state(x_sds_cirro_token)
+    UPLOADS.dismiss(upload_id, x_sds_cirro_token)
+    return UPLOADS.state(x_sds_cirro_token)
 
 
 @router.post("/api/cirro/upload")
@@ -208,8 +144,8 @@ async def cirro_upload(body: dict, x_sds_cirro_token: str | None = Header(defaul
         if not within_data_dir(target) or not target.exists():
             raise HTTPException(400, f"not a saved checkpoint session: {p}")
         resolved.append(str(target))
-    upload_id = _uploads.submit(x_sds_cirro_token, cred, body["project_id"],
-                                body["dataset_name"].strip(),
-                                (body.get("description") or "").strip(), resolved,
-                                body.get("folder") or None)
+    upload_id = UPLOADS.submit(x_sds_cirro_token, cred, body["project_id"],
+                               body["dataset_name"].strip(),
+                               (body.get("description") or "").strip(), resolved,
+                               body.get("folder") or None)
     return {"status": "started", "id": upload_id}

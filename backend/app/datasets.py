@@ -9,11 +9,16 @@ The full recursive scan is cached and prewarmed at startup (see `prewarm.py`) so
 the picker is instant on first open even on a large/slow mount. The cache is
 invalidated whenever the app writes a checkpoint (`Session._write_checkpoint`),
 so a just-saved session shows up the next time the picker opens.
+
+Also home to `browse`, the one-level raw-input-mount listing behind the
+`/api/fs/browse` route and the MCP `browse_data_dir` tool.
 """
 from __future__ import annotations
 
 import os
 from pathlib import Path
+
+from .config import within_data_dir
 
 # Dirs never worth walking for datasets (vendored/build/staging; `_`-prefixed dirs
 # like a reader's raw-bundle staging folder are skipped so their internal zarrs
@@ -83,6 +88,39 @@ def list_datasets(roots: list[Path]) -> list[dict]:
     if key not in _cache:
         _cache[key] = _scan(roots)
     return _cache[key]
+
+
+def browse(roots: list[Path], path: str | None = None, include_files: bool = False) -> dict:
+    """Navigate the raw-input data mount (DATA_DIR only) one level at a time for the
+    New Session import flow and the MCP browse_data_dir tool — never the checkpoint
+    mount or the whole filesystem. A `.zarr`/`.zarr.zip` entry is a loadable dataset;
+    other directories are navigable. With `include_files` (raw-data import, where the
+    reader's input may be any file type), regular files are listed too. Raises
+    ValueError (unresolvable path), PermissionError (outside the data dir), or
+    NotADirectoryError; the route boundary in main.py maps these to 400/403/404."""
+    if not path:
+        return {"path": "", "parent": None,
+                "entries": [{"name": str(r), "path": str(r), "kind": "dir"} for r in roots]}
+    try:
+        target = Path(path).resolve()
+    except OSError:
+        raise ValueError("bad path")
+    if not within_data_dir(target):
+        raise PermissionError("path is outside the data directory")
+    if not target.is_dir():
+        raise NotADirectoryError("not a directory")
+    entries = []
+    for child in sorted(target.iterdir(), key=lambda c: c.name.lower()):
+        if child.name.startswith("."):
+            continue
+        if child.name.endswith((".zarr", ".zarr.zip", ".zarr.tar.gz", ".zarr.tgz")):
+            entries.append({"name": child.name, "path": str(child), "kind": "dataset"})
+        elif child.is_dir():
+            entries.append({"name": child.name, "path": str(child), "kind": "dir"})
+        elif include_files:
+            entries.append({"name": child.name, "path": str(child), "kind": "file"})
+    parent = None if target in roots else str(target.parent)
+    return {"path": str(target), "parent": parent, "entries": entries}
 
 
 def invalidate() -> None:

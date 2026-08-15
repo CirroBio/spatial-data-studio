@@ -4,7 +4,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request, Response
 
 from .. import imaging
-from ..config import config
+from ..config import _within_dir, config
 from ..deps import _session, _read_locked, _render_image
 
 router = APIRouter()
@@ -62,13 +62,14 @@ async def image_thumbnail(sid: str, element: str, max_px: int = 2048, channels: 
 # path above stays the fallback. See image_info's client_compositing field.
 def _raster_file(store_dir: str, rel: str) -> Path | None:
     """Resolve zarr key `rel` under `store_dir`, or None if it escapes the store
-    (absolute, backslash, or `..`) — mirrors config._within_dir path safety. The store
-    dir is under DATA_DIR but this bounds reads to the one element's store."""
+    (absolute, backslash, or `..`) — containment via the shared config._within_dir
+    guard. The store dir is under DATA_DIR but this bounds reads to the one
+    element's store."""
     if rel.startswith("/") or "\\" in rel or ".." in rel.split("/"):
         return None
     root = Path(store_dir).resolve()
     target = (root / rel).resolve()
-    if target != root and root not in target.parents:
+    if not _within_dir(target, root):
         return None
     return target
 

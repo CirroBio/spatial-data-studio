@@ -1,13 +1,12 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from .config import config, data_roots, within_data_dir
+from .config import config, data_roots
 from .registry.introspect import REGISTRY
 from .sessions.manager import SessionManager
 from .sessions.presence import PRESENCE, clean_name
@@ -19,7 +18,8 @@ from .prewarm import PREWARM
 from . import datasets
 from . import deps
 from .deps import (_session, _writable_session, _claim_lock, _mgr, _in_executor,
-                   _read_locked, bind_client_id, CLIENT_ID)
+                   _read_locked, bind_client_id, CLIENT_ID, default_save_path,
+                   search_var_names)
 from .routers import imaging as imaging_router, cirro as cirro_router
 from .routers import snapshots as snapshots_router, recipes as recipes_router
 from .mcp.server import mcp_server
@@ -165,43 +165,19 @@ async def create_session(body: dict):
 # ---- filesystem browse (for the New Session path typeahead) ----------------
 @app.get("/api/fs/browse")
 async def fs_browse(path: str | None = None, include_files: bool = False):
-    """Navigate the raw-input data mount (DATA_DIR only) for the New Session
-    import flow — never the checkpoint mount or the whole filesystem. A
-    `.zarr`/`.zarr.zip` entry is a loadable dataset; other directories are
-    navigable. With `include_files` (raw-data import, where the reader's input
-    may be any file type), regular files are listed too."""
-    roots = data_roots()
-    if not path:
-        return {"path": "", "parent": None,
-                "entries": [{"name": str(r), "path": str(r), "kind": "dir"} for r in roots]}
+    """Navigate the raw-input data mount for the New Session import flow. The listing
+    itself is `datasets.browse` (shared with the MCP browse_data_dir tool); this
+    boundary only maps its plain exceptions onto HTTP statuses."""
     try:
-        target = Path(path).resolve()
-    except OSError:
-        raise HTTPException(400, "bad path")
-    if not within_data_dir(target):
-        raise HTTPException(403, "path is outside the data directory")
-    if not target.is_dir():
-        raise HTTPException(404, "not a directory")
-
-    def _list():
-        out = []
-        for child in sorted(target.iterdir(), key=lambda c: c.name.lower()):
-            if child.name.startswith("."):
-                continue
-            if child.name.endswith((".zarr", ".zarr.zip", ".zarr.tar.gz", ".zarr.tgz")):
-                out.append({"name": child.name, "path": str(child), "kind": "dataset"})
-            elif child.is_dir():
-                out.append({"name": child.name, "path": str(child), "kind": "dir"})
-            elif include_files:
-                out.append({"name": child.name, "path": str(child), "kind": "file"})
-        return out
-
-    try:
-        entries = await _in_executor(_list)
+        return await _in_executor(datasets.browse, data_roots(), path, include_files)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except NotADirectoryError as e:
+        raise HTTPException(404, str(e))
     except OSError as e:
         raise HTTPException(400, str(e))
-    parent = None if target in roots else str(target.parent)
-    return {"path": str(target), "parent": parent, "entries": entries}
 
 
 @app.get("/api/fs/datasets")
@@ -462,21 +438,11 @@ async def list_third_party_licenses():
     return acknowledgements.catalog()
 
 
-def _default_save_path(sess) -> str:
-    """Checkpoint path to use when the caller doesn't give one explicitly. The
-    filename's content-hash suffix is (re)computed from the written bytes on
-    every save (see `_save_zip`), so this only needs the checkpoint's clean base
-    name - stripping any hash a previous save already appended keeps it from
-    stacking a new one on top."""
-    from .persistence.store import strip_content_hash, CHECKPOINT_EXT
-    return str(config.DATA_DIR / f"{strip_content_hash(sess.name)}{CHECKPOINT_EXT}")
-
-
 @app.post("/api/sessions/{sid}/save")
 async def save(sid: str, body: dict | None = None):
     sess = _writable_session(sid)
     explicit = (body or {}).get("path")
-    path = explicit or _default_save_path(sess)
+    path = explicit or default_save_path(sess)
     job_id = sess.enqueue_special("save", {"path": path, "hash_name": not explicit})
     return {"job_id": job_id, "path": path}
 
@@ -503,7 +469,7 @@ async def set_points_transform(sid: str, body: dict):
     if not (isinstance(affine, list) and len(affine) == 6):
         raise HTTPException(400, "affine must be 6 floats [a, b, c, d, e, f]")
     explicit = body.get("path")
-    path = explicit or _default_save_path(sess)
+    path = explicit or default_save_path(sess)
     job_id = sess.enqueue_special("set_transform", {"affine": affine, "path": path, "hash_name": not explicit})
     return {"job_id": job_id, "path": path}
 
@@ -557,23 +523,9 @@ async def shapes_geoarrow(sid: str, element: str, bbox: str, limit: int | None =
 
 @app.get("/api/sessions/{sid}/var-names")
 async def var_names(sid: str, q: str = "", limit: int = 50):
-    """Search var_names (genes) for the color-by gene picker. adata can carry tens
-    of thousands of genes, so match server-side and cap the result; prefix hits rank
-    first, then substring hits."""
-    sess = _session(sid)
-
-    def _search():
-        names = [str(v) for v in sess.active_table().var_names]
-        ql = q.strip().lower()
-        if not ql:
-            return names[:limit]
-        starts = [s for s in names if s.lower().startswith(ql)]
-        if len(starts) >= limit:
-            return starts[:limit]
-        contains = [s for s in names if ql in s.lower() and not s.lower().startswith(ql)]
-        return (starts + contains)[:limit]
-
-    return {"names": await _read_locked(sess, _search)}
+    """Search var_names (genes) for the color-by gene picker — the matching lives in
+    `deps.search_var_names`, shared with the MCP search_genes tool."""
+    return {"names": await search_var_names(_session(sid), q, limit)}
 
 
 # ---- data inspector: element inventory + dataframe previews ----------------

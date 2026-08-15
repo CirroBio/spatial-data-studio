@@ -16,12 +16,16 @@ export function shapesFetchZoomThreshold(meanSpacingWorld: number): number {
 interface Params {
   positions: ScatterPositions | null;
   imageInfo: ImageInfo | null;
+  // The image-info fetch failed terminally: stop waiting for the image and fall
+  // through to the world-space spot-bounds fit (imageInfo stays null, so the
+  // no-affine rendering path applies).
+  imageInfoFailed: boolean;
   showImage: boolean;
   display: SpatialDisplaySpec;
 }
 
 export function useCanvasViewState(
-  { positions, imageInfo, showImage, display }: Params,
+  { positions, imageInfo, imageInfoFailed, showImage, display }: Params,
 ): {
   containerRef: RefObject<HTMLDivElement>;
   canvasSize: { width: number; height: number } | null;
@@ -77,14 +81,15 @@ export function useCanvasViewState(
   // canvas is remounted per session (key on the session id in App), so this runs
   // once per session load. Wait for the image bounds before the first fit when a
   // tissue image is shown, so the whole section (which can extend beyond the spots)
-  // is framed, not just the spots.
+  // is framed, not just the spots — unless the image-info fetch failed, in which
+  // case the spots are all there is to frame.
   useEffect(() => {
     if (viewState) return;
     if (!positions) return;
-    if (display.encoding.image_layer && !imageInfo) return;
+    if (display.encoding.image_layer && !imageInfo && !imageInfoFailed) return;
     const fit = fitToData();
     if (fit) setViewState(fit);
-  }, [fitToData, display.encoding.image_layer, imageInfo, positions, viewState]);
+  }, [fitToData, display.encoding.image_layer, imageInfo, imageInfoFailed, positions, viewState]);
 
   return { containerRef, canvasSize, viewState, setViewState, fitToData };
 }

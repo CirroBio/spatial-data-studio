@@ -134,6 +134,14 @@ def resolve_steps(recipe: dict, values: dict | None = None) -> list[dict]:
     return steps
 
 
+def steps_from_history(app_state: dict) -> list[dict]:
+    """The session's completed compute history as recipe step descriptors — the
+    export half of the ad-hoc recipe round trip (GET /recipe) and the `recipe`
+    provenance block snapshots embed in every exported figure."""
+    return [{"namespace": r["namespace"], "function": r["function"], "params": r["params"]}
+            for r in app_state.get("compute_history", []) if r.get("status") == "completed"]
+
+
 def list_recipes() -> list[dict]:
     return [{"name": n, "description": r["meta"].get("description", "")} for n, r in _BUNDLED.items()]
 

@@ -18,8 +18,7 @@ async def list_bundled_recipes():
 @router.get("/api/sessions/{sid}/recipe")
 async def export_recipe(sid: str):
     sess = _session(sid)
-    steps = [{"namespace": r["namespace"], "function": r["function"], "params": r["params"]}
-             for r in sess.app_state["compute_history"] if r["status"] == "completed"]
+    steps = recipes.steps_from_history(sess.app_state)
     return {"library_versions": REGISTRY.library_versions, "steps": steps}
 
 

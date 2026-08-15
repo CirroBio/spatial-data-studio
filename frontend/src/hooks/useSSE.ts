@@ -36,7 +36,6 @@ export function useSSE(enabled = true): void {
     removeActiveJob,
     addQueuedEntry,
     setEntryStatus,
-    activeSessionId,
     setSessionState,
     refreshSessionState,
     refreshShapeAnnotations,
@@ -53,9 +52,9 @@ export function useSSE(enabled = true): void {
     setPresence,
   } = useAppStore();
 
-  // Last event id processed, kept across effect re-runs (session switches) so the
-  // polling fallback resumes where it left off — the JSON mirror of SSE's
-  // Last-Event-ID resume — instead of re-baselining and dropping events.
+  // Last event id processed, kept across effect re-runs so the polling fallback
+  // resumes where it left off — the JSON mirror of SSE's Last-Event-ID resume —
+  // instead of re-baselining and dropping events.
   const cursor = useRef<number | undefined>(undefined);
 
   // Debounces the full-session refetch that job.completed/job.failed/plot.drawn/
@@ -75,6 +74,13 @@ export function useSSE(enabled = true): void {
     if (!enabled) return;
     let lastMemoryWarnAt = 0;
 
+    // Session gating reads the store at event time, never the effect closure: closing
+    // over activeSessionId would put it in the dependency array, and recreating the
+    // EventSource on every session switch opens a fresh connection that sends no
+    // Last-Event-ID (browsers only send it on auto-reconnect), silently dropping any
+    // events published during the gap.
+    const activeSession = () => useAppStore.getState().activeSessionId;
+
     // One handler per event type, driven identically by the SSE stream and by the
     // polling fallback. Data arrives already parsed (JSON.parse for SSE frames,
     // native JSON for the poll), so each handler just narrows the payload type.
@@ -93,7 +99,7 @@ export function useSSE(enabled = true): void {
         // This fires on a status transition (loading -> ready/errored). If it's the
         // session currently being viewed (e.g. the user switched to it while it loaded),
         // refetch its state so the loading view resolves to the canvas or the error.
-        if (summary.id === activeSessionId) void refreshSessionState(summary.id);
+        if (summary.id === activeSession()) void refreshSessionState(summary.id);
       },
 
       // Progress of a synchronous checkpoint load, before any session id exists. The
@@ -110,7 +116,7 @@ export function useSSE(enabled = true): void {
       // other job events so another session's import never streams into this viewer.
       'job.log': (data) => {
         const d = data as JobLogEvent;
-        if (d.session_id !== activeSessionId) return;
+        if (d.session_id !== activeSession()) return;
         appendJobLog(d.job_id, d.chunk);
       },
 
@@ -120,7 +126,7 @@ export function useSSE(enabled = true): void {
       'session.removed': (data) => {
         const d = data as SessionRemovedEvent;
         removeSession(d.session_id);
-        if (d.reason !== 'subset' && d.session_id === activeSessionId) {
+        if (d.reason !== 'subset' && d.session_id === activeSession()) {
           setActiveSessionId(null);
           setSessionState(null);
           pushNotification({ kind: 'info', message: 'This session was closed.' });
@@ -136,7 +142,7 @@ export function useSSE(enabled = true): void {
       // another session's activity never spins this viewer's UI.
       'job.queued': (data) => {
         const d = data as JobQueuedEvent;
-        if (d.session_id !== activeSessionId) return;
+        if (d.session_id !== activeSession()) return;
         addActiveJob(d.job_id);
         if (d.effect_class) {
           const desc = d.descriptor as { namespace: string; function: string; params?: Record<string, unknown> };
@@ -148,7 +154,7 @@ export function useSSE(enabled = true): void {
 
       'job.started': (data) => {
         const d = data as JobStartedEvent;
-        if (d.session_id !== activeSessionId) return;
+        if (d.session_id !== activeSession()) return;
         addActiveJob(d.job_id);
         setEntryStatus(d.job_id, 'running');
       },
@@ -167,7 +173,7 @@ export function useSSE(enabled = true): void {
         // Everything below reflects a change to a specific session; only apply it to a
         // viewer who is actually looking at that session so another user's work never
         // moves this viewer, re-renders their canvas, or toasts at them.
-        if (d.session_id !== activeSessionId) return;
+        if (d.session_id !== activeSession()) return;
         updateDataVersions(d.data_versions);
         // Flip the row to its terminal status from the event, not the refetch below:
         // in a back-to-back queue (recipe / run-all) this job's completion refetch
@@ -207,7 +213,7 @@ export function useSSE(enabled = true): void {
         // Failed compute jobs vanish from history (DESIGN §6.1); surface the error so
         // the user isn't left with a silently-closed form and no feedback — but only to
         // the viewer of that session, so another user's failure doesn't toast here.
-        if (d.session_id !== activeSessionId) return;
+        if (d.session_id !== activeSession()) return;
         // Failed jobs stay in history (audit-log model); flip the row from the event
         // so it doesn't linger as "running" behind a blocked refetch.
         setEntryStatus(d.job_id, 'failed');
@@ -233,7 +239,7 @@ export function useSSE(enabled = true): void {
 
       'plot.drawn': (data) => {
         const d = data as PlotDrawnEvent;
-        if (d.session_id === activeSessionId) {
+        if (d.session_id === activeSession()) {
           setEntryStatus(d.plot_id, 'drawn');
           scheduleRefresh(d.session_id);
         }
@@ -241,7 +247,7 @@ export function useSSE(enabled = true): void {
 
       'plot.invalidated': (data) => {
         const d = data as PlotInvalidatedEvent;
-        if (d.session_id === activeSessionId) {
+        if (d.session_id === activeSession()) {
           d.plot_ids.forEach((id) => setEntryStatus(id, 'invalidated'));
           scheduleRefresh(d.session_id);
         }
@@ -255,7 +261,7 @@ export function useSSE(enabled = true): void {
         // (the PUT is skipped), so leave those alone rather than snapping their canvas
         // to the holder's — that divergence is the point of view-only access.
         const store = useAppStore.getState();
-        if (d.session_id === activeSessionId && !editBlockReason(store.sessionState, store.presence)) {
+        if (d.session_id === store.activeSessionId && !editBlockReason(store.sessionState, store.presence)) {
           updateDisplay(d.spec);
         }
       },
@@ -324,5 +330,5 @@ export function useSSE(enabled = true): void {
       if (pollTimer !== undefined) clearTimeout(pollTimer);
       if (refreshTimer.current) clearTimeout(refreshTimer.current);
     };
-  }, [enabled, activeSessionId, upsertSession, setResourceSample, updateDataVersions, updateDisplay, addActiveJob, removeActiveJob, addQueuedEntry, setEntryStatus, setSessionState, refreshSessionState, refreshShapeAnnotations, resolveShapeJob, pushNotification, setActiveSessionId, setSessions, removeSession, refreshCirroUploads, setLoadProgress, appendLoadLog, appendJobLog, clearJobLog, setPresence]);
+  }, [enabled, upsertSession, setResourceSample, updateDataVersions, updateDisplay, addActiveJob, removeActiveJob, addQueuedEntry, setEntryStatus, setSessionState, refreshSessionState, refreshShapeAnnotations, resolveShapeJob, pushNotification, setActiveSessionId, setSessions, removeSession, refreshCirroUploads, setLoadProgress, appendLoadLog, appendJobLog, clearJobLog, setPresence]);
 }

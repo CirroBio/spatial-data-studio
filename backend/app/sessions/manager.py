@@ -173,21 +173,35 @@ class SessionManager:
     def state(self, sess: Session) -> dict:
         from ..transport.arrow import describe_fields
         fields = {}
-        try:
-            # Read the live AnnData under the read lock: the worker mutates obs/obsm
-            # under the write lock, so an unguarded describe_fields can hit a torn read
-            # or "dict changed size during iteration" mid-compute.
-            with sess.lock.reading():
+        app_state = sess.app_state
+        with sess.lock.reading():
+            try:
+                # Read the live AnnData under the read lock: the worker mutates obs/obsm
+                # under the write lock, so an unguarded describe_fields can hit a torn read
+                # or "dict changed size during iteration" mid-compute.
                 fields = describe_fields(sess.active_table(), sess.sdata)
-        except RuntimeError:
-            pass
+            except RuntimeError:
+                pass
+            # regions.assign (sessions/regions.py) mutates app_state["regions"] and each
+            # display's nested `encoding` IN PLACE under the write lock — appending
+            # region entries, rebinding entry["categories"], writing enc["color_by"] and
+            # nested enc["category_colors"][...] — so the shallow dict(d) display copies
+            # below would still share (and FastAPI would serialize, post-lock) the live
+            # sub-dicts mid-mutation. Deep-copy just those substructures, under the read
+            # lock so the copy itself can't tear either; plots/history can be huge, so
+            # the whole app_state is deliberately NOT deep-copied.
+            regions_copy = copy.deepcopy(app_state.get("regions", []))
+            displays_copy = [
+                {**d, "encoding": copy.deepcopy(d["encoding"])}
+                if d.get("encoding") is not None else dict(d)
+                for d in list(app_state.get("displays", []))
+            ]
         # Snapshot the mutable collections: the worker thread appends to / rewrites
         # compute_history/plots and bumps data_versions as bookkeeping AFTER releasing
         # the write lock, so returning the live app_state would let FastAPI serialize
         # it (post-lock) mid-mutation — a torn read or "changed size during iteration".
         # list(<list>) is a single atomic C copy under the GIL; the per-record dict()
         # then iterates that snapshot, never the live list.
-        app_state = sess.app_state
         # Drop each record's full captured log (`_log`) from this polled response: the
         # frontend fetches a job's log on demand via GET /api/sessions/{id}/jobs/{job_id}/log
         # (get_log reads `_log` straight from app_state) and streams it live over `job.log`,
@@ -199,7 +213,8 @@ class SessionManager:
             **app_state,
             "compute_history": [_public(r) for r in list(app_state.get("compute_history", []))],
             "plots": [_public(r) for r in list(app_state.get("plots", []))],
-            "displays": [dict(d) for d in list(app_state.get("displays", []))],
+            "displays": displays_copy,
+            "regions": regions_copy,
             "data_versions": dict(app_state.get("data_versions", {})),
         }
         return {"summary": self.summary(sess), "app_state": safe_state,
@@ -341,7 +356,12 @@ class SessionManager:
         # write lock.
         sess.shutdown()
         with sess.lock.writing():
-            if save and sess.store_path:
+            # A session whose load is still in flight or errored has no object in
+            # memory (sess.sdata is None) even though store_path is set; there is
+            # nothing to save and the on-disk checkpoint is already its latest
+            # state, so skip the save — the temp-dir/presence/session.removed
+            # cleanup below must still run.
+            if save and sess.store_path and sess.sdata is not None:
                 save_spatialdata(sess.sdata, sess.store_path, sess.app_state)
             # Evict this object's image caches before releasing it — they key on
             # id(sdata), which a later session's object could reuse (imaging.py).

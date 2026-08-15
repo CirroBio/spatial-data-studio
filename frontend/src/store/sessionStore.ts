@@ -72,6 +72,29 @@ function shapesAreLocalOnly(state: { sessionState: SessionState | null }): boole
   return state.sessionState?.summary.read_only === true;
 }
 
+// The persistence protocol shared by create/update/delete: mark the shape locally
+// owned before the request so a refresh can't clobber the optimistic edit, map the
+// accepted job back to the shape (resolveShapeJob clears the mark when that job
+// lands), and on request failure roll the mark back and toast. Resolves false on
+// failure so a caller can undo its own optimistic edit.
+function persistShapeJob(
+  shapeId: string,
+  label: string,
+  call: () => Promise<{ job_id: string }>,
+): Promise<boolean> {
+  bumpShapePending(shapeId, 1);
+  return call()
+    .then(({ job_id }) => { shapeJobShape.set(job_id, shapeId); return true; })
+    .catch((err: unknown) => {
+      bumpShapePending(shapeId, -1);
+      useAppStore.getState().pushNotification({
+        kind: 'error',
+        message: `${label}: ${err instanceof Error ? err.message : String(err)}`,
+      });
+      return false;
+    });
+}
+
 interface AppStore {
   // The `index.json` collection backing a serverless deployment, once discovered.
   // Null in a live app (there is none) and until the probe finishes.
@@ -666,14 +689,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
     get().upsertShapeAnnotation(shape); // optimistic — the job.completed refetch reconciles
     get().setSelectedShapeId(shape.id);
     if (shapesAreLocalOnly(get())) return;
-    bumpShapePending(shape.id, 1);
-    createShapeAnnotation(sessionId, shape)
-      .then(({ job_id }) => { shapeJobShape.set(job_id, shape.id); })
-      .catch((err) => {
-        bumpShapePending(shape.id, -1);
-        get().pushNotification({ kind: 'error', message: `Create shape failed: ${err instanceof Error ? err.message : String(err)}` });
-        get().removeShapeAnnotationLocal(shape.id);
-      });
+    void persistShapeJob(shape.id, 'Create shape failed', () => createShapeAnnotation(sessionId, shape))
+      .then((ok) => { if (!ok) get().removeShapeAnnotationLocal(shape.id); });
   },
   sendShapeUpdate: (shapeId) => {
     const sessionId = get().activeSessionId;
@@ -681,13 +698,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const shape = get().shapeAnnotations.find((s) => s.id === shapeId);
     if (!shape) return; // deleted meanwhile
     if (shapesAreLocalOnly(get())) return;  // already upserted; nowhere to persist it
-    bumpShapePending(shapeId, 1);
-    updateShapeAnnotation(sessionId, shapeId, shape)
-      .then(({ job_id }) => { shapeJobShape.set(job_id, shapeId); })
-      .catch((err) => {
-        bumpShapePending(shapeId, -1);
-        get().pushNotification({ kind: 'error', message: `Update shape failed: ${err instanceof Error ? err.message : String(err)}` });
-      });
+    void persistShapeJob(shapeId, 'Update shape failed', () => updateShapeAnnotation(sessionId, shapeId, shape));
   },
   deleteShape: (id) => {
     const sessionId = get().activeSessionId;
@@ -695,13 +706,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     get().removeShapeAnnotationLocal(id);
     if (get().selectedShapeId === id) get().setSelectedShapeId(null);
     if (shapesAreLocalOnly(get())) return;
-    bumpShapePending(id, 1);
-    deleteShapeAnnotation(sessionId, id)
-      .then(({ job_id }) => { shapeJobShape.set(job_id, id); })
-      .catch((err) => {
-        bumpShapePending(id, -1);
-        get().pushNotification({ kind: 'error', message: `Delete shape failed: ${err instanceof Error ? err.message : String(err)}` });
-      });
+    void persistShapeJob(id, 'Delete shape failed', () => deleteShapeAnnotation(sessionId, id));
   },
   resolveShapeJob: (jobId) => {
     const shapeId = shapeJobShape.get(jobId);

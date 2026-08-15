@@ -1,20 +1,20 @@
-import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import DeckGL from '@deck.gl/react';
 import { OrthographicView, OrbitView } from '@deck.gl/core';
-import { PolygonLayer, PathLayer, ScatterplotLayer } from '@deck.gl/layers';
 import type { Layer, PickingInfo } from '@deck.gl/core';
 import { useAppStore } from '../../store/sessionStore';
 import { useArrowField } from '../../hooks/useArrowField';
 import { useEditGate } from '../../hooks/usePresence';
 import { addDisplay as postDisplay } from '../../api';
 import { reportError } from '../../lib/errors';
-import { downloadCanvasPng } from '../../lib/canvasCapture';
-import { useDataSource } from '../../data/context';
 import { indicesInRings } from '../../lib/pointInPolygon';
 import { isEmbeddingDisplay, type EmbeddingDisplaySpec, type ObsField, type ObsmField } from '../../types';
 import { useArrowPositions } from './useArrowPositions';
 import { useDisplayPersistence } from './useDisplayPersistence';
 import { useEmbeddingViewState, type EmbeddingViewState } from './useEmbeddingViewState';
+import { useColorField } from './useColorField';
+import { useSnapshotHandler } from './useSnapshotHandler';
+import { buildLassoLayers } from './buildLassoLayers';
 import { useSpotColors, arrowToColorSource } from './useSpotColors';
 import { buildSpotLayer } from './buildSpotLayer';
 import EmbeddingControls from './EmbeddingControls';
@@ -185,28 +185,19 @@ function EmbeddingCanvasView({
   annotationTarget: { regionSetId: string; category: string; color: string } | null;
 }) {
   const {
-    sessionState, isolatedCategory, hiddenCells, openSnapshotExport, setSnapshotHandler,
+    sessionState, isolatedCategory, hiddenCells,
     drawPolygons, drawRing, addDrawVertex, clearDraw, setRegionCellCount, setRegionCellIndices,
     theme,
   } = useAppStore();
-  const source = useDataSource();
   const dataVersions = sessionState?.data_versions ?? {};
   const { canEdit } = useEditGate();
 
   const { is_3d, x_component, y_component, z_component } = display.encoding;
   const coordsPath = `obsm:${display.encoding.obsm_key}`;
   const coordsVersion = dataVersions[coordsPath] ?? 0;
-  // '' when the display has no colouring, which reads as falsy everywhere below
-  // (no field fetch, no colour source, no legend) instead of crashing on null.
-  const colorByPath = display.encoding.color_by ?? '';
-  // Gene colorings (`X:<gene>`) can't be versioned per gene — the backend tracks the
-  // expression matrix by whole-array identity and bumps the coarse `X:` path — so fold
-  // that in, else a normalize/log1p/scale/filter compute leaves the canvas on stale colors.
-  const colorVersion = (dataVersions[colorByPath] ?? 0)
-    + (colorByPath.startsWith('X:') ? (dataVersions['X:'] ?? 0) : 0);
 
   const { table: coordsTable, loading: coordsLoading } = useArrowField(coordsPath, coordsVersion);
-  const { table: colorTable, loading: colorLoading } = useArrowField(colorByPath, colorVersion);
+  const { colorByPath, colorTable, colorLoading } = useColorField(display.encoding.color_by, dataVersions);
 
   const [panelCollapsed, setPanelCollapsed] = useState(false);
 
@@ -231,37 +222,17 @@ function EmbeddingCanvasView({
     categoryColors: display.encoding.category_colors?.[colorByPath],
   });
 
-  // Save Snapshot opens the export modal seeded with the live camera (read via a ref
-  // so it's where the user is looking) and the canvas pixel size (seeds the output
-  // aspect). Registered while this canvas is mounted.
-  const viewStateRef = useRef(viewState);
-  viewStateRef.current = viewState;
-  const handleSnapshot = useCallback(() => {
-    // See SpatialCanvas: a checkpoint captures the canvas rather than asking the
-    // backend for a rendered figure.
-    if (source?.kind === 'checkpoint') {
-      void downloadCanvasPng(containerRef.current, sessionState?.summary.name ?? 'view')
-        .catch((err) => reportError('PNG export failed', err));
-      return;
-    }
-    const vs = viewStateRef.current;
-    const target = vs?.target as number[] | undefined;
-    if (!vs || !target || typeof vs.zoom !== 'number') return;
-    const el = containerRef.current;
-    const size = el ? { width: el.clientWidth, height: el.clientHeight } : { width: 1000, height: 1000 };
-    openSnapshotExport({
-      sessionId,
-      displayId: display.id,
-      kind: 'embedding',
-      viewport: { target: target.slice(0, 2), zoom: vs.zoom },
-      canvasSize: size,
-      label: sessionState?.summary.name ?? 'snapshot',
-    });
-  }, [source, sessionId, display.id, openSnapshotExport, containerRef, sessionState?.summary.name]);
-  useEffect(() => {
-    setSnapshotHandler(handleSnapshot);
-    return () => setSnapshotHandler(null);
-  }, [handleSnapshot, setSnapshotHandler]);
+  useSnapshotHandler({
+    kind: 'embedding',
+    sessionId,
+    displayId: display.id,
+    viewState,
+    containerRef,
+    getCanvasSize: () => {
+      const el = containerRef.current;
+      return el ? { width: el.clientWidth, height: el.clientHeight } : { width: 1000, height: 1000 };
+    },
+  });
 
   const legendVisible = display.encoding.legend_visible !== false;
   const legendTitle = display.encoding.legend_title || colorByLabel(colorByPath);
@@ -352,25 +323,7 @@ function EmbeddingCanvasView({
 
   const drawLayers = useMemo<Layer[]>(() => {
     if (!lassoMode || is_3d) return [];  // 3D draws a screen-space SVG overlay instead
-    const out: Layer[] = [];
-    if (drawPolygons.length) {
-      out.push(new PolygonLayer<[number, number][]>({
-        id: 'embed-draw-polys', data: drawPolygons, getPolygon: (d) => d,
-        filled: true, getFillColor: [...selColor, 50], stroked: true,
-        getLineColor: [...selColor, 220], getLineWidth: 2, lineWidthUnits: 'pixels', pickable: false,
-      }));
-    }
-    if (drawRing.length) {
-      out.push(new PathLayer<[number, number][]>({
-        id: 'embed-draw-ring', data: [drawRing], getPath: (d) => d,
-        getColor: [...selColor, 220], getWidth: 2, widthUnits: 'pixels', pickable: false,
-      }));
-      out.push(new ScatterplotLayer<[number, number]>({
-        id: 'embed-draw-verts', data: drawRing, getPosition: (d) => d,
-        getFillColor: [...selColor, 255], getRadius: 4, radiusUnits: 'pixels', pickable: false,
-      }));
-    }
-    return out;
+    return buildLassoLayers(drawPolygons, drawRing, selColor, { idPrefix: 'embed-draw' });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lassoMode, is_3d, drawPolygons, drawRing, canvasMode]);
 

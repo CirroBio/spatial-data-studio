@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import DeckGL from '@deck.gl/react';
-import { ScatterplotLayer, PolygonLayer, PathLayer } from '@deck.gl/layers';
+import { ScatterplotLayer, PathLayer } from '@deck.gl/layers';
 import { LinearInterpolator } from '@deck.gl/core';
 import type { Layer, OrthographicViewState, PickingInfo } from '@deck.gl/core';
 import { useAppStore } from '../../store/sessionStore';
@@ -9,7 +9,6 @@ import { useArrowField } from '../../hooks/useArrowField';
 import { useEditGate } from '../../hooks/usePresence';
 import { fetchWhenIdle } from '../../api';
 import { countPointsInRings, indicesInRings } from '../../lib/pointInPolygon';
-import { downloadCanvasPng } from '../../lib/canvasCapture';
 import { reportError } from '../../lib/errors';
 import TransformEditor from '../TransformEditor';
 import { isSpatialDisplay, type SpatialDisplaySpec, type ImageInfo } from '../../types';
@@ -27,6 +26,9 @@ import { worldToPixelAffine, affineScale, wx, wy } from './imageAffine';
 import { buildSpotLayer, estimateMeanSpacing } from './buildSpotLayer';
 import { PLOT_BACKGROUNDS, SELECTION_COLORS, rgbToHex } from './colorUtils';
 import { buildShapeAnnotationLayers, buildShapeHandleLayer, buildDragPreviewLayers } from './buildShapeAnnotationLayers';
+import { buildLassoLayers } from './buildLassoLayers';
+import { useColorField } from './useColorField';
+import { useSnapshotHandler } from './useSnapshotHandler';
 import { usePolygonBbox } from './usePolygonBbox';
 import { useImageChannels } from './useImageChannels';
 import CanvasControls from './CanvasControls';
@@ -60,7 +62,7 @@ interface Props {
 }
 
 export default function SpatialCanvas({ display, sessionId, canvasMode, annotationTarget }: Props) {
-  const { sessionState, isolatedCategory, hiddenCells, openSnapshotExport, setSnapshotHandler } = useAppStore();
+  const { sessionState, isolatedCategory, hiddenCells } = useAppStore();
   const source = useDataSource();
   const fields = sessionState?.fields;
   const dataVersions = sessionState?.data_versions ?? {};
@@ -68,19 +70,12 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
 
   const coordsPath = display.encoding.coords;
   const coordsVersion = dataVersions[coordsPath] ?? 0;
-  // '' when the display has no colouring, which reads as falsy everywhere below
-  // (no field fetch, no colour source, no legend) instead of crashing on null.
-  const colorByPath = display.encoding.color_by ?? '';
-  // Gene colorings (`X:<gene>`) can't be versioned per gene — the backend tracks the
-  // expression matrix by whole-array identity and bumps the coarse `X:` path — so fold
-  // that in, else a normalize/log1p/scale/filter compute leaves the canvas on stale colors.
-  const colorVersion = (dataVersions[colorByPath] ?? 0)
-    + (colorByPath.startsWith('X:') ? (dataVersions['X:'] ?? 0) : 0);
 
   const { table: coordsTable, loading: coordsLoading } = useArrowField(coordsPath, coordsVersion);
-  const { table: colorTable, loading: colorLoading } = useArrowField(colorByPath, colorVersion);
+  const { colorByPath, colorTable, colorLoading } = useColorField(display.encoding.color_by, dataVersions);
 
   const [imageInfo, setImageInfo] = useState<ImageInfo | null>(null);
+  const [imageInfoFailed, setImageInfoFailed] = useState(false);
 
   // When the display has an image, the canvas works in that image's pixel coordinate
   // space so Viv's MultiscaleImageLayer renders natively (the image sits at its own
@@ -188,6 +183,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   const { containerRef, canvasSize, viewState, setViewState, fitToData } = useCanvasViewState({
     positions,
     imageInfo,
+    imageInfoFailed,
     showImage,
     display,
   });
@@ -202,39 +198,20 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
     currentSpec,
   });
 
-  // Save Snapshot (settings panel) opens the export modal seeded with the live
-  // framing: the current viewport (read via a ref so it's where the user is looking,
-  // not the possibly-stale persisted one) and the canvas pixel size (seeds the output
-  // aspect). Whichever canvas is mounted registers this handler while mounted.
+  // Live viewport for handlers that read where the user is looking right now
+  // (text placement zoom, minimap navigation, viewport persistence).
   const viewStateRef = useRef(viewState);
   viewStateRef.current = viewState;
-  const canvasSizeRef = useRef(canvasSize);
-  canvasSizeRef.current = canvasSize;
-  const handleSnapshot = useCallback(() => {
-    // A checkpoint has no backend to render the figure, so the snapshot action
-    // captures the canvas as a PNG instead (see lib/canvasCapture).
-    if (source?.kind === 'checkpoint') {
-      void downloadCanvasPng(containerRef.current, sessionState?.summary.name ?? 'view')
-        .catch((err) => reportError('PNG export failed', err));
-      return;
-    }
-    const vs = viewStateRef.current;
-    if (!vs || typeof vs.zoom !== 'number') return;
-    const size = canvasSizeRef.current ?? { width: 1200, height: 900 };
-    openSnapshotExport({
-      sessionId,
-      displayId: display.id,
-      kind: 'spatial',
-      viewport: { target: (vs.target as number[]).slice(0, 2), zoom: vs.zoom },
-      canvasSize: size,
-      label: sessionState?.summary.name ?? 'snapshot',
-      minimap: showMinimap,
-    });
-  }, [source, containerRef, sessionId, display.id, openSnapshotExport, sessionState?.summary.name, showMinimap]);
-  useEffect(() => {
-    setSnapshotHandler(handleSnapshot);
-    return () => setSnapshotHandler(null);
-  }, [handleSnapshot, setSnapshotHandler]);
+
+  useSnapshotHandler({
+    kind: 'spatial',
+    sessionId,
+    displayId: display.id,
+    viewState,
+    containerRef,
+    getCanvasSize: () => canvasSize ?? { width: 1200, height: 900 },
+    minimap: showMinimap,
+  });
 
   // Overview inset (Minimap): the whole section with a box marking the visible window.
   // Its coordinate space is the canvas': the image's level-0 pixel extent when the
@@ -300,7 +277,10 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
     if (activeShapeTool === 'text') {
       const vs = viewStateRef.current;
       const z = vs ? (Array.isArray(vs.zoom) ? vs.zoom[0] : vs.zoom) ?? 0 : 0;
-      commitNewShape(textGeometryAt(pt, Math.pow(2, -z)));
+      // 2^-z is canvas units per screen px — image-pixel units when an image is
+      // shown — so divide by radiusScale (px per world unit) to get the WORLD units
+      // per screen px textGeometryAt expects (text renders at fontSize * radiusScale).
+      commitNewShape(textGeometryAt(pt, Math.pow(2, -z) / radiusScale));
       return;
     }
 
@@ -312,7 +292,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
       setSelectedShapeId(hit ?? null);
     }
   }, [lassoMode, shapesMode, activeShapeTool, addDrawVertex, addDraftVertex,
-      commitNewShape, setSelectedShapeId, toWorld]);
+      commitNewShape, setSelectedShapeId, toWorld, radiusScale]);
 
   // True when the pick hits the currently selected shape's body (its fill,
   // stroke, or text glyph) — the surface a drag translates.
@@ -386,13 +366,27 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   // holds the write lock on first open) so the image layer materializes once the lock
   // frees; without this a single 503 here leaves imageInfo null and the image blank,
   // since nothing else re-runs this effect after the session becomes ready.
+  // On terminal failure (503 beyond fetchWhenIdle's retries, any other error) the
+  // error is surfaced and `imageInfoFailed` lets useCanvasViewState fall through to
+  // the world-space spot-bounds fit instead of "Initializing canvas..." forever. No
+  // retry after that: the view is by then framed in world space, and a late-arriving
+  // affine would shift every layer out from under the camera. A fresh attempt happens
+  // whenever this effect re-runs (the image element or source changes) — both states
+  // reset first so a failed or stale fetch never leaves the previous element's
+  // affine applied.
   useEffect(() => {
+    setImageInfo(null);
+    setImageInfoFailed(false);
     const element = display.encoding.image_layer;
     if (!element || !source) return;
     const controller = new AbortController();
     fetchWhenIdle(() => source.getImageInfo(element), { signal: controller.signal })
       .then((info) => { if (!controller.signal.aborted) setImageInfo(info); })
-      .catch((err) => { if (!controller.signal.aborted) console.error(err); });
+      .catch((err) => {
+        if (controller.signal.aborted) return;
+        setImageInfoFailed(true);
+        reportError('Tissue image failed to load', err);
+      });
     return () => controller.abort();
   }, [source, display.encoding.image_layer]);
 
@@ -540,31 +534,10 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   // Selection graphics are UI overlays that must always be visible: 'always' depth
   // compare so they aren't occluded by any cell layer that writes depth.
   const OVERLAY_PARAMS = { depthCompare: 'always' as const, depthWriteEnabled: false };
-  const drawLayers: Layer[] = [];
-  if (lassoMode) {
-    if (polygons.length) {
-      drawLayers.push(new PolygonLayer<[number, number][]>({
-        id: 'sel-polygons', data: polygons, getPolygon: (d) => d,
-        filled: true, getFillColor: [...SEL, 50], stroked: true,
-        getLineColor: [...SEL, 220], getLineWidth: 2, lineWidthUnits: 'pixels', pickable: false,
-        parameters: OVERLAY_PARAMS, modelMatrix: worldToPixelMat,
-      }));
-    }
-    if (currentRing.length >= 2) {
-      drawLayers.push(new PathLayer<[number, number][]>({
-        id: 'sel-path', data: [currentRing], getPath: (d) => d,
-        getColor: [...SEL, 220], getWidth: 2, widthUnits: 'pixels',
-        parameters: OVERLAY_PARAMS, modelMatrix: worldToPixelMat,
-      }));
-    }
-    if (currentRing.length >= 1) {
-      drawLayers.push(new ScatterplotLayer<[number, number]>({
-        id: 'sel-verts', data: currentRing, getPosition: (d) => d,
-        getFillColor: [...SEL, 255], getRadius: 4, radiusUnits: 'pixels',
-        parameters: OVERLAY_PARAMS, modelMatrix: worldToPixelMat,
-      }));
-    }
-  }
+  const drawLayers: Layer[] = lassoMode
+    ? buildLassoLayers(polygons, currentRing, SEL,
+        { idPrefix: 'sel', modelMatrix: worldToPixelMat, parameters: OVERLAY_PARAMS })
+    : [];
 
   // Shape annotations render whenever they exist, independent of the active tab;
   // the drag-in-progress override keeps the persisted-shape layer showing the

@@ -70,8 +70,9 @@ backend/    FastAPI app
   app/deps.py     shared FastAPI helpers used by main.py and every router: the MANAGER
                   holder, session lookup (_session/_writable_session — the read-only + edit-lock
                   guard every mutating route goes through), the per-request client id
-                  (bind_client_id/CLIENT_ID), the read-lock/executor wrappers, and the
-                  image-render admission semaphore
+                  (bind_client_id/CLIENT_ID), the read-lock/executor wrappers, the
+                  image-render admission semaphore, and the business helpers shared by a
+                  route and the MCP surface (default checkpoint path, var-name search)
   app/registry/   base.py (abstract Function + contract envelope), library_fn.py (one reflection
                   executor for squidpy/scanpy/spatialdata-io), custom/ (non-squidpy functions),
                   library_catalog.yaml (opt-in library manifests), terms.yaml + dictionary.py
@@ -99,7 +100,8 @@ backend/    FastAPI app
                   per-session on-disk zarr store is also served raw (see the raster route)
                   for client-side (Viv) GPU compositing, with WebP tiles as the fallback
   app/snapshots.py matplotlib figure render (vector PDF/raster PNG) + gallery list/delete
-  app/datasets.py saved-checkpoint scan for the load/upload pickers (prewarmed cache)
+  app/datasets.py saved-checkpoint scan for the load/upload pickers (prewarmed cache) +
+                  the one-level data-dir browse behind /api/fs/browse and browse_data_dir
   app/prewarm.py  background async queue that warms slow first-open menu lists off the event loop
   app/cirro.py    Cirro dataset upload (per-browser device-code auth, symlink-based upload folder)
   cli.py          offline recipe runner — reuses the registry/session engine headlessly
@@ -146,7 +148,7 @@ Component-level notes: [`backend/README.md`](backend/README.md),
 | Change the parameter-form UI | `frontend/src/components/forms/` (`FunctionFields` renders the widgets incl. the `FsPicker` filesystem picker; `FunctionForm` adds the submit footer; the New Session dialog reuses `FunctionFields` as the reader's input form) | — |
 | Change how a reader param is classified as a folder/file/value input | `backend/app/registry/reader_paths.py` (`path_kind` + the absolute/relative path sets, shared with `sessions/manager.py` validation) | [docs/CONTRACT.md](docs/CONTRACT.md) |
 | Change how a snapshot figure renders or what it embeds | `backend/app/snapshots.py` (render + metadata) + `frontend/src/components/SnapshotExportModal.tsx` (framing/output) + `frontend/src/components/SnapshotBrowser.tsx` (gallery) | [DESIGN.md](DESIGN.md) §14 |
-| Change Cirro upload | `backend/app/cirro.py` (client + bundle) + `backend/app/routers/cirro.py` (routes + upload queue) + `frontend/src/components/CirroUploadDialog.tsx` | [DESIGN.md](DESIGN.md) §15 |
+| Change Cirro upload | `backend/app/cirro.py` (client + bundle + `UploadQueue`) + `backend/app/routers/cirro.py` (routes) + `frontend/src/components/CirroUploadDialog.tsx` | [DESIGN.md](DESIGN.md) §15 |
 | Change Cirro login (device code, credential scoping, expiry) | `backend/app/cirro.py` (`CredentialStore`, `start_login`) + `backend/app/routers/cirro.py` (`/api/cirro/auth`) + `frontend/src/components/CirroConnectDialog.tsx` + the token helpers in `frontend/src/api.ts` | [DESIGN.md](DESIGN.md) §15 |
 
 ### Live import logging

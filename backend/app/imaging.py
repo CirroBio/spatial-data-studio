@@ -35,8 +35,13 @@ TILE_WEBP_QUALITY = 80
 # Keyed by (id(sdata), ...). id() is only unique among *live* objects, so entries
 # MUST be evicted when a session closes (see evict_caches): otherwise they leak, and
 # a later session whose sdata is allocated at the same address would read another
-# image's stale norm for a same-named element.
+# image's stale norm for a same-named element. Guarded by _norm_cache_lock: tile and
+# thumbnail requests run concurrently under the shared read lock, and OrderedDict
+# mutation (move_to_end/insert/popitem) is not thread-safe (same hazard as
+# _raster_chunk_cache below). The norm itself is computed outside the lock — it scans
+# a whole pyramid level — so a racing pair just computes the same value twice.
 _norm_cache: "OrderedDict[tuple, np.ndarray]" = OrderedDict()
+_norm_cache_lock = threading.Lock()
 _NORM_CACHE_MAX = 256  # per-channel norm arrays kept in memory (LRU)
 
 # Raw Viv chunk bytes (the default client-compositing path). The raster_store route
@@ -57,8 +62,9 @@ def evict_caches(sdata) -> None:
     released so a reused id() can't serve another image's cached norm/tiles/chunks."""
     global _raster_chunk_bytes
     sid = id(sdata)
-    for key in [k for k in _norm_cache if k[0] == sid]:
-        _norm_cache.pop(key, None)
+    with _norm_cache_lock:
+        for key in [k for k in _norm_cache if k[0] == sid]:
+            _norm_cache.pop(key, None)
     with _raster_chunk_lock:
         for key in [k for k in _raster_chunk_cache if k[0] == sid]:
             _raster_chunk_bytes -= len(_raster_chunk_cache.pop(key))
@@ -197,10 +203,11 @@ def _channel_norm(sdata, element) -> np.ndarray:
     tile of an element uses the same scaling (per-tile maxima would make brightness
     jump between adjacent tiles). uint8 images use a fixed 255."""
     key = (id(sdata), element)
-    cached = _norm_cache.get(key)
-    if cached is not None:
-        _norm_cache.move_to_end(key)
-        return cached
+    with _norm_cache_lock:
+        cached = _norm_cache.get(key)
+        if cached is not None:
+            _norm_cache.move_to_end(key)
+            return cached
     arr = _image_array(sdata, element)
     data = np.asarray(arr.data if hasattr(arr, "data") else arr)
     if data.ndim == 2:
@@ -209,9 +216,10 @@ def _channel_norm(sdata, element) -> np.ndarray:
         norm = np.full(data.shape[0], 255.0, dtype=np.float64)
     else:
         norm = np.array([max(float(np.percentile(data[c], 99.9)), 1.0) for c in range(data.shape[0])])
-    _norm_cache[key] = norm
-    if len(_norm_cache) > _NORM_CACHE_MAX:
-        _norm_cache.popitem(last=False)
+    with _norm_cache_lock:
+        _norm_cache[key] = norm
+        if len(_norm_cache) > _NORM_CACHE_MAX:
+            _norm_cache.popitem(last=False)
     return norm
 
 

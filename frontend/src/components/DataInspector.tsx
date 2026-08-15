@@ -22,8 +22,12 @@ type Selection =
   | { kind: 'image'; name: string }
   | { kind: 'labels'; name: string };
 
-function fieldPath(sel: Selection): string | null {
-  if (sel.kind === 'table') return sel.field;
+function fieldPath(sel: Selection, activeTable: string | null): string | null {
+  if (sel.kind === 'table') {
+    // Bare 'obs'/'var' means the active table server-side; a non-active table
+    // must be named explicitly or the preview would show the wrong table's data.
+    return sel.name === activeTable ? sel.field : `tables:${sel.name}:${sel.field}`;
+  }
   if (sel.kind === 'shapes') return `shapes:${sel.name}`;
   if (sel.kind === 'points') return `points:${sel.name}`;
   return null;
@@ -106,6 +110,7 @@ export default function DataInspector() {
           <TableView
             sessionId={activeSessionId}
             sel={sel}
+            activeTable={inv?.tables.find((t) => t.active)?.name ?? null}
             onField={(field) => sel.kind === 'table' && setSel({ ...sel, field })}
           />
         ) : (
@@ -239,10 +244,12 @@ function ElementNavigator({
 function TableView({
   sessionId,
   sel,
+  activeTable,
   onField,
 }: {
   sessionId: string;
   sel: Selection;
+  activeTable: string | null;
   onField: (field: 'obs' | 'var') => void;
 }) {
   const [offset, setOffset] = useState(0);
@@ -251,14 +258,15 @@ function TableView({
   const [error, setError] = useState<string | null>(null);
   const dataVersions = useAppStore((s) => s.sessionState?.data_versions);
 
-  const path = fieldPath(sel);
+  const path = fieldPath(sel, activeTable);
 
   // Scope the refetch trigger to versions relevant to this selection, not every
-  // field in the session: a bare "obs"/"var" path (the whole table) aggregates
+  // field in the session: a bare "obs"/"var" path (the active table) aggregates
   // every `obs:<col>`/`var:<col>` version, while "shapes:<name>"/"points:<name>"
   // match their own single key. Without this, any unrelated field changing
   // anywhere in the session (e.g. a gene column from a compute step) refetched
-  // this 50-row preview too.
+  // this 50-row preview too. A "tables:<name>:..." path (a non-active table)
+  // matches no version key — compute mutates the active table, so no refetch.
   const relevantVersion = path && dataVersions
     ? Object.entries(dataVersions)
         .filter(([k]) => (path.includes(':') ? k === path : k.startsWith(`${path}:`)))

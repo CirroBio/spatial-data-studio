@@ -43,7 +43,7 @@ import numpy as np
 import spatialdata as sd
 import zarr
 
-from ..config import config
+from ..config import _within_dir, config
 from ..schemas import checkpoint as checkpoint_schemas
 from ..sessions import appstate
 
@@ -204,11 +204,12 @@ def _extract_zip_verifying(path: str, extract_dir: str, expected: str,
         for arcname in sorted(zf.namelist()):
             h.update(arcname.encode())
             target = os.path.join(extract_dir, arcname)
-            # Zip-slip guard: reject any entry that resolves outside extract_dir. Even
-            # though these are archives we wrote, a hash-named drop-in could carry a
-            # `../` arcname, and the content-hash check runs only AFTER the full extract.
+            # Zip-slip guard (shared config._within_dir containment check): reject any
+            # entry that resolves outside extract_dir. Even though these are archives we
+            # wrote, a hash-named drop-in could carry a `../` arcname, and the
+            # content-hash check runs only AFTER the full extract.
             resolved = Path(target).resolve()
-            if resolved != extract_root and extract_root not in resolved.parents:
+            if not _within_dir(resolved, extract_root):
                 raise ValueError(f"unsafe archive entry escapes extract dir: {arcname!r}")
             if arcname.endswith("/"):
                 os.makedirs(target, exist_ok=True)

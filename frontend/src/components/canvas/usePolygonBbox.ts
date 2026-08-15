@@ -33,13 +33,22 @@ type Bbox = [number, number, number, number];
 const CACHE_MAX = 48;
 const cache = new Map<string, arrow.Table>();
 const pending = new Set<string>();
+const failed = new Set<string>();
 
-function getTable(key: string, fetchShapes: FetchShapes, element: string, bbox: Bbox, onLoad: () => void): arrow.Table | null {
+function getTable(key: string, fetchShapes: FetchShapes, element: string, bbox: Bbox, onLoad: () => void): { table: arrow.Table | null; failed: boolean } {
   const hit = cache.get(key);
   if (hit) {
     cache.delete(key);
     cache.set(key, hit);  // LRU bump
-    return hit;
+    return { table: hit, failed: false };
+  }
+  if (failed.has(key)) {
+    // The last fetch of this bbox failed (transient/404 → the cells layer just
+    // stays blank). Report the failure once so the caller shows loading:false
+    // instead of a stuck "Loading cell boundaries" cue, and clear the mark so a
+    // later memo run retries the fetch.
+    failed.delete(key);
+    return { table: null, failed: true };
   }
   if (!pending.has(key)) {
     pending.add(key);
@@ -50,9 +59,10 @@ function getTable(key: string, fetchShapes: FetchShapes, element: string, bbox: 
         if (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value as string);
         onLoad();
       })
-      .catch(() => { pending.delete(key); });  // transient/404 → the cells layer just stays blank
+      // Bump on failure too, so the memo re-runs and drops its loading:true value.
+      .catch(() => { pending.delete(key); failed.add(key); onLoad(); });
   }
-  return null;
+  return { table: null, failed: false };
 }
 
 // Build a per-feature RGBA color Vector (arrow FixedSizeList<Uint8, 4>) by
@@ -169,8 +179,8 @@ export function usePolygonBbox(
     // Round the (world-space) bbox to integers so sub-unit jitter doesn't churn the key.
     const b = bboxToWorld(settled, pixelToWorld).map(Math.round) as Bbox;
     const key = `${sourceId}:${element}:${version}:${b.join(',')}`;
-    const table = getTable(key, fetchShapes, element, b, bump);
-    if (!table) return { layer: lastLayer.current, loading: true };
+    const { table, failed: fetchFailed } = getTable(key, fetchShapes, element, b, bump);
+    if (!table) return { layer: lastLayer.current, loading: !fetchFailed };
     // Over budget (viewport holds > POLYGON_LIMIT cells) → the backend returns a
     // 0-row table. Report no layer (not an empty one) so the caller shows just the
     // points instead of blanking. Clear lastLayer so stale outlines from a
