@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, type RefObject } from 'react';
+import { useState, useEffect, useCallback, useRef, type RefObject } from 'react';
 import type { OrthographicViewState } from '@deck.gl/core';
 import type { SpatialDisplaySpec, ImageInfo } from '../types';
 import type { ScatterPositions } from './useArrowPositions';
@@ -83,12 +83,22 @@ export function useCanvasViewState(
   // tissue image is shown, so the whole section (which can extend beyond the spots)
   // is framed, not just the spots — unless the image-info fetch failed, in which
   // case the spots are all there is to frame.
+  //
+  // It also runs again whenever the image element changes: the canvas coordinate space
+  // IS the chosen image's pixel space, so a camera framed for the previous element (or
+  // for world space) points somewhere arbitrary in the new one. `framedElement` only
+  // advances once a fit actually lands, so an unsized canvas or a pending image info
+  // retries rather than leaving the new element unframed.
+  const framedElement = useRef<string | null | undefined>(undefined);
   useEffect(() => {
-    if (viewState) return;
+    const element = display.encoding.image_layer;
+    if (viewState && framedElement.current === element) return;
     if (!positions) return;
-    if (display.encoding.image_layer && !imageInfo && !imageInfoFailed) return;
+    if (element && !imageInfo && !imageInfoFailed) return;
     const fit = fitToData();
-    if (fit) setViewState(fit);
+    if (!fit) return;
+    framedElement.current = element;
+    setViewState(fit);
   }, [fitToData, display.encoding.image_layer, imageInfo, imageInfoFailed, positions, viewState]);
 
   return { containerRef, canvasSize, viewState, setViewState, fitToData };

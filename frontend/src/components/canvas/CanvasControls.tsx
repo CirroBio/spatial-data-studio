@@ -44,6 +44,9 @@ interface CanvasControlsProps {
   shapeSets: string[];
   shapesElement: string | null;
   setShapesElement: (v: string) => void;
+  imageSets: string[];
+  imageElement: string | null;
+  setImageElement: (v: string | null) => void;
   channels: Channel[];
   setChannel: (index: number, patch: Partial<{ visible: boolean; name: string; color: string; contrastLimits: [number, number] }>) => void;
   maxVisibleReached: boolean;
@@ -143,6 +146,9 @@ export default function CanvasControls({
   shapeSets,
   shapesElement,
   setShapesElement,
+  imageSets,
+  imageElement,
+  setImageElement,
   channels,
   setChannel,
   maxVisibleReached,
@@ -158,7 +164,7 @@ export default function CanvasControls({
   // The shapes overlay needs a polygon element; with none available the Cells layer
   // is Points-only, regardless of any persisted render_mode.
   const mode = shapeSets.length > 0 ? renderMode : 'points';
-  const hasImage = !!display.encoding.image_layer;
+  const hasImage = imageElement !== null;
   const [tab, setTab] = useState<DisplayTab>('layers');
   // Which channel's color/contrast settings are expanded (Image tab). Ephemeral UI.
   const [expandedChannel, setExpandedChannel] = useState<number | null>(null);
@@ -456,6 +462,25 @@ export default function CanvasControls({
         {/* Always available: the backdrop applies whether or not the dataset has an
             image element, so this tab is not gated on `hasImage`. */}
         <Tabs.Content value="image" className="flex flex-col gap-2 pt-2 focus:outline-none">
+          {/* Which raster is drawn under the cells. Datasets often carry several
+              (an H&E alongside a morphology stain); "None" shows the backdrop alone. */}
+          {imageSets.length > 0 && (
+            <div className="flex flex-col gap-1">
+              <label className={FIELD_LABEL}>Image</label>
+              <select
+                value={imageElement ?? ''}
+                onChange={(e) => setImageElement(e.target.value || null)}
+                className={SELECT_CLASS}
+                title="Which image element to display under the cells. Switching images resets the channel settings, since channels belong to the image."
+              >
+                <option value="">None</option>
+                {imageSets.map((name) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <div className="flex flex-col gap-1">
             <label className={FIELD_LABEL}>Backdrop</label>
             <div className="flex items-center gap-1.5">
@@ -472,7 +497,7 @@ export default function CanvasControls({
             </div>
           </div>
 
-          {!hasImage && (
+          {imageSets.length === 0 && (
             <p className="text-[10px] text-muted/60 leading-snug">This dataset has no image element.</p>
           )}
           {hasImage && !showImage && (

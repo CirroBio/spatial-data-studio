@@ -83,6 +83,9 @@ export interface SpatialCanvasControls {
   renderMode: 'points' | 'points+shapes';
   shapeSets: string[];
   shapesElement: string | null;
+  imageSets: string[];
+  imageElement: string | null;
+  setImageElement: (element: string | null) => void;
   channels: Channel[];
   setChannel: (index: number, patch: ChannelPatch) => void;
   maxVisibleReached: boolean;
@@ -511,6 +514,21 @@ export default function SpatialCanvas({
     updateEncoding({ category_colors: rest });
   }, [display.encoding.category_colors, colorByPath, updateEncoding]);
 
+  // Switching the image element drops the per-channel state with it: `channels` is
+  // keyed by channel index, and index 2 of an H&E is not index 2 of a 20-plex IF stain.
+  // Cleared to `{}` rather than dropped, so a shared view link can carry the reset —
+  // its diff against the checkpoint's encoding can't represent an absent key.
+  // Picking an element also turns the image layer back on, so the choice is visible
+  // without a second trip to the View tab; picking "None" leaves nothing to show.
+  const setImageElement = useCallback((element: string | null) => {
+    const base = currentSpec();
+    if (base.encoding.image_layer === element) return;
+    persistDisplay({
+      ...base,
+      encoding: { ...base.encoding, image_layer: element, channels: {}, show_image: element !== null },
+    });
+  }, [currentSpec, persistDisplay]);
+
   const legendVisible = display.encoding.legend_visible !== false;
   const legendTitle = display.encoding.legend_title || colorByLabel(colorByPath);
 
@@ -748,6 +766,9 @@ export default function SpatialCanvas({
         renderMode,
         shapeSets: polygonElements,
         shapesElement,
+        imageSets: fields?.images ?? [],
+        imageElement: display.encoding.image_layer,
+        setImageElement,
         channels,
         setChannel,
         maxVisibleReached,

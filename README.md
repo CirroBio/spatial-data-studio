@@ -126,14 +126,16 @@ the analysis history that produced this view.*
 </tr>
 </table>
 
-![The display settings panel, organised into View, Cells, and Image icon tabs: layer visibility, color by, render mode, point size, plot orientation, zoom, minimap, plot backdrop, and per-channel image color/contrast.](./docs/images/display.jpg)
+![The display settings panel, organised into View, Cells, and Image icon tabs: layer visibility, color by, render mode, point size, plot orientation, zoom, minimap, image selection, plot backdrop, and per-channel image color/contrast.](./docs/images/display.jpg)
 
 *Customize the display, organised into **View**, **Cells**, and **Image** icon tabs —
 choose what colors the cells, how they render, how the plot is oriented (flip the
 horizontal/vertical axes), the zoom level (buttons plus scroll/pinch), whether the
 minimap is shown, the plot's own light/dark backdrop (on the **Image** tab, set per
 plot and independent of the app theme), and how each tissue-image channel is colored
-and contrast-adjusted.
+and contrast-adjusted. A dataset that carries more than one image (say an H&E next to
+a morphology stain) picks which one is drawn under the cells at the top of the
+**Image** tab, or **None** for no image at all; each image brings its own channels.
 When cells are colored by a categorical value, each group's color can be overridden
 individually (and reset to the default palette) at the bottom of the **Cells** tab.
 (Text and shape annotations that persist with the dataset are drawn from the left

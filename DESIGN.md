@@ -710,6 +710,12 @@ at that boundary, since a raw reader input has no cheap size estimate.
 
 ### 9.4 Image channel controls
 
+Which raster is drawn is itself a control: the **Image** tab lists the object's image
+elements (`fields.images`) and writes the pick to `image_layer`, with **None** for no
+image at all. Switching elements clears `channels` — that map is keyed by channel index,
+which means nothing across images — and turns `show_image` back on, and the canvas
+re-frames, since its coordinate space is the chosen image's pixel space (§9.3).
+
 Per image channel: **toggle visibility**, **rename** (display-only name overriding raw
 channel labels), and assign one of 8 canonical spectrum colors. Channels are composited
 by additively blending each channel's percentile-normalized intensity tinted with its
