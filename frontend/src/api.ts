@@ -331,9 +331,27 @@ export async function getShapesGeoArrow(
 }
 
 // ---- data inspector ---------------------------------------------------------
-export async function getElements(sessionId: string): Promise<ElementInventory> {
-  const res = await apiFetch(`/api/sessions/${sessionId}/elements`);
-  return res.json() as Promise<ElementInventory>;
+/** The five element facets of a SpatialData object, as keyed by `ElementInventory`
+ * and by the save body's `include`. */
+export type SdataFacet = keyof ElementInventory;
+
+/** `ElementInventory` with the per-element checkpoint size estimate the save dialog
+ * needs (`?sizes=1`). Declared here rather than on the library's `ElementInventory`:
+ * the canvas has no use for a size, so widening a published type for one Studio
+ * dialog would be the wrong direction. `null` means "not estimable" — see
+ * `store.element_size_mb`. */
+export type SizedElements = {
+  [F in SdataFacet]: (ElementInventory[F][number] & { size_mb: number | null })[];
+};
+
+export async function getElements(sessionId: string): Promise<ElementInventory>;
+export async function getElements(sessionId: string, opts: { sizes: true }): Promise<SizedElements>;
+export async function getElements(
+  sessionId: string, opts?: { sizes?: boolean },
+): Promise<ElementInventory | SizedElements> {
+  const query = opts?.sizes ? '?sizes=1' : '';
+  const res = await apiFetch(`/api/sessions/${sessionId}/elements${query}`);
+  return res.json() as Promise<ElementInventory | SizedElements>;
 }
 
 export type TableCell = string | number | boolean | null;
@@ -591,11 +609,16 @@ export async function setPointsTransform(
   return res.json() as Promise<{ job_id: string }>;
 }
 
-export async function saveSession(sessionId: string, path?: string): Promise<{ job_id: string }> {
+/** `include` writes only the named elements: a facet left out keeps that facet whole,
+ * a facet present keeps exactly the names listed, so `{ images: [] }` drops every
+ * image. Omit it for the ordinary whole-object save. */
+export async function saveSession(
+  sessionId: string, path?: string, include?: Partial<Record<SdataFacet, string[]>>,
+): Promise<{ job_id: string }> {
   const res = await apiFetch(`/api/sessions/${sessionId}/save`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(path ? { path } : {}),
+    body: JSON.stringify({ ...(path ? { path } : {}), ...(include ? { include } : {}) }),
   });
   return res.json() as Promise<{ job_id: string }>;
 }

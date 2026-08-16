@@ -46,3 +46,37 @@ def bump_versions(st: dict, field_paths) -> dict:
     for fp in field_paths:
         dv[fp] = dv.get(fp, 0) + 1
     return dv
+
+
+# Display-encoding keys that name an sdata element, and the facet each is drawn from.
+# `coords` is an obsm path and `color_by` is table-scoped, so neither is an element
+# reference and neither appears here.
+_ELEMENT_REFS = {"image_layer": "images", "shapes_layer": "shapes"}
+
+
+def prune_to_elements(st: dict, kept: dict[str, set[str]]) -> dict:
+    """Copy of `st` with display encodings that name a dropped element neutralised.
+
+    A selective save (`store.select_elements`) can omit an element a display still
+    points at; left alone the written checkpoint would reference an image or shapes
+    layer that isn't in the file, which the serverless viewer renders as a broken
+    layer. Both reference keys are nullable in `app_state.schema.json`, so clearing
+    them keeps the blob schema-valid and the display falls back to "no image" /
+    "no boundaries".
+
+    `kept` maps facet -> surviving element names. Returns `st` unchanged (same object)
+    when nothing needs clearing, so the common full-save path copies nothing.
+    """
+    stale = [
+        (i, key)
+        for i, d in enumerate(st.get("displays", []))
+        for key, facet in _ELEMENT_REFS.items()
+        if (name := (d.get("encoding") or {}).get(key)) and name not in kept.get(facet, set())
+    ]
+    if not stale:
+        return st
+    out = dict(st)
+    out["displays"] = [dict(d) for d in st["displays"]]
+    for i, key in stale:
+        out["displays"][i]["encoding"] = {**out["displays"][i]["encoding"], key: None}
+    return out

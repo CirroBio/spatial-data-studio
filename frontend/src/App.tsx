@@ -9,6 +9,8 @@ import { checkpointUrlFromLocation, fetchCheckpointIndex, isEmbedMode } from './
 import { requestFreshCheckpointUrl, useEmbedBridge } from './data/embedBridge';
 import CheckpointIndexPage from './components/CheckpointIndexPage';
 import { useSSE } from './hooks/useSSE';
+import { useUrlViewSync } from './hooks/useUrlViewSync';
+import { urlHasViewport } from './lib/urlViewState';
 import { useSession } from './hooks/useSession';
 import { usePresence, useEditGate } from './hooks/usePresence';
 import Header from './components/Header';
@@ -49,6 +51,13 @@ export default function App() {
   // re-signs through the host rather than dying partway through a long session.
   const checkpoint = useCheckpointSession(checkpointUrl, embed ? requestFreshCheckpointUrl : undefined);
   useEmbedBridge(embed, checkpoint);
+  // Shareable view links, serverless only and never under an embed host — there the
+  // dashboard owns display state over postMessage and a URL writer would race it.
+  useUrlViewSync(checkpointUrl !== null && !embed);
+  // The camera follows the display when a host applies one (embed) or when a shared
+  // link pinned one; otherwise both canvases fit to the data as usual.
+  const linkPinsViewport = useMemo(urlHasViewport, []);
+  const restoreViewport = embed || linkPinsViewport;
 
   useSSE(!serverless);
 
@@ -334,6 +343,7 @@ export default function App() {
             canvasMode={canvasMode}
             annotationTarget={annotationTarget}
             embedded={embed}
+            restoreViewport={restoreViewport}
           />
         </StudioCanvasHost>
       );
@@ -350,6 +360,7 @@ export default function App() {
             canvasMode={canvasMode}
             annotationTarget={annotationTarget}
             embedded={embed}
+            restoreViewport={restoreViewport}
           />
         </StudioCanvasHost>
       );

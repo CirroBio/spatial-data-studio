@@ -13,8 +13,14 @@ import pandas as pd
 _MAX_CELL = 80  # truncate long stringified cells (e.g. geometry WKT)
 
 
-def describe_elements(adata, sdata, active_table_key: str | None) -> dict:
-    """Inventory of the object's elements for the inspector's navigator."""
+def describe_elements(adata, sdata, active_table_key: str | None, *,
+                      sizes: bool = False, stores: dict[str, str] | None = None) -> dict:
+    """Inventory of the object's elements for the inspector's navigator.
+
+    `sizes` additionally annotates every entry with `size_mb` — the estimated
+    contribution that element makes to a written checkpoint, for the save dialog's
+    per-element breakdown. Off by default: it stats the backing store, which the
+    inspector has no use for. See `store.element_size_mb` for the accuracy contract."""
     tables = []
     if sdata is not None and sdata.tables:
         for name, t in sdata.tables.items():
@@ -41,8 +47,14 @@ def describe_elements(adata, sdata, active_table_key: str | None) -> dict:
         for name in sdata.labels:
             labels.append({"name": name})
 
-    return {"tables": tables, "shapes": shapes, "points": points,
-            "images": images, "labels": labels}
+    out = {"tables": tables, "shapes": shapes, "points": points,
+           "images": images, "labels": labels}
+    if sizes and sdata is not None:
+        from ..persistence.store import element_size_mb
+        for facet, entries in out.items():
+            for e in entries:
+                e["size_mb"] = element_size_mb(sdata, facet, e["name"], stores)
+    return out
 
 
 def _cell(v):

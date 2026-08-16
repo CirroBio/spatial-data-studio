@@ -705,21 +705,27 @@ class Session:
         self.dirty_transforms.clear()
         self.force_full = False
 
-    def _write_checkpoint(self, path: str, hash_name: bool) -> str:
+    def _write_checkpoint(self, path: str, hash_name: bool,
+                          include: dict[str, list[str]] | None = None) -> str:
         """Persist the object to `path`, incrementally when possible: rewrite only the
         changed table/transform elements (reusing the on-disk rasters untouched) when
         the session is still backed by the writable directory store it loaded from and
         no raster changed; otherwise re-serialize the whole object. The caller holds
-        the read lock and updates saved-state after this returns."""
+        the read lock and updates saved-state after this returns.
+
+        `include` writes only the named elements. It short-circuits above the
+        incremental branch because `update_checkpoint` reuses the on-disk rasters
+        wholesale, which would put back exactly the elements the caller asked to drop."""
         from ..persistence.store import (save_spatialdata, update_checkpoint,
                                           can_update_incrementally)
         with self._save_lock:
-            if (path.endswith(".zarr.zip") and not self.force_full
+            if (include is None and path.endswith(".zarr.zip") and not self.force_full
                     and can_update_incrementally(self.sdata, self.extract_dir)):
                 return update_checkpoint(self.sdata, path, self.app_state,
                                          tables=self.dirty_tables, transforms=self.dirty_transforms,
                                          hash_name=hash_name)
-            return save_spatialdata(self.sdata, path, self.app_state, hash_name=hash_name)
+            return save_spatialdata(self.sdata, path, self.app_state, hash_name=hash_name,
+                                    include=include)
 
     def _save_and_finish(self, job_id: str, payload: dict, kind: str,
                          bump_fields: list | None = None) -> None:
@@ -730,15 +736,22 @@ class Session:
         target = Path(payload["path"]).resolve()
         if not within_data_dir(target):
             raise ValueError("save path is outside the data directory")
+        include = payload.get("include")
         with self.lock.reading():
-            self.store_path = self._write_checkpoint(payload["path"], payload.get("hash_name", False))
-        self.saved = True
-        self._clear_dirty()
+            written = self._write_checkpoint(payload["path"], payload.get("hash_name", False),
+                                             include=include)
+        # A filtered write is an export, not this session's checkpoint: the object still
+        # holds elements the file doesn't contain, so adopting it as `store_path` and
+        # calling the session saved would both be false.
+        if include is None:
+            self.store_path = written
+            self.saved = True
+            self._clear_dirty()
         self._jobs[job_id]["status"] = "completed"
         if bump_fields:
             appstate.bump_versions(self.app_state, bump_fields)
         BUS.publish("job.completed", {"session_id": self.id, "job_id": job_id, "kind": kind,
-                                      "path": self.store_path,
+                                      "path": written,
                                       "data_versions": self.app_state["data_versions"]})
 
     def _run_set_transform(self, job_id, payload):

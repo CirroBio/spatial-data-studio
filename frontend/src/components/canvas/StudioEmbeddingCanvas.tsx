@@ -6,7 +6,8 @@ import EmbeddingControls from './EmbeddingControls';
 
 // The Studio app's embedding canvas. Same slot arrangement as StudioSpatialCanvas.
 export default function StudioEmbeddingCanvas({
-  display, sessionId, obsmFields, obsFields, layerNames, canvasMode, annotationTarget, embedded,
+  display, sessionId, obsmFields, obsFields, layerNames, canvasMode, annotationTarget,
+  embedded, restoreViewport,
 }: {
   display: EmbeddingDisplaySpec;
   sessionId: string;
@@ -16,6 +17,8 @@ export default function StudioEmbeddingCanvas({
   canvasMode: 'regions' | 'shapes' | 'subset' | null;
   annotationTarget: { regionSetId: string; category: string; color: string } | null;
   embedded: boolean;
+  // See StudioSpatialCanvas: camera restore is independent of who owns the controls.
+  restoreViewport: boolean;
 }) {
   const [panelCollapsed, setPanelCollapsed] = useState(false);
 
@@ -28,7 +31,7 @@ export default function StudioEmbeddingCanvas({
       layerNames={layerNames}
       canvasMode={canvasMode}
       annotationTarget={annotationTarget}
-      followDisplayViewport={embedded}
+      followDisplayViewport={restoreViewport}
       controls={embedded ? undefined : (api) => (
         <EmbeddingControls
           {...api}

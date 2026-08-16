@@ -1,0 +1,75 @@
+name: docs
+
+# Builds the documentation site (docs-site/, VitePress over the repo's own markdown) and
+# the serverless viewer, and publishes both to GitHub Pages. The demo checkpoints are
+# committed under docs-site/viewer-data/, so this job never downloads or rebuilds data —
+# regenerate them with scripts/prepare_demo_checkpoints.py and commit the result.
+#
+# Pages must be enabled once by hand: Settings -> Pages -> Source = GitHub Actions.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let two deploys race; queue instead of cancelling so a merged PR always lands.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Build the viewer SPA
+        # vite.config.ts sets base './', so the same build works under /viewer/.
+        run: npm run build
+
+      - name: Build the docs site
+        run: npm run docs:build
+
+      - name: Assemble the Pages tree
+        # /viewer/ ends up a valid standalone deployment in its own right (DESIGN §14.3):
+        # index.html + assets + index.json + the .zarr.zip files in one directory, which
+        # is what makes it browsable as a collection as well as embeddable per page.
+        run: |
+          cp -r frontend/dist docs-site/.vitepress/dist/viewer
+          cp docs-site/viewer-data/* docs-site/.vitepress/dist/viewer/
+          mkdir -p docs-site/.vitepress/dist/docs
+          cp -r docs/images docs-site/.vitepress/dist/docs/images
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs-site/.vitepress/dist
+
+  deploy:
+    # PRs build (so a broken site fails review) but only main publishes.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

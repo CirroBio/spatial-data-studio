@@ -438,12 +438,45 @@ async def list_third_party_licenses():
     return acknowledgements.catalog()
 
 
+def _validated_include(sess, include) -> dict[str, list[str]] | None:
+    """Check the save body's element selection against the session, raising 400 rather
+    than letting a bad name surface as a failed job. A facet absent from `include` keeps
+    that facet whole; a facet present keeps exactly the names listed, so `{"images": []}`
+    drops every image."""
+    if include is None:
+        return None
+    from .registry.base import sdata_facets
+    if not isinstance(include, dict):
+        raise HTTPException(400, "include must be an object of facet -> element names")
+    facets = sdata_facets()
+    out: dict[str, list[str]] = {}
+    for facet, names in include.items():
+        if facet not in facets:
+            raise HTTPException(400, f"unknown element facet '{facet}'")
+        if not isinstance(names, list):
+            raise HTTPException(400, f"include['{facet}'] must be a list of element names")
+        have = set(getattr(sess.sdata, facet, None) or {})
+        missing = sorted(n for n in names if n not in have)
+        if missing:
+            raise HTTPException(400, f"unknown {facet} element(s): {', '.join(missing)}")
+        out[facet] = list(names)
+    kept = out.get("tables")
+    # Dropping the table the displays and every field path are resolved against would
+    # produce a checkpoint that reopens with nothing to show.
+    if kept is not None and sess.active_table_key is not None and sess.active_table_key not in kept:
+        raise HTTPException(400, "the active table must be included in the saved checkpoint")
+    return out
+
+
 @app.post("/api/sessions/{sid}/save")
 async def save(sid: str, body: dict | None = None):
     sess = _writable_session(sid)
-    explicit = (body or {}).get("path")
+    body = body or {}
+    explicit = body.get("path")
     path = explicit or default_save_path(sess)
-    job_id = sess.enqueue_special("save", {"path": path, "hash_name": not explicit})
+    include = _validated_include(sess, body.get("include"))
+    job_id = sess.enqueue_special("save", {"path": path, "hash_name": not explicit,
+                                           "include": include})
     return {"job_id": job_id, "path": path}
 
 
@@ -530,11 +563,12 @@ async def var_names(sid: str, q: str = "", limit: int = 50):
 
 # ---- data inspector: element inventory + dataframe previews ----------------
 @app.get("/api/sessions/{sid}/elements")
-async def elements(sid: str):
+async def elements(sid: str, sizes: bool = False):
     sess = _session(sid)
 
     def _build():
-        return tables.describe_elements(sess.active_table(), sess.sdata, sess.active_table_key)
+        return tables.describe_elements(sess.active_table(), sess.sdata, sess.active_table_key,
+                                        sizes=sizes, stores=sess.raster_stores)
 
     return await _read_locked(sess, _build)
 

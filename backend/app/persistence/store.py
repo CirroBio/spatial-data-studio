@@ -301,12 +301,48 @@ def _stringify_uns_recarrays(sdata) -> list[tuple[dict, str, object]]:
     return swaps
 
 
-def save_spatialdata(sdata, path: str, app_state: dict, hash_name: bool = False) -> str:
+def select_elements(sdata, include: dict[str, list[str]]):
+    """Shallow view over `sdata` carrying only the named elements.
+
+    A facet absent from `include` is kept whole; a facet present keeps exactly the
+    names listed, so `{"images": []}` is how a caller drops every image. Element
+    objects are shared with `sdata` rather than copied — the same dask arrays, the
+    same AnnData — so building a view costs nothing and cannot mutate the live
+    session's object. `attrs` is a fresh dict so `save_spatialdata`'s app_state swap
+    lands on the view instead of the caller's object.
+
+    The view has no backing path, so a filtered save structurally cannot take the
+    incremental route (`can_update_incrementally`) and reuse on-disk rasters that the
+    selection just dropped.
+    """
+    from ..registry.base import sdata_facets
+    kept = {}
+    for facet in sdata_facets():
+        have = dict(getattr(sdata, facet, {}) or {})
+        names = include.get(facet)
+        kept[facet] = have if names is None else {n: have[n] for n in names if n in have}
+    view = sd.SpatialData(**kept)
+    view.attrs = dict(sdata.attrs)
+    return view
+
+
+def save_spatialdata(sdata, path: str, app_state: dict, hash_name: bool = False,
+                     include: dict[str, list[str]] | None = None) -> str:
     """`hash_name` renames a `.zarr.zip` checkpoint to embed a hash of its own
     contents once written (auto-managed saves only — explicit save-as paths are
     honored verbatim). Worker logs are stripped from the persisted `app_state` and
     written under `logs/` instead (see module docstring); the caller's live
-    `app_state` is left untouched."""
+    `app_state` is left untouched.
+
+    `include` (facet -> element names) writes only those elements — see
+    `select_elements` for the absent-vs-present rule. Displays naming a dropped
+    element are neutralised so the file still renders; the live object keeps
+    everything."""
+    if include is not None:
+        from ..registry.base import sdata_facets
+        sdata = select_elements(sdata, include)
+        app_state = appstate.prune_to_elements(
+            app_state, {f: set(getattr(sdata, f, {}) or {}) for f in sdata_facets()})
     persisted, logs = _split_logs(app_state)
     checkpoint_schemas.validate_app_state(persisted)
     original = sdata.attrs.get("app_state")
@@ -724,6 +760,102 @@ def _zarr_root(extracted_dir: str) -> str:
     if len(dirs) == 1:
         return dirs[0]
     return extracted_dir
+
+
+# Inverse of `estimate_resident_mb`'s DECOMP: that reads a compressed store and scales
+# up to resident bytes, this takes in-memory bytes and scales down to what the
+# compressed checkpoint will hold. The same 4x, applied the other way.
+_COMPRESSION = 1 / 4.0
+# Label masks are long runs of a handful of integer values, so they compress far harder
+# than photographic (H&E) or fluorescence intensity data.
+_COMPRESSION_BY_FACET = {"labels": 1 / 20.0}
+
+
+def _dir_bytes(p: Path) -> int:
+    return sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
+
+
+def _raster_nbytes(el) -> int:
+    """Uncompressed bytes across every pyramid level of an image/labels element."""
+    from .. import imaging
+    levels = len(imaging._scale_names(el)) if imaging._is_multiscale(el) else 1
+    total = 0
+    for i in range(levels):
+        arr = imaging._level_array(el, i)
+        total += int(np.prod(arr.shape)) * np.dtype(arr.dtype).itemsize
+    return total
+
+
+def _matrix_nbytes(m) -> int:
+    if m is None:
+        return 0
+    if hasattr(m, "nnz"):  # scipy sparse
+        return int(m.nnz) * (m.data.itemsize + m.indices.itemsize)
+    return int(getattr(m, "nbytes", 0))
+
+
+def _table_nbytes(adata) -> int:
+    """Uncompressed bytes of an AnnData. A sparse `X` counts twice: the checkpoint also
+    carries the gene-major CSC mirror written by `_write_csc_mirror`."""
+    total = _matrix_nbytes(adata.X) * (2 if hasattr(adata.X, "nnz") else 1)
+    for layer in getattr(adata, "layers", {}).values():
+        total += _matrix_nbytes(layer)
+    for frame in (adata.obs, adata.var):
+        total += int(frame.memory_usage(deep=True).sum())
+    for mapping in ("obsm", "varm", "obsp"):
+        for m in (getattr(adata, mapping, None) or {}).values():
+            total += _matrix_nbytes(m)
+    return total
+
+
+def _shapes_nbytes(gdf) -> int:
+    import shapely
+    coords = int(shapely.get_num_coordinates(np.asarray(gdf.geometry.array)).sum())
+    attrs = int(gdf.drop(columns=gdf.geometry.name).memory_usage(deep=True).sum())
+    return coords * 16 + attrs  # two float64 ordinates per coordinate
+
+
+def _points_nbytes(pdf) -> int | None:
+    """None when the frame is dask-backed: its row count isn't known without reading
+    it, and drawing a number in a dialog must not trigger a full scan."""
+    rows = pdf.shape[0]
+    if not isinstance(rows, (int, np.integer)):
+        return None
+    return int(rows) * sum(np.dtype(d).itemsize for d in pdf.dtypes)
+
+
+def element_size_mb(sdata, facet: str, name: str,
+                    stores: dict[str, str] | None = None) -> float | None:
+    """Estimated contribution of one element to a written checkpoint, in MB.
+
+    Two tiers, most accurate first. If the element already sits in a store on disk —
+    the object's own backing directory, or the per-element store a rebuilt raster was
+    written to (`Session.raster_stores`) — its real compressed bytes are read, which is
+    what a full re-save writes out again. Otherwise the size is estimated from shape,
+    dtype and sparsity and scaled by a compression factor.
+
+    The estimate is rough: within roughly 2x, and worse for fluorescence than for H&E.
+    `None` means "not estimable" (a dask points frame), so a total built from these is
+    a lower bound.
+    """
+    for root in (getattr(sdata, "path", None), (stores or {}).get(name)):
+        if root and (d := Path(root) / facet / name).is_dir():
+            return round(_dir_bytes(d) / 1e6, 1)
+
+    el = (getattr(sdata, facet, None) or {}).get(name)
+    if el is None:
+        return None
+    if facet in ("images", "labels"):
+        raw = _raster_nbytes(el)
+    elif facet == "tables":
+        raw = _table_nbytes(el)
+    elif facet == "shapes":
+        raw = _shapes_nbytes(el)
+    else:
+        raw = _points_nbytes(el)
+    if raw is None:
+        return None
+    return round(raw * _COMPRESSION_BY_FACET.get(facet, _COMPRESSION) / 1e6, 1)
 
 
 def estimate_resident_mb(path: str) -> float:

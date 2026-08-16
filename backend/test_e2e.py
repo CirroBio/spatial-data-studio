@@ -686,6 +686,81 @@ def run_incremental_save_flow(client, checkpoint_path):
     print("[ok] incremental-saved table change survived reload")
 
 
+def run_selective_save_flow(client, checkpoint_path):
+    """A save can name which elements go in the file. Asserts the per-element size
+    breakdown, that a filtered write drops exactly what was deselected (file, sidecar
+    and the displays pointing at it), that it neither takes the incremental path nor
+    rewrites the source rasters, and that the live session keeps everything."""
+    import zipfile
+    import zarr
+    from app.deps import MANAGER
+    from app.persistence import store
+    sid = new_session(client, checkpoint_path)
+    sess = MANAGER.get(sid)
+    assert store.can_update_incrementally(sess.sdata, sess.extract_dir), \
+        "expected an incremental-capable session to prove the filtered save opts out"
+
+    inv = client.get(f"/api/sessions/{sid}/elements").json()
+    assert "size_mb" not in inv["tables"][0], "sizes must stay opt-in for the inspector"
+    sized = client.get(f"/api/sessions/{sid}/elements?sizes=1").json()
+    for facet in ("tables", "images", "labels", "points", "shapes"):
+        for e in sized[facet]:
+            assert "size_mb" in e, f"{facet}/{e['name']} missing size_mb"
+    assert sized["tables"][0]["size_mb"] > 0, "the active table should have a measurable size"
+    images = [i["name"] for i in sized["images"]]
+    assert images and all(i["size_mb"] > 0 for i in sized["images"]), f"no sized images: {sized['images']}"
+    print(f"[ok] element sizes: table={sized['tables'][0]['size_mb']}MB "
+          f"images={[(i['name'], i['size_mb']) for i in sized['images']]}")
+
+    # Point a display at an image so the reference-rewrite has something to clear.
+    disp = client.get(f"/api/sessions/{sid}").json()["app_state"]["displays"][0]
+    disp["encoding"]["image_layer"] = images[0]
+    assert client.put(f"/api/sessions/{sid}/displays/{disp['id']}", json=disp).status_code == 200
+
+    def raster_mtimes():
+        base = os.path.join(str(sess.sdata.path), "images")
+        return {os.path.join(r, f): os.path.getmtime(os.path.join(r, f))
+                for r, _, fs in os.walk(base) for f in fs}
+
+    before_mtimes = raster_mtimes()
+    before_store, before_saved = sess.store_path, sess.saved
+    out = os.path.join(str(config.DATA_DIR), "selective_session.zarr.zip")
+    sv = client.post(f"/api/sessions/{sid}/save",
+                     json={"path": out, "include": {"images": []}}).json()
+    assert wait_job(client, sid, sv["job_id"])["status"] == "completed"
+
+    with zipfile.ZipFile(out) as z:
+        names = z.namelist()
+    assert not any(n.startswith("images/") and n.count("/") > 1 for n in names), \
+        f"filtered save still wrote image arrays: {[n for n in names if n.startswith('images/')][:5]}"
+    assert any(n.startswith("tables/") for n in names), "filtered save dropped the tables too"
+
+    # A filtered write is an export: the session still holds the images the file lacks,
+    # so it must not adopt the result as its own checkpoint.
+    assert sess.store_path == before_store and sess.saved == before_saved, \
+        f"filtered save adopted the export: store_path={sess.store_path} saved={sess.saved}"
+    assert raster_mtimes() == before_mtimes, "filtered save rewrote the source rasters"
+    assert [i["name"] for i in client.get(f"/api/sessions/{sid}/elements").json()["images"]] == images, \
+        "filtered save mutated the live session's images"
+
+    sdata, extract_dir, _ = store.read_spatialdata_archive(out)
+    assert not list(sdata.images), f"reloaded filtered checkpoint still has images: {list(sdata.images)}"
+    assert list(sdata.tables), "reloaded filtered checkpoint has no tables"
+    reloaded = sdata.attrs["app_state"]["displays"][0]["encoding"]["image_layer"]
+    assert reloaded is None, f"display still references a dropped image: {reloaded!r}"
+    root = zarr.open_group(store._zarr_root(extract_dir), mode="r")
+    assert dict(root["viewer"].attrs)["images"] == {}, "viewer sidecar still advertises images"
+    print("[ok] filtered save dropped images from file, sidecar and displays")
+
+    bad = client.post(f"/api/sessions/{sid}/save", json={"include": {"images": ["nope"]}})
+    assert bad.status_code == 400, f"unknown element name accepted: {bad.status_code}"
+    bad = client.post(f"/api/sessions/{sid}/save", json={"include": {"tables": []}})
+    assert bad.status_code == 400, f"dropping the active table accepted: {bad.status_code}"
+    bad = client.post(f"/api/sessions/{sid}/save", json={"include": {"nosuch": []}})
+    assert bad.status_code == 400, f"unknown facet accepted: {bad.status_code}"
+    print("[ok] selective save rejects unknown elements, unknown facets and a table-less selection")
+
+
 def run_content_hash_flow(client):
     """Default-path save writes a content-hashed filename that reloads, and a second
     save doesn't stack a second hash suffix (recent 'Content-hash checkpoint names')."""
@@ -1966,6 +2041,7 @@ def main():
         run_shape_annotations_flow(client)
         run_transform_flow(client)
         run_incremental_save_flow(client, out)
+        run_selective_save_flow(client, out)
         run_content_hash_flow(client)
         run_invalidation_flow(client)
         run_encoding_persistence_flow(client)

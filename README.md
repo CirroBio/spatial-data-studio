@@ -10,7 +10,7 @@ can read), run [`squidpy`](https://squidpy.readthedocs.io/) and
 forms, and explore the result on a fast WebGL canvas that draws every cell over the
 tissue image. It runs as a single local server you open in your browser.
 
-![The spatial canvas showing a Xenium ovarian-cancer section, each cell colored by its cellular neighborhood, over the morphology image, with the left panel open on the Compute (history) tab.](docs/images/hero.jpg)
+![The spatial canvas showing a Xenium ovarian-cancer section, each cell colored by its cellular neighborhood, over the morphology image, with the left panel open on the Compute (history) tab.](./docs/images/hero.jpg)
 
 *A whole Xenium ovarian-cancer section (~400,000 cells), colored by cellular
 neighborhood. The left panel organizes the session into **Compute**, **Plots**,
@@ -59,7 +59,10 @@ the analysis history that produced this view.*
   you can still explore freely and change any display setting (color by, channels,
   zoom, render mode); those changes stay on your screen instead of going into the
   session.
-- **Save and share.** Save a checkpoint you can reopen later, save a **snapshot** — a
+- **Save and share.** Save a checkpoint you can reopen later — choosing what goes into
+  the file from a checklist of the dataset's elements, each with its estimated size, so
+  you can leave a multi-gigabyte tissue image out of a copy you want to send someone
+  (the session on screen keeps everything either way). Save a **snapshot** — a
   high-quality figure of the current view exported as a vector PDF and/or raster PNG,
   framed and sized in a dialog with a live preview, optionally with the minimap inset
   included in the figure — or upload saved checkpoints to
@@ -101,11 +104,21 @@ the analysis history that produced this view.*
   (running an analysis, annotating, subsetting, plotting, saving) needs the live app.
   You can still export what you see as a PNG; the publication-quality PDF figure and
   cell-boundary outlines aren't available this way.
+- **Share the exact view you're looking at.** In that no-backend viewer, every display
+  setting you change from what the checkpoint was saved with — color by, palettes and
+  per-category colors, channels and contrast, point size and shape, legends, layer
+  visibility, and where you've panned and zoomed to — is kept in the page's address.
+  **Copy link to this view** in the menu hands you a URL that reopens the same
+  checkpoint framed and styled exactly as you left it, so a collaborator sees your view
+  rather than the saved one. Only your changes travel, so the link stays short.
+  You can try this without installing anything — the
+  [live demos](https://cirrobio.github.io/spatial-data-studio/demo/) are the real viewer
+  running in your browser against a hosted checkpoint.
 
 <table>
 <tr>
-<td width="50%"><img src="docs/images/run-function.jpg" alt="The Cellular Neighborhoods function detail: its documentation, citation, and a parameter form generated from the function signature."></td>
-<td width="50%"><img src="docs/images/recipes.jpg" alt="The recipe gallery listing curated multi-step analysis workflows."></td>
+<td width="50%"><img src="./docs/images/run-function.jpg" alt="The Cellular Neighborhoods function detail: its documentation, citation, and a parameter form generated from the function signature."></td>
+<td width="50%"><img src="./docs/images/recipes.jpg" alt="The recipe gallery listing curated multi-step analysis workflows."></td>
 </tr>
 <tr>
 <td><b>Run a function.</b> Each operation opens with its provenance and a form built from the function's parameters.</td>
@@ -113,7 +126,7 @@ the analysis history that produced this view.*
 </tr>
 </table>
 
-![The display settings panel, organised into View, Cells, and Image icon tabs: layer visibility, color by, render mode, point size, plot orientation, zoom, minimap, plot backdrop, and per-channel image color/contrast.](docs/images/display.jpg)
+![The display settings panel, organised into View, Cells, and Image icon tabs: layer visibility, color by, render mode, point size, plot orientation, zoom, minimap, plot backdrop, and per-channel image color/contrast.](./docs/images/display.jpg)
 
 *Customize the display, organised into **View**, **Cells**, and **Image** icon tabs —
 choose what colors the cells, how they render, how the plot is oriented (flip the
@@ -126,7 +139,7 @@ individually (and reset to the default palette) at the bottom of the **Cells** t
 (Text and shape annotations that persist with the dataset are drawn from the left
 panel's **Annotations** tab.)*
 
-![A Xenium section zoomed in, each cell drawn as its true segmentation outline and colored by its cellular neighborhood, over the morphology image.](docs/images/cell-outlines.jpg)
+![A Xenium section zoomed in, each cell drawn as its true segmentation outline and colored by its cellular neighborhood, over the morphology image.](./docs/images/cell-outlines.jpg)
 
 *Switch to cell-boundary rendering to draw each cell as its actual segmentation
 shape rather than a point — pick the shape set (here `cell_boundaries`) and choose

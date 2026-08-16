@@ -1,18 +1,43 @@
 import { lazy, Suspense, useMemo, useState, type ReactNode } from 'react';
 import { useAppStore } from '../store/sessionStore';
-import { saveSession, disconnectFromCirro, getCirroAuth } from '../api';
+import { disconnectFromCirro, getCirroAuth } from '../api';
 import { reportError } from '@cirrobio/spatial-viewer';
 import { useEditGate } from '../hooks/usePresence';
-import { checkpointUrlFromLocation } from '../data/checkpointIndex';
+import { VIEW_PARAM, checkpointUrlFromLocation } from '../data/checkpointIndex';
+import { flushUrlViewState } from '../hooks/useUrlViewSync';
+import { isOverlayOversized } from '../lib/urlViewState';
 import AcknowledgementsDialog from './AcknowledgementsDialog';
 import CirroUploadDialog from './CirroUploadDialog';
 import CirroConnectDialog from './CirroConnectDialog';
 const SnapshotBrowser = lazy(() => import('./SnapshotBrowser'));
 const SnapshotExportModal = lazy(() => import('./SnapshotExportModal'));
+const SaveCheckpointDialog = lazy(() => import('./SaveCheckpointDialog'));
 import { useTour, spatialDataStudioTour } from '../tours';
 
 interface Props {
   onNewSession: () => void;
+}
+
+/** Copy `text`, falling back to a hidden textarea when the Clipboard API is missing or
+ * refuses. It rejects rather than being absent under a restrictive permissions policy
+ * (an iframe without `clipboard-write`, some browsers' defaults), so absence is not the
+ * only case worth handling. */
+function copyText(text: string): Promise<void> {
+  const viaTextarea = () => {
+    const field = document.createElement('textarea');
+    field.value = text;
+    field.style.position = 'fixed';
+    field.style.opacity = '0';
+    document.body.appendChild(field);
+    field.select();
+    try {
+      if (!document.execCommand('copy')) throw new Error('the browser refused the copy');
+    } finally {
+      document.body.removeChild(field);
+    }
+  };
+  if (!navigator.clipboard?.writeText) return Promise.resolve().then(viaTextarea);
+  return navigator.clipboard.writeText(text).catch(viaTextarea);
 }
 
 // One row of the settings panel: icon + label, greyed and non-clickable when
@@ -110,11 +135,32 @@ export default function SettingsPanel({ onNewSession }: Props) {
     ? `Open the Spatial or Embeddings view to ${snapshotNoun}.`
     : null;
 
-  function handleSave() {
-    if (!activeSessionId) return;
-    saveSession(activeSessionId)
-      .then(({ job_id }) => useAppStore.getState().setBlockingJob({ id: job_id, label: 'Saving session…' }))
-      .catch((err) => reportError('Save failed', err));
+  // The dialog owns the save itself: it lists the object's elements with their
+  // estimated contribution to the file so a large raster can be left out, and issues
+  // the request with whatever survived.
+  const [saveOpen, setSaveOpen] = useState(false);
+
+  const [linkCopied, setLinkCopied] = useState(false);
+
+  function handleCopyLink() {
+    // Force the pending URL write out first: the sync debounces, so a link copied
+    // moments after a slider drag would otherwise be one edit stale.
+    flushUrlViewState();
+    const href = window.location.href;
+    if (isOverlayOversized(new URLSearchParams(window.location.search).get(VIEW_PARAM))) {
+      // Nothing is dropped — but some mail and chat clients wrap or truncate a URL this
+      // long, and a half-pasted link fails in a way that looks like the app's fault.
+      useAppStore.getState().pushNotification({
+        kind: 'info',
+        message: 'This link is unusually long — some chat and mail clients may break it.',
+      });
+    }
+    copyText(href)
+      .then(() => {
+        setLinkCopied(true);
+        setTimeout(() => setLinkCopied(false), 2000);
+      })
+      .catch((err) => reportError('Copy failed', err));
   }
 
   return (
@@ -153,10 +199,24 @@ export default function SettingsPanel({ onNewSession }: Props) {
               }
             />
             )}
+            {captureOnly && (
+            <PanelItem
+              label="Copy link to this view"
+              onClick={handleCopyLink}
+              title="Copies a link that reopens this checkpoint with the display settings you have now."
+              trailing={linkCopied ? <span className="text-[10px] text-muted">Copied</span> : undefined}
+              icon={
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                  <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                </svg>
+              }
+            />
+            )}
             {!captureOnly && (
             <PanelItem
-              label="Save session"
-              onClick={handleSave}
+              label="Save session…"
+              onClick={() => setSaveOpen(true)}
               disabled={!activeSessionId || !!blockingJob || !canEdit}
               title={saveDisabledReason ?? (unsaved ? 'Save session — unsaved changes' : undefined)}
               trailing={unsaved ? <span className="w-1.5 h-1.5 rounded-full bg-warn" title="Unsaved changes" /> : undefined}
@@ -272,6 +332,11 @@ export default function SettingsPanel({ onNewSession }: Props) {
       </aside>
 
       {showAbout && <AcknowledgementsDialog onClose={() => setShowAbout(false)} />}
+      {saveOpen && activeSessionId && (
+        <Suspense fallback={null}>
+          <SaveCheckpointDialog sessionId={activeSessionId} onClose={() => setSaveOpen(false)} />
+        </Suspense>
+      )}
       {snapshotExport && (
         <Suspense fallback={null}>
           <SnapshotExportModal params={snapshotExport} onClose={closeSnapshotExport} />

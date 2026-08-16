@@ -81,7 +81,7 @@ ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_cate
 | POST | `/api/sessions/{id}/shape-annotations` | `ShapeAnnotation` (no id) | `{job_id}` (create one shape) |
 | PUT  | `/api/sessions/{id}/shape-annotations/{shapeId}` | `ShapeAnnotation` | `{job_id}` (replace one shape's geometry/style) |
 | DELETE | `/api/sessions/{id}/shape-annotations/{shapeId}` | — | `{job_id}` |
-| POST | `/api/sessions/{id}/save` | `{path?}` | `{job_id, path}` (queued save) |
+| POST | `/api/sessions/{id}/save` | `{path?, include?}` | `{job_id, path}` (queued save) |
 | GET  | `/api/sessions/{id}/points-transform` | — | `{affine:[a,b,c,d,e,f], element}` (points→global affine of the active table's region element) |
 | POST | `/api/sessions/{id}/points-transform` | `{affine:[a,b,c,d,e,f], path?}` | `{job_id, path}` (sets the affine and persists to disk) |
 | POST | `/api/sessions/{id}/snapshot` | `{viewport:{target,zoom}, width_px, height_px, dpi, formats:["pdf"\|"png"], label?, display_id?, include_minimap?}` | `{status,name,formats,rasterized_points}` — renders + writes `<base>.figure.{pdf,png,thumb.png,json}` in DATA_DIR |
@@ -102,7 +102,7 @@ ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_cate
 | POST | `/api/cirro/upload` | `{project_id, dataset_name, description?, session_paths:[str], folder?}` | `{status:"started", id}` (background; announces `cirro.upload.completed`/`failed` over SSE; always uses the generic "Files" ingest process; `folder` → `folder://<path>` dataset tag; the bundle also carries `index.json` and, where `SDS_STATIC_DIR` is set, the built SPA, so the dataset is a serverless deployment (DESIGN §14.3); needs at least one session; 401 if not connected) |
 | GET  | `/api/sessions/{id}/data/{fieldPath}` | fieldPath e.g. `obs:leiden`, `obsm:spatial`, `X:Sox17`, `obsp:spatial_distances` | Arrow IPC stream (application/vnd.apache.arrow.stream) |
 | GET  | `/api/sessions/{id}/shapes/{element}/geoarrow?bbox=minx,miny,maxx,maxy[&limit=N]` | `bbox` in the `obsm:spatial` world space; optional `limit` caps the returned feature count | Arrow IPC stream (`application/vnd.apache.arrow.stream`) of viewport-clipped boundary polygons — `geometry` (GeoArrow) + `cell_index:int32`; 400 on a malformed bbox; 404 if the element is absent or non-polygonal |
-| GET  | `/api/sessions/{id}/elements` | — | `{tables:[{name,n_obs,n_vars,active}], shapes, points, images, labels}` (data inspector inventory) |
+| GET  | `/api/sessions/{id}/elements` | `?sizes` | `{tables:[{name,n_obs,n_vars,active}], shapes, points, images, labels}` (data inspector inventory; `?sizes=1` adds `size_mb: number\|null` to every entry) |
 | GET  | `/api/sessions/{id}/table?path=&offset=&limit=` | path = `obs`, `var` (the active table), `tables:<name>:obs`, `tables:<name>:var` (a named table, active or not), `shapes:<name>`, `points:<name>`; 404 for an unknown table/element | `{total_rows, offset, limit, index_name, index, columns:[{name,dtype}], rows}` (JSON page) |
 | GET  | `/api/sessions/{id}/image/{element}/info` | — | `{levels:[{level,width,height}], channels, channel_names, bounds, pixel_to_world, tile_size, client_compositing, raster_base_url, zarr_group_path, contrast_limits, contrast_range, is_rgb}` (see below) |
 | GET  | `/api/sessions/{id}/image/{element}/thumbnail?max_px=&channels=` | — | composited WebP (`image/webp`, LRU-cached) |
@@ -175,6 +175,16 @@ for 20 s drops out and releases its lock. Full rules: DESIGN §16.5.
 ### Session source on create
 - read:  `{kind:"read", namespace:"read", function:"visium", params:{path:"..."}}` — any `path`/`input`/`image_path`/`alignment_file` param must resolve under `DATA_DIR`, else 400.
 - load:  `{kind:"load", path:"/data/visium_hne.zarr"}` — `path` must resolve under `DATA_DIR` (the same allowlist as `/api/fs/browse`), else 400. `POST /api/sessions/{id}/save`'s `path` must also resolve under `DATA_DIR`, else 400.
+
+### Save `include`
+`{"images": [], "shapes": ["cells"]}` — facet (`images|labels|points|shapes|tables`) to
+the element names to write. A facet **absent** from the object keeps that facet whole; a
+facet **present** keeps exactly the names listed, so `{"images": []}` drops every image.
+Omitting `include` saves the whole object, which is the only form that takes the
+incremental fast path and that the session adopts as its own checkpoint — a filtered
+write is an export, so `saved`/`store_path` are left alone. Display encodings naming a
+dropped element are rewritten to `null` so the file still opens cleanly. 400 on an
+unknown facet, an unknown element name, or a `tables` list that omits the active table.
 
 ### SessionSummary
 ```jsonc

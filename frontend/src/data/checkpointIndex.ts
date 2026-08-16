@@ -39,6 +39,12 @@ export function isEmbedMode(): boolean {
   return new URLSearchParams(window.location.search).get(EMBED_PARAM) === '1';
 }
 
+// Display settings that differ from the checkpoint's own saved view, so a tuned view
+// can be shared as a link. One opaque base64url payload rather than a field per
+// setting: `category_colors` and `channels` are nested maps that don't survive being
+// spread across query parameters. Encoder + schema: lib/urlViewState.ts.
+export const VIEW_PARAM = 'view';
+
 export interface CheckpointEntry {
   // As written in the manifest — what goes back into `?checkpoint=`, so the address
   // bar stays as short and portable as the manifest itself.
@@ -94,7 +100,12 @@ export async function fetchCheckpointIndex(): Promise<CheckpointIndex> {
 /** Open a checkpoint by its manifest path. A full navigation rather than an in-place
  * swap: a checkpoint carries its own displays, fields and locally-made labels, and
  * reloading is the one way to guarantee none of the previous one's state leaks into
- * the next. The bundle is already cached, so this costs a parse, not a download. */
+ * the next. The bundle is already cached, so this costs a parse, not a download.
+ *
+ * Dropping the rest of the query string is part of that guarantee, `view` included: a
+ * shared view's delta is written against one checkpoint's encodings, and carrying it to
+ * a different file would apply another dataset's colour-by columns, channel indices and
+ * world coordinates. */
 export function openCheckpointPath(path: string): void {
   const url = new URL(window.location.href);
   url.search = `?${CHECKPOINT_PARAM}=${encodeURIComponent(path)}`;

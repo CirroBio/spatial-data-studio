@@ -8,10 +8,11 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from '../store/sessionStore';
 import {
-  isSpatialDisplay, openCheckpoint,
+  isEmbeddingDisplay, isSpatialDisplay, openCheckpoint,
   type CheckpointUrlRefresher, type DataSource,
 } from '@cirrobio/spatial-viewer';
 import type { AppState, SessionState } from '../types';
+import { applyOverlayToAppState, setViewBaseline, urlViewOverlay } from '../lib/urlViewState';
 
 function displayName(url: string): string {
   const last = url.split('/').pop() ?? url;
@@ -59,9 +60,18 @@ export function useCheckpointSession(
           read_only: true,
           error: null,
         };
+        // The file's own displays are the baseline a shared link's delta is written
+        // against and applied to, so capture them before the overlay goes on. Applying
+        // it here rather than after `setSessionState` is what keeps the first canvas
+        // render already correct instead of flashing the saved view.
+        const saved = appState as unknown as AppState;
+        setViewBaseline({
+          spatial: saved.displays.find(isSpatialDisplay) ?? null,
+          embedding: saved.displays.find(isEmbeddingDisplay) ?? null,
+        });
         const state: SessionState = {
           summary,
-          app_state: appState as unknown as AppState,
+          app_state: applyOverlayToAppState(saved, urlViewOverlay()),
           queue: [],
           fields,
           // Nothing can recompute a checkpoint, so no field is ever invalidated and

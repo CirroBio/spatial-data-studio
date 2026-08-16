@@ -69,4 +69,5 @@ jobs:
           npm ci
           npm run typecheck -w @cirrobio/spatial-viewer
           npx tsc --noEmit -p frontend/tsconfig.app.json
+          npm run test -w spatial-data-studio-frontend
           npm run build

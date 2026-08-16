@@ -35,6 +35,14 @@ def is_table_facet(facet: str) -> bool:
     package boundary for the underscore-prefixed list itself."""
     return facet in _TABLE_FACETS
 
+
+def sdata_facets() -> tuple[str, ...]:
+    """The sdata-scoped element facets (see `_SDATA_FACETS`), in a fixed order. For
+    callers outside the registry package that enumerate a SpatialData object's
+    elements (e.g. persistence/store.py's `select_elements`), same rationale as
+    `is_table_facet`."""
+    return tuple(_SDATA_FACETS)
+
 # Closed vocabularies for a ParamSpec / Function, mirrored from the frontend so the
 # form can't be handed a value it doesn't render. WIDGETS is the exact `UiWidget`
 # union in frontend/src/types.ts; EFFECT_CLASSES / ROLES are `EffectClass` and the

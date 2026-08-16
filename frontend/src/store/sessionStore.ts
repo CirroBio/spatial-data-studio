@@ -29,6 +29,7 @@ import { clientName, setClientName, editBlockReason } from '../lib/presence';
 import { putDisplay, getSession, listShapeAnnotations, createShapeAnnotation, updateShapeAnnotation, deleteShapeAnnotation, postPresence, getCirroUploads } from '../api';
 import type { CirroAuth, CirroUpload } from '../api';
 import { checkpointUrlFromLocation, type CheckpointIndex } from '../data/checkpointIndex';
+import { initialUiOverlay } from '../lib/urlViewState';
 
 // Level 0 of a locally-labelled column: every cell starts here and stays here
 // until a lasso claims it, so unlabelled cells still render (greyed) instead of
@@ -524,7 +525,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
   sidebarTab: 'compute',
   setSidebarTab: (tab) => set({ sidebarTab: tab }),
 
-  mainView: 'canvas',
+  // Seeded from a shared view link before the first render: this decides which canvas
+  // mounts, so applying it afterwards would flash the wrong view (lib/urlViewState.ts).
+  mainView: initialUiOverlay().mainView ?? 'canvas',
   setMainView: (view) => set({ mainView: view }),
 
   theme: readTheme(),
@@ -782,7 +785,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setMenuOpen: (open) => set({ menuOpen: open }),
   // A checkpoint viewer opens with the sidebar collapsed — the visualization is the
   // point there, and the sidebar holds only the analysis history (Sidebar.tsx).
-  leftMenuOpen: checkpointUrlFromLocation() === null,
+  leftMenuOpen: initialUiOverlay().leftMenuOpen ?? checkpointUrlFromLocation() === null,
   setLeftMenuOpen: (open) => set({ leftMenuOpen: open }),
 
   cirroAuth: null,

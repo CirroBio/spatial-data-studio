@@ -8,7 +8,7 @@ import LegendControls from './LegendControls';
 import RangeField from './RangeField';
 import DualRangeField from './DualRangeField';
 import {
-  CATEGORY_SWATCHES, CHANNEL_COLORS, ZOOM_LIMITS,
+  CATEGORY_SWATCHES, CHANNEL_COLORS, SPATIAL_ENCODING_DEFAULTS, ZOOM_LIMITS,
   type Channel, type ObsField, type SpatialDisplaySpec,
 } from '@cirrobio/spatial-viewer';
 
@@ -317,7 +317,7 @@ export default function CanvasControls({
           <div className="flex flex-col gap-1">
             <label className={FIELD_LABEL}>Geometry</label>
             <select
-              value={display.encoding.point_marker ?? 'circle'}
+              value={display.encoding.point_marker ?? SPATIAL_ENCODING_DEFAULTS.point_marker}
               onChange={(e) => updateEncoding({ point_marker: e.target.value as 'circle' | 'square' | 'hexagon' })}
               className={SELECT_CLASS}
               title="Point glyph shape."
@@ -347,7 +347,7 @@ export default function CanvasControls({
               <div className="flex flex-col gap-1">
                 <label className={FIELD_LABEL}>Boundary style</label>
                 <select
-                  value={display.encoding.boundary_style ?? 'filled'}
+                  value={display.encoding.boundary_style ?? SPATIAL_ENCODING_DEFAULTS.boundary_style}
                   onChange={(e) => updateEncoding({ boundary_style: e.target.value as 'filled' | 'outline' })}
                   className={SELECT_CLASS}
                   title="Filled draws each cell boundary as a solid shape; Outline draws only the boundary line."
@@ -357,8 +357,10 @@ export default function CanvasControls({
                 </select>
               </div>
 
-              {(display.encoding.boundary_style ?? 'filled') === 'outline' && (
-                <RangeField label="Line width" value={display.encoding.boundary_line_width ?? 1} min={0.5} max={8} step={0.5}
+              {(display.encoding.boundary_style ?? SPATIAL_ENCODING_DEFAULTS.boundary_style) === 'outline' && (
+                <RangeField label="Line width"
+                  value={display.encoding.boundary_line_width ?? SPATIAL_ENCODING_DEFAULTS.boundary_line_width}
+                  min={0.5} max={8} step={0.5}
                   onChange={(v) => updateEncoding({ boundary_line_width: v })} />
               )}
             </>

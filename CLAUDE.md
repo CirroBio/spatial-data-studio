@@ -21,6 +21,15 @@ When in doubt, skim both before committing and fix anything they now misstate. D
 not fold developer detail back into `README.md`, and do not leave user-facing feature
 changes out of it.
 
+The documentation site (`docs-site/`) publishes the files above **unmodified** — it
+points VitePress at the repo root, so the markdown in the repo *is* the site. Never
+copy or paraphrase `README.md`, `DEVELOPMENT.md`, `DESIGN.md` or any component README
+into `docs-site/`; pages there may only add site-specific material (navigation, the
+live-viewer demos). Adding, renaming or moving a published `.md` updates the sidebar in
+`docs-site/.vitepress/config.mts` in the same commit — the build's dead-link check fails
+otherwise. `<ViewerEmbed>` may appear only in pages under `docs-site/`, never in
+published repo markdown, which has to stay readable on GitHub.
+
 ## Keep run.sh / stop.sh current (always)
 
 `run.sh` is the local dev launcher (backend `uvicorn` + frontend `npm run dev`);

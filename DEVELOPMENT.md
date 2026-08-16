@@ -129,8 +129,12 @@ frontend/   React + TS + Vite + Tailwind SPA around that canvas (an npm workspac
 nextflow/   Nextflow workflow wrapping backend/cli.py (uv installs deps at runtime; no image build)
 docker/     single-image build (multi-stage), nginx edge, supervisor
 docs/       CONTRACT.md (REST/SSE/Arrow API), images/ (README screenshots)
+docs-site/  VitePress documentation site published to GitHub Pages. Renders the repo's own
+            markdown in place (srcDir is the repo root); demo/ holds the only new pages, and
+            viewer-data/ the committed demo checkpoints they embed
 scripts/    test-data prep: prepare_test_data.py (Visium H&E), prepare_xenium_data.py (Xenium),
-            prepare_xenium_tma.py (Xenium TMA grid for the Identify TMAs detector)
+            prepare_xenium_tma.py (Xenium TMA grid for the Identify TMAs detector),
+            prepare_demo_checkpoints.py (small checkpoints for the docs site's live demos)
 sds-governance/  governance bundle: RULES.md + AGENTS.md + skills/ + checks/ executable gate
                  (`make check`) + license allowlist
 ```
@@ -152,13 +156,17 @@ Component-level notes: [`backend/README.md`](backend/README.md),
 | Change who may edit a session (presence, the edit lock, viewer names) | `backend/app/sessions/presence.py` + `deps.py` (`_claim_lock`) + `frontend/src/lib/presence.ts` (identity + gate) + `hooks/usePresence.ts` (heartbeat) + `components/LockBadge.tsx` | [DESIGN.md](DESIGN.md) §16.5 |
 | Change the MCP assistant surface (tools, vision render, agent guidance) | `backend/app/mcp/server.py` (tools) + `vision.py` (render/coords/membership) + `agent.py` (presence/lock) + `guides/*.md` (guidance text); mounted in `main.py` | [DESIGN.md](DESIGN.md) §29 |
 | Change the checkpoint/persistence format | `backend/app/persistence/store.py` | [DESIGN.md](DESIGN.md) §3, §14.1, [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) |
+| Change which elements a save can leave out, or how their sizes are estimated | `backend/app/persistence/store.py` (`select_elements`, `element_size_mb`) + `sessions/appstate.py` (`prune_to_elements`) + `frontend/src/components/SaveCheckpointDialog.tsx` | below |
 | Change what the serverless viewer can read from a checkpoint | `backend/app/persistence/store.py` (`_write_viewer_sidecar`, the writer half) + `packages/viewer/src/data/checkpointSource.ts` (the reader half) — the two must move together | [DESIGN.md](DESIGN.md) §14.1–14.2, [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) §4 |
 | Change the shape of `app_state`, the `viewer/` sidecar, `X_csc`, or `index.json` | `backend/app/schemas/checkpoint/*.schema.json` (the JSON Schema is validated against on every write) + [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) in the same commit — `sds-governance/checks/check_checkpoint_schema_docs.py` fails the build otherwise | [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) |
 | Add a render-path call the canvas makes | `packages/viewer/src/data/types.ts` (the `DataSource` interface), then **both** `frontend/src/data/apiSource.ts` and `packages/viewer/src/data/checkpointSource.ts` | [DESIGN.md](DESIGN.md) §14.2 |
 | Change what the serverless viewer shows (collapsed-by-default sidebar with the analysis history only, PNG export) | `frontend/src/components/Sidebar.tsx` (the serverless branch), `store/sessionStore.ts` (`leftMenuOpen` default), `packages/viewer/src/lib/canvasCapture.ts` | [DESIGN.md](DESIGN.md) §14.2 |
 | Change the `index.json` deployment manifest or the checkpoint switcher | `frontend/src/data/checkpointIndex.ts` (format + navigation), `components/CheckpointIndexPage.tsx` (landing), `components/CheckpointPicker.tsx` (header), `backend/app/cirro.py` (`_write_viewer_index`) | [DESIGN.md](DESIGN.md) §14.3, [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) §8 |
 | Change the embed protocol (viewer in an iframe under a Cirro dashboard) | `frontend/src/data/embedBridge.ts` (viewer side) + [docs/EMBED_PROTOCOL.md](docs/EMBED_PROTOCOL.md) in the same commit — the dashboard side in `@cirrobio/dashboard` must move together | [docs/EMBED_PROTOCOL.md](docs/EMBED_PROTOCOL.md) |
+| Change what a shared view link carries | `frontend/src/lib/urlViewState.ts` (schema + diff) + `hooks/useUrlViewSync.ts` (writer); add the field's default to `packages/viewer/src/defaults.ts` if it has a constant one | below |
 | Change the deck.gl canvas / rendering | `packages/viewer/src/canvas/` | [packages/viewer/README.md](packages/viewer/README.md) |
+| Change the docs site's navigation, or publish a doc that isn't on it yet | `docs-site/.vitepress/config.mts` (sidebar + `srcExclude`) | below |
+| Change the docs site's live demos | `docs-site/demo/*.md` + `.vitepress/theme/components/ViewerEmbed.vue`; regenerate data with `scripts/prepare_demo_checkpoints.py` | below |
 | Give the canvas something new from the app (store state, an action, a way to persist) | `packages/viewer/src/canvas/canvas-host.tsx` (the `CanvasHost` contract), then `frontend/src/components/StudioCanvasHost.tsx` (the app's implementation of it) — the canvas never reaches for the store or `api.ts` itself | below |
 | Change an in-canvas settings panel, or what the canvas hands one | `frontend/src/components/canvas/CanvasControls.tsx` / `EmbeddingControls.tsx` (Tailwind app UI), and `SpatialCanvasControls` / `EmbeddingCanvasControls` in `packages/viewer/src/canvas/` for the slot payload | below |
 | Publish or version the canvas library | `packages/viewer/package.json` + [packages/viewer/README.md](packages/viewer/README.md) ("Releasing") | — |
@@ -229,6 +237,45 @@ fronting proxy's origin timeout (the 504 fix). It uses `forward_load_logs(load_i
 lines — plus milestone progress and a terminal `done`/`hash_check` event — onto the
 `session.loading` channel keyed by the client-minted `load_id`. The frontend accumulates
 these in per-job / per-load buffers (`sessionStore`) and renders them with `AnsiLog`.
+
+### Selective checkpoint saves
+
+`POST /api/sessions/{id}/save` takes an optional `include` (facet -> element names, see
+[docs/CONTRACT.md](docs/CONTRACT.md)) so a copy can be written without a multi-gigabyte
+raster. `SaveCheckpointDialog.tsx` opens on every save with everything ticked, and sends
+`include` **only** when something was unticked — an untouched selection is byte-for-byte
+the old save.
+
+Filtering happens in `store.select_elements`, a shallow `SpatialData` view sharing the
+live object's element objects (same dask arrays, same AnnData), so it costs nothing and
+cannot mutate the session. Three consequences worth knowing before changing it:
+
+- The view has **no backing path**, so `can_update_incrementally` is false for it. That
+  is deliberate — `update_checkpoint` reuses the on-disk rasters wholesale and would put
+  back exactly what was dropped — and `Session._write_checkpoint` also short-circuits
+  above the incremental branch so the guarantee doesn't rest on that alone.
+- The sidecar, the CSC mirrors and consolidated metadata all derive from whatever object
+  `_write_browser_reader_support` is handed, so a filtered write produces a
+  self-consistent `viewer/` group with no extra work.
+- A filtered write is an **export**: `_save_and_finish` skips adopting it, so
+  `store_path`, `saved` and the dirty sets are untouched. The session still holds
+  elements the file doesn't.
+
+`appstate.prune_to_elements` clears `image_layer` / `shapes_layer` on any display naming
+a dropped element (both are nullable in `app_state.schema.json`), so the file still opens
+cleanly instead of rendering a missing layer. Nothing records *which* elements were
+dropped — deliberately, since that would mean a `viewer/` sidecar schema change and drag
+[docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) in under rule R17 for no gain.
+
+`store.element_size_mb` backs the dialog's per-element figures (`GET
+/api/sessions/{id}/elements?sizes=1`, off by default — it stats the store and the
+inspector has no use for it). It prefers real compressed bytes off disk, from the
+object's backing store or a rebuilt raster's own store in `Session.raster_stores`, and
+falls back to a shape/dtype/nnz estimate scaled by `_COMPRESSION` — the documented
+inverse of `estimate_resident_mb`'s `DECOMP`, with a separate factor for labels, which
+compress far harder than intensity data. The fallback is within roughly 2x and worse for
+fluorescence than H&E; `None` ("unknown", a dask points frame whose length would cost a
+full scan) makes the dialog's total a lower bound rather than an estimate.
 
 ## Local dev environment
 
@@ -414,6 +461,106 @@ in [`docker/README.md`](docker/README.md). The `work-tmpfs.sh` entrypoint sizes 
 `/work` tmpfs to `SDS_WORK_TMPFS_PCT` of the detected memory limit at startup so the
 RAM working set autoscales with `mem_limit`; it needs `cap_add: SYS_ADMIN` (compose)
 and fails open to the mount-time `size=` otherwise.
+
+### Shareable view links
+
+In the serverless viewer, whatever differs from the checkpoint's own saved encodings is
+mirrored into a `view` query parameter, so a tuned view can be handed to someone else as
+a URL (DESIGN §14.2). `lib/urlViewState.ts` owns the schema and the diff;
+`hooks/useUrlViewSync.ts` writes it.
+
+- **The baseline is the checkpoint, not a constants table.** The recipient opens the
+  same `?checkpoint=`, so both sides read an identical `app_state` and baseline + delta
+  reproduces the view exactly. Diffing against static defaults could not work:
+  `color_by`, `image_layer` and `show_image` all default off the data.
+- **Defaults still matter, for normalization.** Both sides run through
+  `SPATIAL_ENCODING_DEFAULTS` / `EMBEDDING_ENCODING_DEFAULTS`
+  (`packages/viewer/src/defaults.ts`) before comparing, so an absent field and its
+  default compare equal — otherwise toggling a setting off and on again would emit it.
+  A new encoding field with a constant default belongs in that table.
+- **Nested maps replace wholesale.** `channels` and `category_colors` are two-level
+  records; a per-key merge would need tombstones to express "the user removed this
+  override".
+- **One opaque parameter**, base64url JSON, not a parameter per setting — those two maps
+  do not survive being spread across query parameters. Unknown keys are ignored, so a
+  link from a newer build degrades to a partial view; an unreadable one falls back to
+  the saved view with a notice.
+- **The writer subscribes to the store**, not to `useDisplayPersistence` — that hook
+  returns early on `!canEdit`, which is exactly the serverless case, so its debounce
+  never arms. The URL is write-only after mount (decoded once, `replaceState` only), so
+  there is no feedback loop and deliberately no `popstate` listener.
+- **Off in embed mode and in the backed app.** Under a dashboard host the parent owns
+  display state over postMessage and a URL writer would race `apply-display`; in the
+  backed app the encoding is server-persisted, multi-user, and already shareable by
+  session id.
+- **Camera restore** reuses the library's `followDisplayViewport` prop, which embed mode
+  already used. It is threaded as its own `restoreViewport` prop rather than reusing
+  `embedded`, since that one also hides the in-canvas controls — a shared link restores
+  the camera *and* keeps the controls.
+
+Tests: `src/lib/urlViewState.test.ts` (vitest, `npm run test -w spatial-data-studio-frontend`)
+covers the encoder; `e2e/serverless-share.spec.ts` covers the wiring by sharing a link
+between two browser contexts. The e2e drives the camera through the zoom buttons —
+`onZoom` writes the viewport directly, bypassing deck's controller, which synthetic drag
+and wheel events never reach.
+
+## Documentation site
+
+`docs-site/` is a VitePress site published to GitHub Pages by
+[`.github/workflows/docs.yml`](.github/workflows/docs.yml). It is a third npm workspace,
+so the one root `npm ci` installs it:
+
+```bash
+npm run docs:dev      # local, hot-reloading
+npm run docs:build    # production build + dead-link check
+```
+
+**It publishes the repo's markdown in place.** `srcDir` is the repo root, so the file
+tree *is* the route tree (`DEVELOPMENT.md` → `/DEVELOPMENT`, `docs/CONTRACT.md` →
+`/docs/CONTRACT`) and the relative links these docs already use between each other keep
+working. Nothing is copied, so nothing can drift — which is the whole point, and why
+CLAUDE.md forbids forking any of it into `docs-site/`. Two consequences:
+
+- `srcExclude` in `.vitepress/config.mts` has to stay tight, or every stray markdown
+  file in the repo becomes a page. Agent instructions (`CLAUDE.md`, `AGENTS.md`,
+  `sds-governance/skills/`, `backend/app/mcp/guides/`) are excluded deliberately — they
+  are written for tools, not readers.
+- The build **fails on a dead link**, which is what keeps the cross-doc links honest.
+  `ignoreDeadLinks` carries only two kinds of exemption: `/viewer/`, which the deploy
+  job assembles rather than VitePress rendering it, and links to the excluded agent
+  files.
+
+**The live demos** are the only new prose (`docs-site/demo/`). They embed the real
+serverless viewer through `<ViewerEmbed>`
+(`.vitepress/theme/components/ViewerEmbed.vue`), registered globally by the theme. It is
+an `<iframe>` over the built SPA, not the `@cirrobio/spatial-viewer` library: this site
+is Vue and the library is React, the library ships no control panel (controls stay
+app-side behind a render-prop slot, so a page built on it would have nothing to click),
+and it needs a `CanvasHost` adapter per host. The iframe also keeps each demo's WebGL
+context disposable, and — because the SPA and the `.zarr.zip` files come off the same
+origin — needs no CORS for the reader's range requests. Nothing loads until the reader
+clicks: the SPA bundle is ~4 MB, so three demos on a page would otherwise cost 12 MB up
+front. Pass `chrome="minimal"` to add `embed=1` (no header, sidebar or in-canvas
+controls) when a page wants the canvas alone.
+
+**The demo checkpoints are committed** under `docs-site/viewer-data/` (~5 MB), so the
+Pages job never downloads or rebuilds data. Regenerate them with
+
+```bash
+python scripts/prepare_demo_checkpoints.py
+```
+
+which builds a fully synthetic multichannel section (no downloads, no fixtures) plus the
+Xenium TMA grid when `test-data/xenium_tma.zarr` exists, writes each through the app's
+own session machinery so it carries default displays and a current `viewer/` sidecar,
+and rewrites `index.json`. Re-run and commit whenever the checkpoint format moves — the
+reader rejects a stale `VIEWER_SIDECAR_VERSION`.
+
+**Deploying** needs one manual step, once: **Settings → Pages → Source = GitHub
+Actions**. The workflow builds the SPA and the site, then assembles them so
+`/viewer/` is itself a valid standalone deployment (DESIGN §14.3) — `index.html` +
+`assets/` + `index.json` + the `.zarr.zip` files — which is what makes it browsable as a
+collection as well as embeddable per page. Pull requests build but do not publish.
 
 ## Tests
 

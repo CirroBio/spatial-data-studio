@@ -4,13 +4,17 @@
   "version": "0.1.0",
   "workspaces": [
     "packages/viewer",
-    "frontend"
+    "frontend",
+    "docs-site"
   ],
   "scripts": {
     "build": "npm run build -w @cirrobio/spatial-viewer && npm run build -w spatial-data-studio-frontend",
     "build:viewer": "npm run build -w @cirrobio/spatial-viewer",
     "dev": "npm run dev -w spatial-data-studio-frontend",
     "check:tours": "npm run check:tours -w spatial-data-studio-frontend",
-    "test:e2e": "npm run test:e2e -w spatial-data-studio-frontend"
+    "test:e2e": "npm run test:e2e -w spatial-data-studio-frontend",
+    "docs:dev": "npm run docs:dev -w spatial-data-studio-docs",
+    "docs:build": "npm run docs:build -w spatial-data-studio-docs",
+    "docs:preview": "npm run docs:preview -w spatial-data-studio-docs"
   }
 }

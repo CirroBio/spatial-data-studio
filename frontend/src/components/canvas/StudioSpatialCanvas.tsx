@@ -8,7 +8,7 @@ import CanvasControls from './CanvasControls';
 // the canvas without the app's stylesheet (a Cirro dashboard tile) passes no
 // controls and drives the display from its own inspector instead.
 export default function StudioSpatialCanvas({
-  display, sessionId, canvasMode, annotationTarget, embedded,
+  display, sessionId, canvasMode, annotationTarget, embedded, restoreViewport,
 }: {
   display: SpatialDisplaySpec;
   sessionId: string;
@@ -16,8 +16,12 @@ export default function StudioSpatialCanvas({
   annotationTarget: { regionSetId: string; category: string; color: string } | null;
   // Embedded under a hosting dashboard: it owns the display settings over
   // postMessage, so the in-canvas panel would be a second, competing control surface
-  // over the same state — and the viewport it applies has to reach the camera.
+  // over the same state.
   embedded: boolean;
+  // Put the camera where the display says, rather than fitting to the data. Separate
+  // from `embedded` because a shared view link restores the camera while keeping the
+  // controls — the two happen to coincide only for a dashboard host.
+  restoreViewport: boolean;
 }) {
   const [panelCollapsed, setPanelCollapsed] = useState(false);
 
@@ -27,7 +31,7 @@ export default function StudioSpatialCanvas({
       sessionId={sessionId}
       canvasMode={canvasMode}
       annotationTarget={annotationTarget}
-      followDisplayViewport={embedded}
+      followDisplayViewport={restoreViewport}
       controls={embedded ? undefined : (api) => (
         <CanvasControls
           {...api}

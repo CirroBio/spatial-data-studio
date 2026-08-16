@@ -1206,7 +1206,7 @@ looked on the canvas at the chosen framing.
 
 ### 14.1 Checkpoint on-disk format
 
-See [docs/CHECKPOINT_FORMAT.md](../docs/CHECKPOINT_FORMAT.md) for the field-level
+See [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) for the field-level
 reference (every attrs key, its type, and the JSON Schema that enforces it) — this
 section is the design rationale, that document is what a third party building a
 different reader/writer needs. Every app-defined structure below (`app_state`, the
@@ -1321,6 +1321,11 @@ deployment is a copy plus a manifest. All asset URLs in the build are relative
 a domain root. `path` resolves against the manifest's own URL,
 so entries can name siblings, subfolders, or absolute URLs on another host.
 
+The documentation site's `/viewer/` directory is another instance of exactly this
+layout, assembled by `.github/workflows/docs.yml` from the SPA build and the demo
+checkpoints in `docs-site/viewer-data/`. That is what lets a docs page iframe a single
+checkpoint while the same directory also serves as a browsable collection.
+
 Mode resolution (`App`): `?checkpoint=<url>` opens that file. With no parameter, the
 app polls `/api/readyz`; a sibling `index.json` is what distinguishes a static
 deployment from a backend that is merely still booting, so it is probed **once** on
@@ -1342,7 +1347,19 @@ real subsetting (`sd.polygon_query`), saving, and the matplotlib vector-PDF snap
 export. Cell-boundary overlays are also absent — `shapes/<name>/shapes.parquet` is
 GeoParquet, which zarrita cannot decode, so `getShapesGeoArrow`/`getElements` are
 optional on the interface and the Cells layer stays on its points-only path (the same
-fallback as a display with no shapes element). Nothing local survives a reload.
+fallback as a display with no shapes element).
+
+Display settings are the one thing that does survive a reload, because they ride in the
+URL rather than in storage. Whatever differs from the checkpoint's own saved encodings
+is written to a `view` parameter (`lib/urlViewState.ts`), so a tuned view is shareable:
+the recipient opens the same `?checkpoint=`, reads the identical `app_state` out of the
+identical file, and the delta lands them on the same picture — camera included. Only the
+delta travels, so a link stays short and a re-saved checkpoint degrades gracefully
+(what the user changed still applies, what they didn't follows the new file). Nothing
+else local survives: selections, hidden cells and locally-drawn labels are gone on
+reload. The parameter is deliberately absent in embed mode, where the host owns display
+state over postMessage (docs/EMBED_PROTOCOL.md), and in the backed app, where the
+encoding is server-persisted and shared by session id.
 
 ---
 
