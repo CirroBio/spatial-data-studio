@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, type RefObject } from 'react';
 import type { OrthographicViewState } from '@deck.gl/core';
-import type { SpatialDisplaySpec, ImageInfo } from '../../types';
+import type { SpatialDisplaySpec, ImageInfo } from '../types';
 import type { ScatterPositions } from './useArrowPositions';
 import { ZOOM_LIMITS, fitZoom, useCanvasSize } from './viewFit';
 
@@ -27,7 +27,7 @@ interface Params {
 export function useCanvasViewState(
   { positions, imageInfo, imageInfoFailed, showImage, display }: Params,
 ): {
-  containerRef: RefObject<HTMLDivElement>;
+  containerRef: RefObject<HTMLDivElement | null>;
   canvasSize: { width: number; height: number } | null;
   viewState: OrthographicViewState | null;
   setViewState: (vs: OrthographicViewState) => void;

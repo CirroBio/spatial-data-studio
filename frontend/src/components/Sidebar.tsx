@@ -4,7 +4,7 @@ import PanelTabs, { type PanelTab } from './PanelTabs';
 import { useAppStore } from '../store/sessionStore';
 import { checkpointUrlFromLocation } from '../data/checkpointIndex';
 import { deleteHistoryEntry, getRecipe, importRecipe, getSession, runAllPending } from '../api';
-import { reportError } from '../lib/errors';
+import { reportError } from '@cirrobio/spatial-viewer';
 import { useEditGate } from '../hooks/usePresence';
 import StatusBadge, { type Status } from './StatusBadge';
 import FunctionPicker from './FunctionPicker';

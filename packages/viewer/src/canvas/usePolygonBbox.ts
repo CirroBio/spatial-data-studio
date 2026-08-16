@@ -6,8 +6,8 @@ import type { Matrix4 } from '@math.gl/core';
 // Pinned here because 0.4.x may drift the API and needs re-testing; not migrated.
 import { GeoArrowPolygonLayer } from '@geoarrow/deck.gl-layers';
 import type { GeoArrowPolygonLayerProps } from '@geoarrow/deck.gl-layers';
-import { useDataSource } from '../../data/context';
-import type { DataSource } from '../../data/types';
+import { useDataSource } from '../data/context';
+import type { DataSource } from '../data/types';
 import { wx, wy, type Affine } from './imageAffine';
 
 // The boundary fetch, once a source is known to provide one. Neither implementation

@@ -4,8 +4,7 @@ import {
   getCirroFolders, getCirroProjects, getDatasets, uploadToCirro,
   type CirroProject, type DatasetEntry,
 } from '../api';
-import { formatError } from '../lib/format';
-import { reportError } from '../lib/errors';
+import { formatError, reportError } from '@cirrobio/spatial-viewer';
 import { ModalOverlay, ModalHeader } from './DetailModal';
 
 interface Props {

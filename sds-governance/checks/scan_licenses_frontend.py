@@ -8,8 +8,10 @@ import json
 import sys
 from pathlib import Path
 
-FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
-NODE_MODULES = FRONTEND_DIR / "node_modules"
+# npm workspaces hoist every dependency of both members (frontend, packages/viewer)
+# into the repo root's node_modules; there is no frontend/node_modules.
+REPO_ROOT = Path(__file__).resolve().parents[2]
+NODE_MODULES = REPO_ROOT / "node_modules"
 OUT_PATH = Path(__file__).resolve().parents[1] / "sbom_frontend.json"
 
 

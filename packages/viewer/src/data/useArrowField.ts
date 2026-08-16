@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import * as arrow from 'apache-arrow';
-import { fetchWhenIdle } from '../api';
-import { useDataSource } from '../data/context';
+import { fetchWhenIdle } from '../lib/fetchWhenIdle';
+import { useDataSource } from './context';
 import { formatError } from '../lib/format';
 
 type CacheKey = string; // `${sourceId}:${fieldPath}:${version}`

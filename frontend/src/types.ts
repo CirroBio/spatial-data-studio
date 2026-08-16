@@ -1,4 +1,8 @@
-// types.ts — all domain types for Spatial Data Studio
+// types.ts — the app's own domain types: the function registry, sessions, jobs, the
+// edit lock and the SSE payloads. The display model the canvas renders from
+// (DisplaySpec, SessionFields, ImageInfo and friends) belongs to
+// `@cirrobio/spatial-viewer` and is imported from there.
+import type { DisplaySpec, SessionFields } from '@cirrobio/spatial-viewer';
 
 export type EffectClass = 'compute' | 'plot' | 'read' | 'extract';
 
@@ -79,34 +83,6 @@ export interface PresenceView {
   sessions: Record<string, SessionPresence>;
 }
 
-export interface ObsField {
-  name: string;
-  kind: 'categorical' | 'numeric';
-}
-
-export interface ObsmField {
-  name: string;
-  n_components: number;
-}
-
-export interface ImageDims {
-  name: string;
-  width: number;
-  height: number;
-}
-
-export interface SessionFields {
-  obs: ObsField[];
-  obsm: ObsmField[];
-  n_obs: number;
-  var_names_count: number;
-  obsp: string[];
-  layers: string[];
-  images: string[];
-  image_dims: ImageDims[];
-  shapes: string[];
-}
-
 export interface HistEntry {
   id: string;
   namespace: string;
@@ -126,100 +102,6 @@ export interface PlotEntry {
   params: Record<string, unknown>;
   status: 'pending' | 'queued' | 'running' | 'drawn' | 'invalidated' | 'failed';
   references: string[];
-}
-
-export interface ChannelState {
-  visible: boolean;
-  name: string;
-  color?: string;
-  contrast_limits?: [number, number];  // per-channel [min,max] override; unset = server default
-}
-
-export interface DisplayEncoding {
-  coords: string;
-  // Null when the dataset offered nothing to colour by — `manager.auto_displays`
-  // leaves it unset unless it finds a categorical obs column.
-  color_by: string | null;
-  image_layer: string | null;
-  shapes_layer: string | null;
-  point_size: number;
-  opacity: number;
-  colormap: string;
-  channels?: Record<string, ChannelState>;  // per-channel on/off + rename (v3 Part 10)
-  legend_visible?: boolean;  // cell-color legend (colorbar / category swatches); defaults on
-  legend_title?: string;     // overrides the default title (color_by column, sans "obs:")
-  show_points?: boolean;     // cells-layer visibility; defaults on
-  show_image?: boolean;      // image-layer visibility; defaults to (image_layer != null)
-  show_channel_legend?: boolean;  // image channel legend visibility; defaults on
-  show_minimap?: boolean;    // overview inset (minimap) in the canvas' top left; defaults on
-  isolated_category?: string | null;  // isolate one category in the color-by legend (dims the rest)
-  // Per-category color overrides for a categorical color-by, keyed by the color_by
-  // path (obs:<col>, X:<gene>, ...) then by category level -> `#rrggbb`. Levels
-  // without an entry fall back to the default categorical palette.
-  category_colors?: Record<string, Record<string, string>>;
-  // How the Cells layer renders. Points always draw (styled by `point_size` +
-  // `point_marker`, overlaps merged not blended), visible at every zoom. 'points'
-  // (default) is points only; 'points+shapes' additionally overlays cell-boundary
-  // fills from `shapes_layer` once zoomed in far enough that the viewport-culled set
-  // fits. The legacy value 'shapes' is read as 'points+shapes'.
-  render_mode?: 'points' | 'points+shapes' | 'shapes';
-  // Cell-boundary overlay style (render_mode 'points+shapes'). 'filled' (default)
-  // fills each polygon with the cell's color; 'outline' draws only the boundary
-  // stroke at `boundary_line_width` screen pixels.
-  boundary_style?: 'filled' | 'outline';
-  boundary_line_width?: number;         // outline stroke width in pixels; defaults to 1
-  point_marker?: 'circle' | 'square' | 'hexagon';  // point glyph shape; defaults to circle
-  invert_x?: boolean;                   // mirror the plot horizontally; defaults off
-  invert_y?: boolean;                   // mirror the plot vertically; defaults off
-  background?: 'light' | 'dark';        // per-plot backdrop, independent of the app theme; defaults to dark
-}
-
-export interface Viewport {
-  target: number[];
-  zoom: number;
-  rotationX?: number;      // embedding_canvas, 3D mode only
-  rotationOrbit?: number;  // embedding_canvas, 3D mode only
-}
-
-export interface EmbeddingEncoding {
-  obsm_key: string;
-  x_component: number;
-  y_component: number;
-  z_component: number;  // used only when is_3d
-  is_3d: boolean;
-  color_by: string | null;
-  point_size: number;
-  opacity: number;
-  colormap: string;
-  legend_visible?: boolean;
-  legend_title?: string;
-  // Per-category color overrides for a categorical color-by, keyed by color_by path
-  // then category level -> `#rrggbb`. Same shape/semantics as on DisplayEncoding.
-  category_colors?: Record<string, Record<string, string>>;
-}
-
-export interface SpatialDisplaySpec {
-  id: string;
-  type: 'spatial_canvas';
-  encoding: DisplayEncoding;
-  viewport: Viewport | null;
-}
-
-export interface EmbeddingDisplaySpec {
-  id: string;
-  type: 'embedding_canvas';
-  encoding: EmbeddingEncoding;
-  viewport: Viewport | null;
-}
-
-export type DisplaySpec = SpatialDisplaySpec | EmbeddingDisplaySpec;
-
-export function isSpatialDisplay(d: DisplaySpec): d is SpatialDisplaySpec {
-  return d.type === 'spatial_canvas';
-}
-
-export function isEmbeddingDisplay(d: DisplaySpec): d is EmbeddingDisplaySpec {
-  return d.type === 'embedding_canvas';
 }
 
 export interface RegionCategory {
@@ -256,37 +138,6 @@ export interface SessionState {
   queue: QueueEntry[];
   fields: SessionFields;
   data_versions: Record<string, number>;
-}
-
-export interface ImageLevel {
-  level: number;
-  width: number;
-  height: number;
-}
-
-export interface ImageInfo {
-  element: string;
-  height: number;
-  width: number;
-  channels: number;
-  channel_names: string[];
-  bounds: [number, number, number, number];
-  // Affine [a,b,c,d,e,f] mapping level-0 pixel (px,py) -> world (spot space):
-  // world_x = a*px + b*py + c, world_y = d*px + e*py + f. Encodes any rotation
-  // or axis-swap from image alignment (e.g. an aligned H&E).
-  pixel_to_world: [number, number, number, number, number, number];
-  levels: ImageLevel[];
-  tile_size: number;
-  // Client-side (Viv) GPU compositing fields. When client_compositing is true the
-  // live canvas reads the element's Zarr store directly at
-  // raster_base_url/zarr_group_path and composites channels on the GPU; false
-  // keeps the server-composited PNG/WebP tile path.
-  client_compositing?: boolean;
-  raster_base_url?: string;   // "/api/sessions/{sid}/raster/{element}" (no trailing slash)
-  zarr_group_path?: string;   // "images/{element}"
-  contrast_limits?: [number, number][];  // per channel default [min,max], order matches channel_names
-  contrast_range?: [number, number][];   // per channel [min,max] data range — the domain for contrast sliders
-  is_rgb?: boolean;           // true-color 3-channel image shown as-is, not tinted
 }
 
 // SSE event payloads

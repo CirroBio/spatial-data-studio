@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
+import { OVERLAY_PANEL } from './overlayStyles';
 import type { ScatterPositions } from './useArrowPositions';
 
 // Overview inset ("minimap") — a thumbnail of the whole section with a white box
@@ -111,8 +112,16 @@ export default function Minimap({
   return (
     <div
       ref={boxRef}
-      style={{ width, height }}
-      className="absolute top-11 left-2 z-20 rounded border border-border bg-surface/90 backdrop-blur-sm overflow-hidden cursor-crosshair select-none"
+      style={{
+        ...OVERLAY_PANEL,
+        width, height,
+        top: 44, left: 8, zIndex: 20,
+        borderRadius: 4,
+        overflow: 'hidden',
+        cursor: 'crosshair',
+        userSelect: 'none',
+        WebkitUserSelect: 'none',
+      }}
       title="Overview — click or drag to move the view"
       onPointerDown={(e) => {
         e.currentTarget.setPointerCapture(e.pointerId);
@@ -131,15 +140,22 @@ export default function Minimap({
           src={imageUrl}
           alt="section overview"
           draggable={false}
-          className="w-full h-full object-fill"
-          style={{ transform: `scale(${invertX ? -1 : 1}, ${invertY ? 1 : -1})` }}
+          style={{
+            width: '100%', height: '100%', objectFit: 'fill',
+            transform: `scale(${invertX ? -1 : 1}, ${invertY ? 1 : -1})`,
+          }}
         />
       ) : (
         <canvas ref={canvasRef} style={{ width, height }} />
       )}
       <div
-        className="absolute border border-white/90 bg-white/10 pointer-events-none"
-        style={{ left: box.left, top: box.top, width: box.width, height: box.height }}
+        style={{
+          position: 'absolute',
+          border: '1px solid rgb(255 255 255 / 0.9)',
+          background: 'rgb(255 255 255 / 0.1)',
+          pointerEvents: 'none',
+          left: box.left, top: box.top, width: box.width, height: box.height,
+        }}
       />
     </div>
   );

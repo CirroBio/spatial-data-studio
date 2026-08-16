@@ -3,22 +3,28 @@
 # ---------------------------------------------------------------------------
 FROM node:22-slim AS spa-builder
 
-WORKDIR /build/frontend
+WORKDIR /build
 
 # Copy manifest files first so the install layer is cached across source-only changes.
+# The repo is one npm workspace (frontend + packages/viewer), so the root manifests
+# and both members' package.json drive the install.
 # Copies package-lock.json too when present (real Vite project); placeholder has none.
-COPY frontend/package.json ./
-COPY frontend/package-lock.json* ./
+COPY package.json ./
+COPY package-lock.json* ./
+COPY frontend/package.json ./frontend/
+COPY packages/viewer/package.json ./packages/viewer/
 
 # Use npm ci when a lockfile exists (deterministic, faster); fall back to npm install
 # for the placeholder build that ships without a lockfile.
 RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
-COPY frontend/ ./
+COPY frontend/ ./frontend/
+COPY packages/viewer/ ./packages/viewer/
+# Builds @cirrobio/spatial-viewer first, then the app.
 RUN npm run build
 
 # Verify the output exists
-RUN test -f dist/index.html
+RUN test -f frontend/dist/index.html
 
 
 # ---------------------------------------------------------------------------

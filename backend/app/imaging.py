@@ -159,7 +159,7 @@ def channel_names(elem) -> list[str]:
 
 # Canonical 8-color channel palette: ColorBrewer/matplotlib "Set1", the standard
 # qualitative cycle used across scientific plotting (R, Python, ggplot2). Mirrors
-# frontend/src/components/canvas/colorUtils.ts CHANNEL_COLORS.
+# packages/viewer/src/canvas/colorUtils.ts CHANNEL_COLORS.
 DEFAULT_CHANNEL_COLORS: list[tuple[int, int, int]] = [
     (228, 26, 28),   # red
     (55, 126, 184),  # blue

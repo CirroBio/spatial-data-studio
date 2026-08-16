@@ -18,6 +18,19 @@ import type { DataSource, ImageLoader, LocalCategorical } from './types';
 // `persistence.store.VIEWER_SIDECAR_VERSION`; bumped only by a breaking layout change.
 const VIEWER_SIDECAR_VERSION = 1;
 
+/**
+ * Resolves a currently-valid URL for the checkpoint. A host that hands out
+ * short-lived presigned URLs (Cirro signs for minutes; a session lasts as long as
+ * someone keeps looking) supplies this so the reader can re-sign instead of
+ * failing once the URL it opened with expires.
+ */
+export type CheckpointUrlRefresher = () => Promise<string>;
+
+// What S3 answers a presigned URL with once it has expired (`AccessDenied` /
+// `ExpiredToken`). A genuine permission failure looks the same, so the reader
+// re-signs at most once per expiry and surfaces a second failure as-is.
+const EXPIRED_URL_STATUSES = new Set([401, 403]);
+
 // Range-GET reader for ZipFileStore. Unlike zarrita's built-in HTTPRangeReader it
 // never issues a HEAD: Cirro serves checkpoints as method-specific presigned S3 GET
 // URLs, which reject HEAD with 403 (SignatureDoesNotMatch), so getLength()'s HEAD
@@ -25,12 +38,41 @@ const VIEWER_SIDECAR_VERSION = 1;
 // `Content-Range` of a one-byte GET instead.
 class RangeGetReader {
   private length?: number;
+  private url: string;
+  private refreshing: Promise<string> | null = null;
 
-  constructor(readonly url: string) {}
+  constructor(url: string, private readonly refreshUrl?: CheckpointUrlRefresher) {
+    this.url = url;
+  }
+
+  /**
+   * Re-sign once per expiry, not once per failed read: an expired URL fails every
+   * in-flight tile request at the same moment, and each one must retry against the
+   * same replacement rather than asking the host for its own.
+   */
+  private async refresh(refreshUrl: CheckpointUrlRefresher, staleUrl: string): Promise<void> {
+    // Another read's refresh already replaced the URL this attempt used.
+    if (this.url !== staleUrl) return;
+    if (!this.refreshing) {
+      this.refreshing = refreshUrl().then(
+        (url) => { this.url = url; this.refreshing = null; return url; },
+        (err: unknown) => { this.refreshing = null; throw err; },
+      );
+    }
+    await this.refreshing;
+  }
+
+  private async fetchRange(range: string): Promise<Response> {
+    const attemptUrl = this.url;
+    const res = await fetch(attemptUrl, { headers: { Range: range } });
+    if (res.ok || !this.refreshUrl || !EXPIRED_URL_STATUSES.has(res.status)) return res;
+    await this.refresh(this.refreshUrl, attemptUrl);
+    return fetch(this.url, { headers: { Range: range } });
+  }
 
   async getLength(): Promise<number> {
     if (this.length === undefined) {
-      const res = await fetch(this.url, { headers: { Range: 'bytes=0-0' } });
+      const res = await this.fetchRange('bytes=0-0');
       if (!res.ok) throw new Error(`length probe failed for ${this.url}: ${res.status} ${res.statusText}`);
       const contentRange = res.headers.get('content-range'); // "bytes 0-0/<total>"
       const total = contentRange?.split('/')[1];
@@ -43,7 +85,7 @@ class RangeGetReader {
 
   async read(offset: number, size: number): Promise<Uint8Array<ArrayBuffer>> {
     if (size === 0) return new Uint8Array(0);
-    const res = await fetch(this.url, { headers: { Range: `bytes=${offset}-${offset + size - 1}` } });
+    const res = await this.fetchRange(`bytes=${offset}-${offset + size - 1}`);
     if (!res.ok) {
       throw new Error(`range GET failed for ${this.url} at ${offset}+${size}: ${res.status} ${res.statusText}`);
     }
@@ -78,7 +120,7 @@ type Root = zarr.Location<AsyncReadable>;
 
 async function readGroupAttrs(root: Root, path: string): Promise<Record<string, unknown> | null> {
   try {
-    const group = await zarr.open(root.resolve(path), { kind: 'group' });
+    const group = await zarr.open.v3(root.resolve(path), { kind: 'group' });
     return (await group.attrs) as Record<string, unknown>;
   } catch {
     return null;
@@ -87,13 +129,13 @@ async function readGroupAttrs(root: Root, path: string): Promise<Record<string, 
 
 // Whole numeric array as Float64Array, uniform regardless of the on-disk dtype.
 async function readNumeric(root: Root, path: string): Promise<Float64Array> {
-  const arr = await zarr.open(root.resolve(path), { kind: 'array' });
+  const arr = await zarr.open.v3(root.resolve(path), { kind: 'array' });
   const chunk = await zarr.get(arr);
   return Float64Array.from(chunk.data as ArrayLike<number>, Number);
 }
 
 async function readStrings(root: Root, path: string): Promise<string[]> {
-  const arr = await zarr.open(root.resolve(path), { kind: 'array' });
+  const arr = await zarr.open.v3(root.resolve(path), { kind: 'array' });
   const chunk = await zarr.get(arr);
   return globalThis.Array.from(chunk.data as ArrayLike<unknown>, String);
 }
@@ -101,7 +143,7 @@ async function readStrings(root: Root, path: string): Promise<string[]> {
 // A single slice of a 1-D array — the CSC mirror's per-gene span. zarrita fetches
 // only the chunks the slice covers.
 async function readSpan(root: Root, path: string, start: number, stop: number): Promise<Float64Array> {
-  const arr = await zarr.open(root.resolve(path), { kind: 'array' });
+  const arr = await zarr.open.v3(root.resolve(path), { kind: 'array' });
   const chunk = await zarr.get(arr, [zarr.slice(start, stop)]);
   return Float64Array.from(chunk.data as ArrayLike<number>, Number);
 }
@@ -120,19 +162,27 @@ export interface CheckpointHandle {
 }
 
 /** Open a checkpoint for reading. `source` is a `blob:`/`http(s):` URL, or a File the
- * user picked (which `file://` pages need — range GETs don't work there). */
-export async function openCheckpoint(target: string | File): Promise<CheckpointHandle> {
+ * user picked (which `file://` pages need — range GETs don't work there).
+ * `refreshUrl` re-signs an expiring URL mid-session; a File needs none. */
+export async function openCheckpoint(
+  target: string | File,
+  refreshUrl?: CheckpointUrlRefresher,
+): Promise<CheckpointHandle> {
   const url = typeof target === 'string' ? target : target.name;
   const rawStore = typeof target === 'string'
-    ? new ZipFileStore(new RangeGetReader(target))
+    ? new ZipFileStore(new RangeGetReader(target, refreshUrl))
     : ZipFileStore.fromBlob(target);
-  // Consolidated metadata turns every later `zarr.open` into a memory lookup and
+  // Every open is pinned to v3 (`open.v3`) rather than letting zarrita auto-detect:
+// checkpoints are always Zarr v3, and the auto-detect path probes v2 first, which
+// costs a 404 per node and leaves the losing probe's rejection unhandled — surfacing
+// as `Uncaught (in promise) NotFoundError` in every consumer's console.
+// Consolidated metadata turns every later `zarr.open` into a memory lookup and
   // supplies the group listing `deriveFields` needs (Zarr v3 stores carry no child
   // index). It is written alongside the sidecar, which the check below requires.
   const store = await zarr.withMaybeConsolidatedMetadata(rawStore, { format: 'v3' });
   const contents = 'contents' in store ? store.contents() : [];
   const root = zarr.root(store);
-  const rootAttrs = (await (await zarr.open(root, { kind: 'group' })).attrs) as Record<string, unknown>;
+  const rootAttrs = (await (await zarr.open.v3(root, { kind: 'group' })).attrs) as Record<string, unknown>;
   const appState = (rootAttrs.app_state ?? {}) as Record<string, unknown>;
 
   const sidecar = (await readGroupAttrs(root, 'viewer')) as unknown as ViewerSidecar | null;
@@ -271,7 +321,7 @@ async function deriveFields(
 
   const obsm: ObsmField[] = [];
   for (const name of childrenOf(contents, `tables/${table}/obsm`)) {
-    const arr = await zarr.open(root.resolve(`tables/${table}/obsm/${name}`), { kind: 'array' });
+    const arr = await zarr.open.v3(root.resolve(`tables/${table}/obsm/${name}`), { kind: 'array' });
     obsm.push({ name, n_components: arr.shape[1] ?? 0 });
   }
 
@@ -294,7 +344,7 @@ async function deriveFields(
 
 async function arrayLength(root: Root, path: string): Promise<number> {
   try {
-    return (await zarr.open(root.resolve(path), { kind: 'array' })).shape[0];
+    return (await zarr.open.v3(root.resolve(path), { kind: 'array' })).shape[0];
   } catch {
     return 0;
   }
@@ -306,7 +356,7 @@ async function arrayLength(root: Root, path: string): Promise<number> {
 async function readObsm(
   root: Root, table: string, key: string, affine: number[] | undefined,
 ): Promise<Table> {
-  const arr = await zarr.open(root.resolve(`tables/${table}/obsm/${key}`), { kind: 'array' });
+  const arr = await zarr.open.v3(root.resolve(`tables/${table}/obsm/${key}`), { kind: 'array' });
   const chunk = await zarr.get(arr);
   const [n, d] = chunk.shape;
   const flat = chunk.data as ArrayLike<number>;
@@ -340,7 +390,7 @@ function applyAffineXy(xs: Float32Array, ys: Float32Array, [a, b, c, d, e, f]: n
 // plain column as an array. Mirrors `_obs_batch`'s two shapes.
 async function readObs(root: Root, table: string, key: string): Promise<Table> {
   const path = `tables/${table}/obs/${key}`;
-  const node = await zarr.open(root.resolve(path));
+  const node = await zarr.open.v3(root.resolve(path));
   if (node.kind === 'group') {
     const categories = await readStrings(root, `${path}/categories`);
     const codes = Int32Array.from(await readNumeric(root, `${path}/codes`));
@@ -395,7 +445,7 @@ async function readGeneFromCsc(
 async function readGeneFromMatrix(
   root: Root, path: string, geneIndex: number,
 ): Promise<Float32Array> {
-  const node = await zarr.open(root.resolve(path));
+  const node = await zarr.open.v3(root.resolve(path));
   if (node.kind === 'array') {
     const column = await zarr.get(node, [null, geneIndex]);
     return Float32Array.from(column.data as ArrayLike<number>, Number);

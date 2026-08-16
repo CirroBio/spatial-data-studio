@@ -1,5 +1,5 @@
 import type * as arrow from 'apache-arrow';
-import { useArrowField } from '../../hooks/useArrowField';
+import { useArrowField } from '../data/useArrowField';
 
 // Resolves a display's color_by encoding to its fetched Arrow column, shared by the
 // spatial and embedding canvases.

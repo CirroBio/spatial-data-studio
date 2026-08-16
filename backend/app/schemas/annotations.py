@@ -1,4 +1,4 @@
-"""Pydantic counterpart of frontend/src/schemas/annotations.ts — hand-kept in
+"""Pydantic counterpart of packages/viewer/src/schemas/annotations.ts — hand-kept in
 sync field-for-field (no codegen). Validates shape-annotation job payloads
 before they touch the `sdata.shapes["annotations"]` GeoDataFrame
 (see sessions/shape_annotations.py).

@@ -2,57 +2,24 @@
 // the two functions that decode Arrow IPC below, so it stays out of the initial
 // bundle and loads with the canvas that needs it.
 import type { Table } from 'apache-arrow';
+import {
+  ApiError,
+  type DisplaySpec,
+  type ElementInventory,
+  type ImageInfo,
+  type ShapeAnnotation,
+  type Snapshot,
+  type SnapshotFormat,
+} from '@cirrobio/spatial-viewer';
 import type {
   FunctionEntry,
   SessionSummary,
   SessionState,
-  DisplaySpec,
-  ImageInfo,
   UiFieldInfo,
   HashCheck,
   PresenceView,
 } from './types';
 import { CLIENT_ID } from './lib/presence';
-import type { Snapshot, SnapshotFormat } from './lib/snapshots';
-import type { ShapeAnnotation } from './schemas/annotations';
-
-// Carries the HTTP status so callers can distinguish a transient 503 (a read
-// endpoint refusing while a compute/plot job holds the session write lock) from a
-// real failure, and retry the former quietly.
-export class ApiError extends Error {
-  constructor(public status: number, message: string) {
-    super(message);
-    this.name = 'ApiError';
-  }
-}
-
-// A read endpoint fast-fails with 503 while a job holds the session write lock
-// (backend: _read_locked / READ_LOCK_TIMEOUT_S) — most notably during the async
-// checkpoint load that runs as a session's first job, which 503s every canvas read
-// (coords, colors, image info, raster chunks) until it frees the lock. Retry with
-// backoff so state converges once the lock frees, without surfacing a transient
-// "busy" error. Non-503 errors propagate immediately. `signal` stops the retry loop
-// promptly when the caller aborts (superseded fetch / unmount).
-export async function fetchWhenIdle<T>(
-  fn: () => Promise<T>,
-  { tries = 6, delayMs = 2000, signal }: { tries?: number; delayMs?: number; signal?: AbortSignal } = {},
-): Promise<T> {
-  for (let attempt = 0; ; attempt++) {
-    if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
-    try {
-      return await fn();
-    } catch (err) {
-      if (attempt < tries && err instanceof ApiError && err.status === 503 && !signal?.aborted) {
-        await new Promise<void>((resolve, reject) => {
-          const timer = setTimeout(resolve, delayMs);
-          signal?.addEventListener('abort', () => { clearTimeout(timer); reject(new DOMException('aborted', 'AbortError')); }, { once: true });
-        });
-        continue;
-      }
-      throw err;
-    }
-  }
-}
 
 async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   // Every request identifies this browser so the backend can tell the session's lock
@@ -364,14 +331,6 @@ export async function getShapesGeoArrow(
 }
 
 // ---- data inspector ---------------------------------------------------------
-export interface ElementInventory {
-  tables: { name: string; n_obs: number; n_vars: number; active: boolean }[];
-  shapes: { name: string; count: number; geometry: string[]; columns: string[] }[];
-  points: { name: string; columns: string[] }[];
-  images: { name: string }[];
-  labels: { name: string }[];
-}
-
 export async function getElements(sessionId: string): Promise<ElementInventory> {
   const res = await apiFetch(`/api/sessions/${sessionId}/elements`);
   return res.json() as Promise<ElementInventory>;

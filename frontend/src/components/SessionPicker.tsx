@@ -1,7 +1,7 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useAppStore } from '../store/sessionStore';
 import { deleteSession } from '../api';
-import { reportError } from '../lib/errors';
+import { reportError } from '@cirrobio/spatial-viewer';
 import { lockStateOf } from '../lib/presence';
 
 // Header switcher over the currently-loaded sessions. Selecting a session calls

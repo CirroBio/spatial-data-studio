@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import type { ObsField } from '../types';
+import type { ObsField } from '@cirrobio/spatial-viewer';
 
 interface Props {
   fields: ObsField[];

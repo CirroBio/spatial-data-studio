@@ -1,7 +1,7 @@
 import { lazy, Suspense, useMemo, useState, type ReactNode } from 'react';
 import { useAppStore } from '../store/sessionStore';
 import { saveSession, disconnectFromCirro, getCirroAuth } from '../api';
-import { reportError } from '../lib/errors';
+import { reportError } from '@cirrobio/spatial-viewer';
 import { useEditGate } from '../hooks/usePresence';
 import { checkpointUrlFromLocation } from '../data/checkpointIndex';
 import AcknowledgementsDialog from './AcknowledgementsDialog';

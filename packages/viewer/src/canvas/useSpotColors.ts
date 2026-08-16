@@ -52,7 +52,7 @@ interface Params {
   isolatedCategory: string | null;
   // Rows to draw fully transparent (the serverless viewer's hide-cells mask). Unlike
   // an isolated category, which dims to a visible 30, these vanish.
-  hiddenCells?: Set<number> | null;
+  hiddenCells?: ReadonlySet<number> | null;
   // Per-category `#rrggbb` overrides for the current categorical field; a level
   // absent here falls back to the default palette. Undefined for numeric fields.
   categoryColors?: Record<string, string>;

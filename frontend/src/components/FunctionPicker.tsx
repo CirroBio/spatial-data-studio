@@ -3,7 +3,7 @@ import * as Dialog from '@radix-ui/react-dialog';
 import { useAppStore } from '../store/sessionStore';
 import { submitJob } from '../api';
 import FunctionForm from './forms/FunctionForm';
-import { formatError } from '../lib/format';
+import { formatError } from '@cirrobio/spatial-viewer';
 import { useEditGate } from '../hooks/usePresence';
 import { EMPTY_FIELDS } from '../hooks/useRerunEditor';
 import type { FunctionEntry } from '../types';

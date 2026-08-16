@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
 import ObsFieldSelect from '../ObsFieldSelect';
 import VarNameSelect from '../VarNameSelect';
-import type { ObsField } from '../../types';
-import { parseColorBy, type ColorBySlot } from './colorBy';
+import { parseColorBy, type ColorBySlot, type ObsField } from '@cirrobio/spatial-viewer';
 
 interface Props {
   value: string;          // color_by path

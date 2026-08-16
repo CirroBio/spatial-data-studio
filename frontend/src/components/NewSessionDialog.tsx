@@ -3,7 +3,7 @@ import { useForm } from 'react-hook-form';
 import * as Dialog from '@radix-ui/react-dialog';
 import { createSession, getDatasets } from '../api';
 import { useAppStore } from '../store/sessionStore';
-import { formatError } from '../lib/format';
+import { formatError } from '@cirrobio/spatial-viewer';
 import AnsiLog from './AnsiLog';
 import FunctionFields, { coerceParams } from './forms/FunctionFields';
 import { EMPTY_FIELDS } from '../hooks/useRerunEditor';

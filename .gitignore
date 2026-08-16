@@ -8,10 +8,12 @@ __pycache__/
 node_modules/
 frontend/dist/
 frontend/dist-viewer/
+packages/*/dist/
 frontend/playwright-report/
 frontend/test-results/
 frontend/blob-report/
 frontend/*.tsbuildinfo
+packages/*/*.tsbuildinfo
 
 # Data (large; fetched via scripts/prepare_test_data.py). Anchored to the repo root:
 # unanchored, `data/` also swallowed source directories named data (e.g.

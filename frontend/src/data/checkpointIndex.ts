@@ -30,6 +30,15 @@ export function checkpointUrlFromLocation(): string | null {
   return raw ? new URL(raw, document.baseURI).href : null;
 }
 
+// `embed=1` alongside `?checkpoint=` puts the viewer in embed mode: a hosting page
+// (a Cirro dashboard) owns the display settings over postMessage and the app chrome
+// (header, sidebar, picker) is hidden. Protocol: docs/EMBED_PROTOCOL.md.
+export const EMBED_PARAM = 'embed';
+
+export function isEmbedMode(): boolean {
+  return new URLSearchParams(window.location.search).get(EMBED_PARAM) === '1';
+}
+
 export interface CheckpointEntry {
   // As written in the manifest — what goes back into `?checkpoint=`, so the address
   // bar stays as short and portable as the manifest itself.

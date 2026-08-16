@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
-import type { FunctionEntry, SessionFields } from '../../types';
+import type { SessionFields } from '@cirrobio/spatial-viewer';
+import type { FunctionEntry } from '../../types';
 import { getObsValues } from '../../api';
 import FunctionFields, { coerceParams } from './FunctionFields';
 

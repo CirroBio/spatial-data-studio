@@ -1258,11 +1258,12 @@ carries no child index and the reader could not even name the table.
 
 Opening the SPA with `?checkpoint=<url>` reads a `.zarr.zip` directly and renders it
 with no backend at all — the same bundle, the same canvas, the same display controls.
-This is one app with two data sources, not a second viewer: `frontend/src/data/`
-defines a `DataSource` interface over the render path (`getFieldData`,
-`getImageInfo`, `openImageLoader`, `getShapesGeoArrow`, `getElements`,
-`searchVarNames`, `imageThumbnailUrl`), implemented by `apiSource` (live session) and
-`checkpointSource` (zarrita over `ZipFileStore`). The handful of hooks that used to
+This is one app with two data sources, not a second viewer:
+`packages/viewer/src/data/types.ts` defines a `DataSource` interface over the render
+path (`getFieldData`, `getImageInfo`, `openImageLoader`, `getShapesGeoArrow`,
+`getElements`, `searchVarNames`, `imageThumbnailUrl`), implemented by
+`frontend/src/data/apiSource.ts` (live session) and the library's `checkpointSource`
+(zarrita over `ZipFileStore`). The handful of hooks that used to
 call `api.ts` directly — `useArrowField`, `useVivImageLayer`, `usePolygonBbox`,
 `VarNameSelect`, `SpatialCanvas` — read the source from `DataSourceProvider` instead.
 Everything downstream (palettes, point styling, channel shaders, legends, minimap,

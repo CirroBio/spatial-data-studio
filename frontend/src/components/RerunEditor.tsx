@@ -1,5 +1,6 @@
 import FunctionForm from './forms/FunctionForm';
-import type { FunctionEntry, SessionFields } from '../types';
+import type { SessionFields } from '@cirrobio/spatial-viewer';
+import type { FunctionEntry } from '../types';
 
 interface Props {
   fn: FunctionEntry;

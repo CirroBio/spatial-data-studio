@@ -2,7 +2,7 @@ import { useAppStore } from '../store/sessionStore';
 import CirroMark from './CirroMark';
 import SessionPicker from './SessionPicker';
 import CheckpointPicker from './CheckpointPicker';
-import { useDataSource } from '../data/context';
+import { useDataSource } from '@cirrobio/spatial-viewer';
 import LockBadge from './LockBadge';
 import { TourAnchors } from '../tours';
 

@@ -18,7 +18,7 @@ export function fitZoom(extentX: number, extentY: number, pxW: number, pxH: numb
 // Track the canvas element's pixel size so a tile layer can pick a level of detail,
 // enumerate visible tiles, and drive the fit math.
 export function useCanvasSize(): {
-  containerRef: RefObject<HTMLDivElement>;
+  containerRef: RefObject<HTMLDivElement | null>;
   canvasSize: { width: number; height: number } | null;
 } {
   const [canvasSize, setCanvasSize] = useState<{ width: number; height: number } | null>(null);

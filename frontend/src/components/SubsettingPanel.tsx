@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useAppStore } from '../store/sessionStore';
 import { subsetSession } from '../api';
-import { reportError } from '../lib/errors';
+import { reportError } from '@cirrobio/spatial-viewer';
 import { useDrawSelection } from '../hooks/useDrawSelection';
 import { useLocalEditsOnly } from '../hooks/usePresence';
 import DrawControls from './DrawControls';

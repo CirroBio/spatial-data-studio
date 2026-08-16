@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useAppStore } from '../store/sessionStore';
 import { postPresence } from '../api';
 import { clientName, editBlockReason } from '../lib/presence';
-import { useDataSource } from '../data/context';
+import { useDataSource } from '@cirrobio/spatial-viewer';
 
 // Heartbeat cadence. The backend drops a viewer, releasing its lock, after
 // SDS_PRESENCE_TIMEOUT_S (20 s — four beats) of silence, so this must stay well under it.

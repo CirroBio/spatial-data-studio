@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from '../store/sessionStore';
 import { submitJob, runPendingStep, editPendingStep, getSession } from '../api';
-import { reportError } from '../lib/errors';
+import { reportError } from '@cirrobio/spatial-viewer';
 import { useEditGate } from './usePresence';
-import type { SessionFields } from '../types';
+import type { SessionFields } from '@cirrobio/spatial-viewer';
 
 export const EMPTY_FIELDS: SessionFields = {
   obs: [], obsm: [], n_obs: 0, var_names_count: 0, obsp: [], layers: [], images: [], image_dims: [], shapes: [],

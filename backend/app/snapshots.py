@@ -73,7 +73,7 @@ MINIMAP_MARGIN_FRACTION = 0.02
 # the points are strided — the overview only needs the shape of the section.
 MINIMAP_MAX_POINTS = 4000
 
-# Cell-color palettes, kept byte-identical to frontend/src/components/canvas/colorUtils.ts
+# Cell-color palettes, kept byte-identical to packages/viewer/src/canvas/colorUtils.ts
 # so a snapshot matches the live canvas exactly. CATEGORY_COLORS: 15 distinct
 # (colorblind-friendly) colors, assigned to the *sorted* category list.
 CATEGORY_COLORS: list[tuple[int, int, int]] = [
@@ -84,7 +84,7 @@ CATEGORY_COLORS: list[tuple[int, int, int]] = [
 MAX_CATEGORICAL_LEVELS = 100  # matches useSpotColors.MAX_CATEGORICAL_LEVELS
 DIM_ALPHA = 30  # isolated-category dimming, matches useSpotColors
 
-# Mirrors PLOT_BACKGROUNDS in frontend/src/components/canvas/colorUtils.ts, which in turn
+# Mirrors PLOT_BACKGROUNDS in packages/viewer/src/canvas/colorUtils.ts, which in turn
 # tracks --color-bg per theme, so an exported figure matches the canvas it came from.
 PLOT_BACKGROUNDS = {"dark": (7 / 255, 11 / 255, 36 / 255), "light": (250 / 255, 251 / 255, 252 / 255)}
 

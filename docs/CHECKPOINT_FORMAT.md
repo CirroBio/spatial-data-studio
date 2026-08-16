@@ -5,7 +5,7 @@ saves and reads: a single `.sdata.zarr.zip` archive that holds a complete
 [SpatialData](https://spatialdata.scverse.org/) object plus a small amount of
 app-defined metadata layered on top. It is written for someone building a
 **different** application that needs to read (or write) this file — the app's own
-`backend/app/persistence/store.py` (writer) and `frontend/src/data/checkpointSource.ts`
+`backend/app/persistence/store.py` (writer) and `packages/viewer/src/data/checkpointSource.ts`
 (reader) are the reference implementation; this document describes the format
 they agree on, independent of either implementation.
 

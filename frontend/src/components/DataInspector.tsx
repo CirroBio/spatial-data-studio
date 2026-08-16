@@ -5,11 +5,9 @@ import {
   getTablePreview,
   getImageInfo,
   getImageThumbnailUrl,
-  type ElementInventory,
   type TablePreview,
 } from '../api';
-import { formatError } from '../lib/format';
-import type { ImageInfo } from '../types';
+import { formatError, type ElementInventory, type ImageInfo } from '@cirrobio/spatial-viewer';
 
 const PAGE_SIZE = 50;
 

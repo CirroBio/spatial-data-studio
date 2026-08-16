@@ -7,9 +7,11 @@
 // a second notion of "can't write".
 import { useEffect, useState } from 'react';
 import { useAppStore } from '../store/sessionStore';
-import { isSpatialDisplay, type AppState, type SessionState } from '../types';
-import { openCheckpoint } from './checkpointSource';
-import type { DataSource } from './types';
+import {
+  isSpatialDisplay, openCheckpoint,
+  type CheckpointUrlRefresher, type DataSource,
+} from '@cirrobio/spatial-viewer';
+import type { AppState, SessionState } from '../types';
 
 function displayName(url: string): string {
   const last = url.split('/').pop() ?? url;
@@ -23,8 +25,12 @@ export interface CheckpointSession {
 }
 
 /** Open `target` and install it as the active (read-only) session. Returns the data
- * source the canvas should read through. */
-export function useCheckpointSession(target: string | File | null): CheckpointSession {
+ * source the canvas should read through. `refreshUrl` (embed mode) re-signs the
+ * checkpoint URL when it expires mid-session. */
+export function useCheckpointSession(
+  target: string | File | null,
+  refreshUrl?: CheckpointUrlRefresher,
+): CheckpointSession {
   const [source, setSource] = useState<DataSource | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(!!target);
@@ -39,7 +45,7 @@ export function useCheckpointSession(target: string | File | null): CheckpointSe
     setLoading(true);
     setError(null);
 
-    openCheckpoint(target)
+    openCheckpoint(target, refreshUrl)
       .then(({ source: opened, appState, fields }) => {
         if (stale) return;
         const summary = {

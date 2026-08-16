@@ -2,7 +2,7 @@ import ColorBySelect from './ColorBySelect';
 import CanvasSettingsShell from './CanvasSettingsShell';
 import LegendControls from './LegendControls';
 import PointStyleControls from './PointStyleControls';
-import type { EmbeddingDisplaySpec, ObsField, ObsmField } from '../../types';
+import type { EmbeddingDisplaySpec, ObsField, ObsmField } from '@cirrobio/spatial-viewer';
 
 interface Props {
   display: EmbeddingDisplaySpec;

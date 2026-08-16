@@ -1,3 +1,4 @@
+import { resolve } from 'node:path';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
@@ -18,7 +19,16 @@ export default defineConfig({
   // prefix (e.g. a Cirro bundle behind a signed-URL subpath), not just "/".
   base: './',
   plugins: [react()],
-  resolve: { dedupe: DEDUPE },
+  resolve: {
+    dedupe: DEDUPE,
+    alias: {
+      // The canvas library is a workspace sibling. Resolve it to its sources rather
+      // than its build output so `npm run dev` hot-reloads canvas edits and neither
+      // the dev server nor `tsc -b` needs packages/viewer/dist to exist first. The
+      // published artifact is still built and typechecked by the root `npm run build`.
+      '@cirrobio/spatial-viewer': resolve(__dirname, '../packages/viewer/src/index.ts'),
+    },
+  },
   optimizeDeps: {
     include: ['@vivjs/loaders', '@vivjs/layers'],
   },

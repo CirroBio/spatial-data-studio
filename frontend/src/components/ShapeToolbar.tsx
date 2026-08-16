@@ -1,5 +1,4 @@
-import type { ShapeKind } from '../schemas/annotations';
-import { SHAPE_KINDS } from '../schemas/annotations';
+import { SHAPE_KINDS, type ShapeKind } from '@cirrobio/spatial-viewer';
 
 const TOOL_LABELS: Record<ShapeKind, string> = {
   line: 'Line / Arrow',

@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import type { SpatialDisplaySpec, ImageInfo } from '../../types';
+import type { SpatialDisplaySpec, ImageInfo } from '../types';
 import { defaultChannelColor } from './colorUtils';
 
 // Viv composites at most this many channels in one shader pass, so at most this many
@@ -21,7 +21,7 @@ export interface Channel {
   contrastRange: [number, number];   // slider domain [min,max] (data range, widened to fit the default)
 }
 
-type ChannelPatch = Partial<{ visible: boolean; name: string; color: string; contrastLimits: [number, number] }>;
+export type ChannelPatch = Partial<{ visible: boolean; name: string; color: string; contrastLimits: [number, number] }>;
 
 interface Params {
   imageInfo: ImageInfo | null;

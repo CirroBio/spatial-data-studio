@@ -2,9 +2,16 @@
 
 React/TypeScript SPA for the Spatial Data Studio spatial omics analysis tool.
 
+The WebGL canvas itself is not here: it lives in
+[`packages/viewer`](../packages/viewer/README.md) (`@cirrobio/spatial-viewer`), a
+workspace sibling this app depends on, so a Cirro dashboard can render the same
+canvas natively. What stays here is the app around it — the store, the REST layer,
+the panels, and the Tailwind-styled in-canvas control panels the app passes into the
+canvas' `controls` slot.
+
 ## Stack
 
-- Vite 5 + React 18 + TypeScript 5 (strict)
+- Vite 6 + React 19 + TypeScript 5 (strict)
 - Tailwind CSS 3
 - deck.gl 9 (`OrthographicView` for 2D world-coordinate spatial/embedding scatter;
   `OrbitView` + `PointCloudLayer` for the 3D embeddings mode)
@@ -16,9 +23,13 @@ React/TypeScript SPA for the Spatial Data Studio spatial omics analysis tool.
 ## Development
 
 ```sh
-npm install
+npm install      # run it at the repo root: one npm workspace covers this app and packages/viewer
 npm run dev      # serves on http://localhost:5173, proxies /api -> http://127.0.0.1:8000
 ```
+
+Vite resolves `@cirrobio/spatial-viewer` to `packages/viewer/src` (an alias in
+`vite.config.ts`, mirrored by `paths` in `tsconfig.app.json`), so canvas edits hot-
+reload and typechecking needs no build of the library first.
 
 The backend must be running at `http://127.0.0.1:8000`. Vite proxies all `/api`
 requests there, including the `/api/events` SSE stream (buffering disabled via
@@ -27,21 +38,29 @@ requests there, including the `/api/events` SSE stream (buffering disabled via
 ## Build
 
 ```sh
-npm run build    # tsc -b && vite build -> dist/
+npm run build    # from the repo root: builds packages/viewer, then tsc -b && vite build -> frontend/dist/
 npm run preview  # serve the production build
 ```
 
 ## Layout
 
 - `src/api.ts` — fetch wrappers and Arrow IPC field fetching
-- `src/types.ts` — domain types mirroring the backend API contract
+- `src/types.ts` — the app's own domain types (registry, sessions, jobs, SSE); the
+  display model the canvas renders from comes from `@cirrobio/spatial-viewer`
 - `src/store/sessionStore.ts` — global zustand store
 - `src/hooks/useSSE.ts` — single multiplexed EventSource connection
 - `src/hooks/useSession.ts` — active session loading
 - `src/hooks/usePresence.ts` — viewer heartbeat + the lock-state / edit-gate selectors
 - `src/lib/presence.ts` — this browser's id + display name, and what the session lock means for it
-- `src/hooks/useArrowField.ts` — Arrow field fetching, cached by `sessionId:fieldPath:version`
-- `src/components/canvas/SpatialCanvas.tsx` — deck.gl spatial canvas (tissue image + spots)
+- `src/data/apiSource.ts` — the live-session `DataSource` the canvas reads through
+- `src/components/StudioCanvasHost.tsx` — the app's implementation of the library's
+  `CanvasHost` contract, built from the store; the only place the store and the canvas meet
+- `src/components/canvas/StudioSpatialCanvas.tsx` /
+  `StudioEmbeddingCanvas.tsx` — the library canvas with the app's control panel in its
+  `controls` slot; the panels themselves (`CanvasControls`, `EmbeddingControls`,
+  `ColorBySelect`, `CanvasSettingsShell`, `RangeField`, `DualRangeField`) are the only
+  canvas files left in this app, and they are here because they are Tailwind-styled
+- `src/hooks/useDisplayPersistence.ts` — optimistic store write + debounced display PUT
 - `src/components/forms/FunctionForm.tsx` — schema-driven function parameter form
 
 ## Theming
@@ -62,9 +81,12 @@ microscopy imagery wants a dark surround. Dark is the default; the theme is pers
 what keeps a solid accent button legible in both.
 
 Two colors are *not* theme tokens and must not be swapped for brand colors:
-`CATEGORY_COLORS` and the viridis ramp in `canvas/colorUtils.ts` encode data, not
-chrome, and `CHANNEL_COLORS` mirrors the backend's channel defaults. `PLOT_BACKGROUNDS`
-there tracks `--color-bg` per theme and is mirrored in `backend/app/snapshots.py` so an
+`CATEGORY_COLORS` and the viridis ramp in the canvas library's `canvas/colorUtils.ts`
+encode data, not chrome, and `CHANNEL_COLORS` mirrors the backend's channel defaults.
+The library's in-canvas overlays carry inline styles rather than Tailwind classes (it
+ships no stylesheet), but they read these same `--color-*` tokens, so they follow the
+app theme here and fall back to the dark palette in a host that defines none.
+`PLOT_BACKGROUNDS` there tracks `--color-bg` per theme and is mirrored in `backend/app/snapshots.py` so an
 exported figure matches the canvas it came from.
 
 Typography is Geist / Geist Mono (`@fontsource-variable/*`, self-hosted so the Docker

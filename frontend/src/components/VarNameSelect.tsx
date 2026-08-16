@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useDataSource } from '../data/context';
-import { reportError } from '../lib/errors';
+import { reportError, useDataSource } from '@cirrobio/spatial-viewer';
 
 interface Props {
   value: string;

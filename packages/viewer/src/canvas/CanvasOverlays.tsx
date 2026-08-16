@@ -1,4 +1,8 @@
 import { VIRIDIS_CSS_GRADIENT } from './colorUtils';
+import {
+  CELL_LEGEND, CHANNEL_LEGEND, DRAW_HINT, LEGEND_ROW, LOADING_CUE, SWATCH, TILE_STATUS,
+  TRUNCATE, themeColor,
+} from './overlayStyles';
 import type { Channel } from './useImageChannels';
 import type { ColorLegend } from './useSpotColors';
 import type { TileLoadProgress } from './useTileLoadProgress';
@@ -17,9 +21,14 @@ export function LoadingCue({
 }) {
   if (!(coordsLoading || colorLoading || boundariesLoading)) return null;
   return (
-    <div className="absolute top-3 left-3 z-20 flex items-center gap-2 px-3 py-1.5 rounded-full bg-surface/95 border border-accent/60 text-xs text-text backdrop-blur-sm shadow-lg pointer-events-none">
-      <svg className="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-        <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+    <div style={LOADING_CUE}>
+      {/* SMIL rather than a CSS animation: the library ships no stylesheet, so it
+          cannot declare the keyframes a spinner class would need. */}
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+        <path d="M21 12a9 9 0 1 1-6.219-8.56">
+          <animateTransform attributeName="transform" type="rotate"
+            from="0 12 12" to="360 12 12" dur="1s" repeatCount="indefinite" />
+        </path>
       </svg>
       <span>
         {coordsLoading ? 'Loading cells…' : colorLoading ? 'Loading colors…' : 'Loading cell boundaries…'}
@@ -35,10 +44,15 @@ export function LoadingCue({
 export function ImageTileStatus({ progress }: { progress: TileLoadProgress }) {
   if (!progress.active) return null;
   return (
-    <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center gap-1.5 px-3 py-2 rounded-lg bg-surface/90 border border-border backdrop-blur-sm shadow-md pointer-events-none">
-      <span className="text-[11px] text-muted">Loading image…</span>
-      <div className="w-48 h-1.5 rounded-full bg-border overflow-hidden">
-        <div className="h-full bg-accent transition-[width]" style={{ width: `${Math.round(progress.value * 100)}%` }} />
+    <div style={TILE_STATUS}>
+      <span style={{ fontSize: 11, color: themeColor('muted') }}>Loading image…</span>
+      <div style={{ width: 192, height: 6, borderRadius: 9999, background: themeColor('border'), overflow: 'hidden' }}>
+        <div style={{
+          height: '100%',
+          background: themeColor('accent'),
+          transition: 'width 150ms cubic-bezier(0.4, 0, 0.2, 1)',
+          width: `${Math.round(progress.value * 100)}%`,
+        }} />
       </div>
     </div>
   );
@@ -56,11 +70,11 @@ export function ChannelLegend({
 }) {
   if (!(show && showLegend && channels.some((c) => c.visible))) return null;
   return (
-    <div className="absolute bottom-3 left-3 z-10 bg-surface/90 border border-border rounded p-2 flex flex-col gap-1 max-w-[180px] backdrop-blur-sm pointer-events-none">
+    <div style={CHANNEL_LEGEND}>
       {channels.filter((c) => c.visible).map((c) => (
-        <div key={c.index} className="flex items-center gap-1.5 text-[11px] text-text">
-          <span className="w-2.5 h-2.5 rounded-sm shrink-0 border border-border/50" style={{ background: c.color }} />
-          <span className="truncate">{c.name}</span>
+        <div key={c.index} style={LEGEND_ROW}>
+          <span style={{ ...SWATCH, background: c.color }} />
+          <span style={TRUNCATE}>{c.name}</span>
         </div>
       ))}
     </div>
@@ -79,28 +93,36 @@ export function CellColorLegend({
 }) {
   if (!(visible && legend)) return null;
   return (
-    <div className="absolute bottom-3 right-3 z-10 bg-surface/90 border border-border rounded p-2 max-w-[200px] backdrop-blur-sm">
-      <div className="text-[11px] font-medium text-text mb-1 truncate" title={title}>{title}</div>
+    <div style={CELL_LEGEND}>
+      <div
+        style={{ ...TRUNCATE, fontSize: 11, fontWeight: 500, color: themeColor('text'), marginBottom: 4 }}
+        title={title}
+      >
+        {title}
+      </div>
       {legend.kind === 'categorical' ? (
-        <div className="flex flex-col gap-1 max-h-[220px] overflow-y-auto">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 220, overflowY: 'auto' }}>
           {legend.items.map((it) => (
-            <div key={it.label} className="flex items-center gap-1.5 text-[11px] text-text">
-              <span
-                className="w-2.5 h-2.5 rounded-sm shrink-0 border border-border/50"
-                style={{ background: `rgb(${it.color[0]},${it.color[1]},${it.color[2]})` }}
-              />
-              <span className="truncate">{it.label}</span>
+            <div key={it.label} style={LEGEND_ROW}>
+              <span style={{ ...SWATCH, background: `rgb(${it.color[0]},${it.color[1]},${it.color[2]})` }} />
+              <span style={TRUNCATE}>{it.label}</span>
             </div>
           ))}
         </div>
       ) : legend.kind === 'too-many-categories' ? (
-        <div className="text-[11px] text-muted">
+        <div style={{ fontSize: 11, color: themeColor('muted') }}>
           {legend.count.toLocaleString()} categories — too many to color (limit {legend.limit}).
         </div>
       ) : (
-        <div className="flex flex-col gap-1 w-[150px]">
-          <div className="h-2.5 w-full rounded-sm border border-border/50" style={{ background: VIRIDIS_CSS_GRADIENT }} />
-          <div className="flex justify-between text-[10px] text-muted" style={{ fontVariantNumeric: 'tabular-nums' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, width: 150 }}>
+          <div style={{
+            height: 10, width: '100%', borderRadius: 2,
+            border: `1px solid ${themeColor('border', 0.5)}`, background: VIRIDIS_CSS_GRADIENT,
+          }} />
+          <div style={{
+            display: 'flex', justifyContent: 'space-between',
+            fontSize: 10, color: themeColor('muted'), fontVariantNumeric: 'tabular-nums',
+          }}>
             <span>{legend.min.toLocaleString(undefined, { maximumSignificantDigits: 3 })}</span>
             <span>{legend.max.toLocaleString(undefined, { maximumSignificantDigits: 3 })}</span>
           </div>
@@ -123,14 +145,9 @@ export function DrawHint({
   // The shape-annotation editor (canvasMode === 'shapes') shows its own toolbar
   // hints in the AnnotationsPanel; this hint is only for the lasso-drag modes.
   if (!drawMode || canvasMode === 'shapes') return null;
+  const tone = canvasMode === 'regions' ? 'success' : 'accent';
   return (
-    <div
-      className={`absolute top-3 left-1/2 -translate-x-1/2 z-10 px-3 py-1.5 rounded border text-xs tracking-wide pointer-events-none backdrop-blur-sm whitespace-nowrap bg-surface/90 ${
-        canvasMode === 'regions'
-          ? 'border-success/70 text-success'
-          : 'border-accent/70 text-accent'
-      }`}
-    >
+    <div style={{ ...DRAW_HINT, borderColor: themeColor(tone, 0.7), color: themeColor(tone) }}>
       {canvasMode === 'regions'
         ? annotationTarget
           ? `Annotating ${annotationTarget.regionSetId} / ${annotationTarget.category} — click to add points, then Apply on the left`

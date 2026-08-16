@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { getSnapshots, deleteSnapshot, snapshotFileUrl, snapshotThumbnailUrl } from '../api';
-import { reportError } from '../lib/errors';
+import { formatCreated, reportError, type Snapshot } from '@cirrobio/spatial-viewer';
 import { useAppStore } from '../store/sessionStore';
-import { formatCreated, type Snapshot } from '../lib/snapshots';
 import { ModalOverlay, ModalHeader } from './DetailModal';
 
 interface Props {

@@ -1,5 +1,6 @@
 import type { UseFormRegister, FieldErrors, UseFormWatch, UseFormSetValue } from 'react-hook-form';
-import type { FunctionEntry, SessionFields } from '../../types';
+import type { SessionFields } from '@cirrobio/spatial-viewer';
+import type { FunctionEntry } from '../../types';
 import FsPicker from './FsPicker';
 
 export interface JsonSchemaProperty {

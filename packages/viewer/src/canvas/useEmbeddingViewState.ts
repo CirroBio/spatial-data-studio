@@ -23,7 +23,7 @@ interface Params {
 export function useEmbeddingViewState(
   { positions, is3d }: Params,
 ): {
-  containerRef: RefObject<HTMLDivElement>;
+  containerRef: RefObject<HTMLDivElement | null>;
   canvasSize: { width: number; height: number } | null;
   viewState: EmbeddingViewState | null;
   setViewState: (vs: EmbeddingViewState) => void;

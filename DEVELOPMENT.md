@@ -86,7 +86,7 @@ backend/    FastAPI app
                   shape_annotations (arrows/lines/boxes/polygons/ellipses/text -> sdata.shapes["annotations"]),
                   appstate, transform (points->global affine)
   app/schemas/    pydantic request-body schemas (annotations.py, kept in sync with
-                  frontend/src/schemas/annotations.ts's zod schema)
+                  packages/viewer/src/schemas/annotations.ts's zod schema)
   app/transport/  arrow (field -> Arrow IPC), tables (element inventory + dataframe page JSON),
                   annotations (shape-annotation read/JSON conversion), sse, livelog
                   (streams a running reader's log to the client live during import)
@@ -105,11 +105,27 @@ backend/    FastAPI app
   app/prewarm.py  background async queue that warms slow first-open menu lists off the event loop
   app/cirro.py    Cirro dataset upload (per-browser device-code auth, symlink-based upload folder)
   cli.py          offline recipe runner — reuses the registry/session engine headlessly
-frontend/   React + TS + Vite + Tailwind + deck.gl SPA
-  src/data/       the DataSource abstraction the canvas renders through: apiSource (live
-                  session over HTTP) and checkpointSource (a .zarr.zip read directly with
-                  zarrita over HTTP Range — the serverless viewer, DESIGN §14.2), plus
-                  checkpointIndex (the index.json deployment manifest, §14.3)
+packages/viewer/  @cirrobio/spatial-viewer — the deck.gl canvases and the checkpoint
+                  reader as a library, so a Cirro dashboard can render the same canvas
+                  natively instead of embedding the app in an iframe. See
+                  packages/viewer/README.md
+  src/canvas/     the canvases and their layers, legends, minimap, lasso and shape
+                  editing, plus canvas-host.tsx (the CanvasHost contract) and the
+                  palettes/view-fit helpers a host's own controls need
+  src/data/       the DataSource contract the canvas renders through, the DataSourceProvider,
+                  and checkpointSource (a .zarr.zip read directly with zarrita over HTTP
+                  Range — the serverless viewer, DESIGN §14.2)
+  src/types.ts    the display model (DisplaySpec/DisplayEncoding/SessionFields/ImageInfo)
+  src/defaults.ts the fallbacks the canvases apply for absent encoding fields, exported so
+                  a host that authors a display agrees with what will actually render
+frontend/   React + TS + Vite + Tailwind SPA around that canvas (an npm workspace
+            sibling of packages/viewer; one `npm install` at the repo root covers both)
+  src/data/       apiSource (the live-session DataSource over HTTP) + checkpointIndex
+                  (the index.json deployment manifest, §14.3) + embedBridge (embed mode)
+  src/components/canvas/  what stays app-side: the Tailwind-styled in-canvas settings
+                  panels (CanvasControls / EmbeddingControls and their fields), and the
+                  StudioSpatialCanvas / StudioEmbeddingCanvas adapters that drop them
+                  into the library canvas' `controls` slot
 nextflow/   Nextflow workflow wrapping backend/cli.py (uv installs deps at runtime; no image build)
 docker/     single-image build (multi-stage), nginx edge, supervisor
 docs/       CONTRACT.md (REST/SSE/Arrow API), images/ (README screenshots)
@@ -136,20 +152,61 @@ Component-level notes: [`backend/README.md`](backend/README.md),
 | Change who may edit a session (presence, the edit lock, viewer names) | `backend/app/sessions/presence.py` + `deps.py` (`_claim_lock`) + `frontend/src/lib/presence.ts` (identity + gate) + `hooks/usePresence.ts` (heartbeat) + `components/LockBadge.tsx` | [DESIGN.md](DESIGN.md) §16.5 |
 | Change the MCP assistant surface (tools, vision render, agent guidance) | `backend/app/mcp/server.py` (tools) + `vision.py` (render/coords/membership) + `agent.py` (presence/lock) + `guides/*.md` (guidance text); mounted in `main.py` | [DESIGN.md](DESIGN.md) §29 |
 | Change the checkpoint/persistence format | `backend/app/persistence/store.py` | [DESIGN.md](DESIGN.md) §3, §14.1, [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) |
-| Change what the serverless viewer can read from a checkpoint | `backend/app/persistence/store.py` (`_write_viewer_sidecar`, the writer half) + `frontend/src/data/checkpointSource.ts` (the reader half) — the two must move together | [DESIGN.md](DESIGN.md) §14.1–14.2, [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) §4 |
+| Change what the serverless viewer can read from a checkpoint | `backend/app/persistence/store.py` (`_write_viewer_sidecar`, the writer half) + `packages/viewer/src/data/checkpointSource.ts` (the reader half) — the two must move together | [DESIGN.md](DESIGN.md) §14.1–14.2, [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) §4 |
 | Change the shape of `app_state`, the `viewer/` sidecar, `X_csc`, or `index.json` | `backend/app/schemas/checkpoint/*.schema.json` (the JSON Schema is validated against on every write) + [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) in the same commit — `sds-governance/checks/check_checkpoint_schema_docs.py` fails the build otherwise | [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) |
-| Add a render-path call the canvas makes | `frontend/src/data/types.ts` (the `DataSource` interface), then **both** `apiSource.ts` and `checkpointSource.ts` | [DESIGN.md](DESIGN.md) §14.2 |
-| Change what the serverless viewer shows (collapsed-by-default sidebar with the analysis history only, PNG export) | `frontend/src/components/Sidebar.tsx` (the serverless branch), `store/sessionStore.ts` (`leftMenuOpen` default), `lib/canvasCapture.ts` | [DESIGN.md](DESIGN.md) §14.2 |
+| Add a render-path call the canvas makes | `packages/viewer/src/data/types.ts` (the `DataSource` interface), then **both** `frontend/src/data/apiSource.ts` and `packages/viewer/src/data/checkpointSource.ts` | [DESIGN.md](DESIGN.md) §14.2 |
+| Change what the serverless viewer shows (collapsed-by-default sidebar with the analysis history only, PNG export) | `frontend/src/components/Sidebar.tsx` (the serverless branch), `store/sessionStore.ts` (`leftMenuOpen` default), `packages/viewer/src/lib/canvasCapture.ts` | [DESIGN.md](DESIGN.md) §14.2 |
 | Change the `index.json` deployment manifest or the checkpoint switcher | `frontend/src/data/checkpointIndex.ts` (format + navigation), `components/CheckpointIndexPage.tsx` (landing), `components/CheckpointPicker.tsx` (header), `backend/app/cirro.py` (`_write_viewer_index`) | [DESIGN.md](DESIGN.md) §14.3, [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) §8 |
-| Change the deck.gl canvas / rendering | `frontend/src/components/canvas/` | [frontend/README.md](frontend/README.md) |
-| Retune the palette, theme tokens, fonts, or the Cirro mark | `frontend/src/index.css` (tokens) + `frontend/tailwind.config.js` (names) + `frontend/src/components/CirroMark.tsx` / `public/favicon.svg` (logo) | [frontend/README.md](frontend/README.md) |
-| Change the canvas minimap (overview inset) | `frontend/src/components/canvas/Minimap.tsx` (overlay + navigation) + `SpatialCanvas.tsx` (extent/thumbnail wiring) + `backend/app/snapshots.py` `_draw_minimap` (figure inset) | [DESIGN.md](DESIGN.md) §9.11 |
+| Change the embed protocol (viewer in an iframe under a Cirro dashboard) | `frontend/src/data/embedBridge.ts` (viewer side) + [docs/EMBED_PROTOCOL.md](docs/EMBED_PROTOCOL.md) in the same commit — the dashboard side in `@cirrobio/dashboard` must move together | [docs/EMBED_PROTOCOL.md](docs/EMBED_PROTOCOL.md) |
+| Change the deck.gl canvas / rendering | `packages/viewer/src/canvas/` | [packages/viewer/README.md](packages/viewer/README.md) |
+| Give the canvas something new from the app (store state, an action, a way to persist) | `packages/viewer/src/canvas/canvas-host.tsx` (the `CanvasHost` contract), then `frontend/src/components/StudioCanvasHost.tsx` (the app's implementation of it) — the canvas never reaches for the store or `api.ts` itself | below |
+| Change an in-canvas settings panel, or what the canvas hands one | `frontend/src/components/canvas/CanvasControls.tsx` / `EmbeddingControls.tsx` (Tailwind app UI), and `SpatialCanvasControls` / `EmbeddingCanvasControls` in `packages/viewer/src/canvas/` for the slot payload | below |
+| Publish or version the canvas library | `packages/viewer/package.json` + [packages/viewer/README.md](packages/viewer/README.md) ("Releasing") | — |
+| Change how a display setting is persisted (the debounced PUT, the edit gate, the refetch flush) | `frontend/src/hooks/useDisplayPersistence.ts` | below |
+| Retune the palette, theme tokens, fonts, or the Cirro mark | `frontend/src/index.css` (tokens) + `frontend/tailwind.config.js` (names) + `packages/viewer/src/canvas/overlayStyles.ts` (the library overlays' fallbacks) + `frontend/src/components/CirroMark.tsx` / `public/favicon.svg` (logo) | [frontend/README.md](frontend/README.md) |
+| Change the canvas minimap (overview inset) | `packages/viewer/src/canvas/Minimap.tsx` (overlay + navigation) + `SpatialCanvas.tsx` (extent/thumbnail wiring) + `backend/app/snapshots.py` `_draw_minimap` (figure inset) | [DESIGN.md](DESIGN.md) §9.11 |
 | Change how the browser reads raw image data (client-side Viv compositing) | `backend/app/routers/imaging.py` raster route + `/image/{element}/info` fields; `rasters.py` `raster_stores` map | [docs/CONTRACT.md](docs/CONTRACT.md) |
 | Change the parameter-form UI | `frontend/src/components/forms/` (`FunctionFields` renders the widgets incl. the `FsPicker` filesystem picker; `FunctionForm` adds the submit footer; the New Session dialog reuses `FunctionFields` as the reader's input form) | — |
 | Change how a reader param is classified as a folder/file/value input | `backend/app/registry/reader_paths.py` (`path_kind` + the absolute/relative path sets, shared with `sessions/manager.py` validation) | [docs/CONTRACT.md](docs/CONTRACT.md) |
 | Change how a snapshot figure renders or what it embeds | `backend/app/snapshots.py` (render + metadata) + `frontend/src/components/SnapshotExportModal.tsx` (framing/output) + `frontend/src/components/SnapshotBrowser.tsx` (gallery) | [DESIGN.md](DESIGN.md) §14 |
 | Change Cirro upload | `backend/app/cirro.py` (client + bundle + `UploadQueue`) + `backend/app/routers/cirro.py` (routes) + `frontend/src/components/CirroUploadDialog.tsx` | [DESIGN.md](DESIGN.md) §15 |
 | Change Cirro login (device code, credential scoping, expiry) | `backend/app/cirro.py` (`CredentialStore`, `start_login`) + `backend/app/routers/cirro.py` (`/api/cirro/auth`) + `frontend/src/components/CirroConnectDialog.tsx` + the token helpers in `frontend/src/api.ts` | [DESIGN.md](DESIGN.md) §15 |
+
+### The canvas host seam
+
+`packages/viewer/` is a standalone package: it renders from its `display` prop, the
+`DataSource` in context, and one host object obtained from `useCanvasHost()`. Nothing
+under `packages/viewer/src` imports `store/sessionStore`, `api.ts` or anything else
+from `frontend/`, and it ships no stylesheet — so the same canvases serve the Studio
+app (live, editable) and a Cirro dashboard tile (checkpoint, read-only) that has none
+of the app's CSS in the page.
+
+Two things it deliberately does *not* own:
+
+- **The in-canvas settings panel.** `CanvasControls` / `EmbeddingControls` are
+  Tailwind-styled app UI and stay in `frontend/`. Both canvases take an optional
+  `controls` slot that hands a panel the canvas-internal state it needs (the resolved
+  channel list, the live camera, the legend's categorical levels); the app passes one
+  in through `components/canvas/StudioSpatialCanvas.tsx` /
+  `StudioEmbeddingCanvas.tsx`, and a dashboard passes nothing and gets a bare canvas.
+- **Whether the camera follows the display.** `followDisplayViewport` is off by
+  default — a live session must not let another viewer's display PUT yank this one's
+  camera. The app turns it on in embed mode; a dashboard tile that owns the viewport
+  turns it on always.
+
+`canvas-host.tsx` defines that contract: the session fields and data versions the
+canvases enumerate, the theme, the edit gate, the isolated category / hidden cells, and
+`onDisplayChange` + `currentSpec` for display edits — the host decides what persisting
+one means. Region drawing, shape annotations and snapshot export are *optional* groups;
+a host that omits one turns that feature off, affordances included, rather than
+presenting a control that does nothing.
+
+`frontend/src/components/StudioCanvasHost.tsx` is the app's implementation and the only
+place the store and the canvas meet: it reads the store, `useEditGate()` and
+`hooks/useDisplayPersistence.ts` (the optimistic store write + the 500 ms debounced
+`PUT /displays/{id}`, its flusher, and the `canEdit` gate) and memoizes them into one
+host object. Adding a store value or an action to the canvas means adding it to the
+contract and to that adapter — never an import from the canvas back into the app.
 
 ### Live import logging
 
@@ -184,6 +241,13 @@ these in per-job / per-load buffers (`sessionStore`) and renders them with `Ansi
 frontend (`npm run dev`; Vite proxies `/api` to :8000) together.
 Stop with Ctrl-C or, from another shell, `./stop.sh` (it reads `.run.pids` and
 kills each process group).
+
+The repo is one npm workspace (`frontend` + `packages/viewer`), so dependencies
+install once at the root into `./node_modules` — there is no `frontend/node_modules`,
+and `run.sh` runs `npm install` at the root when it is missing. Vite aliases
+`@cirrobio/spatial-viewer` to `packages/viewer/src`, so the dev server hot-reloads
+canvas edits without a library build; `npm run build` at the root builds the library
+(`dist/`, ESM + CJS + types) and then the app.
 
 `SDS_DATA_DIR` is the single read-write data folder — inputs, saved checkpoints,
 and snapshots all live there; `run.sh` sets it to `data/` (or `test-data/` with
@@ -253,6 +317,35 @@ moves between them. A host qualifies if it honors HTTP **Range on GET** and retu
 `Content-Range` (no HEAD is ever issued — see `RangeGetReader`); cross-origin
 additionally needs CORS exposing `Content-Range`.
 
+### Embed mode (hosting the serverless viewer in an iframe)
+
+`?checkpoint=<url>&embed=1` puts the serverless viewer in **embed mode** for a
+hosting page — the Cirro dashboard's `spatialdata` node — that owns the display
+settings over `postMessage` (contract: [docs/EMBED_PROTOCOL.md](docs/EMBED_PROTOCOL.md),
+v1). In embed mode the app renders only the canvas area: no header, sidebar,
+settings panel, view switcher, or checkpoint picker, and no in-canvas controls
+(`CanvasControls` / `EmbeddingControls`) either — the host's inspector is the
+single place display settings are changed. The canvas itself stays interactive,
+so camera moves still stream out to the parent as `display-changed`.
+
+Hiding the controls is host policy, not canvas logic: the canvas has no notion of
+embedding. `StudioSpatialCanvas` / `StudioEmbeddingCanvas` simply pass no `controls`
+slot in embed mode, and set `followDisplayViewport` so a viewport the parent applies
+reaches the camera.
+
+The viewer side lives in `frontend/src/data/embedBridge.ts` (`useEmbedBridge`,
+wired in `App.tsx`; the `embed=1` gate is `isEmbedMode` in
+`data/checkpointIndex.ts`, read once in `App.tsx` and passed down). It posts `ready` (checkpoint inventory: displays,
+obs columns, images + channels, obsm keys) once the checkpoint session mounts,
+debounced `display-changed` events (500 ms, echo-guarded) when the active
+display's encoding or viewport changes, `search-vars-result` answers via the
+checkpoint `DataSource`, and `error` when the checkpoint fails to open; it
+applies the parent's `apply-display` / `select-display` to the store exactly as
+local edits would land. Both canvases additionally follow an externally applied
+viewport into the camera when `followDisplayViewport` is set (the
+`appliedEmbedViewport` effects in `packages/viewer/src/canvas/SpatialCanvas.tsx` /
+`EmbeddingCanvas.tsx`).
+
 Only checkpoints written by the current code carry the `viewer/` sidecar, and the
 viewer **requires** it: a Zarr v3 store has no child index, so without the sidecar (and
 the consolidated metadata written with it) the reader can't even name the table. An
@@ -263,7 +356,7 @@ Client-side (Viv) image compositing is the sole canvas image path, **on by defau
 (disable with the `sds:disableClientCompositing` localStorage key, which turns the canvas
 image off — there is no server-composited fallback); `SDS_CLIENT_IMAGE_MAX_CHANNELS`
 (default `6`) caps how many channels the browser composites in one shader pass.
-`useVivImageLayer.ts` builds a single Viv `MultiscaleImageLayer` whose deck.gl `TileLayer`
+`packages/viewer/src/canvas/useVivImageLayer.ts` builds a single Viv `MultiscaleImageLayer` whose deck.gl `TileLayer`
 selects and streams pyramid tiles natively: when a display has an image the canvas
 `OrthographicView` works in that image's own level-0 pixel space (the image sits at
 `[0,0,W,H]` with no modelMatrix; the cell points and every world-space overlay carry the

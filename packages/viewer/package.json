@@ -1,0 +1,50 @@
+{
+  "name": "@cirrobio/spatial-viewer",
+  "version": "0.1.0",
+  "description": "Host-agnostic WebGL spatial/embedding canvases and the .zarr.zip checkpoint reader from Spatial Data Studio.",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "vite build && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.build.json --noEmit"
+  },
+  "peerDependencies": {
+    "@deck.gl/core": "^9",
+    "@deck.gl/extensions": "^9",
+    "@deck.gl/geo-layers": "^9",
+    "@deck.gl/layers": "^9",
+    "@deck.gl/react": "^9",
+    "@geoarrow/deck.gl-layers": "^0.3",
+    "@math.gl/core": "*",
+    "@math.gl/web-mercator": "*",
+    "@vivjs/extensions": "0.22.0",
+    "@vivjs/layers": "0.22.0",
+    "@vivjs/loaders": "0.22.0",
+    "@zarrita/storage": "^0.2",
+    "apache-arrow": ">=13",
+    "react": "^19",
+    "react-dom": "^19",
+    "zarrita": "^0.7",
+    "zod": "^3"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^4.7.0",
+    "typescript": "^5.5.3",
+    "vite": "^6.4.3"
+  }
+}

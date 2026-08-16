@@ -1,10 +1,11 @@
 // DataSource backed by a live session's HTTP API — the existing behavior, moved
 // behind the interface so the canvas can be pointed at a checkpoint instead.
+import { useMemo } from 'react';
 import { loadOmeZarr } from '@vivjs/loaders';
+import type { DataSource, ImageLoader } from '@cirrobio/spatial-viewer';
 import {
   getElements, getFieldData, getImageInfo, getImageThumbnailUrl, getShapesGeoArrow, searchVarNames,
 } from '../api';
-import type { DataSource, ImageLoader } from './types';
 
 export function createApiSource(sessionId: string): DataSource {
   return {
@@ -32,4 +33,10 @@ export function createApiSource(sessionId: string): DataSource {
       return data;
     },
   };
+}
+
+/** Live-session source for `sessionId`, memoized so the canvas hooks see a stable
+ * reference across renders. */
+export function useApiSource(sessionId: string | null): DataSource | null {
+  return useMemo(() => (sessionId ? createApiSource(sessionId) : null), [sessionId]);
 }

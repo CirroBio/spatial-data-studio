@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../store/sessionStore';
 import { takeSessionLock, releaseSessionLock } from '../api';
-import { reportError } from '../lib/errors';
+import { reportError } from '@cirrobio/spatial-viewer';
 import { lockStateOf, randomClientName } from '../lib/presence';
 
 // Header status control for the active session's edit lock: a closed padlock when it

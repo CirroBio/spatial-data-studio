@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../store/sessionStore';
 import { connectToCirro, getCirroAuth } from '../api';
-import { formatError } from '../lib/format';
+import { formatError } from '@cirrobio/spatial-viewer';
 import { ModalOverlay, ModalHeader } from './DetailModal';
 
 // How often to re-check whether the user has finished logging in. Auth state is

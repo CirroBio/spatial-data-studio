@@ -5,7 +5,7 @@ import { DetailHeader, ParametersSection } from './DetailModal';
 import AnsiLog from './AnsiLog';
 import RerunEditor from './RerunEditor';
 import { useRerunEditor } from '../hooks/useRerunEditor';
-import { reportError } from '../lib/errors';
+import { reportError } from '@cirrobio/spatial-viewer';
 
 export default function PlotDetail() {
   const { selectedPlotId, sessionState, activeSessionId, setSelectedPlotId } = useAppStore();

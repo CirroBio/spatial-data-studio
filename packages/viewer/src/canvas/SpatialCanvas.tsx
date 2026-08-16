@@ -1,21 +1,18 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, type ReactNode } from 'react';
 import DeckGL from '@deck.gl/react';
 import { ScatterplotLayer, PathLayer } from '@deck.gl/layers';
 import { LinearInterpolator } from '@deck.gl/core';
 import type { Layer, OrthographicViewState, PickingInfo } from '@deck.gl/core';
-import { useAppStore } from '../../store/sessionStore';
-import { useDataSource } from '../../data/context';
-import { useArrowField } from '../../hooks/useArrowField';
-import { useEditGate } from '../../hooks/usePresence';
-import { fetchWhenIdle } from '../../api';
-import { countPointsInRings, indicesInRings } from '../../lib/pointInPolygon';
-import { reportError } from '../../lib/errors';
-import TransformEditor from '../TransformEditor';
-import { isSpatialDisplay, type SpatialDisplaySpec, type ImageInfo } from '../../types';
-import { useDisplayPersistence } from './useDisplayPersistence';
-import type { ShapeAnnotation, ShapeGeometry, ShapeKind } from '../../schemas/annotations';
-import { textGeometryAt } from '../../schemas/annotations';
-import { geometryFromDrag, applyHandleDrag, translateGeometry } from '../../lib/shapeAnnotations';
+import { useDataSource } from '../data/context';
+import { useArrowField } from '../data/useArrowField';
+import { fetchWhenIdle } from '../lib/fetchWhenIdle';
+import { countPointsInRings, indicesInRings } from '../lib/pointInPolygon';
+import { reportError } from '../lib/errors';
+import { isSpatialDisplay, type SpatialDisplaySpec, type ImageInfo, type ObsField, type Viewport } from '../types';
+import { useCanvasHost, useDisplayEditor } from './canvas-host';
+import type { ShapeAnnotation, ShapeGeometry, ShapeKind } from '../schemas/annotations';
+import { textGeometryAt } from '../schemas/annotations';
+import { geometryFromDrag, applyHandleDrag, translateGeometry } from '../lib/shapeAnnotations';
 import { useArrowPositions } from './useArrowPositions';
 import { useVivImageLayer } from './useVivImageLayer';
 import { useCanvasViewState, shapesFetchZoomThreshold } from './useCanvasViewState';
@@ -30,12 +27,13 @@ import { buildLassoLayers } from './buildLassoLayers';
 import { useColorField } from './useColorField';
 import { useSnapshotHandler } from './useSnapshotHandler';
 import { usePolygonBbox } from './usePolygonBbox';
-import { useImageChannels } from './useImageChannels';
-import CanvasControls from './CanvasControls';
+import { useImageChannels, type Channel, type ChannelPatch } from './useImageChannels';
 import Minimap from './Minimap';
 import { FlipOrthographicView } from './FlipOrthographicView';
 import { colorByLabel } from './colorBy';
 import { LoadingCue, ChannelLegend, CellColorLegend, DrawHint, ImageTileStatus } from './CanvasOverlays';
+import { CANVAS_PLACEHOLDER, CANVAS_ROOT } from './overlayStyles';
+import { SPATIAL_ENCODING_DEFAULTS, showImageDefault } from '../defaults';
 
 // Animate zoom-button clicks so the level eases to the target instead of snapping.
 // Matches the axes deck's OrthographicController interpolates for its own transitions.
@@ -46,11 +44,58 @@ const ZOOM_TRANSITION_MS = 250;
 // most 160 CSS px across, so this covers a retina display with room to spare).
 const MINIMAP_THUMB_PX = 384;
 
+// Stable empties for the optional host features, so a host without them doesn't hand
+// the memos and effects below a fresh array on every render.
+const NO_POLYGONS: [number, number][][] = [];
+const NO_POINTS: [number, number][] = [];
+const NO_SHAPES: ShapeAnnotation[] = [];
+
 type Point = [number, number];
 type ShapeDragTarget =
   | { kind: 'create'; tool: Exclude<ShapeKind, 'polygon' | 'text'>; start: Point }
   | { kind: 'handle'; shapeId: string; handleId: string }
   | { kind: 'translate'; shapeId: string; start: Point; origin: ShapeGeometry };
+
+/** Everything an in-canvas control panel needs that only the mounted canvas knows:
+ * the resolved channel list, the live camera, the legend's categorical levels, and
+ * the polygon element inventory. The Studio app renders `CanvasControls` from this;
+ * a dashboard passes no `controls` and gets a bare canvas. */
+export interface SpatialCanvasControls {
+  display: SpatialDisplaySpec;
+  obsFields: ObsField[];
+  layers: string[];
+  colorByName: string;
+  legendVisible: boolean;
+  updateEncoding: (patch: Partial<SpatialDisplaySpec['encoding']>) => void;
+  // Categorical levels + effective hex color for the per-category color controls;
+  // null unless the current color-by field is categorical (within the level cap).
+  categoryColorItems: { label: string; color: string }[] | null;
+  hasCategoryOverrides: boolean;
+  setCategoryColor: (label: string, color: string) => void;
+  resetCategoryColors: () => void;
+  showPoints: boolean;
+  showImage: boolean;
+  invertX: boolean;
+  invertY: boolean;
+  background: 'light' | 'dark';
+  showLegend: boolean;
+  showMinimap: boolean;
+  renderMode: 'points' | 'points+shapes';
+  shapeSets: string[];
+  shapesElement: string | null;
+  channels: Channel[];
+  setChannel: (index: number, patch: ChannelPatch) => void;
+  maxVisibleReached: boolean;
+  zoom: number;
+  onZoom: (delta: number) => void;
+  onFit: () => void;
+  onEditTransform?: () => void;
+  // False when this viewer can't change the session (read-only snapshot, or another
+  // viewer holds the edit lock): everything else here is a display setting that stays
+  // on this screen, but the transform editor writes to the session and its checkpoint.
+  canEdit: boolean;
+  editBlockedReason: string | null;
+}
 
 interface Props {
   display: SpatialDisplaySpec;
@@ -59,14 +104,24 @@ interface Props {
   canvasMode: 'regions' | 'shapes' | 'subset' | null;
   // Region-labeling config: which region set + category + color to label into
   annotationTarget: { regionSetId: string; category: string; color: string } | null;
+  /** In-canvas control panel, rendered over the bottom-left of the canvas. The panel
+   * itself is host UI (the Studio app's is Tailwind-styled), so the canvas only
+   * supplies the state it owns; omit it for a bare canvas. */
+  controls?: (api: SpatialCanvasControls) => ReactNode;
+  /** Follow `display.viewport` into the camera when the host replaces it. Off by
+   * default: a live session must not let another viewer's PUT echo yank this one's
+   * camera. A host that owns the viewport (a dashboard tile, the embedded viewer)
+   * turns it on. */
+  followDisplayViewport?: boolean;
 }
 
-export default function SpatialCanvas({ display, sessionId, canvasMode, annotationTarget }: Props) {
-  const { sessionState, isolatedCategory, hiddenCells } = useAppStore();
+export default function SpatialCanvas({
+  display, sessionId, canvasMode, annotationTarget, controls, followDisplayViewport = false,
+}: Props) {
+  const host = useCanvasHost();
   const source = useDataSource();
-  const fields = sessionState?.fields;
-  const dataVersions = sessionState?.data_versions ?? {};
-  const { canEdit, reason: editBlockedReason } = useEditGate();
+  const { fields, dataVersions, isolatedCategory, hiddenCells, canEdit } = host;
+  const editBlockedReason = host.editBlockedReason ?? null;
 
   const coordsPath = display.encoding.coords;
   const coordsVersion = dataVersions[coordsPath] ?? 0;
@@ -103,34 +158,34 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
 
   // Layer-visibility toggles are persisted in the display encoding (fall back to the
   // historical defaults when a checkpoint predates these fields).
-  const showPoints = display.encoding.show_points ?? true;
-  const showImage = display.encoding.show_image ?? (display.encoding.image_layer !== null);
-  const showLegend = display.encoding.show_channel_legend ?? true;
-  const showMinimap = display.encoding.show_minimap ?? true;
+  const showPoints = display.encoding.show_points ?? SPATIAL_ENCODING_DEFAULTS.show_points;
+  const showImage = display.encoding.show_image ?? showImageDefault(display.encoding);
+  const showLegend = display.encoding.show_channel_legend ?? SPATIAL_ENCODING_DEFAULTS.show_channel_legend;
+  const showMinimap = display.encoding.show_minimap ?? SPATIAL_ENCODING_DEFAULTS.show_minimap;
   // View orientation + backdrop. Both flips live in the camera (FlipOrthographicView),
   // so picking/drawing stay consistent. The backdrop is independent of the app theme
   // and defaults to dark, matching the snapshot renderer's facecolor default.
-  const invertX = display.encoding.invert_x ?? false;
-  const invertY = display.encoding.invert_y ?? false;
-  const bg = display.encoding.background ?? 'dark';
+  const invertX = display.encoding.invert_x ?? SPATIAL_ENCODING_DEFAULTS.invert_x;
+  const invertY = display.encoding.invert_y ?? SPATIAL_ENCODING_DEFAULTS.invert_y;
+  const bg = display.encoding.background ?? SPATIAL_ENCODING_DEFAULTS.background;
   const views = useMemo(
     () => [new FlipOrthographicView({ id: 'main', flipX: invertX, flipY: invertY })],
     [invertX, invertY],
   );
-  const [transformOpen, setTransformOpen] = useState(false);
-  const [panelCollapsed, setPanelCollapsed] = useState(false);
-
-  // Polygon draw state lives in the store so the active tab's left panel owns the
-  // commit / apply / clear actions; the canvas is purely the drawing surface.
-  const { drawPolygons: polygons, drawRing: currentRing, addDrawVertex, clearDraw, setRegionCellCount, setRegionCellIndices } = useAppStore();
+  // Polygon draw state lives on the host so the active tab's left panel owns the
+  // commit / apply / clear actions; the canvas is purely the drawing surface. Absent
+  // (a host that offers no region drawing) the lasso stays disarmed.
+  const regions = host.regions;
+  const polygons = regions?.drawPolygons ?? NO_POLYGONS;
+  const currentRing = regions?.drawRing ?? NO_POINTS;
 
   // Shape-annotation editor state — the fetched list persists/renders regardless
   // of the active tab; the tool/selection/draft state only matters in 'shapes' mode.
-  const {
-    shapeAnnotations, activeShapeTool, selectedShapeId, draftVertices,
-    setSelectedShapeId, addDraftVertex, clearDraft,
-    upsertShapeAnnotation, sendShapeUpdate, commitNewShape,
-  } = useAppStore();
+  const annotations = host.annotations;
+  const shapeAnnotations = annotations?.shapeAnnotations ?? NO_SHAPES;
+  const activeShapeTool = annotations?.activeShapeTool ?? null;
+  const selectedShapeId = annotations?.selectedShapeId ?? null;
+  const draftVertices = annotations?.draftVertices ?? NO_POINTS;
   // In-progress drag (creating a shape, or dragging a selected shape's handle) is
   // local: it changes on every pointer move and only this canvas renders it.
   const [shapeDragTarget, setShapeDragTarget] = useState<ShapeDragTarget | null>(null);
@@ -146,8 +201,8 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   // The lasso (click-to-add-vertex ring) interaction is shared by region-labeling
   // and subsetting; the shape-annotation editor (canvasMode === 'shapes') uses a
   // separate drag/handle interaction — see useShapeAnnotations/ShapeAnnotationLayers.
-  const lassoMode = canvasMode === 'regions' || canvasMode === 'subset';
-  const shapesMode = canvasMode === 'shapes';
+  const lassoMode = !!regions && (canvasMode === 'regions' || canvasMode === 'subset');
+  const shapesMode = !!annotations && canvasMode === 'shapes';
   const drawMode = lassoMode || shapesMode;
   // Pan is suppressed only while actively drawing (a tool armed) or dragging a
   // handle (or hovering one, about to). With no tool armed and not over a handle,
@@ -161,6 +216,8 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   // in-progress ring) so the Regions/Subset action buttons can show n=…. Points and
   // rings are both in world coords (draw captures apply toWorld), so the test is direct.
   useEffect(() => {
+    if (!regions) return;
+    const { setRegionCellCount, setRegionCellIndices } = regions;
     const rings = currentRing.length >= 3 ? [...polygons, currentRing] : polygons;
     if (!positions) {
       setRegionCellCount(0);
@@ -178,7 +235,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
     }
     setRegionCellCount(countPointsInRings(positions.positions, positions.numRows, rings));
     setRegionCellIndices(null);
-  }, [source, positions, polygons, currentRing, setRegionCellCount, setRegionCellIndices]);
+  }, [source, positions, polygons, currentRing, regions]);
 
   const { containerRef, canvasSize, viewState, setViewState, fitToData } = useCanvasViewState({
     positions,
@@ -188,8 +245,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
     display,
   });
 
-  const { persistDisplay, currentSpec, updateEncoding } = useDisplayPersistence(
-    display, sessionId, canEdit, isSpatialDisplay);
+  const { persistDisplay, currentSpec, updateEncoding } = useDisplayEditor(display, isSpatialDisplay);
 
   const { channels, setChannel, maxVisibleReached } = useImageChannels({
     imageInfo,
@@ -202,6 +258,39 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   // (text placement zoom, minimap navigation, viewport persistence).
   const viewStateRef = useRef(viewState);
   viewStateRef.current = viewState;
+
+  // A host that owns the viewport replaces the display's wholesale (the embedded
+  // viewer's apply-display, and the checkpoint's saved viewport on mount); follow it
+  // into the camera. Opt-in on purpose — a live session never restores a persisted
+  // viewport into a mounted canvas (see useCanvasViewState), and doing so there would
+  // let another viewer's PUT echo yank this one's camera. The ref keeps the effect
+  // one-shot per applied viewport object; a camera move the canvas made itself
+  // round-trips through the store as an equal viewport and is left alone.
+  const appliedEmbedViewport = useRef<Viewport | null | undefined>(undefined);
+  useEffect(() => {
+    if (!followDisplayViewport || !viewState) return;
+    const vp = display.viewport;
+    if (appliedEmbedViewport.current === vp) return;
+    appliedEmbedViewport.current = vp;
+    if (!vp) {
+      // null = auto-fit
+      const fit = fitToData();
+      if (fit) setViewState(fit);
+      return;
+    }
+    const t = viewState.target as number[];
+    const zoom = (Array.isArray(viewState.zoom) ? viewState.zoom[0] : viewState.zoom) ?? 0;
+    if (
+      Math.abs(t[0] - vp.target[0]) < 1e-6 &&
+      Math.abs(t[1] - vp.target[1]) < 1e-6 &&
+      Math.abs(zoom - vp.zoom) < 1e-6
+    ) return;
+    setViewState({
+      ...viewState,
+      target: [vp.target[0], vp.target[1], 0],
+      zoom: vp.zoom, zoomX: vp.zoom, zoomY: vp.zoom,
+    });
+  }, [followDisplayViewport, display.viewport, viewState, fitToData, setViewState]);
 
   useSnapshotHandler({
     kind: 'spatial',
@@ -252,25 +341,25 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
 
   // Clear any in-progress drawing when leaving/entering a draw mode.
   useEffect(() => {
-    clearDraw();
-    clearDraft();
-    setSelectedShapeId(null);
+    regions?.clearDraw();
+    annotations?.clearDraft();
+    annotations?.setSelectedShapeId(null);
     setShapeDragTarget(null);
     setShapeDragPreview(null);
-  }, [canvasMode, clearDraw, clearDraft, setSelectedShapeId]);
+  }, [canvasMode, regions?.clearDraw, annotations?.clearDraft, annotations?.setSelectedShapeId]);
 
   const handleClick = useCallback((info: PickingInfo) => {
     if (lassoMode && info.coordinate) {
-      addDrawVertex(toWorld(info.coordinate));
+      regions?.addDrawVertex(toWorld(info.coordinate));
       return;
     }
-    if (!shapesMode || !info.coordinate) return;
+    if (!shapesMode || !info.coordinate || !annotations) return;
     const pt: Point = toWorld(info.coordinate);
 
     if (activeShapeTool === 'polygon') {
       // Each click drops a vertex; the shape is committed by the panel's Close
       // Shape button (see AnnotationsPanel / commitNewShape).
-      addDraftVertex(pt);
+      annotations.addDraftVertex(pt);
       return;
     }
 
@@ -280,7 +369,7 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
       // 2^-z is canvas units per screen px — image-pixel units when an image is
       // shown — so divide by radiusScale (px per world unit) to get the WORLD units
       // per screen px textGeometryAt expects (text renders at fontSize * radiusScale).
-      commitNewShape(textGeometryAt(pt, Math.pow(2, -z) / radiusScale));
+      annotations.commitNewShape(textGeometryAt(pt, Math.pow(2, -z) / radiusScale));
       return;
     }
 
@@ -289,10 +378,9 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
       const hit = info.layer?.id === 'shape-fill' || info.layer?.id === 'shape-stroke' || info.layer?.id === 'shape-text'
         ? (info.object as ShapeAnnotation | undefined)?.id
         : undefined;
-      setSelectedShapeId(hit ?? null);
+      annotations.setSelectedShapeId(hit ?? null);
     }
-  }, [lassoMode, shapesMode, activeShapeTool, addDrawVertex, addDraftVertex,
-      commitNewShape, setSelectedShapeId, toWorld, radiusScale]);
+  }, [lassoMode, shapesMode, activeShapeTool, regions, annotations, toWorld, radiusScale]);
 
   // True when the pick hits the currently selected shape's body (its fill,
   // stroke, or text glyph) — the surface a drag translates.
@@ -347,20 +435,20 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   }, [shapeDragTarget, toWorld]);
 
   const handleShapeDragEnd = useCallback(() => {
-    if (!shapeDragTarget || !shapeDragPreview) { setShapeDragTarget(null); setShapeDragPreview(null); return; }
+    if (!shapeDragTarget || !shapeDragPreview || !annotations) { setShapeDragTarget(null); setShapeDragPreview(null); return; }
     if (shapeDragTarget.kind === 'create') {
-      commitNewShape(shapeDragPreview);
+      annotations.commitNewShape(shapeDragPreview);
     } else {
       const shape = shapeAnnotations.find((s) => s.id === shapeDragTarget.shapeId);
       if (shape) {
         const updated: ShapeAnnotation = { ...shape, geometry: shapeDragPreview };
-        upsertShapeAnnotation(updated);
-        sendShapeUpdate(shape.id);  // reads the just-upserted latest; marks it locally owned
+        annotations.upsertShapeAnnotation(updated);
+        annotations.sendShapeUpdate(shape.id);  // reads the just-upserted latest; marks it locally owned
       }
     }
     setShapeDragTarget(null);
     setShapeDragPreview(null);
-  }, [shapeDragTarget, shapeDragPreview, shapeAnnotations, commitNewShape, upsertShapeAnnotation, sendShapeUpdate]);
+  }, [shapeDragTarget, shapeDragPreview, shapeAnnotations, annotations]);
 
   // Load image info. Retry a transient 503 (session busy — the async checkpoint load
   // holds the write lock on first open) so the image layer materializes once the lock
@@ -444,10 +532,10 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
   const renderMode: 'points' | 'points+shapes' =
     display.encoding.render_mode === 'points+shapes' || display.encoding.render_mode === 'shapes'
       ? 'points+shapes' : 'points';
-  const marker = display.encoding.point_marker ?? 'circle';
+  const marker = display.encoding.point_marker ?? SPATIAL_ENCODING_DEFAULTS.point_marker;
   // Cell-boundary overlay style: filled polygons (default) or boundary-only strokes.
-  const boundaryOutline = (display.encoding.boundary_style ?? 'filled') === 'outline';
-  const boundaryLineWidth = display.encoding.boundary_line_width ?? 1;
+  const boundaryOutline = (display.encoding.boundary_style ?? SPATIAL_ENCODING_DEFAULTS.boundary_style) === 'outline';
+  const boundaryLineWidth = display.encoding.boundary_line_width ?? SPATIAL_ENCODING_DEFAULTS.boundary_line_width;
 
   // Polygon shape sets available for this session (elements inventory filtered to
   // polygonal geom types). Empty → the whole shapes path stays dormant, which is
@@ -581,14 +669,14 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
 
   if (!viewState) {
     return (
-      <div ref={containerRef} className="w-full h-full flex items-center justify-center bg-bg text-muted text-sm">
+      <div ref={containerRef} style={CANVAS_PLACEHOLDER}>
         {coordsLoading ? 'Loading spatial coordinates...' : 'Initializing canvas...'}
       </div>
     );
   }
 
   return (
-    <div ref={containerRef} className="w-full h-full relative" style={{ backgroundColor: PLOT_BACKGROUNDS[bg] }}>
+    <div ref={containerRef} style={{ ...CANVAS_ROOT, backgroundColor: PLOT_BACKGROUNDS[bg] }}>
       <DeckGL
         views={views}
         viewState={viewState as unknown as Record<string, OrthographicViewState>}
@@ -639,43 +727,32 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
 
       <DrawHint drawMode={drawMode} canvasMode={canvasMode} annotationTarget={annotationTarget} />
 
-      <CanvasControls
-        display={display}
-        obsFields={obsFields}
-        layers={layerNames}
-        colorByName={colorByName}
-        legendVisible={legendVisible}
-        updateEncoding={updateEncoding}
-        categoryColorItems={categoryColorItems}
-        hasCategoryOverrides={!!categoryColors && Object.keys(categoryColors).length > 0}
-        setCategoryColor={setCategoryColor}
-        resetCategoryColors={resetCategoryColors}
-        showPoints={showPoints}
-        setShowPoints={(v) => updateEncoding({ show_points: v })}
-        showImage={showImage}
-        setShowImage={(v) => updateEncoding({ show_image: v })}
-        invertX={invertX}
-        setInvertX={(v) => updateEncoding({ invert_x: v })}
-        invertY={invertY}
-        setInvertY={(v) => updateEncoding({ invert_y: v })}
-        background={bg}
-        setBackground={(v) => updateEncoding({ background: v })}
-        showLegend={showLegend}
-        setShowLegend={(v) => updateEncoding({ show_channel_legend: v })}
-        showMinimap={showMinimap}
-        setShowMinimap={(v) => updateEncoding({ show_minimap: v })}
-        renderMode={renderMode}
-        setRenderMode={(v) => updateEncoding({ render_mode: v })}
-        shapeSets={polygonElements}
-        shapesElement={shapesElement}
-        setShapesElement={(v) => updateEncoding({ shapes_layer: v })}
-        channels={channels}
-        setChannel={setChannel}
-        maxVisibleReached={maxVisibleReached}
-        panelCollapsed={panelCollapsed}
-        setPanelCollapsed={setPanelCollapsed}
-        zoom={zoom}
-        onZoom={(dir) => {
+      {controls?.({
+        display,
+        obsFields,
+        layers: layerNames,
+        colorByName,
+        legendVisible,
+        updateEncoding,
+        categoryColorItems,
+        hasCategoryOverrides: !!categoryColors && Object.keys(categoryColors).length > 0,
+        setCategoryColor,
+        resetCategoryColors,
+        showPoints,
+        showImage,
+        invertX,
+        invertY,
+        background: bg,
+        showLegend,
+        showMinimap,
+        renderMode,
+        shapeSets: polygonElements,
+        shapesElement,
+        channels,
+        setChannel,
+        maxVisibleReached,
+        zoom,
+        onZoom: (dir) => {
           const next = Math.max(ZOOM_LIMITS.minZoom, Math.min(ZOOM_LIMITS.maxZoom, zoom + dir * ZOOM_STEP));
           const t = viewState.target as number[];
           // A wheel zoom leaves deck's per-axis zoomX/zoomY on the view state, and
@@ -687,14 +764,13 @@ export default function SpatialCanvas({ display, sessionId, canvasMode, annotati
           };
           setViewState(updated);
           persistDisplay({ ...currentSpec(), viewport: { target: [t[0], t[1]], zoom: next } });
-        }}
-        onFit={() => { const fit = fitToData(); if (fit) setViewState(fit); }}
-        onEditTransform={() => setTransformOpen(true)}
-        canEdit={canEdit}
-        editBlockedReason={editBlockedReason}
-      />
+        },
+        onFit: () => { const fit = fitToData(); if (fit) setViewState(fit); },
+        onEditTransform: host.onEditTransform,
+        canEdit,
+        editBlockedReason,
+      })}
 
-      {transformOpen && <TransformEditor sessionId={sessionId} onClose={() => setTransformOpen(false)} />}
     </div>
   );
 }

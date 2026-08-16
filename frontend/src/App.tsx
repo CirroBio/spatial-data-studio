@@ -1,11 +1,12 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { useAppStore } from './store/sessionStore';
 import { getSessions, getFunctions, getCirroAuth, getReadyz } from './api';
-import { isSpatialDisplay, isEmbeddingDisplay } from './types';
+import { DataSourceProvider, isEmbeddingDisplay, isSpatialDisplay } from '@cirrobio/spatial-viewer';
 import { resolveRegionSetColumn } from './lib/regions';
-import { DataSourceProvider, useApiSource } from './data/context';
+import { useApiSource } from './data/apiSource';
 import { useCheckpointSession } from './data/useCheckpointSession';
-import { checkpointUrlFromLocation, fetchCheckpointIndex } from './data/checkpointIndex';
+import { checkpointUrlFromLocation, fetchCheckpointIndex, isEmbedMode } from './data/checkpointIndex';
+import { requestFreshCheckpointUrl, useEmbedBridge } from './data/embedBridge';
 import CheckpointIndexPage from './components/CheckpointIndexPage';
 import { useSSE } from './hooks/useSSE';
 import { useSession } from './hooks/useSession';
@@ -17,8 +18,10 @@ import ResourceStrip from './components/ResourceStrip';
 // deck.gl + geoarrow + apache-arrow ride in with the canvases; code-split them so
 // the landing shell paints without pulling that multi-MB graph (loaded on first
 // session open instead).
-const SpatialCanvas = lazy(() => import('./components/canvas/SpatialCanvas'));
-const EmbeddingCanvas = lazy(() => import('./components/canvas/EmbeddingCanvas'));
+const SpatialCanvas = lazy(() => import('./components/canvas/StudioSpatialCanvas'));
+const EmbeddingCanvas = lazy(() => import('./components/canvas/StudioEmbeddingCanvas'));
+import StudioCanvasHost from './components/StudioCanvasHost';
+import EmbeddingEmptyState from './components/EmbeddingEmptyState';
 import ComputeDetail from './components/ComputeDetail';
 import AnsiLog from './components/AnsiLog';
 import PlotDetail from './components/PlotDetail';
@@ -38,7 +41,14 @@ export default function App() {
   const checkpointUrl = useMemo(checkpointUrlFromLocation, []);
   const { checkpointIndex, setCheckpointIndex } = useAppStore();
   const serverless = checkpointUrl !== null || (checkpointIndex?.entries.length ?? 0) > 0;
-  const checkpoint = useCheckpointSession(checkpointUrl);
+  // Embed mode: hosted in an iframe by a Cirro dashboard that owns the display
+  // settings over postMessage (docs/EMBED_PROTOCOL.md). Only meaningful together
+  // with `?checkpoint=`; renders the bare canvas with no app chrome.
+  const embed = useMemo(isEmbedMode, []) && checkpointUrl !== null;
+  // An embed host signs checkpoint URLs for minutes at a time, so the reader
+  // re-signs through the host rather than dying partway through a long session.
+  const checkpoint = useCheckpointSession(checkpointUrl, embed ? requestFreshCheckpointUrl : undefined);
+  useEmbedBridge(embed, checkpoint);
 
   useSSE(!serverless);
 
@@ -301,36 +311,76 @@ export default function App() {
     if (mainView === 'tables' && !serverless) return <DataInspector />;
 
     if (mainView === 'embedding') {
+      // Authoring the display is an app-level write, not something the canvas does.
+      if (!embeddingDisplay) {
+        return (
+          <EmbeddingEmptyState
+            sessionId={activeSessionId}
+            obsmFields={sessionState.fields.obsm.filter((f) => f.name !== 'spatial')}
+            obsFields={sessionState.fields.obs}
+            layers={sessionState.fields.layers}
+          />
+        );
+      }
       return (
-        <EmbeddingCanvas
-          key={activeSessionId}
-          display={embeddingDisplay}
-          sessionId={activeSessionId}
-          obsmFields={sessionState.fields.obsm}
-          obsFields={sessionState.fields.obs}
-          layerNames={sessionState.fields.layers}
-          canvasMode={canvasMode}
-          annotationTarget={annotationTarget}
-        />
+        <StudioCanvasHost sessionId={activeSessionId}>
+          <EmbeddingCanvas
+            key={activeSessionId}
+            display={embeddingDisplay}
+            sessionId={activeSessionId}
+            obsmFields={sessionState.fields.obsm}
+            obsFields={sessionState.fields.obs}
+            layerNames={sessionState.fields.layers}
+            canvasMode={canvasMode}
+            annotationTarget={annotationTarget}
+            embedded={embed}
+          />
+        </StudioCanvasHost>
       );
     }
 
     // Canvas-workflow tabs always show the canvas
     if (display) {
       return (
-        <SpatialCanvas
-          key={activeSessionId}
-          display={display}
-          sessionId={activeSessionId}
-          canvasMode={canvasMode}
-          annotationTarget={annotationTarget}
-        />
+        <StudioCanvasHost sessionId={activeSessionId}>
+          <SpatialCanvas
+            key={activeSessionId}
+            display={display}
+            sessionId={activeSessionId}
+            canvasMode={canvasMode}
+            annotationTarget={annotationTarget}
+            embedded={embed}
+          />
+        </StudioCanvasHost>
       );
     }
     return (
       <div className="flex items-center justify-center h-full text-muted text-sm">
         No spatial canvas display found
       </div>
+    );
+  }
+
+  // Embed mode renders only the main canvas area — no header, sidebar, settings
+  // panel, view switcher, or picker: the hosting dashboard owns display selection
+  // and settings (in-canvas controls stay, their edits stream out as
+  // display-changed events).
+  if (embed) {
+    return (
+      <DataSourceProvider source={dataSource}>
+        <div className="h-full bg-bg text-text">
+          <main className="h-full overflow-hidden relative">
+            <Suspense fallback={
+              <div className="flex items-center justify-center h-full text-muted">
+                <div className="w-6 h-6 rounded-full border-2 border-border border-t-accent animate-spin" />
+              </div>
+            }>
+              {renderMain()}
+            </Suspense>
+          </main>
+          <Toaster />
+        </div>
+      </DataSourceProvider>
     );
   }
 

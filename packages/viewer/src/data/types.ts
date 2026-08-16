@@ -10,7 +10,6 @@
 // figure export, display persistence) stay on `api.ts` and are gated by `canEdit`,
 // which is false for a checkpoint.
 import type { Table } from 'apache-arrow';
-import type { ElementInventory } from '../api';
 import type { ImageInfo } from '../types';
 
 // Viv's multiscale pyramid handle: `loadOmeZarr(...).data`, a PixelSource per level.
@@ -21,6 +20,17 @@ export type ImageLoader = Awaited<ReturnType<typeof import('@vivjs/loaders')['lo
 export interface LocalCategorical {
   categories: string[];
   codes: Int32Array;
+}
+
+// Everything a SpatialData object holds, as the `/elements` route reports it: the
+// boundary overlay picks its polygonal shape sets out of this, and the data
+// inspector pages the tables.
+export interface ElementInventory {
+  tables: { name: string; n_obs: number; n_vars: number; active: boolean }[];
+  shapes: { name: string; count: number; geometry: string[]; columns: string[] }[];
+  points: { name: string; columns: string[] }[];
+  images: { name: string }[];
+  labels: { name: string }[];
 }
 
 export interface DataSource {

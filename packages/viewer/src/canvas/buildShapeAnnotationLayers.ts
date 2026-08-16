@@ -3,8 +3,8 @@ import { PathStyleExtension } from '@deck.gl/extensions';
 import type { PathStyleExtensionProps } from '@deck.gl/extensions';
 import type { Layer } from '@deck.gl/core';
 import type { Matrix4 } from '@math.gl/core';
-import type { ShapeAnnotation, ShapeGeometry } from '../../schemas/annotations';
-import { shapeOutline, shapeHandles, shapeCentroid, arrowheadTriangle, ROTATE_HANDLE_ID } from '../../lib/shapeAnnotations';
+import type { ShapeAnnotation, ShapeGeometry } from '../schemas/annotations';
+import { shapeOutline, shapeHandles, shapeCentroid, arrowheadTriangle, ROTATE_HANDLE_ID } from '../lib/shapeAnnotations';
 import { hexToRgb } from './colorUtils';
 
 type Point = [number, number];

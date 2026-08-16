@@ -17,6 +17,7 @@ import type {
   MemoryWarningEvent,
   PresenceView,
 } from '../types';
+
 import { editBlockReason } from '../lib/presence';
 
 // Poll cadence for the fallback below. Matches the read-retry cadence elsewhere

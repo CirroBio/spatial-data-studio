@@ -7,10 +7,10 @@ import CanvasSettingsShell from './CanvasSettingsShell';
 import LegendControls from './LegendControls';
 import RangeField from './RangeField';
 import DualRangeField from './DualRangeField';
-import type { SpatialDisplaySpec, ObsField } from '../../types';
-import { CHANNEL_COLORS, CATEGORY_SWATCHES } from './colorUtils';
-import { ZOOM_LIMITS } from './viewFit';
-import type { Channel } from './useImageChannels';
+import {
+  CATEGORY_SWATCHES, CHANNEL_COLORS, ZOOM_LIMITS,
+  type Channel, type ObsField, type SpatialDisplaySpec,
+} from '@cirrobio/spatial-viewer';
 
 interface CanvasControlsProps {
   display: SpatialDisplaySpec;
@@ -52,7 +52,7 @@ interface CanvasControlsProps {
   zoom: number;
   onZoom: (delta: number) => void;
   onFit: () => void;
-  onEditTransform: () => void;
+  onEditTransform?: () => void;
   // False when this viewer can't change the session (read-only snapshot, or another
   // viewer holds the edit lock): everything else here is a display setting that stays
   // on this screen, but the transform editor writes to the session and its checkpoint.
@@ -279,15 +279,17 @@ export default function CanvasControls({
             >
               Fit to data
             </button>
-            <button
-              type="button"
-              onClick={onEditTransform}
-              disabled={!canEdit}
-              title={editBlockedReason ?? undefined}
-              className="py-1 text-[11px] bg-bg border border-border rounded text-text hover:border-accent transition-colors disabled:opacity-40 disabled:hover:border-border"
-            >
-              Edit points transform
-            </button>
+            {onEditTransform && (
+              <button
+                type="button"
+                onClick={onEditTransform}
+                disabled={!canEdit}
+                title={editBlockedReason ?? undefined}
+                className="py-1 text-[11px] bg-bg border border-border rounded text-text hover:border-accent transition-colors disabled:opacity-40 disabled:hover:border-border"
+              >
+                Edit points transform
+              </button>
+            )}
           </div>
         </Tabs.Content>
 

@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { saveSnapshot, snapshotPreview, type SnapshotRenderSpec } from '../api';
-import { reportError } from '../lib/errors';
-import { formatError } from '../lib/format';
+import { formatError, reportError, type SnapshotExportParams, type SnapshotFormat } from '@cirrobio/spatial-viewer';
 import { useAppStore } from '../store/sessionStore';
-import type { SnapshotExportParams, SnapshotFormat } from '../lib/snapshots';
 import { ModalOverlay, ModalHeader } from './DetailModal';
 
 // Frame + export a high-quality figure snapshot. Seeded from the live canvas view

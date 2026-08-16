@@ -2,9 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useAppStore } from '../store/sessionStore';
 import ColorSwatchPicker from './ColorSwatchPicker';
 import ShapeToolbar from './ShapeToolbar';
-import type { ShapeAnnotation, StrokeStyle, FillStyle } from '../schemas/annotations';
-import { defaultFill } from '../schemas/annotations';
-import { polygonFromClicks } from '../lib/shapeAnnotations';
+import { defaultFill, polygonFromClicks, type FillStyle, type ShapeAnnotation, type StrokeStyle } from '@cirrobio/spatial-viewer';
 
 const SHAPE_COLORS = [
   '#3388ff', '#e05c5c', '#5cb85c', '#e0a83a', '#a05ce0', '#4ab8c4', '#e05cba', '#7a8b3a',

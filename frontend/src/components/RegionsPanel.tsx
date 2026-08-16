@@ -1,9 +1,7 @@
 import { useState } from 'react';
 import { useAppStore } from '../store/sessionStore';
 import { annotateSession, createShapeAnnotation } from '../api';
-import { useDataSource } from '../data/context';
-import { defaultStroke, defaultFill, type ShapeAnnotation } from '../schemas/annotations';
-import { reportError } from '../lib/errors';
+import { defaultFill, defaultStroke, reportError, useDataSource, type ShapeAnnotation } from '@cirrobio/spatial-viewer';
 import { resolveRegionSetColumn } from '../lib/regions';
 import { useDrawSelection } from '../hooks/useDrawSelection';
 import ColorSwatchPicker from './ColorSwatchPicker';

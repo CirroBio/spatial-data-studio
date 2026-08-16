@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { getThirdPartyLicenses, type ThirdPartyLicense } from '../api';
-import { formatError } from '../lib/format';
+import { formatError } from '@cirrobio/spatial-viewer';
 import { ModalOverlay, ModalHeader } from './DetailModal';
 
 interface Props {

@@ -1,4 +1,19 @@
 import { create } from 'zustand';
+import {
+  ApiError,
+  defaultFill,
+  defaultStroke,
+  fetchWhenIdle,
+  isSpatialDisplay,
+  type DataSource,
+  type DisplaySpec,
+  type LocalCategorical,
+  type ShapeAnnotation,
+  type ShapeGeometry,
+  type ShapeKind,
+  type SnapshotExportParams,
+  type SpatialDisplaySpec,
+} from '@cirrobio/spatial-viewer';
 import type {
   SessionSummary,
   SessionState,
@@ -6,21 +21,13 @@ import type {
   FunctionEntry,
   ResourceSample,
   SessionLoadingEvent,
-  DisplaySpec,
-  SpatialDisplaySpec,
   HistEntry,
   PlotEntry,
   RegionSet,
 } from '../types';
-import { isSpatialDisplay } from '../types';
-import type { DataSource } from '../data/types';
 import { clientName, setClientName, editBlockReason } from '../lib/presence';
-import { putDisplay, getSession, listShapeAnnotations, createShapeAnnotation, updateShapeAnnotation, deleteShapeAnnotation, postPresence, getCirroUploads, ApiError, fetchWhenIdle } from '../api';
+import { putDisplay, getSession, listShapeAnnotations, createShapeAnnotation, updateShapeAnnotation, deleteShapeAnnotation, postPresence, getCirroUploads } from '../api';
 import type { CirroAuth, CirroUpload } from '../api';
-import type { ShapeAnnotation, ShapeGeometry, ShapeKind } from '../schemas/annotations';
-import { defaultStroke, defaultFill } from '../schemas/annotations';
-import type { SnapshotExportParams } from '../lib/snapshots';
-import type { LocalCategorical } from '../data/types';
 import { checkpointUrlFromLocation, type CheckpointIndex } from '../data/checkpointIndex';
 
 // Level 0 of a locally-labelled column: every cell starts here and stays here

@@ -1,5 +1,4 @@
-import { createContext, useContext, useMemo, type ReactNode } from 'react';
-import { createApiSource } from './apiSource';
+import { createContext, useContext, type ReactNode } from 'react';
 import type { DataSource } from './types';
 
 // The canvas reads its data through whichever source is in context: a live session
@@ -15,10 +14,4 @@ export function DataSourceProvider(
   { source, children }: { source: DataSource | null; children: ReactNode },
 ) {
   return <DataSourceContext.Provider value={source}>{children}</DataSourceContext.Provider>;
-}
-
-/** Live-session source for `sessionId`, memoized so the canvas hooks see a stable
- * reference across renders. */
-export function useApiSource(sessionId: string | null): DataSource | null {
-  return useMemo(() => (sessionId ? createApiSource(sessionId) : null), [sessionId]);
 }

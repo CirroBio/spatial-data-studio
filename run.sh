@@ -21,8 +21,10 @@ if [[ ! -x "$VENV_BIN/python" ]]; then
   exit 1
 fi
 
-if [[ ! -d frontend/node_modules ]]; then
-  (cd frontend && npm install)
+# npm workspaces: one install at the repo root covers frontend/ and packages/viewer/,
+# and hoists everything into ./node_modules (there is no frontend/node_modules).
+if [[ ! -d node_modules ]]; then
+  npm install
 fi
 
 # Docker compose auto-loads .env; local dev needs it sourced explicitly so
@@ -35,14 +37,15 @@ fi
 
 # Cirro uploads bundle the built SPA as the serverless viewer (DESIGN §14.3), so
 # keep a fresh build on disk and point the backend at it. Rebuilt only when frontend
-# sources are newer than the last build, so routine restarts stay fast. A failed
+# or canvas-library sources are newer than the last build, so routine restarts stay
+# fast (the root build makes @cirrobio/spatial-viewer first, then the app). A failed
 # build leaves SDS_STATIC_DIR unset — uploads then omit the viewer (the upload
 # dialog says so) instead of bundling a stale build or blocking the launch.
 if [[ -z "${SDS_STATIC_DIR:-}" ]]; then
   if [[ -f frontend/dist/index.html ]] && \
-     [[ -z "$(find frontend/src frontend/public frontend/index.html frontend/package.json frontend/vite.config.ts frontend/tailwind.config.js -newer frontend/dist/index.html -print -quit 2>/dev/null)" ]]; then
+     [[ -z "$(find frontend/src frontend/public frontend/index.html frontend/package.json frontend/vite.config.ts frontend/tailwind.config.js packages/viewer/src -newer frontend/dist/index.html -print -quit 2>/dev/null)" ]]; then
     export SDS_STATIC_DIR="$PWD/frontend/dist"
-  elif (cd frontend && npm run build); then
+  elif npm run build; then
     export SDS_STATIC_DIR="$PWD/frontend/dist"
   else
     echo "warning: frontend build failed; Cirro uploads will not include the viewer" >&2
