@@ -66,7 +66,7 @@ export default function CirroConnectDialog({ onClose, onConnected }: Props) {
         onClose={onClose}
       />
 
-      <div className="p-4 flex flex-col gap-4">
+      <div className="flex-1 min-h-0 overflow-y-auto p-4 flex flex-col gap-4">
         {error && (
           <div className="text-xs text-danger bg-danger/10 border border-danger/20 rounded px-3 py-2">
             {error}

@@ -74,6 +74,9 @@ interface ModalOverlayProps {
 
 // Backdrop + centered panel shared by the smaller dialogs (recipe gallery, Cirro
 // upload, acknowledgements, transform editor). Closes on backdrop click or Esc.
+// The panel is capped at 80% of the viewport height; each dialog is responsible for
+// giving its body `flex-1 min-h-0 overflow-y-auto` so the overflow scrolls rather
+// than being clipped by the panel.
 export function ModalOverlay({ onClose, widthClassName, children }: ModalOverlayProps) {
   const pointerDownOnBackdrop = useRef(false);
 
@@ -93,7 +96,7 @@ export function ModalOverlay({ onClose, widthClassName, children }: ModalOverlay
       onMouseDown={(e) => { pointerDownOnBackdrop.current = e.target === e.currentTarget; }}
       onClick={(e) => { if (pointerDownOnBackdrop.current && e.target === e.currentTarget) onClose(); }}
     >
-      <div className={`bg-surface border border-border rounded-lg shadow-xl flex flex-col overflow-hidden ${widthClassName}`}>
+      <div className={`bg-surface border border-border rounded-lg shadow-xl flex flex-col overflow-hidden max-h-[80vh] ${widthClassName}`}>
         {children}
       </div>
     </div>

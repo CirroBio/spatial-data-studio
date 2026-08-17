@@ -73,7 +73,7 @@ export default function CirroUploadDialog({ onClose }: Props) {
   const fieldClass = 'w-full bg-bg border border-border rounded px-3 py-2 text-sm text-text placeholder-muted/50 focus:outline-none focus:border-accent';
 
   return (
-    <ModalOverlay onClose={onClose} widthClassName="w-[860px] max-w-[94vw] h-[620px] max-h-[90vh]">
+    <ModalOverlay onClose={onClose} widthClassName="w-[860px] max-w-[94vw] h-[620px]">
       <ModalHeader
         title="Upload to Cirro"
         subtitle={cirroAuth?.username

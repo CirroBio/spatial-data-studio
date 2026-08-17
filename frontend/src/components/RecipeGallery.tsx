@@ -101,7 +101,7 @@ export default function RecipeGallery({ sessionId, onClose }: Props) {
   if (configuring) {
     const recipe = configuring;
     return (
-      <ModalOverlay onClose={onClose} widthClassName="w-[460px] max-h-[80vh]">
+      <ModalOverlay onClose={onClose} widthClassName="w-[460px]">
         <ModalHeader
           title={recipe.name}
           subtitle="Set parameters, then run the recipe now or stage it as editable pending steps."
@@ -109,7 +109,7 @@ export default function RecipeGallery({ sessionId, onClose }: Props) {
         />
         <button
           onClick={() => setConfiguring(null)}
-          className="text-xs text-muted hover:text-text px-4 pt-3 pb-2 self-start"
+          className="shrink-0 text-xs text-muted hover:text-text px-4 pt-3 pb-2 self-start"
         >
           ← Back to recipes
         </button>
@@ -138,7 +138,7 @@ export default function RecipeGallery({ sessionId, onClose }: Props) {
   );
 
   return (
-    <ModalOverlay onClose={onClose} widthClassName="w-[560px] max-h-[80vh]">
+    <ModalOverlay onClose={onClose} widthClassName="w-[560px]">
       <ModalHeader title="Analysis recipes" subtitle="Curated analysis workflows — select one to set its parameters, then run or stage it." onClose={onClose} />
 
       {recipes && recipes.length > 0 && (

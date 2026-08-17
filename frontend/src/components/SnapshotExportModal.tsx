@@ -99,7 +99,7 @@ export default function SnapshotExportModal({ params, onClose }: { params: Snaps
     <ModalOverlay onClose={onClose} widthClassName="w-[720px] max-w-[95vw]">
       <ModalHeader title="Save snapshot" subtitle="Frame a high-quality figure and export it as PDF and/or PNG." onClose={onClose} />
 
-      <div className="flex flex-col md:flex-row gap-4 p-4">
+      <div className="flex-1 min-h-0 overflow-y-auto flex flex-col md:flex-row gap-4 p-4">
         <div className="flex-1 min-w-0 flex items-center justify-center bg-black/20 rounded border border-border min-h-[240px]">
           {previewUrl
             ? <img src={previewUrl} alt="snapshot preview" className={`max-w-full max-h-[360px] object-contain ${previewLoading ? 'opacity-60' : ''}`} />
@@ -154,9 +154,9 @@ export default function SnapshotExportModal({ params, onClose }: { params: Snaps
         </div>
       </div>
 
-      {error && <div className="px-4 pb-2 text-xs text-danger">{error}</div>}
+      {error && <div className="shrink-0 px-4 pb-2 text-xs text-danger">{error}</div>}
 
-      <div className="p-3 border-t border-border flex justify-end gap-2">
+      <div className="shrink-0 p-3 border-t border-border flex justify-end gap-2">
         <button onClick={onClose} className="px-3 py-2 text-sm text-muted hover:text-text transition-colors">Cancel</button>
         <button onClick={save} disabled={saving || noFormat}
           className="px-4 py-2 bg-accent hover:bg-accent/80 disabled:opacity-50 text-on-accent rounded text-sm transition-colors">

@@ -199,7 +199,7 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
     <Dialog.Root open onOpenChange={(o) => { if (!o) onClose(); }}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/60 z-40" />
-        <Dialog.Content className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-surface border border-border rounded-lg shadow-2xl w-[860px] max-w-[94vw] h-[620px] max-h-[90vh] overflow-hidden flex flex-col">
+        <Dialog.Content className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-surface border border-border rounded-lg shadow-2xl w-[860px] max-w-[94vw] h-[620px] max-h-[80vh] overflow-hidden flex flex-col">
           <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
             <Dialog.Title className="text-sm font-semibold text-text">New Session</Dialog.Title>
             <Dialog.Close asChild>

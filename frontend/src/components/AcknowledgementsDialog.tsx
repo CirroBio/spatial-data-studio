@@ -53,7 +53,7 @@ export default function AcknowledgementsDialog({ onClose }: Props) {
   }, []);
 
   return (
-    <ModalOverlay onClose={onClose} widthClassName="w-[560px] max-h-[80vh]">
+    <ModalOverlay onClose={onClose} widthClassName="w-[560px]">
       <ModalHeader title="Acknowledgements" subtitle="Third-party libraries this app is built on." onClose={onClose} />
 
       <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-3">
