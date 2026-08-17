@@ -6,6 +6,7 @@ import {
   ApiError,
   type DisplaySpec,
   type ElementInventory,
+  type FigureFormat,
   type ImageInfo,
   type ShapeAnnotation,
   type Snapshot,
@@ -253,7 +254,7 @@ export async function redrawPlot(sessionId: string, plotId: string): Promise<voi
   await apiFetch(`/api/sessions/${sessionId}/plots/${plotId}/redraw`, { method: 'POST' });
 }
 
-export function getFigureUrl(sessionId: string, plotId: string, fmt: 'svg' | 'pdf' = 'svg'): string {
+export function getFigureUrl(sessionId: string, plotId: string, fmt: FigureFormat = 'svg'): string {
   return `/api/sessions/${sessionId}/plots/${plotId}/figure?fmt=${fmt}`;
 }
 
@@ -628,16 +629,19 @@ export async function setPointsTransform(
  * a facet present keeps exactly the names listed, so `{ images: [] }` drops every
  * image. `levels` maps an image name to the index of the finest pyramid level to
  * write, coarser levels always kept, so `{ hne: 2 }` writes that image without its two
- * most detailed levels. Omit both for the ordinary whole-object save. */
+ * most detailed levels. `figures` names the drawn plots whose rendered figures the file
+ * carries (omit for every one; `[]` for none). Omit all three for the ordinary
+ * whole-object save. */
 export async function saveSession(
   sessionId: string, path?: string, include?: Partial<Record<SdataFacet, string[]>>,
-  levels?: Record<string, number>,
+  levels?: Record<string, number>, figures?: string[],
 ): Promise<{ job_id: string }> {
   const res = await apiFetch(`/api/sessions/${sessionId}/save`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       ...(path ? { path } : {}), ...(include ? { include } : {}), ...(levels ? { levels } : {}),
+      ...(figures ? { figures } : {}),
     }),
   });
   return res.json() as Promise<{ job_id: string }>;

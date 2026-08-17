@@ -22,6 +22,7 @@ import type {
   ResourceSample,
   SessionLoadingEvent,
   HistEntry,
+  MainView,
   PlotEntry,
   RegionSet,
 } from '../types';
@@ -163,12 +164,17 @@ interface AppStore {
   setSelectedComputeId: (id: string | null) => void;
   selectedPlotId: string | null;
   setSelectedPlotId: (id: string | null) => void;
+  // Plot shown fullscreen by FigureLightbox — opened from the Plots view or the plot
+  // detail panel, which is why it lives here rather than in either of them.
+  expandedPlotId: string | null;
+  setExpandedPlotId: (id: string | null) => void;
   sidebarTab: 'compute' | 'plots' | 'regions' | 'annotations' | 'subsetting';
   setSidebarTab: (tab: 'compute' | 'plots' | 'regions' | 'annotations' | 'subsetting') => void;
 
-  // main viewer mode — spatial canvas, embedding scatter, or the data-table inspector
-  mainView: 'canvas' | 'embedding' | 'tables';
-  setMainView: (view: 'canvas' | 'embedding' | 'tables') => void;
+  // main viewer mode — spatial canvas, embedding scatter, the saved plot figures, or
+  // the data-table inspector
+  mainView: MainView;
+  setMainView: (view: MainView) => void;
 
   // light/dark theme — persisted in localStorage so it survives reloads
   theme: 'dark' | 'light';
@@ -522,6 +528,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setSelectedComputeId: (id) => set({ selectedComputeId: id, selectedPlotId: null }),
   selectedPlotId: null,
   setSelectedPlotId: (id) => set({ selectedPlotId: id, selectedComputeId: null }),
+  // A shared link can name the plot it opens on, the same way it names the view.
+  expandedPlotId: initialUiOverlay().expandedPlotId ?? null,
+  setExpandedPlotId: (id) => set({ expandedPlotId: id }),
   sidebarTab: 'compute',
   setSidebarTab: (tab) => set({ sidebarTab: tab }),
 

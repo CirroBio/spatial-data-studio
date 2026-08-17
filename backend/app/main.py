@@ -357,13 +357,15 @@ async def redraw(sid: str, plot_id: str):
 
 @app.get("/api/sessions/{sid}/plots/{plot_id}/figure")
 async def figure(sid: str, plot_id: str, fmt: str = "svg"):
-    figs = _session(sid).plot_figures.get(plot_id)
-    if not figs or figs.get(fmt) is None:
-        raise HTTPException(404, "figure not drawn")
     media = {"svg": "image/svg+xml", "pdf": "application/pdf", "png": "image/png"}.get(fmt)
     if media is None:
         raise HTTPException(400, "fmt must be svg, pdf, or png")
-    return Response(content=figs[fmt], media_type=media)
+    # Served from this session's render, or read back from the checkpoint it was loaded
+    # from — a drawn plot reloads drawn when its figure came with the file.
+    blob = _session(sid).figure(plot_id, fmt)
+    if blob is None:
+        raise HTTPException(404, "figure not drawn")
+    return Response(content=blob, media_type=media)
 
 
 # ---- displays --------------------------------------------------------------
@@ -490,6 +492,21 @@ def _validated_levels(sess, levels) -> dict[str, int] | None:
     return out or None
 
 
+def _validated_figures(sess, figures) -> list[str] | None:
+    """Check the save body's figure selection: `null`/absent keeps every drawn plot's
+    figure, a list keeps exactly those plot ids (`[]` writes no figures at all). Ids that
+    aren't drawn plots are a client bug, not something to silently drop."""
+    if figures is None:
+        return None
+    if not isinstance(figures, list) or not all(isinstance(p, str) for p in figures):
+        raise HTTPException(400, "figures must be a list of plot ids")
+    drawn = {p["id"] for p in sess.app_state["plots"] if p["status"] == "drawn"}
+    missing = sorted(set(figures) - drawn)
+    if missing:
+        raise HTTPException(400, f"no drawn plot(s) with id(s): {', '.join(missing)}")
+    return figures
+
+
 @app.post("/api/sessions/{sid}/save")
 async def save(sid: str, body: dict | None = None):
     sess = _writable_session(sid)
@@ -498,8 +515,10 @@ async def save(sid: str, body: dict | None = None):
     path = explicit or default_save_path(sess)
     include = _validated_include(sess, body.get("include"))
     levels = _validated_levels(sess, body.get("levels"))
+    figures = _validated_figures(sess, body.get("figures"))
     job_id = sess.enqueue_special("save", {"path": path, "hash_name": not explicit,
-                                           "include": include, "levels": levels})
+                                           "include": include, "levels": levels,
+                                           "figures": figures})
     return {"job_id": job_id, "path": path}
 
 

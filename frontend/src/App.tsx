@@ -27,6 +27,8 @@ import EmbeddingEmptyState from './components/EmbeddingEmptyState';
 import ComputeDetail from './components/ComputeDetail';
 import AnsiLog from './components/AnsiLog';
 import PlotDetail from './components/PlotDetail';
+import PlotGallery from './components/PlotGallery';
+import FigureLightbox from './components/FigureLightbox';
 import DataInspector from './components/DataInspector';
 import DetailPanel from './components/DetailPanel';
 import NewSessionDialog from './components/NewSessionDialog';
@@ -318,6 +320,7 @@ export default function App() {
     // `mainView` persists across sessions, so a checkpoint opened while Tables was
     // the last view must not land on the (backend-only) inspector.
     if (mainView === 'tables' && !serverless) return <DataInspector />;
+    if (mainView === 'plots') return <PlotGallery />;
 
     if (mainView === 'embedding') {
       // Authoring the display is an app-level write, not something the canvas does.
@@ -421,6 +424,9 @@ export default function App() {
               {([
                 ['canvas', 'Spatial'],
                 ['embedding', 'Embeddings'],
+                // Only once the session has a plot to show — an always-present tab
+                // that is empty for most sessions isn't worth the toolbar space.
+                ...(sessionState?.app_state.plots.length ? [['plots', 'Plots'] as const] : []),
                 // The table inspector pages dataframes through the backend
                 // (`/elements`, `/table-preview`), which a checkpoint has none of.
                 ...(serverless ? [] : [['tables', 'Tables'] as const]),
@@ -451,6 +457,9 @@ export default function App() {
       {!serverless && <ResourceStrip />}
       <Toaster />
       <BlockingOverlay />
+      {/* Opened from the Plots view or the plot detail panel; renders nothing until one
+          of them sets `expandedPlotId`. */}
+      <FigureLightbox />
       {showNewSession && (
         <NewSessionDialog
           onClose={() => setShowNewSession(false)}

@@ -166,10 +166,11 @@ Component-level notes: [`backend/README.md`](backend/README.md),
 | Change the MCP assistant surface (tools, vision render, agent guidance) | `backend/app/mcp/server.py` (tools) + `vision.py` (render/coords/membership) + `agent.py` (presence/lock) + `guides/*.md` (guidance text); mounted in `main.py` | [DESIGN.md](DESIGN.md) §29 |
 | Change the checkpoint/persistence format | `backend/app/persistence/store.py` | [DESIGN.md](DESIGN.md) §3, §14.1, [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) |
 | Change which elements a save can leave out, at what resolution images are written, or how their sizes are estimated | `backend/app/persistence/store.py` (`select_elements`, `trim_pyramid`, `element_size_mb`, `image_levels`) + `sessions/appstate.py` (`prune_to_elements`) + `frontend/src/components/SaveCheckpointDialog.tsx` | below |
+| Change how rendered plot figures are stored, served or shown | `backend/app/persistence/store.py` (`_write_figures`, `read_figure`, `figure_index`) + `sessions/session.py` (`figure`, `figure_index`, `figures_to_persist`) + `frontend/src/lib/figures.ts` + `components/PlotGallery.tsx` / `FigureLightbox.tsx` / `PlotDetail.tsx` | below |
 | Change what the serverless viewer can read from a checkpoint | `backend/app/persistence/store.py` (`_write_viewer_sidecar`, the writer half) + `packages/viewer/src/data/checkpointSource.ts` (the reader half) — the two must move together | [DESIGN.md](DESIGN.md) §14.1–14.2, [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) §4 |
 | Change the shape of `app_state`, the `viewer/` sidecar, `X_csc`, or `index.json` | `backend/app/schemas/checkpoint/*.schema.json` (the JSON Schema is validated against on every write) + [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) in the same commit — `sds-governance/checks/check_checkpoint_schema_docs.py` fails the build otherwise | [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) |
 | Add a render-path call the canvas makes | `packages/viewer/src/data/types.ts` (the `DataSource` interface), then **both** `frontend/src/data/apiSource.ts` and `packages/viewer/src/data/checkpointSource.ts` | [DESIGN.md](DESIGN.md) §14.2 |
-| Change what the serverless viewer shows (collapsed-by-default sidebar with the analysis history only, PNG export) | `frontend/src/components/Sidebar.tsx` (the serverless branch), `store/sessionStore.ts` (`leftMenuOpen` default), `packages/viewer/src/lib/canvasCapture.ts` | [DESIGN.md](DESIGN.md) §14.2 |
+| Change what the serverless viewer shows (collapsed-by-default sidebar with the analysis history only, the Plots view, PNG export) | `frontend/src/components/Sidebar.tsx` (the serverless branch), `store/sessionStore.ts` (`leftMenuOpen` default), `components/PlotGallery.tsx`, `packages/viewer/src/lib/canvasCapture.ts` | [DESIGN.md](DESIGN.md) §14.2 |
 | Change the `index.json` deployment manifest or the checkpoint switcher | `frontend/src/data/checkpointIndex.ts` (format + navigation), `components/CheckpointIndexPage.tsx` (landing), `components/CheckpointPicker.tsx` (header), `backend/app/cirro.py` (`_write_viewer_index`) | [DESIGN.md](DESIGN.md) §14.3, [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) §8 |
 | Change the embed protocol (viewer in an iframe under a Cirro dashboard) | `frontend/src/data/embedBridge.ts` (viewer side) + [docs/EMBED_PROTOCOL.md](docs/EMBED_PROTOCOL.md) in the same commit — the dashboard side in `@cirrobio/dashboard` must move together | [docs/EMBED_PROTOCOL.md](docs/EMBED_PROTOCOL.md) |
 | Change what a shared view link carries | `frontend/src/lib/urlViewState.ts` (schema + diff) + `hooks/useUrlViewSync.ts` (writer); add the field's default to `packages/viewer/src/defaults.ts` if it has a constant one | below |
@@ -301,6 +302,33 @@ inverse of `estimate_resident_mb`'s `DECOMP`, with a separate factor for labels,
 compress far harder than intensity data. The fallback is within roughly 2x and worse for
 fluorescence than H&E; `None` ("unknown", a dask points frame whose length would cost a
 full scan) makes the dialog's total a lower bound rather than an estimate.
+
+### Rendered plot figures
+
+A drawn plot's SVG/PDF/PNG live in `Session.plot_figures` while the session runs, and
+travel in the checkpoint under `viewer/figures/<plot_id>/<fmt>` (one uint8 array per
+format; see [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) §4.3). Three seams to
+know:
+
+- **The session, not the store, decides what gets written.** `figures_to_persist(keep)`
+  collects the bytes of every `drawn` plot — from memory, or read back from the store the
+  session was loaded from — and `_write_figures` makes the group match that set exactly,
+  deleting anything else. So the save dialog's per-plot toggles (`figures` in the save
+  body) need no logic in the writer. On the incremental save path the store being
+  rewritten is the same one the session reads its figures through, so
+  `_hold_dropped_figures` pulls anything about to be pruned into memory first — dropping
+  a figure changes the file, never the open session.
+- **`figure_index()` reports only `drawn` plots**, merging in-memory bytes over the
+  store's `figures` attr. That is what makes a stale figure unreachable the moment its
+  plot is invalidated, and it is the single source for `SessionState.figures`, the save
+  dialog's sizes, and the MCP `figure_available` flag. Sizes come from the sidecar attr
+  rather than the arrays so the state route can report the whole index in one small read
+  on every poll.
+- **The UI reads figures through the `DataSource`** (`getPlotFigure`), so `PlotGallery`,
+  `FigureLightbox`, `PlotDetail` and the exports are the same components against a live
+  session and a checkpoint. `frontend/src/lib/figures.ts` holds the shared selectors
+  (which format to display, which plots have a figure, byte totals) and `hooks/useFigure.ts`
+  turns one into an object URL, revoked when the plot, format or component changes.
 
 ## Local dev environment
 
@@ -506,6 +534,12 @@ a URL (DESIGN §14.2). `lib/urlViewState.ts` owns the schema and the diff;
 - **Nested maps replace wholesale.** `channels` and `category_colors` are two-level
   records; a per-key merge would need tombstones to express "the user removed this
   override".
+- **`ui` carries what the recipient is looking at**, not just how it is styled: `view`
+  (which main view), `menu` (sidebar), and `plot` — the `plots[].id` open fullscreen, so a
+  link can point at one figure. `ui.view` omits `tables`, which needs a backend. The store
+  seeds `mainView`, `leftMenuOpen` and `expandedPlotId` from `initialUiOverlay()` before
+  the first render, since all three change what mounts; `FigureLightbox` therefore has to
+  wait for a session before deciding a named plot doesn't exist.
 - **One opaque parameter**, base64url JSON, not a parameter per setting — those two maps
   do not survive being spread across query parameters. Unknown keys are ignored, so a
   link from a newer build degrades to a partial view; an unreadable one falls back to
@@ -712,7 +746,8 @@ cd backend
 | `--lowres-max-image-mb` | also write `<name>.lowres.zarr.zip` — the same session with as many of each image's finest pyramid levels dropped as it takes to fit that image budget (`store.cap_image_levels`) |
 
 The output folder holds `<name>.zarr.zip` (the full SpatialData + app state, reloadable
-in the app) and `plots/<NN>_<namespace>.<function>/figure.{svg,pdf}` per plot step.
+in the app, with each drawn plot's figure inside it) and
+`plots/<NN>_<namespace>.<function>/figure.{svg,pdf}` per plot step as loose files.
 Repeating `--recipe` runs the recipes in order in the same session — one load, one
 save — so a longer analysis composes the bundled recipes instead of restating their
 steps in a new file. `--recipe-params` is shared by all of them: each recipe fills only

@@ -6,6 +6,8 @@
 // deck.gl 9 creates its device with `preserveDrawingBuffer: true` by default, so the
 // backbuffer is still readable after the frame is composited.
 
+import { downloadBlob } from './download';
+
 function timestampedName(label: string): string {
   const slug = label.trim().replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '') || 'view';
   // Local time, filename-safe: 2026-08-12T14-32-05
@@ -24,16 +26,5 @@ export async function downloadCanvasPng(container: HTMLElement | null, label: st
 
   const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
   if (!blob) throw new Error('the browser could not encode the canvas as a PNG');
-
-  const url = URL.createObjectURL(blob);
-  try {
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = timestampedName(label);
-    link.click();
-  } finally {
-    // Revoke after the click has been dispatched; doing it synchronously can cancel
-    // the download in Safari.
-    setTimeout(() => URL.revokeObjectURL(url), 0);
-  }
+  downloadBlob(blob, timestampedName(label));
 }

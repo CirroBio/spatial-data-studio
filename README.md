@@ -32,6 +32,9 @@ the analysis history that produced this view.*
   variable genes, co-occurrence, ligand-receptor, and more. Each carries a citation
   and a link to its documentation. Data-transforming functions run from the **Compute**
   tab; plotting functions render static figures collected in a separate **Plots** tab.
+- **Browse your figures.** A **Plots** view sits next to Spatial and Embeddings as a
+  grid of every figure the session has drawn; click one to fill the screen with it and
+  step through the rest with the arrow keys. Any figure downloads as SVG, PDF or PNG.
 - **Apply curated recipes.** Multi-step workflows (preprocess → cluster → annotate →
   neighborhood analysis) you can run in one click or stage and edit step by step.
 - **Visualize interactively.** Color cells by any gene or metadata column, choose which
@@ -60,11 +63,13 @@ the analysis history that produced this view.*
   zoom, render mode); those changes stay on your screen instead of going into the
   session.
 - **Save and share.** Save a checkpoint you can reopen later — choosing what goes into
-  the file from a checklist of the dataset's elements, each with its estimated size, so
-  you can leave a multi-gigabyte tissue image out of a copy you want to send someone.
-  An image you do keep has a resolution slider: it lists what each level of the image
-  pyramid costs, and you pick the most detailed one worth keeping, trading zoomed-in
-  detail for a much smaller file (the session on screen keeps everything either way). Save a **snapshot** — a
+  the file from a checklist of the dataset's elements *and* the figures you've drawn,
+  each with its size, so you can leave a multi-gigabyte tissue image out of a copy you
+  want to send someone. An image you do keep has a resolution slider: it lists what each
+  level of the image pyramid costs, and you pick the most detailed one worth keeping,
+  trading zoomed-in detail for a much smaller file (the session on screen keeps
+  everything either way). Reopening a checkpoint brings its plots back as pictures, not
+  just as a list of what was run. Save a **snapshot** — a
   high-quality figure of the current view exported as a vector PDF and/or raster PNG,
   framed and sized in a dialog with a live preview, optionally with the minimap inset
   included in the figure — or upload saved checkpoints to
@@ -100,16 +105,20 @@ the analysis history that produced this view.*
   megabyte. Any host that serves the file with HTTP range requests will do — put the
   built app, your `.zarr.zip` files, and a small `index.json` listing them in one
   folder and the page becomes a browsable collection you can switch between.
-  The left panel opens collapsed and holds one thing: the history of the analysis
-  that produced the checkpoint — expand it to see each function that was run, and
-  click an entry for its parameters and timing. Anything that would act on the data
-  (running an analysis, annotating, subsetting, plotting, saving) needs the live app.
+  The **Plots** view works here too: the figures saved with the checkpoint are in the
+  file, so the grid, the fullscreen view and the SVG/PDF/PNG downloads all work with no
+  backend. The left panel opens collapsed and holds one thing: the history of the
+  analysis that produced the checkpoint — expand it to see each function that was run,
+  and click an entry for its parameters and timing. Anything that would act on the data
+  (running an analysis, annotating, subsetting, drawing a new plot, saving) needs the
+  live app.
   You can still export what you see as a PNG; the publication-quality PDF figure and
   cell-boundary outlines aren't available this way.
 - **Share the exact view you're looking at.** In that no-backend viewer, every display
   setting you change from what the checkpoint was saved with — color by, palettes and
   per-category colors, channels and contrast, point size and shape, legends, layer
-  visibility, and where you've panned and zoomed to — is kept in the page's address.
+  visibility, where you've panned and zoomed to, and which view (including a figure
+  you've opened fullscreen) you're on — is kept in the page's address.
   **Copy link to this view** in the menu hands you a URL that reopens the same
   checkpoint framed and styled exactly as you left it, so a collaborator sees your view
   rather than the saved one. Only your changes travel, so the link stays short.

@@ -226,12 +226,13 @@ def main(argv=None) -> int:
         # (within_data_dir) is a multi-tenant server concern; offline output goes
         # wherever the caller asked.
         with sess.lock.reading():
+            figures = sess.figures_to_persist()
             written = [save_spatialdata(sess.sdata, str(out_dir / f"{name}.zarr.zip"),
-                                        sess.app_state, hash_name=False)]
+                                        sess.app_state, hash_name=False, figures=figures)]
             if args.lowres_max_image_mb is not None:
                 written.append(save_spatialdata(
                     sess.sdata, str(out_dir / f"{name}.lowres.zarr.zip"), sess.app_state,
-                    hash_name=False, max_image_mb=args.lowres_max_image_mb))
+                    hash_name=False, max_image_mb=args.lowres_max_image_mb, figures=figures))
     finally:
         sess.shutdown()
 

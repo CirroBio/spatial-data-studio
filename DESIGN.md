@@ -48,8 +48,9 @@ parameter.
 - Authentication / access control. The deployment layer owns this; the app is fully
   open and collaborative.
 - Distributed/multi-machine compute. Single long-lived server process.
-- Persisting rendered figures. Plot outputs (SVG/PDF) are disposable; only call
-  descriptors persist.
+- Reproducing a figure from its pixels. The call descriptor is the record of how a plot
+  was made; the rendered copy a checkpoint carries (§7.2) is there to be *looked at*,
+  and is always redrawable from the descriptor.
 
 ---
 
@@ -533,12 +534,23 @@ INVALIDATED → QUEUED  (user clicks "Redraw")
 - Plots render against the **current** data state ("live re-derivation," not a
   snapshot). A redrawn plot may differ from the original if upstream data changed —
   intended; documented.
-- The rendered SVG/PDF is **never persisted**. Only the call descriptor is saved. This
-  is what makes version drift non-destructive: if a `pl` signature changes and a stored
-  call no longer validates, redraw goes `FAILED` and the data is untouched.
+- The call descriptor is what makes a plot reproducible, and version drift
+  non-destructive: if a `pl` signature changes and a stored call no longer validates,
+  redraw goes `FAILED` and the data is untouched.
+- A **drawn** plot's rendered figure (SVG + PDF + PNG) is saved into the checkpoint
+  alongside the descriptor — `viewer/figures/<plot_id>/<fmt>` (§14.1) — so a reloaded or
+  shared file *shows* its plots instead of holding a list of promises. The save dialog
+  lists each figure with its size and can drop any of them; whatever the file doesn't
+  carry reloads `invalidated`, exactly as before, and redraws on demand. An
+  `invalidated` figure is never saved: its bytes no longer match the data, which is the
+  whole meaning of the status.
 - Plot detail view shows: the rendered figure, the generated form (editable params),
-  status, log, an **Edit & rerun**, and a **Redraw** button.
-- Export: user downloads the figure as **SVG or PDF** from the detail view.
+  status, log, an **Edit & rerun**, a **Redraw**, and an **Expand** button.
+- The **Plots** view (main pane, next to Spatial/Embeddings) is a thumbnail grid of the
+  session's figures; clicking one opens a fullscreen carousel (arrow keys step, Esc
+  closes). Both work in the serverless viewer, which reads the figures out of the file.
+- Export: user downloads the figure as **SVG, PDF or PNG** from the detail view or the
+  carousel.
 
 ---
 
@@ -1254,11 +1266,21 @@ carries no child index and the reader could not even name the table.
   downloading the whole CSR `data`+`indices` pair — worse exactly when the table is
   large. Its chunk length is sized from the data (`_csc_chunk`) so one gene column
   lands in one or two chunks whether a gene holds hundreds of non-zeros (Visium) or
-  hundreds of thousands (Xenium).
+  hundreds of thousands (Xenium). The same group carries the **rendered plot figures**
+  (`_write_figures`): `viewer/figures/<plot_id>/<fmt>`, one uint8 array per format
+  written as a single chunk, so a reader fetches a figure in one range read and gets the
+  store's zstd for free (an SVG scatter compresses several-fold). The group is rebuilt
+  from scratch on every save — the caller passes the complete set it wants in the file —
+  so a deselected, deleted or invalidated plot leaves nothing behind. Byte lengths ride
+  in the `figures` attr beside the format list, which is what lets a session report its
+  whole figure index (and the save dialog size its rows) from one small read.
 - **`_consolidate`** re-runs consolidated metadata **last**, so the tree the browser
   reads reports the sharded codec (or zarrita would decode the pre-shard layout) and
   lists `viewer/`. The incremental path (`update_checkpoint`) refreshes the sidecar
-  and re-consolidates too, limiting the CSC rebuild to the dirty tables.
+  and re-consolidates too, limiting the CSC rebuild to the dirty tables. That path
+  rewrites the store the live session reads its own figures through, so before pruning it
+  the session pulls anything it is about to lose into memory (`_hold_dropped_figures`):
+  deselecting a figure changes the file, never what the open session can still show.
 
 ### 14.2 Serverless viewer
 
@@ -1267,7 +1289,7 @@ with no backend at all — the same bundle, the same canvas, the same display co
 This is one app with two data sources, not a second viewer:
 `packages/viewer/src/data/types.ts` defines a `DataSource` interface over the render
 path (`getFieldData`, `getImageInfo`, `openImageLoader`, `getShapesGeoArrow`,
-`getElements`, `searchVarNames`, `imageThumbnailUrl`), implemented by
+`getElements`, `searchVarNames`, `imageThumbnailUrl`, `getPlotFigure`), implemented by
 `frontend/src/data/apiSource.ts` (live session) and the library's `checkpointSource`
 (zarrita over `ZipFileStore`). The handful of hooks that used to
 call `api.ts` directly — `useArrowField`, `useVivImageLayer`, `usePolygonBbox`,
@@ -1290,6 +1312,12 @@ Details that make it work:
 - Consolidated metadata makes every `zarr.open` a memory lookup and is what supplies
   the group listing that `SessionFields` (the obs/obsm pickers) is derived from;
   Zarr v3 stores carry no child index.
+- Saved plot figures come through the same interface: the sidecar's `figures` attr is
+  handed to the synthetic session as `SessionState.figures` — the shape the live route
+  returns — and `getPlotFigure` reads `viewer/figures/<plot_id>/<fmt>` as a blob. The
+  Plots grid, the fullscreen carousel and the figure exports are therefore the same
+  components in both modes, and a plot the file carries no figure for reads
+  "No saved figure" rather than offering a redraw that has no backend to run it.
 - The checkpoint is presented as a synthetic **read-only session**, so
   `editBlockReason`'s existing `summary.read_only` gate disables compute, regions,
   annotations, subsetting and transform edits with no second notion of "can't write".
@@ -1300,7 +1328,9 @@ when `?checkpoint=` is present — `store/sessionStore.ts`) and, when expanded, 
 only the record of the analysis that produced the checkpoint: the compute-history
 list with no tab strip and no recipe footer (`Sidebar.tsx`'s serverless branch,
 gated on the URL rather than the async data source so the tab strip never flashes
-in). Plots, regions, annotations and subsetting are not offered — nothing can run.
+in). Regions, annotations and subsetting are not offered — nothing can run. The **Plots**
+view is offered, because the figures are in the file: the same grid and fullscreen
+carousel as the backed app, read-only (no redraw).
 The browser-only edit plumbing those tabs once used on checkpoints
 (`applyLocalRegion`/`setLocalColumn`, `hiddenCells`, `shapesAreLocalOnly`) is still
 in the store and `DataSource`, but no UI reaches it in this mode. **Snapshot
@@ -1361,9 +1391,11 @@ is written to a `view` parameter (`lib/urlViewState.ts`), so a tuned view is sha
 the recipient opens the same `?checkpoint=`, reads the identical `app_state` out of the
 identical file, and the delta lands them on the same picture — camera included. Only the
 delta travels, so a link stays short and a re-saved checkpoint degrades gracefully
-(what the user changed still applies, what they didn't follows the new file). Nothing
-else local survives: selections, hidden cells and locally-drawn labels are gone on
-reload. The parameter is deliberately absent in embed mode, where the host owns display
+(what the user changed still applies, what they didn't follows the new file). The
+parameter also carries the UI state that decides what the recipient is looking at:
+`ui.view` (which main view), `ui.menu` (sidebar), and `ui.plot` — the id of the plot open
+fullscreen, so "look at this figure" is a link. Nothing else local survives: selections,
+hidden cells and locally-drawn labels are gone on reload. The parameter is deliberately absent in embed mode, where the host owns display
 state over postMessage (docs/EMBED_PROTOCOL.md), and in the backed app, where the
 encoding is server-persisted and shared by session id.
 
@@ -1759,7 +1791,9 @@ closed (a 406 does not auto-reconnect), so SSE remains the path wherever it work
 4. Every function returns the result envelope (§4.7).
 5. Redraw exists only on plotting items; a compute item can never go COMPLETED→QUEUED;
    rerun appends a new (PENDING) step.
-6. Rendered figures are never written to `attrs` or Zarr.
+6. Rendered figures are never written to `attrs` or a table's `uns`. The copy a
+   checkpoint carries lives in the browser-facing `viewer/figures` group, keyed by plot
+   id, and is only ever written for a `drawn` plot.
 7. App state is written only to `sdata.attrs["app_state"]`, never to a table `uns`.
 8. Display `viewport` is default-camera only; live camera is client-local, never
    broadcast.
@@ -2292,8 +2326,9 @@ inspect/annotate membership equal to an independent numpy count.
 Plots gained a raster copy for the same reason: `render_plot` (§base) now saves PNG
 alongside SVG/PDF, threaded through the kernel envelope into `plot_figures` and
 `GET /plots/{id}/figure?fmt=png`, so `view_plot` can hand the agent an image it can
-actually read (redrawing first when the figure is missing after a checkpoint reload,
-or invalidated).
+actually read. The PNG travels in the checkpoint with the other two (§7.2), so after a
+reload `view_plot` usually has an image already; it still redraws first when the file
+carried no figure, or when the plot is invalidated.
 
 ### 29.3 Guidance
 

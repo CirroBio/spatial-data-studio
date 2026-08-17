@@ -219,6 +219,7 @@ class SessionManager:
         }
         return {"summary": self.summary(sess), "app_state": safe_state,
                 "queue": sess.queue_view(), "fields": fields,
+                "figures": sess.figure_index(),
                 "data_versions": safe_state["data_versions"]}
 
     # ---- subset → child (DESIGN §8) --------------------------------------
@@ -362,7 +363,8 @@ class SessionManager:
             # state, so skip the save — the temp-dir/presence/session.removed
             # cleanup below must still run.
             if save and sess.store_path and sess.sdata is not None:
-                save_spatialdata(sess.sdata, sess.store_path, sess.app_state)
+                save_spatialdata(sess.sdata, sess.store_path, sess.app_state,
+                                 figures=sess.figures_to_persist())
             # Evict this object's image caches before releasing it — they key on
             # id(sdata), which a later session's object could reuse (imaging.py).
             if sess.sdata is not None:

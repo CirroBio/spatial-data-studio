@@ -4,7 +4,8 @@ import { useMemo } from 'react';
 import { loadOmeZarr } from '@vivjs/loaders';
 import type { DataSource, ImageLoader } from '@cirrobio/spatial-viewer';
 import {
-  getElements, getFieldData, getImageInfo, getImageThumbnailUrl, getShapesGeoArrow, searchVarNames,
+  getElements, getFieldData, getFigureUrl, getImageInfo, getImageThumbnailUrl,
+  getShapesGeoArrow, searchVarNames,
 } from '../api';
 
 export function createApiSource(sessionId: string): DataSource {
@@ -19,6 +20,15 @@ export function createApiSource(sessionId: string): DataSource {
     searchVarNames: (query, limit) => searchVarNames(sessionId, query, limit),
     imageThumbnailUrl: (element, channels, maxPx) =>
       getImageThumbnailUrl(sessionId, element, channels, maxPx),
+
+    async getPlotFigure(plotId, format): Promise<Blob | null> {
+      // 404 is the ordinary answer for a plot with no figure (never drawn, or reloaded
+      // from a checkpoint saved without them), so it isn't an error to report.
+      const res = await fetch(getFigureUrl(sessionId, plotId, format));
+      if (res.status === 404) return null;
+      if (!res.ok) throw new Error(`figure fetch failed: ${res.status} ${res.statusText}`);
+      return res.blob();
+    },
 
     async openImageLoader(element): Promise<ImageLoader> {
       const info = await getImageInfo(sessionId, element);

@@ -29,7 +29,7 @@ import {
   type SpatialDisplaySpec,
   type Viewport,
 } from '@cirrobio/spatial-viewer';
-import type { AppState } from '../types';
+import type { AppState, MainView } from '../types';
 import { VIEW_PARAM, checkpointUrlFromLocation, isEmbedMode } from '../data/checkpointIndex';
 
 const VIEW_SCHEMA_VERSION = 1;
@@ -39,8 +39,8 @@ const VIEW_SCHEMA_VERSION = 1;
 // than silently dropping fields the user actually set.
 const LONG_URL_WARN_CHARS = 1800;
 
-/** `mainView` and `leftMenuOpen` as a serverless viewer starts before any URL is read. */
-const UI_BASELINE = { mainView: 'canvas' as const, leftMenuOpen: false };
+/** The UI state a serverless viewer starts in, before any URL is read. */
+const UI_BASELINE = { mainView: 'canvas' as const, leftMenuOpen: false, expandedPlotId: null };
 
 const viewportSchema = z.object({
   t: z.array(z.number()),
@@ -102,8 +102,10 @@ const overlaySchema = z.object({
   sp: z.object({ enc: spatialEncodingSchema.optional(), vp: viewportSchema.nullable().optional() }).optional(),
   em: z.object({ enc: embeddingEncodingSchema.optional(), vp: viewportSchema.nullable().optional() }).optional(),
   ui: z.object({
-    view: z.enum(['canvas', 'embedding']).optional(),
+    view: z.enum(['canvas', 'embedding', 'plots']).optional(),
     menu: z.boolean().optional(),
+    // `plots[].id` of the figure shown fullscreen, so a link can open on one plot.
+    plot: z.string().optional(),
   }).optional(),
 });
 
@@ -115,8 +117,9 @@ export interface ViewBaseline {
 }
 
 export interface CurrentView extends ViewBaseline {
-  mainView: 'canvas' | 'embedding' | 'tables';
+  mainView: MainView;
   leftMenuOpen: boolean;
+  expandedPlotId: string | null;
 }
 
 // ---- encoding -------------------------------------------------------------------
@@ -227,6 +230,7 @@ export function buildOverlay(current: CurrentView): ViewOverlay | null {
   const ui = {
     ...(view !== UI_BASELINE.mainView ? { view } : {}),
     ...(current.leftMenuOpen !== UI_BASELINE.leftMenuOpen ? { menu: current.leftMenuOpen } : {}),
+    ...(current.expandedPlotId ? { plot: current.expandedPlotId } : {}),
   };
   if (Object.keys(ui).length) overlay.ui = ui;
 
@@ -292,9 +296,11 @@ export function urlViewMalformed(): boolean {
 /** The UI half of the overlay, safe to call at store-initialization time. `mainView`
  * decides which canvas mounts and `leftMenuOpen` changes the first paint's layout, so
  * both have to be right before the first render rather than applied afterwards. */
-export function initialUiOverlay(): { mainView?: 'canvas' | 'embedding'; leftMenuOpen?: boolean } {
+export function initialUiOverlay(): {
+  mainView?: MainView; leftMenuOpen?: boolean; expandedPlotId?: string;
+} {
   const ui = urlViewOverlay()?.ui;
-  return { mainView: ui?.view, leftMenuOpen: ui?.menu };
+  return { mainView: ui?.view, leftMenuOpen: ui?.menu, expandedPlotId: ui?.plot };
 }
 
 /** True when the link pins a camera, so the canvases can be told to restore it. */

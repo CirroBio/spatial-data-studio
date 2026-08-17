@@ -4,6 +4,8 @@ import {
 } from '../api';
 import { formatError, isSpatialDisplay, reportError } from '@cirrobio/spatial-viewer';
 import { useAppStore } from '../store/sessionStore';
+import { figureBytes, figureFormats } from '../lib/figures';
+import type { SessionState } from '../types';
 import { ModalHeader, ModalOverlay } from './DetailModal';
 
 interface Props {
@@ -11,8 +13,13 @@ interface Props {
   onClose: () => void;
 }
 
+// A checkpoint's contents are elements plus the rendered figures of its drawn plots;
+// `figures` is not a SpatialData facet, so it rides alongside them here and leaves as
+// its own field of the save body.
+type RowGroup = SdataFacet | 'figures';
+
 interface Row {
-  facet: SdataFacet;
+  facet: RowGroup;
   name: string;
   detail: string;
   size: number | null;
@@ -21,13 +28,31 @@ interface Row {
   // The active table anchors every field path and display in the checkpoint, so it
   // can't be dropped — the backend rejects that too.
   locked?: boolean;
+  // Set on figure rows: the plot id the save body names.
+  plotId?: string;
 }
 
-const FACET_LABELS: Record<SdataFacet, string> = {
+const GROUP_LABELS: Record<RowGroup, string> = {
   tables: 'Tables', images: 'Images', labels: 'Labels', shapes: 'Shapes', points: 'Points',
+  figures: 'Plot figures',
 };
+const GROUP_ORDER: RowGroup[] = ['tables', 'images', 'labels', 'shapes', 'points', 'figures'];
 
-const rowKey = (r: Row) => `${r.facet}/${r.name}`;
+// Two plots of the same function share a label, so figure rows key on the plot id.
+const rowKey = (r: Row) => `${r.facet}/${r.plotId ?? r.name}`;
+
+// One row per drawn plot whose figure the file can carry, sized from the bytes the
+// session holds (`SessionState.figures`) so the totals below stay honest.
+function figureRows(state: SessionState | null): Row[] {
+  if (!state) return [];
+  return state.app_state.plots
+    .filter((p) => p.status === 'drawn' && figureFormats(state.figures, p.id).length)
+    .map((p) => ({
+      facet: 'figures' as const, name: `${p.namespace}.${p.function}`, plotId: p.id,
+      size: figureBytes(state.figures, p.id) / 1e6,
+      detail: figureFormats(state.figures, p.id).join('/'),
+    }));
+}
 
 // Tables first — everything else annotates them. Element details mirror what the data
 // inspector shows for the same facet (DataInspector.tsx).
@@ -128,7 +153,8 @@ export default function SaveCheckpointDialog({ sessionId, onClose }: Props) {
     getElements(sessionId, { sizes: true })
       .then((inv) => {
         if (!live) return;
-        const next = buildRows(inv);
+        // Figure sizes are already in the session state; only the elements need measuring.
+        const next = [...buildRows(inv), ...figureRows(useAppStore.getState().sessionState)];
         setRows(next);
         setSelected(Object.fromEntries(next.map((r) => [rowKey(r), true])));
       })
@@ -161,25 +187,34 @@ export default function SaveCheckpointDialog({ sessionId, onClose }: Props) {
 
   function handleSave() {
     if (!rows) return;
-    // Nothing deselected means the ordinary whole-object save: send no `include` at
+    const elements = rows.filter((r) => r.facet !== 'figures');
+    const keptElements = kept.filter((r) => r.facet !== 'figures');
+    // No element deselected means the ordinary whole-object save: send no `include` at
     // all, so the backend keeps its incremental fast path and adopts the result as
     // this session's checkpoint.
     let include: Partial<Record<SdataFacet, string[]>> | undefined;
-    if (droppedAny) {
+    if (keptElements.length < elements.length) {
       include = {};
       // Every facet that has elements must appear, even when it kept none: a facet
       // left out of `include` is kept whole, so an omitted empty facet would silently
       // save everything in it.
-      for (const r of rows) include[r.facet] ??= [];
-      for (const r of kept) include[r.facet]!.push(r.name);
+      for (const r of elements) include[r.facet as SdataFacet] ??= [];
+      for (const r of keptElements) include[r.facet as SdataFacet]!.push(r.name);
     }
     // Only images being saved at less than full resolution; an image left at level 0
     // is the same request as not naming it at all.
     const levels = Object.fromEntries(
       kept.filter((r) => finestOf(r) > 0).map((r) => [r.name, finestOf(r)]),
     );
+    // Unlike `include`, an omitted `figures` keeps every drawn plot's figure, so the
+    // list only has to be sent when one was deselected.
+    const figureRowCount = rows.length - elements.length;
+    const keptFigures = kept.filter((r) => r.facet === 'figures');
+    const figures = keptFigures.length < figureRowCount
+      ? keptFigures.map((r) => r.plotId!)
+      : undefined;
     setSaving(true);
-    saveSession(sessionId, undefined, include, coarsenedAny ? levels : undefined)
+    saveSession(sessionId, undefined, include, coarsenedAny ? levels : undefined, figures)
       .then(({ job_id }) => {
         useAppStore.getState().setBlockingJob({ id: job_id, label: 'Saving session…' });
         onClose();
@@ -199,13 +234,13 @@ export default function SaveCheckpointDialog({ sessionId, onClose }: Props) {
         {error && <p className="text-xs text-warn">Could not list elements: {error}</p>}
         {!rows && !error && <p className="text-xs text-muted">Measuring elements…</p>}
         {rows && rows.length === 0 && <p className="text-xs text-muted">This session has no elements to save.</p>}
-        {rows && (['tables', 'images', 'labels', 'shapes', 'points'] as SdataFacet[]).map((facet) => {
+        {rows && GROUP_ORDER.map((facet) => {
           const group = rows.filter((r) => r.facet === facet);
           if (!group.length) return null;
           return (
             <div key={facet} className="mb-3 last:mb-0">
               <div className="text-[11px] text-muted font-mono uppercase tracking-wide mb-1">
-                {FACET_LABELS[facet]}
+                {GROUP_LABELS[facet]}
               </div>
               {group.map((r) => {
                 const key = rowKey(r);
@@ -258,7 +293,7 @@ export default function SaveCheckpointDialog({ sessionId, onClose }: Props) {
 
       <div className="flex items-center justify-between gap-3 px-4 py-3 border-t border-border shrink-0">
         <span className="text-[11px] text-muted">
-          {rows ? `${kept.length} of ${rows.length} elements · ${totalLabel}` : ''}
+          {rows ? `${kept.length} of ${rows.length} items · ${totalLabel}` : ''}
         </span>
         <button
           type="button"

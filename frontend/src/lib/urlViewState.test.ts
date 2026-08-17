@@ -31,7 +31,8 @@ const embedding = (over: Partial<EmbeddingDisplaySpec['encoding']> = {},
 });
 
 const current = (over: Partial<CurrentView> = {}): CurrentView => ({
-  spatial: spatial(), embedding: embedding(), mainView: 'canvas', leftMenuOpen: false, ...over,
+  spatial: spatial(), embedding: embedding(), mainView: 'canvas', leftMenuOpen: false,
+  expandedPlotId: null, ...over,
 });
 
 beforeEach(() => {
@@ -91,6 +92,11 @@ describe('buildOverlay', () => {
 
   it('carries UI state only when it differs from a fresh viewer', () => {
     expect(buildOverlay(current({ mainView: 'embedding' }))?.ui).toEqual({ view: 'embedding' });
+    // The plot gallery reads figures out of the checkpoint, so it is shareable — as is
+    // the plot the link opens fullscreen.
+    expect(buildOverlay(current({ mainView: 'plots' }))?.ui).toEqual({ view: 'plots' });
+    expect(buildOverlay(current({ mainView: 'plots', expandedPlotId: 'plot-7' }))?.ui)
+      .toEqual({ view: 'plots', plot: 'plot-7' });
     expect(buildOverlay(current({ leftMenuOpen: true }))?.ui).toEqual({ menu: true });
     // Tables is backend-only, so it never reaches a shared link.
     expect(buildOverlay(current({ mainView: 'tables' }))).toBeNull();

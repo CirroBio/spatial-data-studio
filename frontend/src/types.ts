@@ -2,9 +2,13 @@
 // edit lock and the SSE payloads. The display model the canvas renders from
 // (DisplaySpec, SessionFields, ImageInfo and friends) belongs to
 // `@cirrobio/spatial-viewer` and is imported from there.
-import type { DisplaySpec, SessionFields } from '@cirrobio/spatial-viewer';
+import type { DisplaySpec, FigureIndex, SessionFields } from '@cirrobio/spatial-viewer';
 
 export type EffectClass = 'compute' | 'plot' | 'read' | 'extract';
+
+/** What the main pane shows: the spatial canvas, the embedding scatter, the gallery of
+ * saved plot figures, or the data-table inspector (backend only). */
+export type MainView = 'canvas' | 'embedding' | 'plots' | 'tables';
 
 export type UiWidget =
   | 'checkbox'
@@ -137,6 +141,10 @@ export interface SessionState {
   app_state: AppState;
   queue: QueueEntry[];
   fields: SessionFields;
+  // Which plots have a rendered figure to show, and how big each one is: the Plots view
+  // and the save dialog's figures group read it. A `drawn` plot missing from it can
+  // only be redrawn (a checkpoint saved without figures).
+  figures: FigureIndex;
   data_versions: Record<string, number>;
 }
 

@@ -57,6 +57,7 @@ export function useUrlViewSync(enabled: boolean): void {
         embedding: displays.find(isEmbeddingDisplay) ?? null,
         mainView: state.mainView,
         leftMenuOpen: state.leftMenuOpen,
+        expandedPlotId: state.expandedPlotId,
       }));
       if (encoded === lastWritten) return;
       lastWritten = encoded;

@@ -57,8 +57,9 @@ i.e. unzip it anywhere and you have an ordinary Zarr v3 store on disk.
 ├── shapes/<element>/...          # SpatialData shapes (GeoParquet-backed)
 ├── tables/<key>/...              # SpatialData tables (AnnData: X, obs, var, obsm, obsp, layers, uns)
 ├── viewer/                       # APP-DEFINED sidecar — not a SpatialData element (§4)
-│   ├── zarr.json                 #   sidecar_version, table_keys, images, coords_transform
-│   └── tables/<key>/X_csc/       #   gene-major mirror of a sparse table's X
+│   ├── zarr.json                 #   sidecar_version, table_keys, images, coords_transform, figures
+│   ├── tables/<key>/X_csc/       #   gene-major mirror of a sparse table's X
+│   └── figures/<plot_id>/<fmt>   #   rendered plot figures, one uint8 array per format (§4.3)
 ├── logs/<record_id>.log.gz       # APP-DEFINED — relocated worker stdout/stderr (§6)
 └── .zmetadata / consolidated…    # Zarr consolidated metadata, written last (see §2)
 ```
@@ -168,8 +169,9 @@ treat those as stale/unknown outcome, not as an error.
 
 Same shape as a compute-history entry but for plot-producing calls (namespace
 `pl`), with two differences: `references` instead of `structural_diff`, and a
-wider `status` enum because the rendered figure itself is **never persisted** —
-only the recipe to redraw it.
+wider `status` enum. The rendered figure of a `drawn` plot is carried in
+`viewer/figures/<plot_id>/` (§4.3) when the save kept it; the record here is
+always enough to redraw it from scratch.
 
 | field | type | required | notes |
 |---|---|---|---|
@@ -177,13 +179,13 @@ only the recipe to redraw it.
 | `status` | enum | yes | `pending` \| `queued` \| `running` \| `drawn` \| `invalidated` \| `failed` |
 | `references` | array of string | yes | field paths the plot depends on, e.g. `["obs:leiden"]` or `["X:CD3"]` |
 
-On **load**, this app remaps any on-disk `drawn`/`failed`/`running`/`queued`
-plot to `invalidated` in memory (a rendered figure is never carried across a
-reload, so those statuses are meaningless the moment the file is reopened) —
-but the file itself can and does contain all six values, since that remap
-happens after load, not before save. A reader reproducing "what plots exist"
-should treat `drawn` on disk as "was drawn as of the last save, redraw to see
-it now."
+On **load**, this app keeps a `drawn` plot `drawn` when the file carries its
+figure (`viewer/figures` lists its id, §4.3) and remaps it to `invalidated`
+otherwise; `failed`/`running`/`queued` always become `invalidated`, since those
+outcomes cannot be resumed. The file itself can and does contain all six values,
+since that remap happens after load, not before save. A reader reproducing "what
+plots exist" should read `drawn` on disk as "was drawn as of the last save" and
+pair it with `viewer/figures` to know whether a rendered copy came along.
 
 ### 3.3 `displays[]`
 
@@ -289,6 +291,9 @@ Group attrs (`viewer/zarr.json`'s `attributes`):
   },
   "coords_transform": {
     "<table_key>": [a, b, c, d, e, f]   // see affine convention below
+  },
+  "figures": {                          // rendered plot figures in this file, §4.3
+    "<plots[].id>": { "svg": 53392, "pdf": 22054, "png": 40940 }   // byte length per format
   }
 }
 ```
@@ -371,6 +376,34 @@ which row of `var` a gene name maps to before indexing `indptr`.
 `data[indptr[g]:indptr[g+1]]` and `indices[indptr[g]:indptr[g+1]]`; the result
 is a sparse column — cell `indices[i]` has value `data[i]`, every other cell
 is zero.
+
+### 4.3 `viewer/figures/<plot_id>/<format>` — rendered plot figures
+
+The rendered output of a `drawn` plot (§3.2), one group per `plots[].id` and one
+**uint8 array per format** inside it, holding that file's bytes verbatim:
+
+| array | contents |
+|---|---|
+| `svg` | the figure as SVG (`image/svg+xml`) — what this app displays |
+| `pdf` | the figure as PDF (`application/pdf`) — the publication export |
+| `png` | the figure as PNG (`image/png`), 130 DPI — raster fallback, and what the app's assistant tools look at |
+
+Each array is written as a **single chunk**, so a reader fetches a whole figure
+in one byte-range read, decompressed with the store's ordinary zstd codec (an
+SVG scatter compresses several-fold; the PDF and PNG are already compressed and
+gain little). Nothing about the arrays is figure-specific: `shape` is
+`(byte length,)`, and the bytes are the complete file.
+
+Which figures are present is listed in the `viewer` group's `figures` attr
+(§4), plot id -> format -> byte length, so a reader knows what exists — and how
+big it is — without opening any array. **A group present here but absent from
+that attr should be ignored**; the attr is the index of record.
+
+Only `drawn` plots ever appear. A save can exclude any of them (the app's save
+dialog lists them with their sizes), and a checkpoint written before this
+group existed has neither the groups nor the attr — in both cases the plot
+record survives on its own and the figure has to be redrawn, which is why this
+app reloads such a plot as `invalidated` (§3.2).
 
 ## 5. Raster sharding
 
@@ -470,7 +503,10 @@ granularities:
   `viewer/` group at all (written before the sidecar existed) is refused
   outright by a backend-less reader for the same reason — Zarr v3 has no child
   index, so without the sidecar's `table_keys` a reader can't even enumerate
-  what tables exist.
+  what tables exist. Additive keys do **not** bump this version: `figures`
+  (§4.3) was added without one, because an older reader ignoring a key it does
+  not know still renders the file correctly, while a bump would make it refuse
+  a file it could have read.
 
 A checkpoint that only needs to be read by *this app's own backend* (i.e.
 `spatialdata.read_zarr()` plus `attrs["app_state"]` migration) never needs the
@@ -503,7 +539,11 @@ capability:
    `viewer/tables/<key>/X_csc` over the table's own `X` when coloring by one
    gene at a time (§4.2) — it exists precisely to make that single-column read
    cheap.
-6. To reproduce **which record's log** goes with which compute/plot entry:
+6. To **show a plot** rather than describe it: read the `viewer` attrs' `figures`
+   index (§4.3) and fetch `viewer/figures/<plots[].id>/<format>` — one uint8
+   array holding that file's bytes. A plot absent from the index has no
+   rendered copy in this file.
+7. To reproduce **which record's log** goes with which compute/plot entry:
    match `compute_history[].id` / `plots[].id` against `logs/<id>.log.gz` (§6).
 
 ## Schema files

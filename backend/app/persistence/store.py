@@ -10,6 +10,11 @@ out of `attrs["app_state"]` — which is inlined into the store's root `zarr.jso
 and would otherwise be downloaded in full on open — into gzipped files under
 `logs/`, read back lazily by `session.get_log`.
 
+Rendered plot figures travel the same way: the caller passes the bytes of every
+drawn plot it wants persisted and `_write_figures` puts them under
+`viewer/figures/<plot_id>/<fmt>`, read back lazily by `read_figure`. A plot whose
+figure is in the file reloads still `drawn` (see `load_spatialdata`).
+
 A checkpoint is **directly browser-readable** over HTTP Range without this backend
 (DESIGN §14): the serverless viewer opens the `.zarr.zip` with zarrita and renders
 from it. Three write-time steps exist only to serve that reader. They are what make
@@ -22,8 +27,9 @@ a checkpoint written before them is rejected by the viewer with a re-save messag
   the first tile).
 - `_write_viewer_sidecar` writes a `viewer/` group holding what the browser cannot
   cheaply derive: the per-image manifest from `imaging.image_info`, the points->global
-  affine, and a gene-major (CSC) mirror of each table's `X` so coloring by one gene is
-  a couple of range reads instead of a download of the whole CSR `data`+`indices` pair.
+  affine, a gene-major (CSC) mirror of each table's `X` so coloring by one gene is
+  a couple of range reads instead of a download of the whole CSR `data`+`indices` pair,
+  and the drawn plot figures (`_write_figures`) the Plots view renders.
 - `_consolidate` re-runs consolidated metadata last, so the tree the browser reads
   reports the sharded codec and includes `viewer/`.
 """
@@ -84,7 +90,15 @@ _SHARD_SIZE = 4096
 # `test_e2e.run_full_flow` covers.
 VIEWER_GROUP = "viewer"
 # Bumped when the sidecar layout changes so a viewer can refuse a shape it predates.
+# Additive keys (e.g. `figures`) don't bump it: an older reader ignores what it doesn't
+# know, and bumping would make it refuse files it can still render.
 VIEWER_SIDECAR_VERSION = 1
+# Subgroup of `viewer/` holding one group per plot id, one uint8 array per format.
+FIGURES_GROUP = "figures"
+# The formats a drawn plot carries (`session.plot_figures`): SVG is what the app and
+# the browser render, PDF is the publication export, PNG is what the MCP vision tool
+# looks at. All three are persisted so a reloaded checkpoint loses no capability.
+FIGURE_FORMATS = ("svg", "pdf", "png")
 # Chunk length for the CSC mirror's `data`/`indices`, in elements. Sized from the data
 # so one gene column lands in one or two chunks whatever the table's shape: a Visium
 # gene holds a few hundred non-zeros, a Xenium gene hundreds of thousands, and a fixed
@@ -238,9 +252,14 @@ def load_spatialdata(path: str, progress=None):
     `create_from_load`."""
     sdata, extract_dir, hash_check = read_spatialdata_archive(path, progress)
     st = appstate.ensure(sdata.attrs)
-    # Rendered figures are never persisted (§13); plots load undrawn and render
-    # lazily on open (§7.2). A persisted `drawn`/`failed` is meaningless without bytes.
+    # A `drawn` status only means something if the figure came back with the file: one
+    # saved with figures excluded, or written before they were persisted at all, has a
+    # record with no bytes behind it. Those (and any status a save caught mid-flight)
+    # load as `invalidated`, redrawable on demand.
+    persisted = figure_index(extract_dir or path)
     for p in st.get("plots", []):
+        if p.get("status") == "drawn" and p.get("id") in persisted:
+            continue
         if p.get("status") in ("drawn", "failed", "running", "queued"):
             p["status"] = "invalidated"
     newer = st.get("schema_version", 1) > appstate.SCHEMA_VERSION
@@ -424,7 +443,8 @@ def cap_image_levels(sdata, max_mb: float):
 def save_spatialdata(sdata, path: str, app_state: dict, hash_name: bool = False,
                      include: dict[str, list[str]] | None = None,
                      levels: dict[str, int] | None = None,
-                     max_image_mb: float | None = None) -> str:
+                     max_image_mb: float | None = None,
+                     figures: dict[str, dict[str, bytes]] | None = None) -> str:
     """`hash_name` renames a `.zarr.zip` checkpoint to embed a hash of its own
     contents once written (auto-managed saves only — explicit save-as paths are
     honored verbatim). Worker logs are stripped from the persisted `app_state` and
@@ -439,7 +459,10 @@ def save_spatialdata(sdata, path: str, app_state: dict, hash_name: bool = False,
     `levels` (image name -> finest pyramid level) and `max_image_mb` both write images
     at reduced resolution — the first per image, the second to fit a byte budget (see
     `select_elements` and `cap_image_levels`). Both drop resolution, not elements, so
-    nothing in `app_state` needs neutralising for them."""
+    nothing in `app_state` needs neutralising for them.
+
+    `figures` (plot id -> format -> bytes) are the rendered plots to persist; see
+    `_write_figures`."""
     if include is not None or levels:
         from ..registry.base import sdata_facets
         sdata = select_elements(sdata, include, levels)
@@ -454,9 +477,9 @@ def save_spatialdata(sdata, path: str, app_state: dict, hash_name: bool = False,
     uns_swaps = _stringify_uns_recarrays(sdata)
     try:
         if path.endswith(".zarr.zip"):
-            written = _save_zip(sdata, path, hash_name, logs)
+            written = _save_zip(sdata, path, hash_name, logs, figures)
         else:
-            written = _save_dir(sdata, path, logs)
+            written = _save_dir(sdata, path, logs, figures)
     finally:
         # Restore the identity between sdata.attrs and the live session app_state
         # (they are the same object during a live session).
@@ -467,7 +490,8 @@ def save_spatialdata(sdata, path: str, app_state: dict, hash_name: bool = False,
     return written
 
 
-def _save_dir(sdata, path: str, logs: dict[str, str]) -> str:
+def _save_dir(sdata, path: str, logs: dict[str, str],
+              figures: dict[str, dict[str, bytes]] | None = None) -> str:
     p = Path(path)
     if p.exists():
         # spatialdata refuses to overwrite its own backing store; write a temp
@@ -478,7 +502,7 @@ def _save_dir(sdata, path: str, logs: dict[str, str]) -> str:
         # Don't adopt `tmp` as the backing path — it's renamed to `p` below, which would
         # leave sdata.path dangling; point the object at the final `p` after the swap.
         sdata.write(str(tmp), overwrite=True, update_sdata_path=False)
-        _write_browser_reader_support(str(tmp), sdata)
+        _write_browser_reader_support(str(tmp), sdata, figures)
         _write_logs(str(tmp), logs)
         # Keep the original until the new store is fully written, then swap via two
         # atomic renames so a crash mid-save can't destroy the only copy.
@@ -491,12 +515,13 @@ def _save_dir(sdata, path: str, logs: dict[str, str]) -> str:
         sdata.path = p
     else:
         sdata.write(path, overwrite=True)
-        _write_browser_reader_support(path, sdata)
+        _write_browser_reader_support(path, sdata, figures)
         _write_logs(path, logs)
     return path
 
 
-def _save_zip(sdata, path: str, hash_name: bool, logs: dict[str, str]) -> str:
+def _save_zip(sdata, path: str, hash_name: bool, logs: dict[str, str],
+              figures: dict[str, dict[str, bytes]] | None = None) -> str:
     tmpdir = tempfile.mkdtemp(dir=str(Path(path).parent), prefix=".save-")
     zarr_dir = os.path.join(tmpdir, "store.zarr")
     try:
@@ -505,7 +530,7 @@ def _save_zip(sdata, path: str, hash_name: bool, logs: dict[str, str]) -> str:
         # later str(sdata) — e.g. the SpatialData manifest contributor — fails once
         # the temp dir is gone.
         sdata.write(zarr_dir, overwrite=True, update_sdata_path=False)
-        _write_browser_reader_support(zarr_dir, sdata)
+        _write_browser_reader_support(zarr_dir, sdata, figures)
         _write_logs(zarr_dir, logs)
         return _zip_from_dir(zarr_dir, path, hash_name)
     finally:
@@ -528,7 +553,8 @@ def can_update_incrementally(sdata, extract_dir: str | None) -> bool:
 
 
 def update_checkpoint(sdata, path: str, app_state: dict, *, tables: set[str],
-                      transforms: set[str], hash_name: bool = False) -> str:
+                      transforms: set[str], hash_name: bool = False,
+                      figures: dict[str, dict[str, bytes]] | None = None) -> str:
     """Incrementally update a `.zarr.zip` checkpoint, reusing the raster arrays
     already sitting in the directory store that backs `sdata` (`sdata.path`). Only
     the changed table elements and element transforms are rewritten; `app_state` is
@@ -563,7 +589,7 @@ def update_checkpoint(sdata, path: str, app_state: dict, *, tables: set[str],
         # need refreshing: a changed table invalidates its CSC mirror, and a changed
         # transform moves `pixel_to_world`. The image manifest is cheap, so it is
         # always rebuilt; the CSC rebuild is limited to the dirty tables.
-        _write_viewer_sidecar(work_dir, sdata, tables=tables)
+        _write_viewer_sidecar(work_dir, sdata, tables=tables, figures=figures)
         sdata.write_consolidated_metadata()
         written = _zip_from_dir(work_dir, path, hash_name)
     finally:
@@ -618,12 +644,13 @@ def _zip_dir(src_dir: str, dest_zip: str) -> str:
 
 
 # ---- browser-readable checkpoint support (DESIGN §14) -----------------------
-def _write_browser_reader_support(zarr_dir: str, sdata) -> None:
+def _write_browser_reader_support(zarr_dir: str, sdata,
+                                  figures: dict[str, dict[str, bytes]] | None = None) -> None:
     """Make a freshly-written store directly readable by the serverless viewer.
     Order matters: consolidation runs last so the tree the browser fetches reports
     the sharded codec and lists the `viewer/` sidecar."""
     _shard_rasters(zarr_dir)
-    _write_viewer_sidecar(zarr_dir, sdata)
+    _write_viewer_sidecar(zarr_dir, sdata, figures=figures)
     _consolidate(zarr_dir)
 
 
@@ -637,7 +664,8 @@ def _consolidate(zarr_dir: str) -> None:
     _write_consolidated_metadata(zarr_dir)
 
 
-def _write_viewer_sidecar(zarr_dir: str, sdata, tables: set[str] | None = None) -> None:
+def _write_viewer_sidecar(zarr_dir: str, sdata, tables: set[str] | None = None,
+                          figures: dict[str, dict[str, bytes]] | None = None) -> None:
     """Write the `viewer/` group: what the browser needs but cannot cheaply derive
     from the SpatialData elements themselves.
 
@@ -652,9 +680,13 @@ def _write_viewer_sidecar(zarr_dir: str, sdata, tables: set[str] | None = None) 
       duplicates `X` on disk; the alternative is the browser downloading the whole
       CSR `data`+`indices` pair to read one gene column, which is worse exactly when
       the table is large.
+    - `viewer/figures/<plot_id>` holds the rendered plots (`_write_figures`), listed
+      in the `figures` attr so a reader knows what is there without walking the tree.
 
     `tables` limits the CSC rebuild to those keys (the incremental save path knows
-    which tables changed); None rebuilds all of them.
+    which tables changed); None rebuilds all of them. `figures` is the complete set to
+    end up in the file — whatever it omits is removed, so a caller passing None or `{}`
+    writes a checkpoint with no figures at all.
     """
     from .. import imaging
     from ..sessions import transform
@@ -675,11 +707,39 @@ def _write_viewer_sidecar(zarr_dir: str, sdata, tables: set[str] | None = None) 
         "coords_transform": {
             key: transform.get_affine6(sdata, sdata.tables[key]) for key in table_keys
         },
+        "figures": {pid: {fmt: len(blob) for fmt, blob in blobs.items()}
+                    for pid, blobs in (figures or {}).items() if blobs},
     }
     checkpoint_schemas.validate_viewer_sidecar(sidecar)
     group.attrs.update(sidecar)
+    _write_figures(zarr_dir, group, figures or {})
     for key in table_keys if tables is None else (tables & set(table_keys)):
         _write_csc_mirror(group, key, sdata.tables[key])
+
+
+def _write_figures(zarr_dir: str, viewer_group, figures: dict[str, dict[str, bytes]]) -> None:
+    """Rendered plot figures as `viewer/figures/<plot_id>/<fmt>` uint8 arrays, one
+    chunk each so a reader fetches a figure in a single range read (and gets the store's
+    zstd for free — an SVG scatter compresses several-fold).
+
+    The group is rebuilt from scratch rather than added to: `figures` is the complete
+    desired state, so a plot the user deselected, deleted, or invalidated since the last
+    save leaves nothing behind. That means the incremental save path re-writes the bytes
+    of every kept figure each time, which is cheap next to the tables it is already
+    rewriting."""
+    dest = os.path.join(zarr_dir, VIEWER_GROUP, FIGURES_GROUP)
+    if os.path.isdir(dest):
+        shutil.rmtree(dest)
+    if not figures:
+        return
+    group = viewer_group.require_group(FIGURES_GROUP)
+    for plot_id, blobs in figures.items():
+        node = group.require_group(plot_id)
+        for fmt, blob in blobs.items():
+            data = np.frombuffer(blob, dtype=np.uint8)
+            arr = node.create_array(fmt, shape=data.shape, dtype=data.dtype,
+                                    chunks=(max(1, data.size),), overwrite=True)
+            arr[:] = data
 
 
 def _write_csc_mirror(group, key: str, adata) -> None:
@@ -851,6 +911,35 @@ def read_log(store_root: str | None, entry_id: str) -> str | None:
         return None
     with gzip.open(p, "rt", encoding="utf-8") as f:
         return f.read()
+
+
+# ---- persisted plot figures -------------------------------------------------
+def figure_index(store_root: str | None) -> dict[str, dict[str, int]]:
+    """`{plot_id: {format: byte length}}` for the figures in a loaded checkpoint's
+    on-disk store — the sidecar's `figures` attr, read as-is. Empty for a store with
+    none (including one written before figures were persisted).
+
+    The sizes are in the attr rather than measured from the arrays so this is a single
+    small read: the session's state response reports the index on every poll."""
+    if not store_root:
+        return {}
+    meta_path = os.path.join(store_root, VIEWER_GROUP, "zarr.json")
+    if not os.path.isfile(meta_path):
+        return {}
+    with open(meta_path) as f:
+        return json.load(f).get("attributes", {}).get("figures", {})
+
+
+def read_figure(store_root: str | None, plot_id: str, fmt: str) -> bytes | None:
+    """Read one persisted figure back out of a loaded checkpoint's on-disk store (the
+    extract dir for a `.zarr.zip`, or the store dir itself), like `read_log`. Returns
+    None when the checkpoint holds no such figure."""
+    if not store_root or fmt not in FIGURE_FORMATS:
+        return None
+    node = os.path.join(store_root, VIEWER_GROUP, FIGURES_GROUP, plot_id, fmt)
+    if not os.path.isdir(node):
+        return None
+    return zarr.open_array(node, mode="r")[:].tobytes()
 
 
 def _zarr_root(extracted_dir: str) -> str:

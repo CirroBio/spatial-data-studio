@@ -21,6 +21,20 @@
       "type": "object",
       "description": "table key -> 6-float affine applied to that table's obsm:spatial to reach the global coordinate system.",
       "additionalProperties": { "$ref": "#/$defs/affine6" }
+    },
+    "figures": {
+      "type": "object",
+      "description": "plots[].id -> format -> byte length of viewer/figures/<plot_id>/<format>, a uint8 array holding that file's bytes. Absent (or empty) in a checkpoint saved without figures; a plot listed here is the only kind that reloads as `drawn`. The lengths are carried here so a reader can size a figure (and the app can list them in the save dialog) without opening every array.",
+      "additionalProperties": {
+        "type": "object",
+        "minProperties": 1,
+        "additionalProperties": false,
+        "properties": {
+          "svg": { "type": "integer", "minimum": 1 },
+          "pdf": { "type": "integer", "minimum": 1 },
+          "png": { "type": "integer", "minimum": 1 }
+        }
+      }
     }
   },
   "$defs": {

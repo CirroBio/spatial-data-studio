@@ -12,7 +12,10 @@ instead of embedding the whole app in an iframe. **One source of truth for the c
 - `CanvasHostProvider` — the contract a host implements to drive them (see below).
 - `DataSourceProvider` + `openCheckpoint` — the read surface the canvases render
   through, and the `.zarr.zip` reader that implements it over HTTP Range with zarrita
-  and no backend at all.
+  and no backend at all. `openCheckpoint` also returns the file's `app_state`, its field
+  inventory, and its `figures` index (which plots it carries a rendered figure for);
+  `DataSource.getPlotFigure(plotId, format)` reads one as a blob, so a host can show the
+  saved SVG/PDF/PNG figures without a backend.
 - The display model (`DisplaySpec`, `DisplayEncoding`, `SessionFields`, `ImageInfo`, …)
   and `SPATIAL_ENCODING_DEFAULTS` / `EMBEDDING_ENCODING_DEFAULTS` — the fallbacks the
   canvases apply for absent encoding fields, so a host authoring a display agrees with

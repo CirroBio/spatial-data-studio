@@ -31,6 +31,20 @@ export interface SessionFields {
   shapes: string[];
 }
 
+/** The formats a rendered plot figure comes in: SVG is what the app displays, PDF the
+ * publication export, PNG the raster fallback. */
+export type FigureFormat = 'svg' | 'pdf' | 'png';
+
+export const FIGURE_MEDIA_TYPES: Record<FigureFormat, string> = {
+  svg: 'image/svg+xml', pdf: 'application/pdf', png: 'image/png',
+};
+
+/** Which figures are available to render, by plot id and format, with each one's byte
+ * length: `GET /api/sessions/{id}`'s `figures` for a live session, the checkpoint's
+ * `viewer/figures` listing for a saved one. A plot absent from it has no figure to
+ * show — it was never drawn, or was saved without one. */
+export type FigureIndex = Record<string, Partial<Record<FigureFormat, number>>>;
+
 export interface ChannelState {
   visible: boolean;
   name: string;

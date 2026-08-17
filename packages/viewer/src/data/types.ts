@@ -10,7 +10,7 @@
 // figure export, display persistence) stay on `api.ts` and are gated by `canEdit`,
 // which is false for a checkpoint.
 import type { Table } from 'apache-arrow';
-import type { ImageInfo } from '../types';
+import type { FigureFormat, ImageInfo } from '../types';
 
 // Viv's multiscale pyramid handle: `loadOmeZarr(...).data`, a PixelSource per level.
 export type ImageLoader = Awaited<ReturnType<typeof import('@vivjs/loaders')['loadOmeZarr']>>['data'];
@@ -68,6 +68,12 @@ export interface DataSource {
   imageThumbnailUrl(element: string, channels: string | undefined, maxPx: number): string | null;
 
   searchVarNames(query: string, limit?: number): Promise<string[]>;
+
+  // A drawn plot's rendered figure, as a blob typed for the format. The live session
+  // serves it from the render (or the checkpoint it was loaded from); a checkpoint
+  // reads it out of `viewer/figures`. Null when this source holds no such figure —
+  // the plot was never drawn, or was saved without its figures.
+  getPlotFigure(plotId: string, format: FigureFormat): Promise<Blob | null>;
 
   // Install a browser-only column that `getFieldData` serves for `fieldPath`,
   // shadowing anything of that name in the store. Present only on a checkpoint: a

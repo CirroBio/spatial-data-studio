@@ -47,7 +47,7 @@ export function useCheckpointSession(
     setError(null);
 
     openCheckpoint(target, refreshUrl)
-      .then(({ source: opened, appState, fields }) => {
+      .then(({ source: opened, appState, fields, figures }) => {
         if (stale) return;
         const summary = {
           id: opened.id,
@@ -74,6 +74,7 @@ export function useCheckpointSession(
           app_state: applyOverlayToAppState(saved, urlViewOverlay()),
           queue: [],
           fields,
+          figures,
           // Nothing can recompute a checkpoint, so no field is ever invalidated and
           // every version stays at the useArrowField cache's default.
           data_versions: {},

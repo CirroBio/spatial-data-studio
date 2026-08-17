@@ -209,6 +209,16 @@ def run_custom_methods_flow(client):
     assert "milo_differential_abundance" in fn_names and "pseudobulk_deseq2" in fn_names
     print("[ok] milo_differential_abundance and pseudobulk_deseq2 uns payloads round-tripped")
 
+    # Every plot still drawn at save time comes back drawn, with all three rendered
+    # formats — nine custom-method figures over one save/reload (DESIGN §13.2).
+    drawn2 = [p for p in st2["app_state"]["plots"] if p["status"] == "drawn"]
+    assert drawn2, [(p["function"], p["status"]) for p in st2["app_state"]["plots"]]
+    missing = [p["function"] for p in drawn2
+               if set(st2["figures"].get(p["id"], {})) != {"svg", "pdf", "png"}]
+    assert not missing, f"reloaded drawn plots with no figure: {missing}"
+    kept_mb = sum(sum(f.values()) for f in st2["figures"].values()) / 1e6
+    print(f"[ok] {len(drawn2)} drawn plots reloaded with their figures ({kept_mb:.1f} MB)")
+
     print("\nCUSTOM METHODS E2E CHECKS PASSED")
 
 
@@ -863,6 +873,8 @@ def run_invalidation_flow(client):
     assert client.post(f"/api/sessions/{sid}/plots/nope/redraw").status_code == 409
     print("[ok] redraw restores a plot; bogus redraw is a 409")
 
+    run_figure_persistence(client, sid, plot["id"])
+
     # Mutate a field the plot references (annotating a small region writes obs:<ref_col>),
     # which must bump its data_version and flip the dependent plot to invalidated.
     dv_before = dict(client.get(f"/api/sessions/{sid}").json()["data_versions"])
@@ -879,13 +891,84 @@ def run_invalidation_flow(client):
     assert st["data_versions"].get(ref, 0) > dv_before.get(ref, 0), (ref, dv_before, st["data_versions"])
     print(f"[ok] mutating {ref} bumped its data_version and invalidated the dependent plot")
 
-    # a drawn plot reloads as invalidated (its figure isn't persisted)
+    # An invalidated plot's figure is not persisted (its bytes no longer match the data),
+    # so it reloads invalidated and the session reports no figure for it — even though the
+    # stale bytes are still in memory.
+    assert client.get(f"/api/sessions/{sid}").json()["figures"] == {}, \
+        "an invalidated plot still advertises a figure"
     out = os.path.join(str(config.DATA_DIR), "invalidation_session.zarr.zip")
     sv = client.post(f"/api/sessions/{sid}/save", json={"path": out}).json()
     assert wait_job(client, sid, sv["job_id"])["status"] == "completed"
-    pl2 = client.get(f"/api/sessions/{new_session(client, out)}").json()["app_state"]["plots"]
-    assert all(p["status"] == "invalidated" for p in pl2), [p["status"] for p in pl2]
-    print("[ok] drawn plots reload as invalidated")
+    st2 = client.get(f"/api/sessions/{new_session(client, out)}").json()
+    assert all(p["status"] == "invalidated" for p in st2["app_state"]["plots"]), \
+        [p["status"] for p in st2["app_state"]["plots"]]
+    assert st2["figures"] == {}, st2["figures"]
+    print("[ok] invalidated plots keep no figure and reload invalidated")
+
+
+def run_figure_persistence(client, sid, plot_id):
+    """A drawn plot's rendered figure travels in the checkpoint (DESIGN §13.2): the plot
+    reloads `drawn` with its figure fetchable and byte-identical, a save that deselects
+    it reloads the same plot as invalidated, and the browser-readable sidecar lists what
+    is there. Called from `run_invalidation_flow` with a session holding one drawn plot."""
+    import zipfile
+    import zarr
+    from app.persistence import store
+
+    formats = ("svg", "pdf", "png")
+    source = {}
+    for fmt in formats:
+        r = client.get(f"/api/sessions/{sid}/plots/{plot_id}/figure?fmt={fmt}")
+        assert r.status_code == 200, f"{fmt}: {r.status_code}"
+        source[fmt] = r.content
+    index = client.get(f"/api/sessions/{sid}").json()["figures"]
+    assert index[plot_id] == {f: len(source[f]) for f in formats}, index[plot_id]
+
+    out = os.path.join(str(config.DATA_DIR), "figures_session.zarr.zip")
+    sv = client.post(f"/api/sessions/{sid}/save", json={"path": out}).json()
+    assert wait_job(client, sid, sv["job_id"])["status"] == "completed"
+
+    with zipfile.ZipFile(out) as z:
+        names = z.namelist()
+    assert any(n.startswith(f"viewer/figures/{plot_id}/svg/") for n in names), \
+        [n for n in names if n.startswith("viewer/figures")][:5]
+
+    reloaded = new_session(client, out)
+    st = client.get(f"/api/sessions/{reloaded}").json()
+    rec = next(p for p in st["app_state"]["plots"] if p["id"] == plot_id)
+    assert rec["status"] == "drawn", f"a persisted figure must reload drawn, not {rec['status']}"
+    assert st["figures"][plot_id] == index[plot_id], st["figures"]
+    for fmt in formats:
+        r = client.get(f"/api/sessions/{reloaded}/plots/{plot_id}/figure?fmt={fmt}")
+        assert r.status_code == 200 and r.content == source[fmt], f"{fmt} figure changed across the save"
+    print(f"[ok] drawn plot reloads drawn; {'/'.join(formats)} figures byte-identical "
+          f"({sum(len(b) for b in source.values())/1e6:.1f} MB)")
+
+    # ...and the same plot saved with its figure deselected reloads invalidated. Run that
+    # save from the RELOADED session, whose only copy of the figure is the one in the
+    # store its incremental save rewrites: dropping a figure from the file must not take
+    # it away from the open session.
+    bare = os.path.join(str(config.DATA_DIR), "figures_excluded.zarr.zip")
+    sv = client.post(f"/api/sessions/{reloaded}/save", json={"path": bare, "figures": []}).json()
+    assert wait_job(client, reloaded, sv["job_id"])["status"] == "completed"
+    with zipfile.ZipFile(bare) as z:
+        assert not [n for n in z.namelist() if n.startswith("viewer/figures/")], "figures not dropped"
+    _, extract_dir, _ = store.read_spatialdata_archive(bare)
+    assert dict(zarr.open_group(store._zarr_root(extract_dir), mode="r")["viewer"].attrs)["figures"] == {}, \
+        "sidecar still lists figures the file doesn't carry"
+    st = client.get(f"/api/sessions/{new_session(client, bare)}").json()
+    rec = next(p for p in st["app_state"]["plots"] if p["id"] == plot_id)
+    assert rec["status"] == "invalidated", rec["status"]
+    assert st["figures"] == {}, st["figures"]
+    assert client.get(f"/api/sessions/{reloaded}/plots/{plot_id}/figure").content == source["svg"], \
+        "excluding a figure from the file took it away from the session that saved it"
+    print("[ok] figures=[] writes no figures, reloads invalidated, saving session unaffected")
+
+    bad = client.post(f"/api/sessions/{sid}/save", json={"figures": ["nope"]})
+    assert bad.status_code == 400, f"unknown plot id accepted: {bad.status_code}"
+    bad = client.post(f"/api/sessions/{sid}/save", json={"figures": "svg"})
+    assert bad.status_code == 400, f"non-list figures accepted: {bad.status_code}"
+    print("[ok] save rejects an unknown plot id and a non-list figure selection")
 
 
 def run_encoding_persistence_flow(client):

@@ -22,7 +22,9 @@ export function DetailHeader({ title, status, onClose, children }: DetailHeaderP
         <span className="text-sm font-mono text-text">{title}</span>
         <StatusBadge status={status} />
       </div>
-      <div className="flex items-center gap-2">{children}</div>
+      {/* Wraps rather than clipping: a drawn plot carries an Expand, three exports, an
+          edit and a redraw, which don't fit one row in a narrow detail panel. */}
+      <div className="flex flex-wrap items-center justify-end gap-2">{children}</div>
     </div>
   );
 }

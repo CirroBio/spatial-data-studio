@@ -72,7 +72,7 @@ ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_cate
 | PUT  | `/api/sessions/{id}/pending/{stepId}` | `{params}` | `{ok:true}` |
 | DELETE | `/api/sessions/{id}/history/{entryId}` | — | `{ok:true}` (delete a compute/plot history entry, incl. discarding a pending step; queued/running entries can't be deleted) |
 | POST | `/api/sessions/{id}/plots/{plotId}/redraw` | — | `{ok:true}` |
-| GET  | `/api/sessions/{id}/plots/{plotId}/figure?fmt=svg\|pdf\|png` | — | figure bytes (image/svg+xml, application/pdf, or image/png — the raster copy consumed by the MCP assistant's `view_plot`) |
+| GET  | `/api/sessions/{id}/plots/{plotId}/figure?fmt=svg\|pdf\|png` | — | figure bytes (image/svg+xml, application/pdf, or image/png — the raster copy consumed by the MCP assistant's `view_plot`). Served from this session's render, or read back from the checkpoint it was loaded from; **404** when neither has it (`SessionState.figures` says which plots do, without a fetch) |
 | PUT  | `/api/sessions/{id}/displays/{displayId}` | `DisplaySpec` | `{ok:true}` |
 | POST | `/api/sessions/{id}/displays` | `DisplaySpec` (no id) | `DisplaySpec` (with id) — lazily add a display (e.g. an `embedding_canvas` for a dataset/obsm gained after session creation) |
 | POST | `/api/sessions/{id}/subset` | `{polygons:[[[x,y]...]] \| cell_indices:[int], coordinate_system?, invert?:bool}` | `{job_id}` (queued; the child session arrives via a `session.created` SSE event and the parent is closed — `session.removed` with `reason:"subset"`). `coordinate_system` defaults to the object's first system. `invert:true` keeps the cells OUTSIDE the region. `cell_indices` (in place of `polygons`) subsets by explicit table rows — the embedding view's client-resolved selection, filtered via `match_sdata_to_table` |
@@ -81,7 +81,7 @@ ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_cate
 | POST | `/api/sessions/{id}/shape-annotations` | `ShapeAnnotation` (no id) | `{job_id}` (create one shape) |
 | PUT  | `/api/sessions/{id}/shape-annotations/{shapeId}` | `ShapeAnnotation` | `{job_id}` (replace one shape's geometry/style) |
 | DELETE | `/api/sessions/{id}/shape-annotations/{shapeId}` | — | `{job_id}` |
-| POST | `/api/sessions/{id}/save` | `{path?, include?, levels?}` | `{job_id, path}` (queued save) |
+| POST | `/api/sessions/{id}/save` | `{path?, include?, levels?, figures?}` | `{job_id, path}` (queued save). `figures` is the list of drawn-plot ids whose rendered figures the file should carry — omit for all of them, `[]` for none; **400** for an id that isn't a drawn plot |
 | GET  | `/api/sessions/{id}/points-transform` | — | `{affine:[a,b,c,d,e,f], element}` (points→global affine of the active table's region element) |
 | POST | `/api/sessions/{id}/points-transform` | `{affine:[a,b,c,d,e,f], path?}` | `{job_id, path}` (sets the affine and persists to disk) |
 | POST | `/api/sessions/{id}/snapshot` | `{viewport:{target,zoom}, width_px, height_px, dpi, formats:["pdf"\|"png"], label?, display_id?, include_minimap?}` | `{status,name,formats,rasterized_points}` — renders + writes `<base>.figure.{pdf,png,thumb.png,json}` in DATA_DIR |
@@ -211,6 +211,7 @@ filtered or trimmed write is an export, so `saved`/`store_path` are left alone.
   "app_state": { "schema_version":1, "compute_history":[HistEntry], "plots":[PlotEntry], "displays":[DisplaySpec] },
   "queue": [ {job_id, descriptor, status, position} ],
   "fields": { "obs":[{name,kind:"categorical|numeric"}], "obsm":[{name,n_components}], "var_names_count":N, "obsp":[..], "layers":[..], "images":[..], "shapes":[..] },
+  "figures": { "<plotId>": {"svg":53392, "pdf":22054, "png":40940} },   // rendered figures available to fetch, byte length per format; drawn plots only
   "data_versions": { "obs:leiden": 3, ... } }
 ```
 

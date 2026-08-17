@@ -18,10 +18,11 @@ export { useArrowField } from './data/useArrowField';
 
 // ---- The display model ------------------------------------------------------
 export {
-  isSpatialDisplay, isEmbeddingDisplay,
+  FIGURE_MEDIA_TYPES, isSpatialDisplay, isEmbeddingDisplay,
   type ChannelState, type DisplayEncoding, type DisplaySpec, type EmbeddingDisplaySpec,
-  type EmbeddingEncoding, type ImageDims, type ImageInfo, type ImageLevel, type ObsField,
-  type ObsmField, type SessionFields, type SpatialDisplaySpec, type Viewport,
+  type EmbeddingEncoding, type FigureFormat, type FigureIndex, type ImageDims,
+  type ImageInfo, type ImageLevel, type ObsField, type ObsmField, type SessionFields,
+  type SpatialDisplaySpec, type Viewport,
 } from './types';
 export {
   EMBEDDING_ENCODING_DEFAULTS, SPATIAL_ENCODING_DEFAULTS, showImageDefault,
@@ -55,6 +56,7 @@ export { useArrowPositions, type ScatterPositions } from './canvas/useArrowPosit
 
 // ---- Snapshots (PNG capture + the saved-figure contract) ---------------------
 export { downloadCanvasPng } from './lib/canvasCapture';
+export { downloadBlob } from './lib/download';
 export {
   formatCreated, type Snapshot, type SnapshotExportParams, type SnapshotFormat,
 } from './lib/snapshots';

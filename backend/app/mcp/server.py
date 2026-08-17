@@ -498,11 +498,13 @@ async def run_recipe(name: str, param_values: dict | None = None,
 async def list_plots(session_id: str | None = None) -> dict:
     """Every plot in the session with its state (queued|running|drawn|invalidated|
     failed — 'invalidated' means an upstream field changed since it was drawn) and
-    whether a rendered figure is available in memory right now."""
+    whether a rendered figure is available to look at (this session's own render, or one
+    the checkpoint it was loaded from carries)."""
     agent.bind_agent()
     sess = _sess(session_id)
     state = await _read_locked(sess, _mgr().state, sess)
-    plots = [{**p, "figure_available": bool((sess.plot_figures.get(p["id"]) or {}).get("png"))}
+    available = state["figures"]
+    plots = [{**p, "figure_available": "png" in available.get(p["id"], {})}
              for p in state["app_state"].get("plots", [])]
     return {"plots": plots}
 
@@ -510,15 +512,16 @@ async def list_plots(session_id: str | None = None) -> dict:
 @mcp_server.tool()
 async def view_plot(plot_id: str, session_id: str | None = None,
                     redraw_if_missing: bool = True, timeout_s: float = 300):
-    """Look at a drawn plot (returns the figure as an image). If the figure isn't in
-    memory (session reloaded from a checkpoint) or the plot is invalidated, redraws
-    it first (a queued job) unless redraw_if_missing=False."""
+    """Look at a drawn plot (returns the figure as an image). If no rendered figure is
+    available — neither in memory nor in the checkpoint the session was loaded from — or
+    the plot is invalidated, redraws it first (a queued job) unless
+    redraw_if_missing=False."""
     agent.bind_agent()
     sess = _sess(session_id)
     rec = sess.find_record(plot_id)
     if rec is None:
         raise ValueError("no such plot (see list_plots)")
-    png = (sess.plot_figures.get(plot_id) or {}).get("png")
+    png = sess.figure(plot_id, "png")
     if (png is None or rec.get("status") == "invalidated") and redraw_if_missing:
         _writable(session_id)  # a redraw is a mutation (queued job + uns color cache)
         if not sess.redraw_plot(plot_id):
@@ -527,7 +530,7 @@ async def view_plot(plot_id: str, session_id: str | None = None,
         if status != "drawn":
             report = _job_report(sess, plot_id, status)
             raise ValueError(f"redraw did not complete: {json.dumps(report)}")
-        png = (sess.plot_figures.get(plot_id) or {}).get("png")
+        png = sess.figure(plot_id, "png")
         rec = sess.find_record(plot_id) or rec
     if png is None:
         raise ValueError("figure not available (status: %s); pass redraw_if_missing=True"

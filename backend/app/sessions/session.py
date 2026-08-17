@@ -209,7 +209,9 @@ class Session:
         self._queue: "queue.Queue" = queue.Queue()
         self._jobs = {}                 # job_id -> {descriptor, status, kind, started}
         self._failed_logs = {}          # job_id -> log (FAILED vanish from history; log still fetchable)
-        self.plot_figures = {}          # plot_id -> {"svg":bytes,"pdf":bytes} (never persisted)
+        # plot_id -> {"svg":bytes,"pdf":bytes,"png":bytes} for the plots THIS session
+        # drew; `figure`/`figure_index` fall back to the ones a loaded checkpoint carries.
+        self.plot_figures = {}
         self._stop = threading.Event()
         self._worker = threading.Thread(target=self._run, name=f"worker-{sid}", daemon=True)
         self._worker.start()
@@ -707,7 +709,8 @@ class Session:
 
     def _write_checkpoint(self, path: str, hash_name: bool,
                           include: dict[str, list[str]] | None = None,
-                          levels: dict[str, int] | None = None) -> str:
+                          levels: dict[str, int] | None = None,
+                          figures: dict[str, dict[str, bytes]] | None = None) -> str:
         """Persist the object to `path`, incrementally when possible: rewrite only the
         changed table/transform elements (reusing the on-disk rasters untouched) when
         the session is still backed by the writable directory store it loaded from and
@@ -717,18 +720,37 @@ class Session:
         `include` writes only the named elements, `levels` writes named images at
         reduced resolution. Both short-circuit above the incremental branch because
         `update_checkpoint` reuses the on-disk rasters wholesale, which would put back
-        exactly the elements and pyramid levels the caller asked to drop."""
+        exactly the elements and pyramid levels the caller asked to drop.
+
+        `figures` is the complete set of rendered plots to end up in the file (see
+        `figures_to_persist`) — on both routes, whatever it omits is not in the file."""
         from ..persistence.store import (save_spatialdata, update_checkpoint,
                                           can_update_incrementally)
         with self._save_lock:
             if (include is None and not levels and path.endswith(".zarr.zip")
                     and not self.force_full
                     and can_update_incrementally(self.sdata, self.extract_dir)):
+                self._hold_dropped_figures(figures or {})
                 return update_checkpoint(self.sdata, path, self.app_state,
                                          tables=self.dirty_tables, transforms=self.dirty_transforms,
-                                         hash_name=hash_name)
+                                         hash_name=hash_name, figures=figures)
             return save_spatialdata(self.sdata, path, self.app_state, hash_name=hash_name,
-                                    include=include, levels=levels)
+                                    include=include, levels=levels, figures=figures)
+
+    def _hold_dropped_figures(self, keeping: dict[str, dict[str, bytes]]) -> None:
+        """Read into memory any drawn plot's figure that the incremental save is about to
+        prune from the store — that store is `extract_dir`, which this session also reads
+        its figures through. Deselecting a figure changes what the FILE carries, not what
+        the open session can still show."""
+        from ..persistence.store import figure_index, read_figure
+        drawn = {p["id"] for p in self.app_state["plots"] if p["status"] == "drawn"}
+        for pid, sizes in figure_index(self.extract_dir).items():
+            if pid in keeping or pid not in drawn:
+                continue
+            held = self.plot_figures.setdefault(pid, {})
+            for fmt in sizes:
+                if held.get(fmt) is None:
+                    held[fmt] = read_figure(self.extract_dir, pid, fmt)
 
     def _save_and_finish(self, job_id: str, payload: dict, kind: str,
                          bump_fields: list | None = None) -> None:
@@ -742,7 +764,8 @@ class Session:
         include, levels = payload.get("include"), payload.get("levels")
         with self.lock.reading():
             written = self._write_checkpoint(payload["path"], payload.get("hash_name", False),
-                                             include=include, levels=levels)
+                                             include=include, levels=levels,
+                                             figures=self.figures_to_persist(payload.get("figures")))
         # A filtered write is an export, not this session's checkpoint: the object still
         # holds elements — or pyramid levels — the file doesn't contain, so adopting it
         # as `store_path` and calling the session saved would both be false.
@@ -920,6 +943,54 @@ class Session:
                 p["status"] = "invalidated"
                 invalidated.append(p["id"])
         return invalidated
+
+    def figure(self, plot_id: str, fmt: str) -> bytes | None:
+        """One rendered figure's bytes: this session's own render when it drew the plot,
+        otherwise the copy the checkpoint it was loaded from carries (read lazily, like
+        `get_log`). None when neither has it."""
+        blob = (self.plot_figures.get(plot_id) or {}).get(fmt)
+        if blob is not None:
+            return blob
+        from ..persistence.store import read_figure
+        return read_figure(self.extract_dir or self.store_path, plot_id, fmt)
+
+    def figure_index(self) -> dict[str, dict[str, int]]:
+        """`{plot_id: {format: byte length}}` over the figures this session can serve —
+        what the save dialog sizes its figures group from and what tells a client which
+        plots the Plots view can render. A redrawn plot's in-memory bytes shadow the
+        stale ones still in the store it was loaded from.
+
+        Only `drawn` plots appear. The bytes of an invalidated one are still around (in
+        memory, or in the store), but they no longer match the data — reporting them
+        would put a stale figure on screen instead of the redraw prompt."""
+        from ..persistence.store import figure_index
+        drawn = {p["id"] for p in self.app_state["plots"] if p["status"] == "drawn"}
+        index = {pid: {fmt: len(blob) for fmt, blob in blobs.items() if blob}
+                 for pid, blobs in self.plot_figures.items() if pid in drawn}
+        for pid, sizes in figure_index(self.extract_dir or self.store_path).items():
+            if pid in drawn:
+                index.setdefault(pid, sizes)
+        return {pid: sizes for pid, sizes in index.items() if sizes}
+
+    def figures_to_persist(self, keep: list[str] | None = None) -> dict[str, dict[str, bytes]]:
+        """Figure bytes for the checkpoint writer: every plot currently `drawn`, or just
+        those in `keep` (the save dialog's selection). An `invalidated` plot is left out
+        — its figure no longer matches the data, which is the whole meaning of the
+        status."""
+        from ..persistence.store import FIGURE_FORMATS
+        wanted = None if keep is None else set(keep)
+        out: dict[str, dict[str, bytes]] = {}
+        for rec in self.app_state["plots"]:
+            pid = rec["id"]
+            if rec["status"] != "drawn" or (wanted is not None and pid not in wanted):
+                continue
+            # A plot whose render produced only some formats (a backend that couldn't
+            # emit PDF, say) persists the ones it has.
+            blobs = {fmt: blob for fmt in FIGURE_FORMATS
+                     if (blob := self.figure(pid, fmt))}
+            if blobs:
+                out[pid] = blobs
+        return out
 
     def redraw_plot(self, plot_id: str) -> bool:
         rec = self._find_record(plot_id, "plot")

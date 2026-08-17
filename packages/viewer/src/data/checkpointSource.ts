@@ -11,7 +11,11 @@ import { Schema, Table, makeTable } from 'apache-arrow';
 import type { AbsolutePath, AsyncReadable, RangeQuery } from '@zarrita/storage';
 import ZipFileStore from '@zarrita/storage/zip';
 import * as zarr from 'zarrita';
-import type { ImageInfo, ObsField, ObsmField, SessionFields } from '../types';
+import {
+  FIGURE_MEDIA_TYPES,
+  type FigureFormat, type FigureIndex, type ImageInfo, type ObsField, type ObsmField,
+  type SessionFields,
+} from '../types';
 import type { DataSource, ImageLoader, LocalCategorical } from './types';
 
 // Highest `viewer/` sidecar layout this build understands. Mirrors
@@ -114,6 +118,9 @@ interface ViewerSidecar {
   table_keys: string[];
   images: Record<string, Record<string, ImageInfo>>;
   coords_transform: Record<string, number[]>;
+  // Absent in a checkpoint saved without figures, and in every one written before
+  // they were persisted at all.
+  figures?: FigureIndex;
 }
 
 type Root = zarr.Location<AsyncReadable>;
@@ -132,6 +139,16 @@ async function readNumeric(root: Root, path: string): Promise<Float64Array> {
   const arr = await zarr.open.v3(root.resolve(path), { kind: 'array' });
   const chunk = await zarr.get(arr);
   return Float64Array.from(chunk.data as ArrayLike<number>, Number);
+}
+
+// A whole uint8 array — a persisted figure, written as one chunk so this is a single
+// range read of the zip entry.
+async function readBytes(root: Root, path: string): Promise<Uint8Array<ArrayBuffer>> {
+  const arr = await zarr.open.v3(root.resolve(path), { kind: 'array' });
+  const chunk = await zarr.get(arr);
+  // dtype is uint8, so this is the decoded buffer itself — no copy, figures run to
+  // megabytes.
+  return chunk.data as Uint8Array<ArrayBuffer>;
 }
 
 async function readStrings(root: Root, path: string): Promise<string[]> {
@@ -159,6 +176,9 @@ export interface CheckpointHandle {
   appState: Record<string, unknown>;
   // What the pickers enumerate, in the shape `GET /api/sessions/{id}` returns.
   fields: SessionFields;
+  // Which plots this file carries a rendered figure for, same shape as the live
+  // session's `figures`.
+  figures: FigureIndex;
 }
 
 /** Open a checkpoint for reading. `source` is a `blob:`/`http(s):` URL, or a File the
@@ -274,6 +294,12 @@ export async function openCheckpoint(
     // carrying a second, divergent copy of the channel blend.
     imageThumbnailUrl: () => null,
 
+    async getPlotFigure(plotId: string, format: FigureFormat): Promise<Blob | null> {
+      if (!sidecar.figures?.[plotId]?.[format]) return null;
+      const bytes = await readBytes(root, `viewer/figures/${plotId}/${format}`);
+      return new Blob([bytes], { type: FIGURE_MEDIA_TYPES[format] });
+    },
+
     async searchVarNames(query: string, limit = 50): Promise<string[]> {
       // Same ranking as `GET /var-names`: prefix hits first, then substring hits.
       const names = await varNamesOnce();
@@ -287,7 +313,10 @@ export async function openCheckpoint(
     },
   };
 
-  return { source, appState, fields: await deriveFields(root, contents, table, sidecar) };
+  return {
+    source, appState, figures: sidecar.figures ?? {},
+    fields: await deriveFields(root, contents, table, sidecar),
+  };
 }
 
 type Contents = { path: string; kind: 'array' | 'group' }[];

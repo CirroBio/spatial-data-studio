@@ -1,19 +1,28 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from '../store/sessionStore';
-import { getJobLog, redrawPlot, getFigureUrl } from '../api';
+import { getJobLog, redrawPlot } from '../api';
 import { DetailHeader, ParametersSection } from './DetailModal';
 import AnsiLog from './AnsiLog';
 import RerunEditor from './RerunEditor';
 import { useRerunEditor } from '../hooks/useRerunEditor';
-import { reportError } from '@cirrobio/spatial-viewer';
+import { useFigure } from '../hooks/useFigure';
+import { displayFormat, downloadFigure, figureFormats } from '../lib/figures';
+import { reportError, useDataSource } from '@cirrobio/spatial-viewer';
 
 export default function PlotDetail() {
-  const { selectedPlotId, sessionState, activeSessionId, setSelectedPlotId } = useAppStore();
+  const { selectedPlotId, sessionState, activeSessionId, setSelectedPlotId,
+          setExpandedPlotId } = useAppStore();
+  const source = useDataSource();
   const [log, setLog] = useState<string>('');
-  const [svgContent, setSvgContent] = useState<string>('');
   const [redrawing, setRedrawing] = useState(false);
 
   const item = sessionState?.app_state.plots.find((p) => p.id === selectedPlotId) ?? null;
+  // Only a plot the session has a figure for renders — `figures` says so without a
+  // fetch, so a pending/failed/invalidated plot never paints a stale figure.
+  const figures = sessionState?.figures ?? {};
+  const { url: figureUrl, loading: figureLoading } = useFigure(
+    item?.id ?? null, item ? displayFormat(figures, item.id) : null);
+  const exportFormats = item ? figureFormats(figures, item.id) : [];
   const { fn, fields, editing, setEditing, submitting, rerun, runStaged, saveStaged, canEdit, editBlockedReason } =
     useRerunEditor(item, () => setSelectedPlotId(null));
   const isPending = item?.status === 'pending';
@@ -23,18 +32,6 @@ export default function PlotDetail() {
     getJobLog(activeSessionId, selectedPlotId)
       .then(({ log: l }) => setLog(l))
       .catch(() => setLog(''));
-  }, [activeSessionId, selectedPlotId, item?.status]);
-
-  useEffect(() => {
-    if (!activeSessionId || !selectedPlotId || !item) return;
-    // Clear any prior figure so switching to a pending/failed/invalidated plot never
-    // paints the previous plot's SVG under the new item's state.
-    if (item.status !== 'drawn') { setSvgContent(''); return; }
-    const url = getFigureUrl(activeSessionId, selectedPlotId);
-    fetch(url)
-      .then((r) => r.text())
-      .then(setSvgContent)
-      .catch(() => setSvgContent(''));
   }, [activeSessionId, selectedPlotId, item?.status]);
 
   if (!item) {
@@ -54,34 +51,6 @@ export default function PlotDetail() {
       console.error(err);
     } finally {
       setRedrawing(false);
-    }
-  }
-
-  function handleExportSvg() {
-    if (!svgContent || !item) return;
-    const blob = new Blob([svgContent], { type: 'image/svg+xml' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${item.function}.svg`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
-  async function handleExportPdf() {
-    if (!activeSessionId || !item) return;
-    try {
-      const res = await fetch(getFigureUrl(activeSessionId, item.id, 'pdf'));
-      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${item.function}.pdf`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      reportError('Export PDF failed', err);
     }
   }
 
@@ -117,12 +86,21 @@ export default function PlotDetail() {
           </>
         ) : (
           <>
-            {svgContent && (
-              <>
-                <button onClick={handleExportSvg} className={actionBtn}>Export SVG</button>
-                <button onClick={handleExportPdf} className={actionBtn}>Export PDF</button>
-              </>
+            {figureUrl && (
+              <button onClick={() => setExpandedPlotId(item.id)} className={actionBtn}>Expand</button>
             )}
+            {source && exportFormats.map((fmt) => (
+              <button
+                key={fmt}
+                onClick={() => {
+                  downloadFigure(source, item, fmt)
+                    .catch((err: unknown) => reportError(`Export ${fmt.toUpperCase()} failed`, err));
+                }}
+                className={actionBtn}
+              >
+                Export {fmt.toUpperCase()}
+              </button>
+            ))}
             {fn && (
               <button
                 onClick={() => setEditing(true)}
@@ -160,16 +138,25 @@ export default function PlotDetail() {
         />
       ) : (
         <div className="flex-1 overflow-y-auto">
-          {svgContent ? (
+          {figureUrl ? (
             <div className="p-4">
-              <div
-                className="bg-white rounded overflow-auto"
-                // SVG from trusted backend
-                dangerouslySetInnerHTML={{ __html: svgContent }}
-              />
+              <button
+                type="button"
+                onClick={() => setExpandedPlotId(item.id)}
+                title="Open fullscreen"
+                className="block w-full bg-white rounded overflow-hidden"
+              >
+                <img src={figureUrl} alt={`${item.namespace}.${item.function}`} className="w-full" />
+              </button>
             </div>
-          ) : item.status === 'drawn' ? (
+          ) : figureLoading ? (
             <div className="flex items-center justify-center h-32 text-muted text-sm">Loading figure...</div>
+          ) : item.status === 'drawn' ? (
+            <div className="flex items-center justify-center h-32 text-muted text-sm px-4 text-center">
+              {canEdit
+                ? 'This checkpoint was saved without figures — click Redraw'
+                : 'This checkpoint was saved without figures'}
+            </div>
           ) : item.status === 'queued' || item.status === 'running' ? (
             <div className="flex items-center justify-center h-32 text-accent text-sm animate-pulse">
               {item.status === 'running' ? 'Drawing...' : 'Queued...'}

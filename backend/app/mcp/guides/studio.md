@@ -92,7 +92,10 @@ viewer's live camera follows their own interaction.
 - **Plots** are matplotlib figures produced by plot functions (`pl.*`, `sc.pl.*`,
   `custom.*_plot`) — statistical readouts (enrichment heatmaps, dotplots, …). They
   are tracked in history, become `invalidated` when upstream data changes
-  (`view_plot` redraws automatically), and are what `list_plots`/`view_plot` serve.
+  (`view_plot` redraws automatically), and are what `list_plots`/`view_plot` serve. A
+  drawn plot's rendered figure is saved into the checkpoint, so after a reload
+  `list_plots` usually reports `figure_available` and `view_plot` can look at it without
+  a redraw; a session saved without figures reports the plots as `invalidated`.
 - **Displays** are the live canvases above.
 - **Snapshots** (`export_figure`) are publication-quality PDF/PNG exports of a
   display with embedded provenance, saved to the studio's gallery for the user.
