@@ -45,6 +45,14 @@ __pycache__/
 .nextflow/
 .nextflow.log*
 work/
+# -with-report / -with-trace / -with-timeline / -with-dag, written to the launch dir
+report*.html
+timeline*.html
+trace*.txt
+dag*.html
+dag*.dot
+# the default --outdir: checkpoints run to gigabytes
+/results/
 
 # worktree-local symlinks to the shared venv/data dirs (not the tracked dirs above)
 /.venv-introspect

@@ -195,10 +195,33 @@ echo "params.os_packages = ''" > no-pkgs.config
 nextflow run nextflow/main.nf -profile test -c no-pkgs.config
 ```
 
+## Container images must provide `ps`
+
+Both images the workflow runs need `ps` (Debian/Ubuntu `procps`, conda `procps-ng`).
+This is not about nice-to-have metrics: Nextflow's task wrapper runs `nxf_trace`
+**inside** the container whenever tracing is enabled — `-with-trace`, `-with-report`,
+`-with-timeline`, which most launchers turn on — and it opens with
+
+```sh
+command -v ps &>/dev/null || { >&2 echo "Command 'ps' required by nextflow ..."; exit 1; }
+```
+
+so an image without `ps` fails *every task* rather than merely losing resource numbers.
+`nxf_tree`/`nxf_kill` also walk the process table (`ps -e -o pid= -o ppid=`) to stop a
+task's children.
+
+Both defaults ship it. If you point `--multiqc_container` or `--analysis_container`
+somewhere else, check it first:
+
+```bash
+python nextflow/tests/check_containers.py
+```
+
 ## Tests
 
 ```bash
 python nextflow/tests/check_catalog.py
+python nextflow/tests/check_containers.py
 ```
 
 Validates the catalog against its schema, checks every recipe it names exists, verifies

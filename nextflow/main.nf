@@ -18,7 +18,7 @@ include { discoverCandidates } from './modules/discovery.nf'
 
 process ANALYSE {
     tag "${prefix} (${spec.label})"
-    container 'ghcr.io/astral-sh/uv:python3.11-bookworm'
+    container params.analysis_container
 
     // Everything this candidate produces is already laid out under out/ exactly as it
     // should be published, so publishing is a straight copy with the wrapper stripped.
@@ -138,7 +138,7 @@ process MULTIQC {
 }
 
 process PUBLISH_VIEWER {
-    container 'ghcr.io/astral-sh/uv:python3.11-bookworm'
+    container params.analysis_container
 
     // Published file by file rather than as one directory: the checkpoints and the
     // MultiQC report land in this same tree, and publishing a directory replaces the

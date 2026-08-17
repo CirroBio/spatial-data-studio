@@ -630,6 +630,11 @@ collection as well as embeddable per page. Pull requests build but do not publis
   common parameter's `applies_to` really is the set of types whose recipes declare it,
   checks the params agree across `nextflow.config` and `nextflow_schema.json`, and runs
   discovery over a synthetic tree of every catalogued type.
+- `python nextflow/tests/check_containers.py` — asserts every `*_container` image named
+  in `nextflow.config` provides `ps`. Nextflow runs `nxf_trace` inside the container
+  under `-with-trace`/`-with-report` and **exits 1** when `ps` is absent, so an image
+  without procps fails every task rather than just losing resource metrics. Pulls the
+  images; skips cleanly when Docker is unavailable.
 - `cd frontend && npx tsc --noEmit -p tsconfig.app.json && npm run build` — typecheck
   + build.
 - `cd frontend && npm run check:tours` — static guard that every guided-tour anchor

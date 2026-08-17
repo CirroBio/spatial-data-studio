@@ -95,6 +95,13 @@ jobs:
           pip install --quiet jsonschema
           python nextflow/tests/check_catalog.py
 
+      - name: Check the container images
+        # Every image the workflow runs must provide `ps`: Nextflow's wrapper runs
+        # nxf_trace inside the container under -with-trace/-with-report and exits 1
+        # without it, so a missing procps fails every task rather than just losing
+        # metrics. This pulls the images, which is the slowest step in this job.
+        run: python nextflow/tests/check_containers.py
+
   frontend:
     runs-on: ubuntu-latest
     steps:

@@ -138,9 +138,13 @@
           "format": "directory-path",
           "description": "A built viewer SPA. The workflow does not build one: run `npm ci && npm run build` at the repo root."
         },
+        "analysis_container": {
+          "type": "string",
+          "description": "Image the discovery/analysis and viewer-publishing tasks run in. Must provide `ps`: Nextflow runs nxf_trace inside the container under -with-trace/-with-report and exits 1 without it."
+        },
         "multiqc_container": {
           "type": "string",
-          "description": "Image the MultiQC report is rendered in."
+          "description": "Image the MultiQC report is rendered in. Must provide `ps`, for the same reason as analysis_container."
         },
         "os_packages": {
           "type": "string",
