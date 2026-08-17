@@ -61,8 +61,10 @@ the analysis history that produced this view.*
   session.
 - **Save and share.** Save a checkpoint you can reopen later — choosing what goes into
   the file from a checklist of the dataset's elements, each with its estimated size, so
-  you can leave a multi-gigabyte tissue image out of a copy you want to send someone
-  (the session on screen keeps everything either way). Save a **snapshot** — a
+  you can leave a multi-gigabyte tissue image out of a copy you want to send someone.
+  An image you do keep has a resolution slider: it lists what each level of the image
+  pyramid costs, and you pick the most detailed one worth keeping, trading zoomed-in
+  detail for a much smaller file (the session on screen keeps everything either way). Save a **snapshot** — a
   high-quality figure of the current view exported as a vector PDF and/or raster PNG,
   framed and sized in a dialog with a live preview, optionally with the minimap inset
   included in the figure — or upload saved checkpoints to

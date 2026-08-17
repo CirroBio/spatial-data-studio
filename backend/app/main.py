@@ -468,6 +468,28 @@ def _validated_include(sess, include) -> dict[str, list[str]] | None:
     return out
 
 
+def _validated_levels(sess, levels) -> dict[str, int] | None:
+    """Check the save body's per-image resolution choice — image name -> index of the
+    finest pyramid level to write, coarser levels always kept, so 0 writes the whole
+    pyramid. Levels a caller left at 0 are dropped here, so an all-0 request is
+    indistinguishable from no request at all and keeps the incremental fast path."""
+    if not levels:
+        return None
+    if not isinstance(levels, dict):
+        raise HTTPException(400, "levels must be an object of image name -> level index")
+    from . import imaging
+    out: dict[str, int] = {}
+    for name, finest in levels.items():
+        if name not in (getattr(sess.sdata, "images", None) or {}):
+            raise HTTPException(400, f"unknown images element '{name}'")
+        depth = len(imaging._levels_meta(sess.sdata, name))
+        if not isinstance(finest, int) or isinstance(finest, bool) or not 0 <= finest < depth:
+            raise HTTPException(400, f"levels['{name}'] must be an integer in 0..{depth - 1}")
+        if finest:
+            out[name] = finest
+    return out or None
+
+
 @app.post("/api/sessions/{sid}/save")
 async def save(sid: str, body: dict | None = None):
     sess = _writable_session(sid)
@@ -475,8 +497,9 @@ async def save(sid: str, body: dict | None = None):
     explicit = body.get("path")
     path = explicit or default_save_path(sess)
     include = _validated_include(sess, body.get("include"))
+    levels = _validated_levels(sess, body.get("levels"))
     job_id = sess.enqueue_special("save", {"path": path, "hash_name": not explicit,
-                                           "include": include})
+                                           "include": include, "levels": levels})
     return {"job_id": job_id, "path": path}
 
 

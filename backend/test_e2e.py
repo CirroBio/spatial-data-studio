@@ -687,10 +687,12 @@ def run_incremental_save_flow(client, checkpoint_path):
 
 
 def run_selective_save_flow(client, checkpoint_path):
-    """A save can name which elements go in the file. Asserts the per-element size
-    breakdown, that a filtered write drops exactly what was deselected (file, sidecar
-    and the displays pointing at it), that it neither takes the incremental path nor
-    rewrites the source rasters, and that the live session keeps everything."""
+    """A save can name which elements go in the file, and at what resolution. Asserts
+    the per-element (and per pyramid level) size breakdown, that a filtered write drops
+    exactly what was deselected (file, sidecar and the displays pointing at it), that a
+    level-trimmed image comes back smaller but in the same place, that neither write
+    takes the incremental path or rewrites the source rasters, and that the live session
+    keeps everything."""
     import zipfile
     import zarr
     from app.deps import MANAGER
@@ -711,6 +713,17 @@ def run_selective_save_flow(client, checkpoint_path):
     assert images and all(i["size_mb"] > 0 for i in sized["images"]), f"no sized images: {sized['images']}"
     print(f"[ok] element sizes: table={sized['tables'][0]['size_mb']}MB "
           f"images={[(i['name'], i['size_mb']) for i in sized['images']]}")
+
+    # The resolution slider is drawn from `levels`: finest first, shrinking, and adding
+    # up to the whole-element number so dropping levels can be subtracted from the total.
+    levels = sized["images"][0]["levels"]
+    assert len(levels) > 1, f"expected a multiscale test image, got {levels}"
+    assert [lv["level"] for lv in levels] == list(range(len(levels))), f"levels misindexed: {levels}"
+    assert all(a["width"] > b["width"] and a["height"] > b["height"]
+               for a, b in zip(levels, levels[1:])), f"levels not finest-first: {levels}"
+    drift = abs(sum(lv["size_mb"] for lv in levels) - sized["images"][0]["size_mb"])
+    assert drift <= 0.1 * (len(levels) + 1), f"level sizes don't sum to the element size: {levels}"
+    print(f"[ok] image pyramid: {[(lv['width'], lv['size_mb']) for lv in levels]}")
 
     # Point a display at an image so the reference-rewrite has something to clear.
     disp = client.get(f"/api/sessions/{sid}").json()["app_state"]["displays"][0]
@@ -751,6 +764,43 @@ def run_selective_save_flow(client, checkpoint_path):
     root = zarr.open_group(store._zarr_root(extract_dir), mode="r")
     assert dict(root["viewer"].attrs)["images"] == {}, "viewer sidecar still advertises images"
     print("[ok] filtered save dropped images from file, sidecar and displays")
+
+    # Resolution trim: same image, minus its finest level. The file has to shrink, and
+    # the coarser level that becomes level 0 has to keep the image's place in the world.
+    from app import imaging
+    img = images[0]
+    coarse = os.path.join(str(config.DATA_DIR), "coarse_session.zarr.zip")
+    sv = client.post(f"/api/sessions/{sid}/save",
+                     json={"path": coarse, "levels": {img: 1}}).json()
+    assert wait_job(client, sid, sv["job_id"])["status"] == "completed"
+    assert sess.store_path == before_store and sess.saved == before_saved, \
+        f"level-trimmed save adopted the export: store_path={sess.store_path} saved={sess.saved}"
+    assert raster_mtimes() == before_mtimes, "level-trimmed save rewrote the source rasters"
+    assert os.path.getsize(coarse) < os.path.getsize(checkpoint_path), \
+        f"level-trimmed save is no smaller: {os.path.getsize(coarse)} vs {os.path.getsize(checkpoint_path)}"
+
+    trimmed, trimmed_dir, _ = store.read_spatialdata_archive(coarse)
+    got, want = imaging.image_info(trimmed, img), imaging.image_info(sess.sdata, img)
+    assert len(got["levels"]) == len(levels) - 1, f"pyramid not trimmed: {got['levels']}"
+    assert (got["width"], got["height"]) == (levels[1]["width"], levels[1]["height"]), \
+        f"trimmed image's level 0 isn't the old level 1: {got['width']}x{got['height']}"
+    assert all(abs(a - b) < 1e-6 for a, b in zip(got["bounds"], want["bounds"])), \
+        f"trimmed image moved: {got['bounds']} vs {want['bounds']}"
+    assert got["channel_names"] == want["channel_names"], "trimmed image lost its channel names"
+    # The sidecar manifest is keyed [element][table_key] — every entry has to describe
+    # the trimmed pyramid, or the browser reader asks for a level that isn't there.
+    sidecar = dict(zarr.open_group(store._zarr_root(trimmed_dir), mode="r")["viewer"].attrs)
+    assert all(len(info["levels"]) == len(got["levels"])
+               for info in sidecar["images"][img].values()), \
+        f"viewer sidecar advertises a pyramid the file doesn't have: {sidecar['images'][img]}"
+    print(f"[ok] resolution trim: {len(levels)} levels -> {len(got['levels'])}, "
+          f"{os.path.getsize(checkpoint_path) // 1000}kB -> {os.path.getsize(coarse) // 1000}kB")
+
+    bad = client.post(f"/api/sessions/{sid}/save", json={"levels": {img: len(levels)}})
+    assert bad.status_code == 400, f"out-of-range level accepted: {bad.status_code}"
+    bad = client.post(f"/api/sessions/{sid}/save", json={"levels": {"nope": 1}})
+    assert bad.status_code == 400, f"unknown image in levels accepted: {bad.status_code}"
+    print("[ok] resolution trim rejects out-of-range levels and unknown images")
 
     bad = client.post(f"/api/sessions/{sid}/save", json={"include": {"images": ["nope"]}})
     assert bad.status_code == 400, f"unknown element name accepted: {bad.status_code}"

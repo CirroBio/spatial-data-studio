@@ -41,6 +41,7 @@ from pathlib import Path
 
 import numpy as np
 import spatialdata as sd
+import xarray
 import zarr
 
 from ..config import _within_dir, config
@@ -301,11 +302,33 @@ def _stringify_uns_recarrays(sdata) -> list[tuple[dict, str, object]]:
     return swaps
 
 
-def select_elements(sdata, include: dict[str, list[str]]):
+def trim_pyramid(el, finest: int):
+    """Multiscale image `el` with every pyramid level finer than `finest` dropped and
+    the survivors renumbered from `scale0`.
+
+    Each level carries its own transform to the global coordinate system — the level
+    that becomes the new `scale0` keeps the downscale its old position implied — so the
+    trimmed image still lands where it did. Levels are shared with `el`, not copied.
+    A single-scale image, or `finest == 0`, comes back untouched.
+    """
+    from .. import imaging
+    names = imaging._scale_names(el) if imaging._is_multiscale(el) else []
+    if finest <= 0 or not names:
+        return el
+    kept = {f"/scale{i}": xarray.Dataset({"image": imaging._level_array(el, level)})
+            for i, level in enumerate(range(finest, len(names)))}
+    return xarray.DataTree.from_dict(kept)
+
+
+def select_elements(sdata, include: dict[str, list[str]] | None = None,
+                    levels: dict[str, int] | None = None):
     """Shallow view over `sdata` carrying only the named elements.
 
     A facet absent from `include` is kept whole; a facet present keeps exactly the
-    names listed, so `{"images": []}` is how a caller drops every image. Element
+    names listed, so `{"images": []}` is how a caller drops every image. `levels` maps
+    an image name to the finest pyramid level to keep (`trim_pyramid`), which shrinks an
+    image rather than dropping it — for the same trim driven by a byte budget instead of
+    a per-image choice, see `cap_image_levels`. Element
     objects are shared with `sdata` rather than copied — the same dask arrays, the
     same AnnData — so building a view costs nothing and cannot mutate the live
     session's object. `attrs` is a fresh dict so `save_spatialdata`'s app_state swap
@@ -319,8 +342,11 @@ def select_elements(sdata, include: dict[str, list[str]]):
     kept = {}
     for facet in sdata_facets():
         have = dict(getattr(sdata, facet, {}) or {})
-        names = include.get(facet)
+        names = include.get(facet) if include is not None else None
         kept[facet] = have if names is None else {n: have[n] for n in names if n in have}
+    for name, finest in (levels or {}).items():
+        if name in kept["images"]:
+            kept["images"][name] = trim_pyramid(kept["images"][name], finest)
     view = sd.SpatialData(**kept)
     view.attrs = dict(sdata.attrs)
     return view
@@ -330,7 +356,7 @@ def _level_stored_mb(arr) -> float:
     """Estimated compressed MB one pyramid level occupies in a written checkpoint —
     the same shape x dtype x `_COMPRESSION` estimate `element_size_mb` falls back to,
     per level rather than per element."""
-    return arr.size * arr.dtype.itemsize * _COMPRESSION / 1e6
+    return _level_nbytes(arr) * _COMPRESSION / 1e6
 
 
 def cap_image_levels(sdata, max_mb: float):
@@ -353,42 +379,42 @@ def cap_image_levels(sdata, max_mb: float):
     handed an image-less object. Single-scale images pass through untouched, having no
     level to drop.
 
+    This is the budget-driven half of the same trim `select_elements`'s `levels` does
+    per image (both land in `trim_pyramid`): a batch caller names a size it must fit,
+    the save dialog names the detail it wants to keep.
+
     Only images are trimmed — label pyramids are long runs of a few integer values and
     compress hard enough that their finest level is a rounding error.
     """
-    import xarray as xr
-
     from ..registry.base import sdata_facets
     from .. import imaging
 
     kept = {facet: dict(getattr(sdata, facet, {}) or {}) for facet in sdata_facets()}
-    # name -> levels still kept, finest first, as (scale name, estimated MB).
+    # name -> estimated MB per level still kept, finest first.
     pyramids = {}
     fixed_mb = 0.0
-    for name, el in kept.get("images", {}).items():
+    for name, el in kept["images"].items():
         if not imaging._is_multiscale(el):
             fixed_mb += _level_stored_mb(imaging._level_array(el, 0))
             continue
-        pyramids[name] = [(s, _level_stored_mb(el[s]["image"])) for s in imaging._scale_names(el)]
+        pyramids[name] = [_level_stored_mb(el[s]["image"]) for s in imaging._scale_names(el)]
 
     def total():
-        return fixed_mb + sum(mb for levels in pyramids.values() for _, mb in levels)
+        return fixed_mb + sum(mb for levels in pyramids.values() for mb in levels)
 
     # Drop from the image whose finest level is biggest, until it fits or nothing is
     # left to drop.
+    dropped = {name: 0 for name in pyramids}
     while total() > max_mb:
         droppable = {name: levels for name, levels in pyramids.items() if len(levels) > 1}
         if not droppable:
             break
-        biggest = max(droppable, key=lambda name: droppable[name][0][1])
+        biggest = max(droppable, key=lambda name: droppable[name][0])
         pyramids[biggest] = pyramids[biggest][1:]
+        dropped[biggest] += 1
 
-    for name, levels in pyramids.items():
-        el = kept["images"][name]
-        if len(levels) == len(imaging._scale_names(el)):
-            continue        # nothing dropped, keep the original object
-        kept["images"][name] = xr.DataTree.from_dict(
-            {f"scale{i}": el[s].dataset for i, (s, _) in enumerate(levels)})
+    for name, finest in dropped.items():
+        kept["images"][name] = trim_pyramid(kept["images"][name], finest)
 
     view = sd.SpatialData(**kept)
     view.attrs = dict(sdata.attrs)
@@ -397,6 +423,7 @@ def cap_image_levels(sdata, max_mb: float):
 
 def save_spatialdata(sdata, path: str, app_state: dict, hash_name: bool = False,
                      include: dict[str, list[str]] | None = None,
+                     levels: dict[str, int] | None = None,
                      max_image_mb: float | None = None) -> str:
     """`hash_name` renames a `.zarr.zip` checkpoint to embed a hash of its own
     contents once written (auto-managed saves only — explicit save-as paths are
@@ -409,12 +436,13 @@ def save_spatialdata(sdata, path: str, app_state: dict, hash_name: bool = False,
     element are neutralised so the file still renders; the live object keeps
     everything.
 
-    `max_image_mb` writes the images with as many of their finest pyramid levels
-    dropped as it takes to fit that budget — see `cap_image_levels`. It drops
-    resolution, not elements, so nothing in `app_state` needs neutralising."""
-    if include is not None:
+    `levels` (image name -> finest pyramid level) and `max_image_mb` both write images
+    at reduced resolution — the first per image, the second to fit a byte budget (see
+    `select_elements` and `cap_image_levels`). Both drop resolution, not elements, so
+    nothing in `app_state` needs neutralising for them."""
+    if include is not None or levels:
         from ..registry.base import sdata_facets
-        sdata = select_elements(sdata, include)
+        sdata = select_elements(sdata, include, levels)
         app_state = appstate.prune_to_elements(
             app_state, {f: set(getattr(sdata, f, {}) or {}) for f in sdata_facets()})
     if max_image_mb is not None:
@@ -851,15 +879,15 @@ def _dir_bytes(p: Path) -> int:
     return sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
 
 
+def _level_nbytes(arr) -> int:
+    return int(np.prod(arr.shape)) * np.dtype(arr.dtype).itemsize
+
+
 def _raster_nbytes(el) -> int:
     """Uncompressed bytes across every pyramid level of an image/labels element."""
     from .. import imaging
     levels = len(imaging._scale_names(el)) if imaging._is_multiscale(el) else 1
-    total = 0
-    for i in range(levels):
-        arr = imaging._level_array(el, i)
-        total += int(np.prod(arr.shape)) * np.dtype(arr.dtype).itemsize
-    return total
+    return sum(_level_nbytes(imaging._level_array(el, i)) for i in range(levels))
 
 
 def _matrix_nbytes(m) -> int:
@@ -900,6 +928,54 @@ def _points_nbytes(pdf) -> int | None:
     return int(rows) * sum(np.dtype(d).itemsize for d in pdf.dtypes)
 
 
+def _element_dir(sdata, facet: str, name: str,
+                 stores: dict[str, str] | None = None) -> Path | None:
+    """Directory holding one element's arrays on disk — the object's own backing store,
+    or the per-element store a rebuilt raster was written to (`Session.raster_stores`) —
+    or None when the element isn't backed by either."""
+    for root in (getattr(sdata, "path", None), (stores or {}).get(name)):
+        if root and (d := Path(root) / facet / name).is_dir():
+            return d
+    return None
+
+
+def _level_dirs(d: Path) -> list[Path]:
+    """A raster element's per-level subdirectories, finest first. Writers disagree on
+    the naming (`0, 1, …` for zarr v2 stores, `s0, s1, …` for v3), so they're ordered by
+    the trailing integer rather than lexically."""
+    numbered = [(m.group(1), p) for p in d.iterdir()
+                if p.is_dir() and (m := re.fullmatch(r"s?(\d+)", p.name))]
+    return [p for _, p in sorted(numbered, key=lambda kv: int(kv[0]))]
+
+
+def image_levels(sdata, name: str, stores: dict[str, str] | None = None) -> list[dict]:
+    """Per pyramid level of one image, finest first: `imaging._levels_meta`'s index and
+    native pixel dims plus the `size_mb` that level contributes to a written checkpoint.
+    A single-scale image reports one level.
+
+    Sizes follow `element_size_mb`'s two tiers and its accuracy contract, per level: the
+    real compressed bytes when the level sits in a store on disk, otherwise an estimate
+    from shape and dtype. Summed over the levels they come to that function's whole-
+    element number, so the save dialog can subtract dropped levels from the total."""
+    from .. import imaging
+    meta = imaging._levels_meta(sdata, name)
+    d = _element_dir(sdata, "images", name, stores)
+    dirs = _level_dirs(d) if d is not None else []
+    # A store written for a different pyramid than the one in memory (a raster rebuilt
+    # since the load) can't be matched up level by level; estimate the whole thing.
+    if len(dirs) != len(meta):
+        dirs = []
+    el = sdata.images[name]
+    out = []
+    for lv in meta:
+        if dirs:
+            mb = _dir_bytes(dirs[lv["level"]]) / 1e6
+        else:
+            mb = _level_stored_mb(imaging._level_array(el, lv["level"]))
+        out.append({**lv, "size_mb": round(mb, 1)})
+    return out
+
+
 def element_size_mb(sdata, facet: str, name: str,
                     stores: dict[str, str] | None = None) -> float | None:
     """Estimated contribution of one element to a written checkpoint, in MB.
@@ -914,9 +990,8 @@ def element_size_mb(sdata, facet: str, name: str,
     `None` means "not estimable" (a dask points frame), so a total built from these is
     a lower bound.
     """
-    for root in (getattr(sdata, "path", None), (stores or {}).get(name)):
-        if root and (d := Path(root) / facet / name).is_dir():
-            return round(_dir_bytes(d) / 1e6, 1)
+    if (d := _element_dir(sdata, facet, name, stores)) is not None:
+        return round(_dir_bytes(d) / 1e6, 1)
 
     el = (getattr(sdata, facet, None) or {}).get(name)
     if el is None:

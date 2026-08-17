@@ -165,7 +165,7 @@ Component-level notes: [`backend/README.md`](backend/README.md),
 | Change who may edit a session (presence, the edit lock, viewer names) | `backend/app/sessions/presence.py` + `deps.py` (`_claim_lock`) + `frontend/src/lib/presence.ts` (identity + gate) + `hooks/usePresence.ts` (heartbeat) + `components/LockBadge.tsx` | [DESIGN.md](DESIGN.md) §16.5 |
 | Change the MCP assistant surface (tools, vision render, agent guidance) | `backend/app/mcp/server.py` (tools) + `vision.py` (render/coords/membership) + `agent.py` (presence/lock) + `guides/*.md` (guidance text); mounted in `main.py` | [DESIGN.md](DESIGN.md) §29 |
 | Change the checkpoint/persistence format | `backend/app/persistence/store.py` | [DESIGN.md](DESIGN.md) §3, §14.1, [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) |
-| Change which elements a save can leave out, or how their sizes are estimated | `backend/app/persistence/store.py` (`select_elements`, `element_size_mb`) + `sessions/appstate.py` (`prune_to_elements`) + `frontend/src/components/SaveCheckpointDialog.tsx` | below |
+| Change which elements a save can leave out, at what resolution images are written, or how their sizes are estimated | `backend/app/persistence/store.py` (`select_elements`, `trim_pyramid`, `element_size_mb`, `image_levels`) + `sessions/appstate.py` (`prune_to_elements`) + `frontend/src/components/SaveCheckpointDialog.tsx` | below |
 | Change what the serverless viewer can read from a checkpoint | `backend/app/persistence/store.py` (`_write_viewer_sidecar`, the writer half) + `packages/viewer/src/data/checkpointSource.ts` (the reader half) — the two must move together | [DESIGN.md](DESIGN.md) §14.1–14.2, [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) §4 |
 | Change the shape of `app_state`, the `viewer/` sidecar, `X_csc`, or `index.json` | `backend/app/schemas/checkpoint/*.schema.json` (the JSON Schema is validated against on every write) + [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) in the same commit — `sds-governance/checks/check_checkpoint_schema_docs.py` fails the build otherwise | [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) |
 | Add a render-path call the canvas makes | `packages/viewer/src/data/types.ts` (the `DataSource` interface), then **both** `frontend/src/data/apiSource.ts` and `packages/viewer/src/data/checkpointSource.ts` | [DESIGN.md](DESIGN.md) §14.2 |
@@ -251,13 +251,29 @@ these in per-job / per-load buffers (`sessionStore`) and renders them with `Ansi
 
 `POST /api/sessions/{id}/save` takes an optional `include` (facet -> element names, see
 [docs/CONTRACT.md](docs/CONTRACT.md)) so a copy can be written without a multi-gigabyte
-raster. `SaveCheckpointDialog.tsx` opens on every save with everything ticked, and sends
-`include` **only** when something was unticked — an untouched selection is byte-for-byte
-the old save.
+raster, and an optional `levels` (image name -> finest pyramid level) so an image can be
+written at reduced resolution instead of being dropped outright.
+`SaveCheckpointDialog.tsx` opens on every save with everything ticked and every image at
+full resolution, and sends `include`/`levels` **only** when something was unticked or
+coarsened — an untouched selection is byte-for-byte the old save.
+
+The per-element size the dialog shows comes from `store.element_size_mb` and, for images,
+its per-level counterpart `store.image_levels`, which the `?sizes=1` inventory carries.
+Both read the real compressed bytes when the element sits in a store on disk and fall
+back to a shape/dtype estimate otherwise; the level sizes sum to the element size, so the
+dialog can subtract dropped levels from its running total.
 
 Filtering happens in `store.select_elements`, a shallow `SpatialData` view sharing the
 live object's element objects (same dask arrays, same AnnData), so it costs nothing and
-cannot mutate the session. Three consequences worth knowing before changing it:
+cannot mutate the session. A `levels` entry additionally swaps in `store.trim_pyramid`'s
+DataTree over the surviving levels — also shared, not copied. Because every level carries
+its own transform to the global coordinate system, the level promoted to `scale0` keeps
+the downscale its old position implied, so a trimmed image still lands where it did.
+`store.cap_image_levels` (`save_spatialdata(max_image_mb=…)`, the CLI's
+`--lowres-max-image-mb` and the Nextflow low-res copy) is the batch half of the same
+trim — it picks the levels from a byte budget instead of per image, then lands in
+`trim_pyramid` too, so a change to how a pyramid is rebuilt touches one place.
+Three consequences worth knowing before changing it:
 
 - The view has **no backing path**, so `can_update_incrementally` is false for it. That
   is deliberate — `update_checkpoint` reuses the on-disk rasters wholesale and would put
@@ -266,9 +282,9 @@ cannot mutate the session. Three consequences worth knowing before changing it:
 - The sidecar, the CSC mirrors and consolidated metadata all derive from whatever object
   `_write_browser_reader_support` is handed, so a filtered write produces a
   self-consistent `viewer/` group with no extra work.
-- A filtered write is an **export**: `_save_and_finish` skips adopting it, so
-  `store_path`, `saved` and the dirty sets are untouched. The session still holds
-  elements the file doesn't.
+- A filtered or level-trimmed write is an **export**: `_save_and_finish` skips adopting
+  it, so `store_path`, `saved` and the dirty sets are untouched. The session still holds
+  elements — and pyramid levels — the file doesn't.
 
 `appstate.prune_to_elements` clears `image_layer` / `shapes_layer` on any display naming
 a dropped element (both are nullable in `app_state.schema.json`), so the file still opens
@@ -693,7 +709,7 @@ cd backend
 | `--output` | output directory (created if absent) |
 | `--reader-params` | JSON object of extra kwargs for the reader (reader mode) |
 | `--name` | base name for the output `.zarr.zip` (default: from `--input`) |
-| `--lowres-copy` | also write `<name>.lowres.zarr.zip` — the same session with the finest pyramid level dropped from every image |
+| `--lowres-max-image-mb` | also write `<name>.lowres.zarr.zip` — the same session with as many of each image's finest pyramid levels dropped as it takes to fit that image budget (`store.cap_image_levels`) |
 
 The output folder holds `<name>.zarr.zip` (the full SpatialData + app state, reloadable
 in the app) and `plots/<NN>_<namespace>.<function>/figure.{svg,pdf}` per plot step.

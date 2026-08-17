@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { getElements, saveSession, type SdataFacet, type SizedElements } from '../api';
+import {
+  getElements, saveSession, type ImageLevel, type SdataFacet, type SizedElements,
+} from '../api';
 import { formatError, isSpatialDisplay, reportError } from '@cirrobio/spatial-viewer';
 import { useAppStore } from '../store/sessionStore';
 import { ModalHeader, ModalOverlay } from './DetailModal';
@@ -14,6 +16,8 @@ interface Row {
   name: string;
   detail: string;
   size: number | null;
+  // Images only: their pyramid levels, finest first. What the resolution slider trims.
+  levels?: ImageLevel[];
   // The active table anchors every field path and display in the checkpoint, so it
   // can't be dropped — the backend rejects that too.
   locked?: boolean;
@@ -33,7 +37,11 @@ function buildRows(inv: SizedElements): Row[] {
       facet: 'tables' as const, name: t.name, size: t.size_mb, locked: t.active,
       detail: `${t.n_obs.toLocaleString()} obs × ${t.n_vars.toLocaleString()} vars`,
     })),
-    ...inv.images.map((i) => ({ facet: 'images' as const, name: i.name, size: i.size_mb, detail: '' })),
+    // An image's detail line is the finest level it will be saved at, so it follows the
+    // resolution slider rather than being fixed here.
+    ...inv.images.map((i) => ({
+      facet: 'images' as const, name: i.name, size: i.size_mb, levels: i.levels, detail: '',
+    })),
     ...inv.labels.map((l) => ({ facet: 'labels' as const, name: l.name, size: l.size_mb, detail: '' })),
     ...inv.shapes.map((s) => ({
       facet: 'shapes' as const, name: s.name, size: s.size_mb,
@@ -55,11 +63,64 @@ function formatSize(mb: number | null): string {
   return `${mb.toFixed(1)} MB`;
 }
 
+const formatDims = (l: ImageLevel) => `${l.width.toLocaleString()} × ${l.height.toLocaleString()} px`;
+
+/** What a row contributes to the file: for an image, only the pyramid levels from
+ * `finest` down to the coarsest, which is the slice the save actually writes. */
+function keptSize(r: Row, finest: number): number | null {
+  if (!r.levels) return r.size;
+  return r.levels.slice(finest).reduce((sum, l) => sum + l.size_mb, 0);
+}
+
+/** Picks how much of one image's pyramid the file keeps, and shows what each level
+ * costs. The slider runs coarsest-only (left) to full detail (right), so it reads as a
+ * detail control rather than a drop count; the coarsest level is never droppable, since
+ * the point is to shrink the file, not to empty it. */
+function LevelSlider({ levels, finest, onChange }: {
+  levels: ImageLevel[];
+  finest: number;
+  onChange: (finest: number) => void;
+}) {
+  const coarsest = levels.length - 1;
+  return (
+    <div className="pl-7 pr-2 pb-2">
+      <div className="flex items-center justify-between text-[10px] text-muted font-mono uppercase tracking-wide">
+        <span>Resolution</span>
+        <span>{levels.length - finest} of {levels.length} levels</span>
+      </div>
+      <input
+        type="range"
+        min={0}
+        max={coarsest}
+        step={1}
+        value={coarsest - finest}
+        onChange={(e) => onChange(coarsest - Number(e.target.value))}
+        className="w-full accent-accent"
+        aria-label="Finest resolution level to save"
+      />
+      {levels.map((l) => (
+        <div
+          key={l.level}
+          className={`flex items-baseline gap-2 text-[11px] font-mono ${
+            l.level < finest ? 'text-muted/50 line-through' : 'text-muted'
+          }`}
+        >
+          <span className="flex-1 truncate">{formatDims(l)}</span>
+          <span>{formatSize(l.size_mb)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function SaveCheckpointDialog({ sessionId, onClose }: Props) {
   const sessionState = useAppStore((s) => s.sessionState);
   const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
+  // Image name -> index of the finest pyramid level to save; absent means the whole
+  // pyramid. Keyed by name because that is what the save body wants back.
+  const [finestLevel, setFinestLevel] = useState<Record<string, number>>({});
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -87,9 +148,11 @@ export default function SaveCheckpointDialog({ sessionId, onClose }: Props) {
     return refs;
   }, [sessionState]);
 
+  const finestOf = (r: Row) => (r.levels ? finestLevel[r.name] ?? 0 : 0);
   const kept = rows?.filter((r) => selected[rowKey(r)]) ?? [];
-  const total = kept.reduce((sum, r) => sum + (r.size ?? 0), 0);
+  const total = kept.reduce((sum, r) => sum + (keptSize(r, finestOf(r)) ?? 0), 0);
   const droppedAny = !!rows && kept.length < rows.length;
+  const coarsenedAny = kept.some((r) => finestOf(r) > 0);
   // An unsized element makes the total a floor rather than an estimate. "<0.1 MB"
   // already reads as approximate, so it takes no extra qualifier.
   const totalLabel = kept.some((r) => r.size === null)
@@ -110,8 +173,13 @@ export default function SaveCheckpointDialog({ sessionId, onClose }: Props) {
       for (const r of rows) include[r.facet] ??= [];
       for (const r of kept) include[r.facet]!.push(r.name);
     }
+    // Only images being saved at less than full resolution; an image left at level 0
+    // is the same request as not naming it at all.
+    const levels = Object.fromEntries(
+      kept.filter((r) => finestOf(r) > 0).map((r) => [r.name, finestOf(r)]),
+    );
     setSaving(true);
-    saveSession(sessionId, undefined, include)
+    saveSession(sessionId, undefined, include, coarsenedAny ? levels : undefined)
       .then(({ job_id }) => {
         useAppStore.getState().setBlockingJob({ id: job_id, label: 'Saving session…' });
         onClose();
@@ -123,7 +191,7 @@ export default function SaveCheckpointDialog({ sessionId, onClose }: Props) {
     <ModalOverlay onClose={onClose} widthClassName="w-[32rem]">
       <ModalHeader
         title="Save session"
-        subtitle="Choose what the checkpoint file contains. The session itself keeps everything."
+        subtitle="Choose what the checkpoint file contains, and at what resolution. The session itself keeps everything."
         onClose={onClose}
       />
 
@@ -143,32 +211,44 @@ export default function SaveCheckpointDialog({ sessionId, onClose }: Props) {
                 const key = rowKey(r);
                 const locked = !!r.locked;
                 const on = !!selected[key];
+                const finest = finestOf(r);
+                const detail = r.levels ? formatDims(r.levels[finest]) : r.detail;
                 return (
-                  <label
-                    key={key}
-                    title={locked ? 'The active table is always saved.' : undefined}
-                    className={`flex items-center gap-2 px-2 py-1.5 rounded ${
-                      locked ? 'opacity-70' : 'cursor-pointer hover:bg-accent-lo/20'
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      className="accent-accent"
-                      checked={on}
-                      disabled={locked}
-                      onChange={() => setSelected((s) => ({ ...s, [key]: !s[key] }))}
-                    />
-                    <span className="flex-1 min-w-0">
-                      <span className="text-xs text-text truncate">{r.name}</span>
-                      {r.detail && <span className="text-[11px] text-muted ml-2">{r.detail}</span>}
-                      {!on && referenced.has(key) && (
-                        <span className="block text-[11px] text-warn">
-                          Used by the Spatial view — that layer will be empty in the saved file.
-                        </span>
-                      )}
-                    </span>
-                    <span className="text-[11px] text-muted font-mono shrink-0">{formatSize(r.size)}</span>
-                  </label>
+                  <div key={key}>
+                    <label
+                      title={locked ? 'The active table is always saved.' : undefined}
+                      className={`flex items-center gap-2 px-2 py-1.5 rounded ${
+                        locked ? 'opacity-70' : 'cursor-pointer hover:bg-accent-lo/20'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        className="accent-accent"
+                        checked={on}
+                        disabled={locked}
+                        onChange={() => setSelected((s) => ({ ...s, [key]: !s[key] }))}
+                      />
+                      <span className="flex-1 min-w-0">
+                        <span className="text-xs text-text truncate">{r.name}</span>
+                        {detail && <span className="text-[11px] text-muted ml-2">{detail}</span>}
+                        {!on && referenced.has(key) && (
+                          <span className="block text-[11px] text-warn">
+                            Used by the Spatial view — that layer will be empty in the saved file.
+                          </span>
+                        )}
+                      </span>
+                      <span className="text-[11px] text-muted font-mono shrink-0">
+                        {formatSize(keptSize(r, finest))}
+                      </span>
+                    </label>
+                    {on && r.levels && r.levels.length > 1 && (
+                      <LevelSlider
+                        levels={r.levels}
+                        finest={finest}
+                        onChange={(level) => setFinestLevel((f) => ({ ...f, [r.name]: level }))}
+                      />
+                    )}
+                  </div>
                 );
               })}
             </div>
@@ -186,7 +266,7 @@ export default function SaveCheckpointDialog({ sessionId, onClose }: Props) {
           disabled={!rows || saving}
           className="px-3 py-1.5 text-xs rounded bg-accent text-bg font-medium disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {saving ? 'Saving…' : droppedAny ? 'Save selected' : 'Save'}
+          {saving ? 'Saving…' : droppedAny || coarsenedAny ? 'Save selected' : 'Save'}
         </button>
       </div>
     </ModalOverlay>

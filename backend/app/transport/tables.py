@@ -18,8 +18,9 @@ def describe_elements(adata, sdata, active_table_key: str | None, *,
     """Inventory of the object's elements for the inspector's navigator.
 
     `sizes` additionally annotates every entry with `size_mb` — the estimated
-    contribution that element makes to a written checkpoint, for the save dialog's
-    per-element breakdown. Off by default: it stats the backing store, which the
+    contribution that element makes to a written checkpoint — and every image with the
+    same breakdown per pyramid level (`levels`), for the save dialog's per-element size
+    and its resolution slider. Off by default: it stats the backing store, which the
     inspector has no use for. See `store.element_size_mb` for the accuracy contract."""
     tables = []
     if sdata is not None and sdata.tables:
@@ -50,10 +51,12 @@ def describe_elements(adata, sdata, active_table_key: str | None, *,
     out = {"tables": tables, "shapes": shapes, "points": points,
            "images": images, "labels": labels}
     if sizes and sdata is not None:
-        from ..persistence.store import element_size_mb
+        from ..persistence.store import element_size_mb, image_levels
         for facet, entries in out.items():
             for e in entries:
                 e["size_mb"] = element_size_mb(sdata, facet, e["name"], stores)
+                if facet == "images":
+                    e["levels"] = image_levels(sdata, e["name"], stores)
     return out
 
 

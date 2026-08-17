@@ -335,13 +335,28 @@ export async function getShapesGeoArrow(
  * and by the save body's `include`. */
 export type SdataFacet = keyof ElementInventory;
 
+/** One pyramid level of an image, finest (`level: 0`) first, with the bytes it
+ * contributes to a checkpoint — what the save dialog's resolution slider is drawn
+ * from. A single-scale image reports one level. */
+export interface ImageLevel {
+  level: number;
+  width: number;
+  height: number;
+  size_mb: number;
+}
+
 /** `ElementInventory` with the per-element checkpoint size estimate the save dialog
- * needs (`?sizes=1`). Declared here rather than on the library's `ElementInventory`:
- * the canvas has no use for a size, so widening a published type for one Studio
- * dialog would be the wrong direction. `null` means "not estimable" — see
- * `store.element_size_mb`. */
+ * needs (`?sizes=1`), and for images the same broken down per pyramid level. Declared
+ * here rather than on the library's `ElementInventory`: the canvas has no use for a
+ * size, so widening a published type for one Studio dialog would be the wrong
+ * direction. `null` means "not estimable" — see `store.element_size_mb`. */
 export type SizedElements = {
-  [F in SdataFacet]: (ElementInventory[F][number] & { size_mb: number | null })[];
+  [F in Exclude<SdataFacet, 'images'>]: (ElementInventory[F][number] & { size_mb: number | null })[];
+} & {
+  images: (ElementInventory['images'][number] & {
+    size_mb: number | null;
+    levels: ImageLevel[];
+  })[];
 };
 
 export async function getElements(sessionId: string): Promise<ElementInventory>;
@@ -611,14 +626,19 @@ export async function setPointsTransform(
 
 /** `include` writes only the named elements: a facet left out keeps that facet whole,
  * a facet present keeps exactly the names listed, so `{ images: [] }` drops every
- * image. Omit it for the ordinary whole-object save. */
+ * image. `levels` maps an image name to the index of the finest pyramid level to
+ * write, coarser levels always kept, so `{ hne: 2 }` writes that image without its two
+ * most detailed levels. Omit both for the ordinary whole-object save. */
 export async function saveSession(
   sessionId: string, path?: string, include?: Partial<Record<SdataFacet, string[]>>,
+  levels?: Record<string, number>,
 ): Promise<{ job_id: string }> {
   const res = await apiFetch(`/api/sessions/${sessionId}/save`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...(path ? { path } : {}), ...(include ? { include } : {}) }),
+    body: JSON.stringify({
+      ...(path ? { path } : {}), ...(include ? { include } : {}), ...(levels ? { levels } : {}),
+    }),
   });
   return res.json() as Promise<{ job_id: string }>;
 }
