@@ -521,7 +521,9 @@ function cirroFetch(path: string, init?: RequestInit): Promise<Response> {
     : init);
 }
 
-export type CirroAuthState = 'disconnected' | 'pending' | 'connected' | 'failed';
+/** 'expired' is a pending login whose device code has run out — recoverable by starting
+ *  a fresh flow against the same domain, unlike the 'failed' catch-all. */
+export type CirroAuthState = 'disconnected' | 'pending' | 'expired' | 'connected' | 'failed';
 
 export interface CirroAuth {
   state: CirroAuthState;

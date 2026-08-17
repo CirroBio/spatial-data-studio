@@ -8,6 +8,11 @@ one connected Cirro identity per browser, held in memory only. `enable_cache=Fal
 is essential: the SDK's cache would otherwise persist one shared token file under
 `~/.cirro/` for every user of the process.
 
+A device code is short-lived (30 minutes at the time of writing), so a login URL a user
+comes back to later is often dead; such a credential reports itself `expired` and the
+client's answer is to post the same domain again, which starts a fresh flow and replaces
+the credential.
+
 `DeviceCodeAuth` refreshes its own access token from the refresh token, so a long
 session survives access-token expiry; when the *refresh* token expires the SDK
 raises and the credential is marked stale, which the frontend turns into a prompt
@@ -33,6 +38,7 @@ import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -73,7 +79,10 @@ class Credential:
     domain: str
     login_url: str
     auth: object                       # cirro.auth.device_code.DeviceCodeAuth
-    state: str = "pending"             # pending | connected | failed
+    # Monotonic instant the device code stops being honored at Cirro's end, from the
+    # flow's own `expiry` — see `current_state`.
+    login_deadline: float
+    state: str = "pending"             # pending | expired | connected | failed
     error: str | None = None
     username: str | None = None
     last_used: float = field(default_factory=time.monotonic)
@@ -84,18 +93,32 @@ class Credential:
     # rather than on every keystroke of the upload dialog's typeahead.
     _folders: dict[str, list[str]] = field(default_factory=dict)
 
+    def current_state(self) -> str:
+        """`state`, except that a pending login past its device code's deadline is
+        already dead at Cirro's end and is reported `expired`.
+
+        Derived rather than stored so it is true the instant the code dies: the SDK's
+        polling thread only notices on its next wake (`interval`, 5 s), and a client that
+        asked in between would otherwise be handed a login URL that no longer works.
+        `expired` is its own state because the answer to it is specific — get a fresh
+        login URL for the same domain — and not the "something went wrong" of `failed`."""
+        if self.state == "pending" and time.monotonic() >= self.login_deadline:
+            return "expired"
+        return self.state
+
     def portal(self):
         """The authenticated DataPortal, built on first use after the flow completes."""
         if self.state != "connected":
-            raise CirroAuthError(self.error or f"Cirro login is {self.state}")
+            raise CirroAuthError(self.error or f"Cirro login is {self.current_state()}")
         if self._portal is None:
             from cirro import CirroApi, DataPortal
             self._portal = DataPortal(client=CirroApi(auth_info=self.auth, base_url=self.domain))
         return self._portal
 
     def public(self) -> dict:
-        return {"state": self.state, "domain": self.domain, "username": self.username,
-                "login_url": self.login_url if self.state == "pending" else None,
+        state = self.current_state()
+        return {"state": state, "domain": self.domain, "username": self.username,
+                "login_url": self.login_url if state == "pending" else None,
                 "error": self.error}
 
 
@@ -215,7 +238,8 @@ def start_login(domain: str) -> tuple[str, Credential]:
         enable_cache=False,     # never share one token file across this process's users
         await_completion=False,
     )
-    cred = Credential(domain=app_config.base_url, login_url=_login_url(auth.auth_message), auth=auth)
+    cred = Credential(domain=app_config.base_url, login_url=_login_url(auth.auth_message),
+                      auth=auth, login_deadline=_login_deadline(auth))
     token = CREDENTIALS.put(cred)
     threading.Thread(target=_await_login, args=(cred,), daemon=True).start()
     return token, cred
@@ -230,6 +254,16 @@ def _login_url(message: str) -> str:
     raise RuntimeError(f"no login URL in Cirro auth message: {message}")
 
 
+def _login_deadline(auth) -> float:
+    """When the device code stops working, as a monotonic instant (matching `last_used`,
+    so a system clock change can't make a live login look expired). Read off the SDK's
+    own flow response — `expiry` is what its poll loop enforces — and clamped at 0 so a
+    clock skew between here and Cirro can only shorten the window, never extend it."""
+    expiry = datetime.fromisoformat(auth._flow["expiry"])
+    remaining = (expiry - datetime.now().astimezone()).total_seconds()
+    return time.monotonic() + max(remaining, 0.0)
+
+
 def _await_login(cred: Credential) -> None:
     """Block on the device-code poll until the user finishes (or it expires). Runs on
     its own thread so the flow keeps running whether or not the client is watching —
@@ -239,9 +273,16 @@ def _await_login(cred: Credential) -> None:
         cred.username = cred.auth.get_current_user()
         cred.state = "connected"
     except Exception as e:
-        cred.state = "failed"
-        cred.error = str(e)
-        _log.warning("Cirro device-code login failed: %s", e)
+        # Past the deadline the SDK raises a bare "Authentication timed out", which is
+        # the expiry `current_state` already reports — keep that state (and its specific
+        # "get a new login URL" remedy) rather than replacing it with a generic failure.
+        if time.monotonic() >= cred.login_deadline:
+            cred.state = "expired"
+            _log.info("Cirro device-code login expired unused: %s", e)
+        else:
+            cred.state = "failed"
+            cred.error = str(e)
+            _log.warning("Cirro device-code login failed: %s", e)
 
 
 def _reauth_error(e: Exception) -> CirroAuthError:

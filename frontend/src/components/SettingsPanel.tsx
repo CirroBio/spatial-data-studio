@@ -300,7 +300,9 @@ export default function SettingsPanel({ onNewSession }: Props) {
                 label={cirroConnected ? 'Upload to Cirro' : 'Connect to Cirro'}
                 sublabel={cirroConnected
                   ? [cirroAuth.username, cirroAuth.domain].filter(Boolean).join(' · ')
-                  : cirroAuth.state === 'pending' ? 'Authentication pending…' : undefined}
+                  : cirroAuth.state === 'pending' ? 'Authentication pending…'
+                  : cirroAuth.state === 'expired' ? 'Login link expired'
+                  : undefined}
                 onClick={() => (cirroConnected ? setShowCirroUpload(true) : setShowCirroConnect(true))}
                 title={uploadTitle}
                 trailing={uploadsActive > 0 ? (

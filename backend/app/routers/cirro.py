@@ -25,11 +25,11 @@ router = APIRouter()
 def _require(token: str | None) -> Credential:
     """The caller's connected credential, or a 401 the frontend turns into a prompt
     to (re)connect. 401 rather than 403 so one status covers never-connected, still
-    pending, and refresh-token-expired alike."""
+    pending, expired, and refresh-token-expired alike."""
     try:
         cred = CREDENTIALS.require(token)
         if cred.state != "connected":
-            raise CirroAuthError(cred.error or f"Cirro login is {cred.state}")
+            raise CirroAuthError(cred.error or f"Cirro login is {cred.current_state()}")
         return cred
     except CirroAuthError as e:
         raise HTTPException(401, str(e))

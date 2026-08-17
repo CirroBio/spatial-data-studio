@@ -1476,6 +1476,29 @@ Upload saved checkpoint sessions to [Cirro](https://cirro.bio/) as a dataset
   OAuth client id, region and auth endpoint, so the domain is the only user input.
   `CIRRO_BASE_URL` only prefills that field — the server holds no Cirro credential of
   its own.
+- **A device code dies long before the credential does** (30 minutes at Cirro's end vs
+  `IDLE_EXPIRY_S`), so a login URL a user comes back to later is usually dead. Three
+  parts make that recoverable rather than a dead end:
+  - `Credential.current_state()` reports a pending login past its `login_deadline` as
+    **`expired`** — a state of its own, because its remedy is specific (get a new URL for
+    the same domain) rather than the "something went wrong" of `failed`. The deadline is
+    the flow's own `expiry`, held as a monotonic instant, so a clock change can't age a
+    live login. It is *derived*, not written by the polling thread: that thread sleeps
+    `interval` (5 s) between checks, and a client asking in between must not be handed a
+    URL Cirro no longer honors. `public()` withholds `login_url` outside `pending` for
+    the same reason. When the thread does wake past the deadline the SDK gives it a bare
+    "Authentication timed out", which it records as `expired` rather than regressing the
+    state to `failed`.
+  - **Refresh login token** in `CirroConnectDialog` posts the same domain again, which
+    starts a fresh flow and *replaces* this browser's credential (`POST` drops the token
+    it was called with). There is no separate refresh endpoint — restarting a flow is
+    what the POST already does, and it is also the retry path when a login fails. The
+    status poll is suspended while that request is in flight, since it carries the
+    credential token the restart is about to drop.
+  - The dialog **re-reads the auth state as it opens**. The store's copy is loaded at
+    startup and only kept fresh by the pending poll, which runs only while the dialog is
+    open, so rendering it unchecked is the other way a dead login URL reaches the user.
+    Nothing polls in the `expired` state: it only moves when the user asks for a new URL.
 - **Credential scoping:** this is a multiuser app, so a credential is keyed by a
   backend-minted secret (`cirro.CredentialStore`, `X-SDS-Cirro-Token`), held in process
   memory and dropped after `IDLE_EXPIRY_S` (8 h) without use. Deliberately **not** keyed
@@ -1504,7 +1527,9 @@ Upload saved checkpoint sessions to [Cirro](https://cirro.bio/) as a dataset
   shipping a collection that silently won't open.
 - **UI:** one sidebar entry that reads "Connect to Cirro" until this browser is signed
   in and "Upload to Cirro" (subtitled with the Cirro username and domain) after, plus a
-  "Disconnect from Cirro" entry. The upload dialog lists Cirro projects, a dataset name,
+  "Disconnect from Cirro" entry. While a login is pending the connect dialog shows the
+  login URL and a "Refresh login token" action (spinner in place of the URL while the new
+  one is being issued); once expired it says so and keeps only that action. The upload dialog lists Cirro projects, a dataset name,
   a description, an optional folder (free-text with typeahead, see below), and saved
   sessions (multi-select). Uploads always use the generic "Files" ingest process
   (`custom_dataset`), so there is no process picker. In-flight uploads survive a

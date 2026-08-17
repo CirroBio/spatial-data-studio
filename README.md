@@ -213,7 +213,9 @@ people can use the same running app without sharing credentials.
 1. **Connect to Cirro** asks for your Cirro domain (for example `app.cirro.bio`) and gives
    you a login link. Open it, sign in as you normally would, and the dialog updates
    itself when you're done — closing it won't cancel the login. Everything else about
-   your account is discovered from the domain.
+   your account is discovered from the domain. A login link is only good for about half
+   an hour; come back to a stale one and the dialog says so and offers **Refresh login
+   token**, which gets you a fresh link for the same account.
 2. The menu entry then reads **Upload to Cirro** and shows which account you're signed
    in as. **Disconnect from Cirro** signs you out of this browser.
 3. The upload dialog asks for a project, a dataset name, an optional description and

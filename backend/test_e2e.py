@@ -1,6 +1,7 @@
 """End-to-end backend test against the real visium_hne dataset (no Docker/frontend).
 Exercises: load -> compute -> compute -> Arrow fetch -> plot -> save -> reload.
 """
+import datetime
 import io
 import json
 import os
@@ -1257,17 +1258,34 @@ def run_cirro_auth_flow(client):
     print("[ok] cirro: unauthenticated calls refused (401), client id is not a credential")
 
     # ---- store: mint, look up, expire, drop. Two tokens never collide.
-    cred = cirro.Credential(domain="example.cirro.bio", login_url="https://x/login", auth=None)
+    live_code = time.monotonic() + cirro.IDLE_EXPIRY_S
+    cred = cirro.Credential(domain="example.cirro.bio", login_url="https://x/login", auth=None,
+                            login_deadline=live_code)
     token = cirro.CREDENTIALS.put(cred)
-    other = cirro.CREDENTIALS.put(cirro.Credential(domain="d2", login_url="u2", auth=None))
+    other = cirro.CREDENTIALS.put(cirro.Credential(domain="d2", login_url="u2", auth=None,
+                                                   login_deadline=live_code))
     assert token != other and len(token) > 20, "credential token must be unguessable"
     assert cirro.CREDENTIALS.get(token) is cred
     assert client.get("/api/cirro/auth", headers={"X-SDS-Cirro-Token": token}).json() \
         == {**cred.public(), "default_domain": config.CIRRO_BASE_URL,
             "viewer_bundled": cirro.viewer_available()}
     # A pending credential is not yet usable for anything but reading its own state.
+    assert cred.public()["state"] == "pending" and cred.public()["login_url"]
     assert client.get("/api/cirro/projects",
                       headers={"X-SDS-Cirro-Token": token}).status_code == 401
+
+    # ---- a pending login past its device code's deadline reports itself expired and
+    # stops handing out the dead login URL, without waiting for the SDK's poll thread
+    # (which sleeps between checks) to reach the same conclusion.
+    cred.login_deadline = time.monotonic() - 1
+    assert cred.state == "pending", "expiry must be derived, not written over the state"
+    expired = client.get("/api/cirro/auth", headers={"X-SDS-Cirro-Token": token}).json()
+    assert expired["state"] == "expired", expired
+    assert expired["login_url"] is None, "served a login URL Cirro no longer honors"
+    assert expired["domain"] == "example.cirro.bio", "refresh needs the domain to reuse"
+    assert client.get("/api/cirro/projects",
+                      headers={"X-SDS-Cirro-Token": token}).status_code == 401
+    cred.login_deadline = live_code
 
     cred.last_used -= cirro.IDLE_EXPIRY_S + 1
     assert cirro.CREDENTIALS.get(token) is None, "idle credential not expired"
@@ -1280,8 +1298,27 @@ def run_cirro_auth_flow(client):
     assert cirro._login_url("To authenticate, visit https://x.cirro.bio/device and enter AB-CD.") \
         == "https://x.cirro.bio/device"
 
+    # ---- the deadline comes off the SDK's flow response, which is the only place the
+    # device code's lifetime is exposed. Both halves of that coupling are checked here,
+    # since neither needs a real login: the SDK still declares the field, and a stub
+    # flow converts to a monotonic instant (a past expiry clamps to now, never a
+    # negative window that would read as "already expired by hours").
+    from cirro.auth.oauth_models import DeviceTokenResponse
+    assert "expiry" in DeviceTokenResponse.__annotations__, \
+        "the Cirro SDK renamed the device-code expiry field"
+
+    class _StubAuth:
+        def __init__(self, offset_s):
+            stamp = datetime.datetime.now().astimezone() + datetime.timedelta(seconds=offset_s)
+            self._flow = {"expiry": stamp.isoformat()}
+
+    assert 590 < cirro._login_deadline(_StubAuth(600)) - time.monotonic() <= 600
+    assert cirro._login_deadline(_StubAuth(-60)) <= time.monotonic()
+    print("[ok] cirro: device-code deadline read from the SDK flow, expiry state derived")
+
     # ---- a connected credential still can't reach outside DATA_DIR.
-    live = cirro.Credential(domain="d", login_url="u", auth=None, state="connected")
+    live = cirro.Credential(domain="d", login_url="u", auth=None, login_deadline=live_code,
+                            state="connected")
     live_token = cirro.CREDENTIALS.put(live)
     hdr = {"X-SDS-Cirro-Token": live_token}
     for bad in ("/etc/passwd", str(config.DATA_DIR / ".." / "escape.zarr.zip")):

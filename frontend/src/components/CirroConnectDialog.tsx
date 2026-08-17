@@ -26,29 +26,44 @@ export default function CirroConnectDialog({ onClose, onConnected }: Props) {
 
   const state = cirroAuth?.state ?? 'disconnected';
   const pending = state === 'pending';
+  const expired = state === 'expired';
 
-  // While the device-code flow is open, poll until the user completes it in their
-  // browser. The flow itself lives on the backend, so closing this dialog doesn't
-  // abandon it — reopening picks the same pending login back up.
+  // Read the login state once as the dialog opens, then — while a device-code flow is
+  // open — poll until the user completes it in their browser. The opening read matters:
+  // the store's copy is loaded at startup and only kept fresh by this poll, so without
+  // it the dialog can present a login URL that died hours ago. The flow itself lives on
+  // the backend, so closing this dialog doesn't abandon it — reopening picks the same
+  // pending login back up.
+  // Both are suspended during a restart: they carry the credential token the restart is
+  // about to replace, and a reply landing after it would report 'disconnected'.
   useEffect(() => {
-    if (!pending) return;
+    if (starting) return;
     let stopped = false;
-    const timer = setInterval(async () => {
+    const read = async () => {
       try {
         const auth = await getCirroAuth();
         if (stopped) return;
         setCirroAuth(auth);
         if (auth.state === 'connected') onConnectedRef.current?.();
       } catch { /* transient; the next tick retries */ }
-    }, POLL_MS);
-    return () => { stopped = true; clearInterval(timer); };
-  }, [pending, setCirroAuth]);
+    };
+    read();
+    // Nothing to wait for once the code has expired — the state only moves again when
+    // the user asks for a new login URL.
+    const timer = pending ? setInterval(read, POLL_MS) : undefined;
+    return () => { stopped = true; if (timer) clearInterval(timer); };
+  }, [pending, starting, setCirroAuth]);
 
-  async function handleConnect() {
+  // Starts a flow and, when one is already pending, replaces it: a device code has a
+  // short life at Cirro's end, so a login URL the user comes back to later can be dead
+  // while the backend still reports the flow as pending. Asking again against the same
+  // domain is the whole of "refresh the login token" — the backend drops the credential
+  // this browser held and mints a new one with a fresh URL.
+  async function handleConnect(targetDomain: string) {
     setStarting(true);
     setError(null);
     try {
-      setCirroAuth(await connectToCirro(domain.trim()));
+      setCirroAuth(await connectToCirro(targetDomain.trim()));
     } catch (err) {
       setError(formatError(err));
     } finally {
@@ -84,6 +99,17 @@ export default function CirroConnectDialog({ onClose, onConnected }: Props) {
             Connected to <span className="font-mono">{cirroAuth?.domain}</span>
             {cirroAuth?.username && <> as <span className="font-mono">{cirroAuth.username}</span></>}.
           </div>
+        ) : (pending || expired) && starting ? (
+          <div className="text-xs text-muted flex items-center gap-2 py-2">
+            <span className="w-4 h-4 rounded-full border-2 border-border border-t-accent animate-spin" />
+            Asking Cirro for a new login link…
+          </div>
+        ) : expired ? (
+          <div className="text-sm text-text">
+            This login link has expired — Cirro's sign-in codes are only good for about
+            half an hour. Refresh it for a new link; you stay on{' '}
+            <span className="font-mono">{cirroAuth?.domain}</span>.
+          </div>
         ) : pending ? (
           <>
             <div className="flex flex-col gap-1.5">
@@ -98,7 +124,8 @@ export default function CirroConnectDialog({ onClose, onConnected }: Props) {
               </a>
               <span className="text-[10px] text-muted/60">
                 Opens Cirro in a new tab. This dialog updates itself once you finish;
-                closing it won't cancel the login.
+                closing it won't cancel the login. If the link has expired, get a
+                working one with "Refresh login token".
               </span>
             </div>
             <div className="text-xs text-muted flex items-center gap-2">
@@ -115,7 +142,7 @@ export default function CirroConnectDialog({ onClose, onConnected }: Props) {
               id="cirro-domain"
               value={domain}
               onChange={(e) => setDomain(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && domain.trim()) handleConnect(); }}
+              onKeyDown={(e) => { if (e.key === 'Enter' && domain.trim()) handleConnect(domain); }}
               autoComplete="off"
               spellCheck={false}
               className={`${fieldClass} font-mono`}
@@ -135,9 +162,21 @@ export default function CirroConnectDialog({ onClose, onConnected }: Props) {
         >
           {state === 'connected' ? 'Close' : 'Cancel'}
         </button>
-        {state !== 'connected' && !pending && (
+        {(pending || expired) && (
           <button
-            onClick={handleConnect}
+            onClick={() => handleConnect(cirroAuth?.domain ?? domain)}
+            disabled={starting}
+            className="px-4 py-2 bg-accent hover:bg-accent/80 disabled:opacity-50 text-on-accent rounded text-sm transition-colors flex items-center gap-2"
+          >
+            {starting && (
+              <span className="w-3.5 h-3.5 rounded-full border-2 border-on-accent/30 border-t-on-accent animate-spin" />
+            )}
+            {starting ? 'Refreshing…' : 'Refresh login token'}
+          </button>
+        )}
+        {state !== 'connected' && !pending && !expired && (
+          <button
+            onClick={() => handleConnect(domain)}
             disabled={!domain.trim() || starting}
             className="px-4 py-2 bg-accent hover:bg-accent/80 disabled:opacity-50 text-on-accent rounded text-sm transition-colors"
           >
