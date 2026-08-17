@@ -126,10 +126,16 @@ frontend/   React + TS + Vite + Tailwind SPA around that canvas (an npm workspac
                   panels (CanvasControls / EmbeddingControls and their fields), and the
                   StudioSpatialCanvas / StudioEmbeddingCanvas adapters that drop them
                   into the library canvas' `controls` slot
-nextflow/   Nextflow workflows wrapping backend/cli.py (uv installs deps at runtime; no image build)
-  main.nf         one dataset, one recipe
-  xenium/         batch Xenium: many bundles -> recipe chain -> MultiQC report + a
-                  serverless viewer/ folder of the resulting checkpoints
+nextflow/   The workflow (one entrypoint), wrapping backend/cli.py; uv installs deps at
+            runtime, so there is no image build
+  main.nf           discover datasets under an input -> per-type recipes -> mirrored
+                    checkpoints + MultiQC report + a serverless viewer
+  data_types.json   the catalog: recognition patterns, readers, recipes and which knob
+                    applies to which type (schema: data_types.schema.json). All
+                    data-type-specific knowledge lives here, none of it in the workflow
+  modules/          discovery: generic, catalog-driven tree walk and classification
+  tests/            check_catalog.py (catalog <-> schema <-> params <-> recipes) and the
+                    discovery harness it drives
 docker/     single-image build (multi-stage), nginx edge, supervisor
 docs/       CONTRACT.md (REST/SSE/Arrow API), images/ (README screenshots)
 docs-site/  VitePress documentation site published to GitHub Pages. Renders the repo's own
@@ -616,8 +622,14 @@ collection as well as embeddable per page. Pull requests build but do not publis
   concurrent request is not stalled for the whole compress on the single worker).
 - `nextflow lint nextflow/` — Nextflow's own linter over every `.nf` and
   `nextflow.config` in the repo. Required to be clean (see `CLAUDE.md`): it catches what
-  the legacy parser silently accepts but the language spec does not, such as top-level
-  variable assignments in a script. `-format` reformats the files it can parse.
+  the legacy parser silently accepts but the language spec does not — top-level variable
+  assignments, `while`, `switch`, `continue`, closures called as local functions.
+  `-format` reformats the files it can parse.
+- `python nextflow/tests/check_catalog.py` — the workflow's declarative half: validates
+  `data_types.json` against its schema, checks every recipe it names exists, verifies each
+  common parameter's `applies_to` really is the set of types whose recipes declare it,
+  checks the params agree across `nextflow.config` and `nextflow_schema.json`, and runs
+  discovery over a synthetic tree of every catalogued type.
 - `cd frontend && npx tsc --noEmit -p tsconfig.app.json && npm run build` — typecheck
   + build.
 - `cd frontend && npm run check:tours` — static guard that every guided-tour anchor
@@ -684,23 +696,21 @@ save — so a longer analysis composes the bundled recipes instead of restating 
 steps in a new file. `--recipe-params` is shared by all of them: each recipe fills only
 the `$param` names it declares, and ignores the rest.
 
-**Nextflow.** Two workflows, both wrapping the CLI in a container that installs the
-pinned Python deps at runtime with `uv`, so there is no image to build.
-
-- `nextflow/main.nf` — one dataset, one recipe; exposes the CLI's own parameters.
-- `nextflow/xenium/main.nf` — a batch: many raw Xenium bundles, each run through the
-  standard preprocess → Leiden → cellular-neighborhoods recipe chain, publishing a
-  MultiQC report over all of them and a `viewer/` folder that is a complete serverless
-  deployment (§14.3) of the resulting checkpoints. It needs a built SPA at
-  `frontend/dist` (`npm ci && npm run build`) — it does not build one.
+**Nextflow.** One workflow, `nextflow/main.nf`, wrapping the CLI in a container that
+installs the pinned Python deps at runtime with `uv`, so there is no image to build.
+Point it at a folder; it finds the spatial datasets inside (all eight readers), loads
+each with the right one, runs that data type's recipes, and publishes the checkpoints in
+a tree mirroring where they were found, plus a MultiQC report and a serverless viewer
+(§14.3). It needs a built SPA at `frontend/dist` (`npm ci && npm run build`) — it does
+not build one.
 
 ```bash
 nextflow run nextflow/main.nf -profile test,docker
-nextflow run nextflow/xenium/main.nf -profile test,docker
 ```
 
-See [`nextflow/README.md`](nextflow/README.md) and
-[`nextflow/xenium/README.md`](nextflow/xenium/README.md) for the full parameter lists.
+Everything data-type-specific is in `nextflow/data_types.json`; the workflow itself has
+no per-format branch. See [`nextflow/README.md`](nextflow/README.md) for the parameters
+and [`nextflow/nextflow_schema.json`](nextflow/nextflow_schema.json) for their schema.
 
 ## Snapshots
 

@@ -1,0 +1,166 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/cirrobio/spatial-data-studio/nextflow/nextflow_schema.json",
+  "title": "Spatial data analysis pipeline parameters",
+  "description": "Finds spatial datasets under an input location, loads each with the reader for its data type, preprocesses it, and publishes checkpoints, a MultiQC report and a browsable viewer. The analysis parameters below are generated from nextflow/data_types.json; each says which data types it applies to, because not every knob is meaningful for every format.",
+  "type": "object",
+  "definitions": {
+    "input_output": {
+      "title": "Input and output",
+      "type": "object",
+      "required": [
+        "input"
+      ],
+      "properties": {
+        "input": {
+          "type": "string",
+          "format": "path",
+          "description": "A folder to search for datasets, or a .json/.yaml file mapping an output prefix to each root folder, e.g. {\"folderA\": \"s3://bucket/a/\", \"folderB/folderC\": \"s3://other/b/\"}. Roots may be local or object-storage paths."
+        },
+        "outdir": {
+          "type": "string",
+          "format": "directory-path",
+          "default": "results",
+          "description": "Publish directory. Checkpoints go under <outdir>/results/ in a tree mirroring where they were found; the viewer's index.html sits at <outdir>/."
+        },
+        "title": {
+          "type": "string",
+          "default": "Spatial data analysis",
+          "description": "Names the viewer collection and the MultiQC report."
+        }
+      }
+    },
+    "discovery": {
+      "title": "Discovery",
+      "type": "object",
+      "properties": {
+        "data_types": {
+          "type": "string",
+          "description": "Comma-separated data-type ids to look for. Default is every type in the catalog: xenium, visium_hd, visium, merscope, cosmx, curio, steinbock, mcmicro."
+        },
+        "recurse": {
+          "type": "boolean",
+          "default": true,
+          "description": "Walk into subfolders looking for datasets. A folder that is recognised as a dataset is not descended into. Off means each input root is itself expected to be a dataset."
+        },
+        "preprocess": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run each data type's preprocessing recipes after loading. Off loads and publishes the data unanalysed."
+        }
+      }
+    },
+    "analysis": {
+      "title": "Analysis",
+      "description": "Applied only to the data types named in each description; a type whose recipes do not declare a parameter ignores it.",
+      "type": "object",
+      "properties": {
+        "min_reads_per_cell": {
+          "type": "integer",
+          "default": 10,
+          "description": "Drop cells/spots with fewer than this many total transcripts. (10x Xenium, Vizgen MERSCOPE, NanoString CosMx, 10x Visium, 10x Visium HD, Curio Seeker)"
+        },
+        "max_reads_per_cell": {
+          "type": "integer",
+          "default": 35000,
+          "description": "Drop spots with more than this many total counts (doublet/artefact ceiling). Only the whole-transcriptome recipes apply a ceiling; a targeted panel has no meaningful upper bound. (10x Visium, 10x Visium HD, Curio Seeker)"
+        },
+        "min_cells_per_gene": {
+          "type": "integer",
+          "default": 5,
+          "description": "Drop genes detected in fewer than this many cells. (10x Xenium, Vizgen MERSCOPE, NanoString CosMx)"
+        },
+        "n_top_genes": {
+          "type": "integer",
+          "default": 2000,
+          "description": "Highly variable genes kept for PCA. Whole-transcriptome data only \u2014 targeted panels are kept whole. (10x Visium, 10x Visium HD, Curio Seeker)"
+        },
+        "cluster_key": {
+          "type": "string",
+          "default": "leiden",
+          "description": "obs column the clustering writes, and the labels the neighborhood analysis groups by. (10x Xenium, Vizgen MERSCOPE, NanoString CosMx, 10x Visium, 10x Visium HD, Curio Seeker, Steinbock (imaging mass cytometry), MCMICRO (multiplexed tissue imaging))"
+        },
+        "resolution": {
+          "type": "number",
+          "default": 1.0,
+          "description": "Leiden resolution: higher gives more, smaller clusters. (10x Xenium, Vizgen MERSCOPE, NanoString CosMx, Steinbock (imaging mass cytometry), MCMICRO (multiplexed tissue imaging))"
+        },
+        "marker_method": {
+          "type": "string",
+          "default": "wilcoxon",
+          "description": "Differential-expression test used to rank marker genes per cluster. (10x Xenium, Vizgen MERSCOPE, NanoString CosMx, 10x Visium, 10x Visium HD, Curio Seeker)",
+          "enum": [
+            "wilcoxon",
+            "t-test",
+            "t-test_overestim_var",
+            "logreg"
+          ]
+        },
+        "n_marker_genes": {
+          "type": "integer",
+          "default": 5,
+          "description": "Top marker genes per cluster shown in the marker dotplot. (10x Xenium, Vizgen MERSCOPE, NanoString CosMx)"
+        },
+        "n_neighborhoods": {
+          "type": "integer",
+          "default": 10,
+          "description": "Number of recurring cellular neighborhoods (niches) to find. (10x Xenium, Vizgen MERSCOPE, NanoString CosMx, 10x Visium, 10x Visium HD, Curio Seeker, Steinbock (imaging mass cytometry), MCMICRO (multiplexed tissue imaging))"
+        },
+        "neighborhood_key": {
+          "type": "string",
+          "default": "cellular_neighborhood",
+          "description": "obs column the neighborhood labels are written to. (10x Xenium, Vizgen MERSCOPE, NanoString CosMx, 10x Visium, 10x Visium HD, Curio Seeker, Steinbock (imaging mass cytometry), MCMICRO (multiplexed tissue imaging))"
+        }
+      }
+    },
+    "advanced": {
+      "title": "Advanced",
+      "type": "object",
+      "properties": {
+        "lowres_max_image_mb": {
+          "type": "number",
+          "default": 10,
+          "minimum": 0.01,
+          "description": "Image budget for the low-res copy written beside every checkpoint: finest pyramid levels are dropped until the images fit."
+        },
+        "catalog": {
+          "type": "string",
+          "format": "file-path",
+          "description": "The data-type catalog (see nextflow/data_types.schema.json)."
+        },
+        "backend": {
+          "type": "string",
+          "format": "directory-path",
+          "description": "The repo's backend/ tree (cli.py + app/, which carries the recipes)."
+        },
+        "viewer_dist": {
+          "type": "string",
+          "format": "directory-path",
+          "description": "A built viewer SPA. The workflow does not build one: run `npm ci && npm run build` at the repo root."
+        },
+        "multiqc_container": {
+          "type": "string",
+          "description": "Image the MultiQC report is rendered in."
+        },
+        "os_packages": {
+          "type": "string",
+          "description": "Apt packages installed in the analysis container before the run. A failed install stops the task."
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "$ref": "#/definitions/input_output"
+    },
+    {
+      "$ref": "#/definitions/discovery"
+    },
+    {
+      "$ref": "#/definitions/analysis"
+    },
+    {
+      "$ref": "#/definitions/advanced"
+    }
+  ]
+}

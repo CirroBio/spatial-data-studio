@@ -1,0 +1,408 @@
+{
+  "catalog_version": 1,
+  "common_params": {
+    "min_reads_per_cell": {
+      "description": "Drop cells/spots with fewer than this many total transcripts.",
+      "type": "integer",
+      "default": 10,
+      "recipe_params": [
+        "min_counts"
+      ],
+      "applies_to": [
+        "xenium",
+        "merscope",
+        "cosmx",
+        "visium",
+        "visium_hd",
+        "curio"
+      ]
+    },
+    "max_reads_per_cell": {
+      "description": "Drop spots with more than this many total counts (doublet/artefact ceiling). Only the whole-transcriptome recipes apply a ceiling; a targeted panel has no meaningful upper bound.",
+      "type": "integer",
+      "default": 35000,
+      "recipe_params": [
+        "max_counts"
+      ],
+      "applies_to": [
+        "visium",
+        "visium_hd",
+        "curio"
+      ]
+    },
+    "min_cells_per_gene": {
+      "description": "Drop genes detected in fewer than this many cells.",
+      "type": "integer",
+      "default": 5,
+      "recipe_params": [
+        "min_cells"
+      ],
+      "applies_to": [
+        "xenium",
+        "merscope",
+        "cosmx"
+      ]
+    },
+    "n_top_genes": {
+      "description": "Highly variable genes kept for PCA. Whole-transcriptome data only \u2014 targeted panels are kept whole.",
+      "type": "integer",
+      "default": 2000,
+      "recipe_params": [
+        "n_top_genes"
+      ],
+      "applies_to": [
+        "visium",
+        "visium_hd",
+        "curio"
+      ]
+    },
+    "cluster_key": {
+      "description": "obs column the clustering writes, and the labels the neighborhood analysis groups by.",
+      "type": "string",
+      "default": "leiden",
+      "recipe_params": [
+        "cluster_key",
+        "cell_type_key"
+      ],
+      "applies_to": [
+        "xenium",
+        "merscope",
+        "cosmx",
+        "visium",
+        "visium_hd",
+        "curio",
+        "steinbock",
+        "mcmicro"
+      ]
+    },
+    "resolution": {
+      "description": "Leiden resolution: higher gives more, smaller clusters.",
+      "type": "number",
+      "default": 1.0,
+      "recipe_params": [
+        "resolution"
+      ],
+      "applies_to": [
+        "xenium",
+        "merscope",
+        "cosmx",
+        "steinbock",
+        "mcmicro"
+      ]
+    },
+    "marker_method": {
+      "description": "Differential-expression test used to rank marker genes per cluster.",
+      "type": "string",
+      "default": "wilcoxon",
+      "enum": [
+        "wilcoxon",
+        "t-test",
+        "t-test_overestim_var",
+        "logreg"
+      ],
+      "recipe_params": [
+        "method"
+      ],
+      "applies_to": [
+        "xenium",
+        "merscope",
+        "cosmx",
+        "visium",
+        "visium_hd",
+        "curio"
+      ]
+    },
+    "n_marker_genes": {
+      "description": "Top marker genes per cluster shown in the marker dotplot.",
+      "type": "integer",
+      "default": 5,
+      "recipe_params": [
+        "n_genes"
+      ],
+      "applies_to": [
+        "xenium",
+        "merscope",
+        "cosmx"
+      ]
+    },
+    "n_neighborhoods": {
+      "description": "Number of recurring cellular neighborhoods (niches) to find.",
+      "type": "integer",
+      "default": 10,
+      "recipe_params": [
+        "n_neighborhoods"
+      ],
+      "applies_to": [
+        "xenium",
+        "merscope",
+        "cosmx",
+        "visium",
+        "visium_hd",
+        "curio",
+        "steinbock",
+        "mcmicro"
+      ]
+    },
+    "neighborhood_key": {
+      "description": "obs column the neighborhood labels are written to.",
+      "type": "string",
+      "default": "cellular_neighborhood",
+      "recipe_params": [
+        "neighborhood_key"
+      ],
+      "applies_to": [
+        "xenium",
+        "merscope",
+        "cosmx",
+        "visium",
+        "visium_hd",
+        "curio",
+        "steinbock",
+        "mcmicro"
+      ]
+    }
+  },
+  "data_types": [
+    {
+      "id": "xenium",
+      "label": "10x Xenium",
+      "reader": "io.xenium",
+      "detect": {
+        "all_of": [
+          "experiment.xenium"
+        ],
+        "any_of": [
+          [
+            "cell_feature_matrix.h5",
+            "cell_feature_matrix.zarr.zip",
+            "cell_feature_matrix"
+          ]
+        ]
+      },
+      "run_metrics": {
+        "file": "metrics_summary.csv",
+        "format": "csv_first_row",
+        "columns": [
+          "panel_name",
+          "region_area",
+          "num_cells_detected",
+          "cells_per_100um2",
+          "median_transcripts_per_cell",
+          "median_genes_per_cell",
+          "total_high_quality_decoded_transcripts",
+          "decoded_transcripts_per_100um2",
+          "fraction_transcripts_decoded_q20",
+          "fraction_transcripts_assigned",
+          "adjusted_negative_control_probe_rate",
+          "estimated_number_of_false_positive_transcripts_per_cell"
+        ]
+      },
+      "recipes": [
+        "01_xenium_preprocess_qc.json",
+        "02_leiden_cluster_markers.json",
+        "04_neighborhood_analysis.json"
+      ],
+      "validated": true,
+      "notes": "Targeted panel of a few hundred genes at cell resolution, so no highly-variable-gene selection. Run end to end against the 10x 'Human Lung (2 FOV)' bundle."
+    },
+    {
+      "id": "visium_hd",
+      "label": "10x Visium HD",
+      "reader": "io.visium_hd",
+      "detect": {
+        "any_of": [
+          [
+            "binned_outputs",
+            "segmented_outputs",
+            "*feature_slice.h5"
+          ]
+        ]
+      },
+      "run_metrics": {
+        "file": "metrics_summary.csv",
+        "format": "csv_first_row",
+        "columns": [
+          "Number of Spots Under Tissue",
+          "Mean Reads per Spot",
+          "Median Genes per Spot",
+          "Median UMI Counts per Spot",
+          "Number of Reads",
+          "Valid Barcodes",
+          "Reads Mapped Confidently to Genome",
+          "Fraction Reads in Spots Under Tissue"
+        ]
+      },
+      "recipes": [
+        "22_visium_analysis_scanpy.json",
+        "04_neighborhood_analysis.json"
+      ],
+      "validated": false,
+      "notes": "Whole-transcriptome bins. Checked before visium via visium's none_of, because an HD run also carries a Visium-shaped count matrix inside binned_outputs/square_XXXum/."
+    },
+    {
+      "id": "visium",
+      "label": "10x Visium",
+      "reader": "io.visium",
+      "detect": {
+        "all_of": [
+          "spatial/scalefactors_json.json"
+        ],
+        "any_of": [
+          [
+            "*filtered_feature_bc_matrix.h5",
+            "*raw_feature_bc_matrix.h5"
+          ],
+          [
+            "spatial/tissue_positions.csv",
+            "spatial/tissue_positions_list.csv"
+          ]
+        ],
+        "none_of": [
+          "binned_outputs",
+          "*feature_slice.h5"
+        ]
+      },
+      "run_metrics": {
+        "file": "metrics_summary.csv",
+        "format": "csv_first_row",
+        "columns": [
+          "Number of Spots Under Tissue",
+          "Mean Reads per Spot",
+          "Median Genes per Spot",
+          "Median UMI Counts per Spot",
+          "Number of Reads",
+          "Valid Barcodes",
+          "Reads Mapped Confidently to Genome",
+          "Fraction Reads in Spots Under Tissue"
+        ]
+      },
+      "recipes": [
+        "22_visium_analysis_scanpy.json",
+        "04_neighborhood_analysis.json"
+      ],
+      "validated": false,
+      "notes": "Whole-transcriptome spots, so the scanpy tutorial path with HVG selection. Count thresholds are Visium-scale and would over-filter a targeted panel."
+    },
+    {
+      "id": "merscope",
+      "label": "Vizgen MERSCOPE",
+      "reader": "io.merscope",
+      "detect": {
+        "all_of": [
+          "detected_transcripts.csv"
+        ],
+        "any_of": [
+          [
+            "cell_by_gene.csv"
+          ],
+          [
+            "cell_metadata.csv"
+          ]
+        ]
+      },
+      "recipes": [
+        "01_xenium_preprocess_qc.json",
+        "02_leiden_cluster_markers.json",
+        "04_neighborhood_analysis.json"
+      ],
+      "validated": false,
+      "notes": "Same modality as Xenium \u2014 targeted panel, raw counts, cell resolution \u2014 so it takes the same recipe chain despite the name on the first recipe."
+    },
+    {
+      "id": "cosmx",
+      "label": "NanoString CosMx",
+      "reader": "io.cosmx",
+      "detect": {
+        "any_of": [
+          [
+            "*exprMat_file.csv"
+          ],
+          [
+            "*metadata_file.csv"
+          ],
+          [
+            "*fov_positions_file.csv"
+          ]
+        ]
+      },
+      "recipes": [
+        "01_xenium_preprocess_qc.json",
+        "02_leiden_cluster_markers.json",
+        "04_neighborhood_analysis.json"
+      ],
+      "validated": false,
+      "notes": "Targeted panel at cell resolution, as Xenium. The reader also accepts CellComposite/ and CellLabels/ when present, but the three per-FOV CSVs are what identifies the export."
+    },
+    {
+      "id": "curio",
+      "label": "Curio Seeker",
+      "reader": "io.curio",
+      "detect": {
+        "all_of": [
+          "anndata.h5ad"
+        ],
+        "any_of": [
+          [
+            "cluster_assignment.txt",
+            "Metrics.csv",
+            "variable_features_clusters.txt"
+          ]
+        ]
+      },
+      "recipes": [
+        "22_visium_analysis_scanpy.json",
+        "04_neighborhood_analysis.json"
+      ],
+      "validated": false,
+      "notes": "Slide-seq-style whole-transcriptome beads, so the whole-transcriptome path rather than the targeted-panel one. Beads are far shallower than Visium spots \u2014 min/max_reads_per_cell almost certainly need lowering."
+    },
+    {
+      "id": "steinbock",
+      "label": "Steinbock (imaging mass cytometry)",
+      "reader": "io.steinbock",
+      "detect": {
+        "all_of": [
+          "cells.h5ad"
+        ],
+        "any_of": [
+          [
+            "masks_deepcell",
+            "masks_ilastik"
+          ],
+          [
+            "ome"
+          ]
+        ]
+      },
+      "recipes": [
+        "25_cluster_protein_intensities.json",
+        "04_neighborhood_analysis.json"
+      ],
+      "validated": false,
+      "notes": "Per-cell protein intensities, not transcript counts: normalize_total/log1p and HVG selection do not apply, so this takes the z-score path instead."
+    },
+    {
+      "id": "mcmicro",
+      "label": "MCMICRO (multiplexed tissue imaging)",
+      "reader": "io.mcmicro",
+      "detect": {
+        "all_of": [
+          "quantification",
+          "markers.csv"
+        ],
+        "any_of": [
+          [
+            "registration",
+            "dearray"
+          ]
+        ]
+      },
+      "recipes": [
+        "25_cluster_protein_intensities.json",
+        "04_neighborhood_analysis.json"
+      ],
+      "validated": false,
+      "notes": "Protein intensities per cell, as Steinbock. markers.csv plus quantification/ is what distinguishes an MCMICRO output directory."
+    }
+  ]
+}

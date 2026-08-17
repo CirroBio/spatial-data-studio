@@ -1,0 +1,21 @@
+# MultiQC settings for the spatial-data workflow. Every section is custom content
+# written by bin/dataset_metrics.py — MultiQC merges the per-dataset files that share
+# an `id` into one cross-dataset section, so the ordering below is the report's outline.
+report_comment: >
+  Every spatial dataset found under the input, whatever its type. The interactive
+  viewer for the same datasets is <code>index.html</code> at the top of this output
+  folder; the checkpoints themselves are under <code>results/</code>, in a tree
+  mirroring where they were found.
+
+custom_content:
+  order:
+    - dataset_status
+    - dataset_run
+    - dataset_analysis
+    - dataset_clusters
+    - dataset_neighborhoods
+
+# The analysis paths are Nextflow work directories, and the timestamp defeats
+# byte-identical reruns; neither tells a reader anything.
+show_analysis_paths: false
+show_analysis_time: false

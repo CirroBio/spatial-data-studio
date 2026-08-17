@@ -21,9 +21,10 @@ New Session "load" path). `--recipe` may be repeated to run several recipes back
 to back in the same session, so a longer analysis composes the bundled recipes
 instead of restating their steps. The output folder receives `<name>.zarr.zip`
 (the full object + app_state) and, per plot step,
-`plots/<NN>_<namespace>.<function>/figure.{svg,pdf}`. `--lowres-copy` adds
-`<name>.lowres.zarr.zip`: the same session with the finest pyramid level dropped
-from every image, so it holds the whole analysis in a much smaller file.
+`plots/<NN>_<namespace>.<function>/figure.{svg,pdf}`. `--lowres-max-image-mb`
+adds `<name>.lowres.zarr.zip`: the same session with enough of each image's
+finest pyramid levels dropped to fit that budget, so it holds the whole analysis
+in a much smaller file.
 """
 from __future__ import annotations
 
@@ -45,9 +46,10 @@ def _parse_args(argv):
                         "or 'zarr'/'spatialdata' to load an existing SpatialData store")
     p.add_argument("--input", required=True,
                    help="path to the raw data folder (reader mode) or the .zarr/.zarr.zip (zarr mode)")
-    p.add_argument("--recipe", required=True, action="append", metavar="RECIPE",
+    p.add_argument("--recipe", action="append", metavar="RECIPE",
                    help="path to a recipe JSON file, or the name of a bundled recipe; "
-                        "repeat to run several recipes back to back in one session")
+                        "repeat to run several recipes back to back in one session. "
+                        "Omit to just read the input and save it unanalysed")
     p.add_argument("--recipe-params", default=None,
                    help="JSON object of recipe-level parameter overrides (see the recipe's "
                         "`params`); values fill the recipe's $param references, defaults apply otherwise")
@@ -56,10 +58,11 @@ def _parse_args(argv):
                    help="JSON object of extra kwargs merged into the reader call (reader mode only)")
     p.add_argument("--name", default=None,
                    help="base name for the output .zarr.zip (default: derived from --input)")
-    p.add_argument("--lowres-copy", action="store_true",
-                   help="also write <name>.lowres.zarr.zip: the same session with the finest "
-                        "pyramid level dropped from every image — a much smaller file that "
-                        "still carries the full analysis, minus the deepest zoom")
+    p.add_argument("--lowres-max-image-mb", type=float, default=None, metavar="MB",
+                   help="also write <name>.lowres.zarr.zip: the same session with as many of "
+                        "each image's finest pyramid levels dropped as it takes to bring the "
+                        "images under this many MB — a much smaller file that still carries "
+                        "the full analysis, minus the deepest zoom")
     p.add_argument("--list-parsers", action="store_true",
                    help="print the available parser names and exit")
     return p.parse_args(argv)
@@ -116,7 +119,7 @@ def _load_recipe_steps(recipe_args: list[str], param_values: dict | None) -> lis
     chain of them."""
     from app import recipes
     steps = []
-    for recipe_arg in recipe_args:
+    for recipe_arg in recipe_args or []:
         path = Path(recipe_arg)
         if path.is_file():
             recipe = json.loads(path.read_text())
@@ -225,10 +228,10 @@ def main(argv=None) -> int:
         with sess.lock.reading():
             written = [save_spatialdata(sess.sdata, str(out_dir / f"{name}.zarr.zip"),
                                         sess.app_state, hash_name=False)]
-            if args.lowres_copy:
+            if args.lowres_max_image_mb is not None:
                 written.append(save_spatialdata(
                     sess.sdata, str(out_dir / f"{name}.lowres.zarr.zip"), sess.app_state,
-                    hash_name=False, drop_image_levels=1))
+                    hash_name=False, max_image_mb=args.lowres_max_image_mb))
     finally:
         sess.shutdown()
 

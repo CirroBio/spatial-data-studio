@@ -1,0 +1,134 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/cirrobio/spatial-data-studio/nextflow/data_types.schema.json",
+  "title": "Spatial data-type catalog",
+  "description": "Everything the workflow knows about a specific spatial data type: how to recognise a folder of it on disk, which reader loads it, and which bundled recipes preprocess it. The workflow itself contains no data-type-specific logic — adding or changing support is an edit to data_types.json alone.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["catalog_version", "common_params", "data_types"],
+  "properties": {
+    "catalog_version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Bumped when the shape of this file changes incompatibly."
+    },
+    "common_params": {
+      "type": "object",
+      "description": "Analysis knobs shared across data types, exposed once as workflow parameters. Each names the recipe parameter it fills and the data types it applies to; the workflow passes it only to those types, and nextflow_schema.json lists the applicable types in the parameter's description.",
+      "additionalProperties": { "$ref": "#/definitions/commonParam" }
+    },
+    "data_types": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/dataType" }
+    }
+  },
+  "definitions": {
+    "commonParam": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["description", "type", "default", "recipe_params", "applies_to"],
+      "properties": {
+        "description": { "type": "string", "minLength": 1 },
+        "type": { "enum": ["integer", "number", "string", "boolean"] },
+        "default": {},
+        "enum": {
+          "type": "array",
+          "minItems": 2,
+          "description": "Closed set of accepted values, mirrored into nextflow_schema.json."
+        },
+        "recipe_params": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Recipe-level parameter name(s) this fills. More than one when a single concept is spelled differently by the recipes it feeds — the cluster column is `cluster_key` to the clustering recipe and `cell_type_key` to the neighborhood one. A recipe that declares none of them ignores the value."
+        },
+        "applies_to": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" },
+          "description": "Data-type ids whose recipes actually declare one of `recipe_params`. Not every knob applies to every type — a targeted panel has no highly-variable-gene step, a whole-transcriptome one has no per-gene cell floor. Verified against the recipes themselves by tests/check_catalog.py, so this cannot drift, and mirrored into each parameter's description in nextflow_schema.json."
+        }
+      }
+    },
+    "dataType": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "reader", "detect", "recipes", "validated"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "Stable identifier — what --data_types filters on and what appears in reports."
+        },
+        "label": { "type": "string", "minLength": 1, "description": "Human-readable name." },
+        "reader": {
+          "type": "string",
+          "pattern": "^[a-z_]+\\.[a-z_0-9]+$",
+          "description": "Registry key of the read-effect function that loads this type (cli.py --parser)."
+        },
+        "reader_params": {
+          "type": "object",
+          "description": "Extra kwargs merged into the reader call (cli.py --reader-params)."
+        },
+        "detect": { "$ref": "#/definitions/detect" },
+        "run_metrics": { "$ref": "#/definitions/runMetrics" },
+        "recipes": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[0-9]{2}_[a-z0-9_]+\\.json$" },
+          "description": "Bundled recipe file names under backend/app/recipes/, run back to back in one session. Empty means this type loads but has no default preprocessing."
+        },
+        "validated": {
+          "type": "boolean",
+          "description": "Whether these recipes have actually been executed against real data of this type. False is honest, not a defect — it tells a reader the defaults are reasoned rather than proven."
+        },
+        "notes": { "type": "string", "description": "Why the recipe is what it is, for a reader deciding whether to trust it." }
+      }
+    },
+    "runMetrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "format", "columns"],
+      "description": "An instrument-written summary inside the data folder, surfaced in the report next to the analysis numbers. Optional — a format that ships no such file simply omits this.",
+      "properties": {
+        "file": { "type": "string", "minLength": 1, "description": "Path relative to the data folder." },
+        "format": {
+          "enum": ["csv_first_row"],
+          "description": "csv_first_row: a header row plus one row of values, the shape both 10x and Vizgen use."
+        },
+        "columns": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Which columns to surface. These files carry dozens; a report showing all of them is unreadable. Columns absent from a given file version are skipped rather than erroring."
+        }
+      }
+    },
+    "detect": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "How a folder of this type is recognised. Patterns are shell globs matched against paths relative to the candidate folder; a pattern containing '/' is matched against that subfolder's listing, so nesting stays explicit and discovery never walks a whole tree to test one folder. A folder matches when every all_of pattern matches, every any_of group has at least one match, and no none_of pattern matches.",
+      "properties": {
+        "all_of": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Every one of these must be present."
+        },
+        "any_of": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "description": "Each inner group must have at least one member present — the way a format that permits alternative file names is expressed."
+        },
+        "none_of": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "None of these may be present. This is how two types whose patterns overlap are told apart (e.g. a Visium HD run also carries Visium's count matrix, one level down)."
+        }
+      }
+    }
+  }
+}

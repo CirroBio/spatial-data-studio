@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "name": "Cluster protein intensities (highly multiplexed imaging)",
+    "description": "Clustering path for per-cell protein intensities from highly multiplexed imaging (imaging mass cytometry, CyCIF, CODEX): z-score each marker, then PCA → neighbors → Leiden → UMAP (2D, plus a 3-component UMAP in obsm['X_umap_3d']). Deliberately omits normalize_total/log1p and highly-variable-gene selection, which assume transcript counts.",
+    "provenance": "Follows the marker-scaling-then-Leiden phenotyping path of the Bodenmiller group's IMC data-analysis book (https://bodenmillergroup.github.io/IMCDataAnalysis/), expressed with scanpy's scale/PCA/neighbors and graspologic (MIT) Leiden."
+  },
+  "readme": "For panels measuring **protein intensity per cell**, not transcript counts — the tables that `io.steinbock` and `io.mcmicro` produce. Library-size normalization and log1p exist to tame count depth and are wrong here: the matrix is already a mean intensity per cell per channel, and a 40-marker panel has no uninformative genes to select away. Instead each marker is z-scored across cells (`sc.pp.scale`, clipped at `max_value` so one saturated cell cannot dominate a component), which puts dim and bright channels on comparable footing, and the standard PCA → neighbors → Leiden path follows. Clusters land in `obs[cluster_key]` and are cell phenotypes rather than transcriptional states. Follow with 'Neighborhood analysis (cellular neighborhoods)' to find the tissue niches those phenotypes form.",
+  "params": [
+    { "name": "max_value", "schema": { "type": "number", "default": 10 }, "widget": "number", "bound_to": null, "required": false, "tooltip": "clip z-scores above this, so a saturated cell cannot dominate a component" },
+    { "name": "cluster_key", "schema": { "type": "string", "default": "leiden" }, "widget": "text", "bound_to": null, "required": true, "tooltip": "obs column to write the cell-phenotype cluster labels into" },
+    { "name": "resolution", "schema": { "type": "number", "default": 1.0 }, "widget": "number", "bound_to": null, "required": false, "tooltip": "Leiden resolution: higher = more, smaller clusters" }
+  ],
+  "steps": [
+    { "namespace": "sc.pp", "function": "scale", "params": { "max_value": { "$param": "max_value" } } },
+    { "namespace": "sc.pp", "function": "pca", "params": {} },
+    { "namespace": "sc.pp", "function": "neighbors", "params": {} },
+    { "namespace": "custom", "function": "leiden", "params": { "key_added": { "$param": "cluster_key" }, "resolution": { "$param": "resolution" }, "n_iterations": 2 } },
+    { "namespace": "sc.tl", "function": "umap", "params": {} },
+    { "namespace": "sc.tl", "function": "umap", "params": { "n_components": 3, "key_added": "X_umap_3d" } }
+  ]
+}

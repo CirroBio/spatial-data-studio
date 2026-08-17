@@ -82,6 +82,19 @@ jobs:
             exit 1
           fi
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Check the data-type catalog
+        # The catalog, its schema, nextflow.config and nextflow_schema.json have to
+        # agree, and nothing at runtime would notice if they stopped. Also runs
+        # discovery over a synthetic tree of every catalogued type.
+        run: |
+          pip install --quiet jsonschema
+          python nextflow/tests/check_catalog.py
+
   frontend:
     runs-on: ubuntu-latest
     steps:

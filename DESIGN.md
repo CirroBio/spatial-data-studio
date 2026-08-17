@@ -2174,35 +2174,51 @@ python cli.py --parser <reader|zarr> --input <path> --recipe <file|name> --outpu
 
 ### 28.2 Nextflow workflow (`nextflow/`)
 
-`nextflow/main.nf` wraps the CLI in one process, exposing the CLI's parameters
-(`parser`, `input`, `recipe`, `outdir`, `name`, `reader_params`). Its container is a
-**public `uv` image**: the pinned Python dependencies (`backend/requirements.txt`) are
-installed at **runtime** with `uv` into a venv, and the `backend/` tree is mounted in —
-so there is **no custom image to build**. The output folder is published via
-`publishDir`. A `test` profile runs the bundled neighborhood-enrichment recipe against
-`test-data/visium_hne.zarr` in `zarr` mode. Python 3.11 is required (squidpy does not
-support 3.13+).
+One entrypoint, `nextflow/main.nf`. Given an input location it discovers the spatial
+datasets under it, loads each with the reader for its type, runs that type's
+preprocessing recipes, and publishes the results in a tree mirroring where they were
+found — plus a MultiQC report over the run and a serverless viewer (§14.3) of every
+checkpoint. Its container is a **public `uv` image**: the pinned Python dependencies
+(`backend/requirements.txt`) are installed at **runtime** into a venv and the `backend/`
+tree is staged in, so there is **no custom image to build**. Python 3.11 is required
+(squidpy does not support 3.13+).
 
-`nextflow/xenium/main.nf` is the batch counterpart: `--input` is a comma-separated list
-of raw Xenium bundles, each folder's own name becoming the sample name, and each sample
-is one CLI invocation running the bundled recipes `01_xenium_preprocess_qc`,
-`02_leiden_cluster_markers` and `04_neighborhood_analysis` back to back (the repeatable
-`--recipe` above; the neighborhood step's `cell_type_key` is the cluster column the
-Leiden step just wrote). Two things are then published that the single-dataset workflow
-does not produce:
+**All data-type knowledge is data.** `data_types.json` (schema: `data_types.schema.json`)
+carries, per type: the glob patterns that recognise a folder of it, the registry key of
+its reader, the bundled recipes that preprocess it, an optional instrument summary file
+to surface in the report, and whether the recipe has actually been run against real data.
+`common_params` declares each analysis knob once, with the recipe parameter names it
+fills and the data types whose recipes declare them — so a parameter is exposed once but
+applied only where it means something. `main.nf` and `modules/discovery.nf` contain no
+per-format branch; adding a format is an edit to the catalog.
 
-- **A MultiQC report** over every sample. `nextflow/xenium/bin/xenium_metrics.py` reads
-  the instrument's `metrics_summary.csv` plus the checkpoint's `obs`/`var` — through
-  zarr's ZipStore, so it costs two dataframes rather than unpacking the archive — and
-  writes MultiQC custom-content `*_mqc.json`; MultiQC merges the per-sample files that
-  share an `id` into cross-sample sections.
-- **A serverless deployment** (§14.3): `results/viewer/` holds the built SPA, the
-  checkpoints, and the `index.json` listing them, so serving that one directory renders
-  every sample with no backend. The SPA is an input, not an output — the workflow uses
-  the existing `frontend/dist` build rather than adding a third build path.
+- **Discovery** walks the tree through Nextflow's own `file()` API, so a root may be
+  local or `s3://`/`gs://`/`az://` with the executor's existing credentials. It is
+  greedy — a folder that classifies is a candidate and is not descended into — and when
+  several types match, the one whose `detect` block asserted the most wins, which is how
+  a Visium HD run resolves without a rule saying so (it also carries a Visium-shaped
+  matrix one level down). A genuine tie is a catalog bug and stops the run.
+- **Input** is either a folder, in which case output prefixes are relative to it, or a
+  `.json`/`.yaml` object mapping an output prefix to each root — the way several
+  unrelated locations are processed into one organised tree. The key fully replaces the
+  root's own path.
+- **Output** mirrors discovery: a dataset found at `<root>/folderA/folderB` publishes
+  `<outdir>/results/folderA/folderB.sdata.zarr.zip`, its low-res copy, its log, and its
+  plots. The SPA sits at `<outdir>/` so `results/…` paths resolve from it, making the
+  whole publish directory a servable deployment.
+- **Failure is per dataset.** Reading and analysing runs with the shell's error exit
+  disarmed: a folder that looks like a type but is truncated or mis-exported publishes
+  its log, is listed as `failed` in the report, and the sweep continues. The dependency
+  install is *not* caught — a broken environment is not a data problem.
+- **Every checkpoint gets a low-res copy** whose image pyramid is capped at
+  `--lowres_max_image_mb` (§28.1's `cap_image_levels`), listed in `index.json` as its own
+  entry beside the full one.
 
-`--lowres_copy` turns on the CLI's `--lowres-copy` per sample, and the reduced
-checkpoint is listed in `index.json` as its own entry beside the full one.
+`tests/check_catalog.py` holds the four declarative files to each other: the catalog
+against its schema, its recipe names against `backend/app/recipes/`, each `applies_to`
+against the parameters those recipes actually declare, and the parameter set against
+both `nextflow.config` and `nextflow_schema.json`. It also runs discovery over a
+synthetic tree of every catalogued type. CI runs it next to `nextflow lint nextflow/`.
 
 ---
 

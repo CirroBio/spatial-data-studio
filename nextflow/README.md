@@ -1,125 +1,208 @@
-# Offline analysis workflow (Nextflow)
+# Spatial data workflow (Nextflow)
 
-A DSL2 workflow that runs a spatial-omics recipe over an input dataset by wrapping
-the repo's headless CLI, `backend/cli.py`. It reads raw data (or an existing
-SpatialData store), runs a recipe end-to-end, and publishes the resulting
-`.zarr.zip` plus any per-step plots.
+Point it at a folder. It finds the spatial datasets inside — Xenium, Visium, Visium HD,
+MERSCOPE, CosMx, Curio, Steinbock, MCMICRO — loads each with the right reader, runs that
+data type's preprocessing recipes, and publishes the results in a tree mirroring where
+they were found, plus a MultiQC report over the whole run and a browsable viewer.
 
-The workflow does **not** reimplement any analysis: it stages `backend/`, installs
-the pinned Python deps at runtime with [uv](https://docs.astral.sh/uv/), and invokes
-`cli.py` exactly as documented in that file.
+This is the repo's only workflow entrypoint.
 
-For a **batch of raw Xenium bundles** — a fixed recipe chain per sample, a MultiQC
-report across all of them, and a browsable viewer folder of the results — use
-[`xenium/main.nf`](xenium/README.md) instead.
+```bash
+nextflow run nextflow/main.nf -profile docker --input /data/experiments
+```
 
-## Quick run (test profile + docker)
+## How it decides what to do
 
-Runs the bundled `07_neighborhood_enrichment` recipe over the bundled
-`test-data/visium_hne.zarr` store:
+Nothing in `main.nf` knows about any particular data type. Recognition patterns, reader
+names, preprocessing recipes and which parameter applies to which type all live in
+[`data_types.json`](data_types.json), which conforms to
+[`data_types.schema.json`](data_types.schema.json). Adding support for a format is an
+edit to that one file.
+
+| Data type | Recognised by | Preprocessing |
+| --------- | ------------- | ------------- |
+| 10x Xenium | `experiment.xenium` | QC → filter → normalize → log1p → PCA → neighbors → UMAP (2D + 3D) → Leiden → markers → cellular neighborhoods |
+| 10x Visium HD | `binned_outputs/`, `segmented_outputs/`, `*feature_slice.h5` | scanpy Visium path (with HVG selection) → cellular neighborhoods |
+| 10x Visium | `spatial/scalefactors_json.json` + a count matrix, and *not* `binned_outputs/` | as Visium HD |
+| Vizgen MERSCOPE | `detected_transcripts.csv` + `cell_by_gene.csv`/`cell_metadata.csv` | as Xenium (same modality: targeted panel, cell resolution) |
+| NanoString CosMx | `*exprMat_file.csv`, `*metadata_file.csv`, `*fov_positions_file.csv` | as Xenium |
+| Curio Seeker | `anndata.h5ad` + `Metrics.csv`/`cluster_assignment.txt` | as Visium (whole transcriptome) |
+| Steinbock | `cells.h5ad` + `ome/` + a masks folder | z-score → PCA → neighbors → Leiden → UMAP, then neighborhoods |
+| MCMICRO | `quantification/` + `markers.csv` + `registration/`/`dearray/` | as Steinbock |
+
+Steinbock and MCMICRO measure **protein intensity**, not transcript counts, so they take
+a path with no `normalize_total`/`log1p` and no highly-variable-gene selection — those
+assume counts. See `backend/app/recipes/25_cluster_protein_intensities.json`.
+
+**Only the Xenium defaults have been executed against real data.** Every other entry
+carries `"validated": false` in the catalog: its patterns and recipe are reasoned from
+`spatialdata_io`'s own format constants and the standard analysis path for the modality,
+but no run has proven them. Treat them as a starting point.
+
+### Discovery
+
+With `--recurse` (the default) the input tree is walked and every folder matching a
+catalogued type becomes a dataset. Matching is **greedy** — a folder that is recognised
+is not descended into, so a format that nests its own sub-outputs yields one dataset
+rather than several. When two types match the same folder the more specific one wins, so
+a Visium HD run does not also register as the Visium-shaped matrix it contains.
+
+With `--recurse false` each input root is expected to be a dataset itself.
+
+## Two ways to specify input
+
+**A folder.** Output paths are relative to it, so the layout does not change if you pass
+the same tree by a different path:
+
+```bash
+nextflow run nextflow/main.nf -profile docker --input /data/experiments
+```
+
+```
+/data/experiments/folderA/folderB/{experiment.xenium, …}
+  -> results/results/folderA/folderB.sdata.zarr.zip
+```
+
+**A map of roots**, as `.json` or `.yaml`, when the data lives in several unrelated
+places and you want one organised output tree. The key is the output prefix and fully
+replaces the root's own path; anything found by recursion nests beneath it:
+
+```json
+{
+  "folderA": "s3://path/to/folderA/",
+  "folderB/folderC": "s3://someother/completely/different/path/to/folder/B/"
+}
+```
+
+```
+-> results/results/folderA.sdata.zarr.zip
+   results/results/folderB/folderC.sdata.zarr.zip
+```
+
+Roots may be local paths or `s3://`, `gs://`, `az://` — discovery goes through Nextflow's
+own `file()` API, so it uses whatever credentials the executor already has.
+
+## Output layout
+
+```
+results/
+  index.html                       # the viewer, at the publish root
+  assets/…
+  index.json                       # lists every checkpoint below
+  results/                         # mirrors where each dataset was found
+    folderA/
+      folderB.sdata.zarr.zip           # the full checkpoint
+      folderB.sdata.lowres.zarr.zip    # image pyramid capped (see below)
+      folderB.log                      # always written
+      folderB.plots/<NN>_<ns>.<fn>/figure.{svg,pdf}
+  multiqc/
+    multiqc_report.html
+    multiqc_report_data/
+```
+
+Serving the `results/` directory over HTTP — any static host — renders every dataset in
+the browser with no backend (DESIGN §14.3). The same `.zarr.zip` files also open in the
+full app (New Session → Load) when you need to compute on them.
+
+**A dataset that fails to load does not fail the run.** Its log is published where its
+checkpoint would have gone, it appears in the report's Datasets table as `failed`, and
+the other datasets carry on. A broken environment (the dependency install) still stops
+the task — that is not the data's fault.
+
+### The low-resolution copy
+
+Every checkpoint is published alongside a copy whose image pyramid has had its finest
+levels dropped until the images fit under `--lowres_max_image_mb` (10 MB by default).
+The image is the largest part of an imaging dataset, so the copy carries the whole
+analysis — cells, clusters, neighborhoods, boundaries, plots, history — in a fraction of
+the space, and renders identically until you zoom past the level it no longer has.
+
+Nothing is resampled: each kept level already stores its own transform to the coordinate
+system, so the trimmed pyramid occupies exactly the same world extent and the cells still
+land on the image. Levels come off whichever image is largest, and at least one level of
+each image always survives.
+
+## Parameters
+
+Full descriptions, types and defaults are in
+[`nextflow_schema.json`](nextflow_schema.json). Analysis parameters are marked with the
+data types they apply to, because not every knob is meaningful for every format — a
+targeted panel has no highly-variable-gene step, a whole-transcriptome one has no
+per-gene cell floor. A parameter is simply ignored by a type that does not use it.
+
+| Param | Default | |
+| ----- | ------- | --- |
+| `--input` | — (required) | A folder, or a `.json`/`.yaml` map of output prefix to root. |
+| `--outdir` | `results` | Publish directory. |
+| `--title` | `Spatial data analysis` | Names the viewer collection and the report. |
+| `--data_types` | all | Comma-separated ids to look for, e.g. `xenium,visium`. |
+| `--recurse` | `true` | Walk into subfolders. |
+| `--preprocess` | `true` | Run each type's recipes. Off loads and publishes unanalysed. |
+| `--lowres_max_image_mb` | `10` | Image budget for the low-res copy. |
+| `--min_reads_per_cell` | `10` | (Xenium, MERSCOPE, CosMx, Visium, Visium HD, Curio) |
+| `--max_reads_per_cell` | `35000` | (Visium, Visium HD, Curio) |
+| `--min_cells_per_gene` | `5` | (Xenium, MERSCOPE, CosMx) |
+| `--n_top_genes` | `2000` | (Visium, Visium HD, Curio) |
+| `--cluster_key` | `leiden` | (all) |
+| `--resolution` | `1.0` | (Xenium, MERSCOPE, CosMx, Steinbock, MCMICRO) |
+| `--marker_method` | `wilcoxon` | (Xenium, MERSCOPE, CosMx, Visium, Visium HD, Curio) |
+| `--n_marker_genes` | `5` | (Xenium, MERSCOPE, CosMx) |
+| `--n_neighborhoods` | `10` | (all) |
+| `--neighborhood_key` | `cellular_neighborhood` | (all) |
+
+Profiles: `docker` enables Docker (each process declares its own image); `test` points
+`--input` at the bundled raw Xenium bundle that `scripts/prepare_xenium_data.py`
+downloads, and trims the analysis task's resources.
 
 ```bash
 nextflow run nextflow/main.nf -profile test,docker
 ```
 
-Output lands in `./results/analysis/` (see [Output layout](#output-layout)).
+## The viewer has to be built first
 
-## Real run: raw Xenium bundle
-
-```bash
-nextflow run nextflow/main.nf -profile docker \
-    --parser io.xenium \
-    --input  /path/to/xenium_bundle \
-    --recipe backend/app/recipes/12_preprocess_cluster_raw_counts.json \
-    --name   my_xenium_sample \
-    --outdir results
-```
-
-`--recipe` accepts either a path to a recipe JSON file or the name of a bundled
-recipe. `--parser` accepts a reader registry key (`io.xenium`, `io.visium`,
-`io.visium_hd`, `io.merscope`, `io.cosmx`, `io.steinbock`, `io.mcmicro`,
-`io.curio`), a bare reader name (`xenium`), or the sentinel `zarr` / `spatialdata`
-to load an existing `.zarr` / `.zarr.zip`.
-
-Extra reader kwargs can be passed as a JSON object:
+The workflow does not build the SPA — the repo already builds it in two other places
+(the docs site and the Docker image), and a third build path would be one too many:
 
 ```bash
-    --reader_params '{"cells_boundaries": true}'
+npm ci && npm run build
 ```
 
-## Parameters
+That writes `frontend/dist`, which `--viewer_dist` defaults to. The run stops
+immediately if there is no `index.html` there.
 
-| Param             | Default                                             | Description |
-| ----------------- | --------------------------------------------------- | ----------- |
-| `--input`         | — (required)                                        | Raw data folder (reader mode) or `.zarr`/`.zarr.zip` (zarr mode). |
-| `--recipe`        | — (required)                                        | Recipe JSON file path, or a bundled recipe name. |
-| `--parser`        | — (required)                                        | Reader key (`io.xenium`), bare name (`xenium`), or `zarr`/`spatialdata`. |
-| `--name`          | `null` (derived from `--input`)                     | Base name for the output `<name>.zarr.zip`. |
-| `--reader_params` | `null`                                              | JSON object of extra reader kwargs (reader mode only). |
-| `--os_packages`   | `null`                                              | Apt packages to install at runtime before the run (see OS libraries). |
-| `--outdir`        | `results`                                           | Publish directory for the output. |
-| `--backend`       | `${projectDir}/../backend`                          | Path to the repo `backend/` tree (`cli.py` + `app/`). |
+## uv at runtime
 
-Profiles:
+The analysis container is the public `uv` image; the pinned Python dependencies
+(`backend/requirements.txt`) are installed into a venv at runtime and `backend/` is
+staged in, so there is no custom image to build. uv caches wheels, so only the first run
+pays for the install — though under the `docker` profile each task gets a fresh
+container, so mount a persistent cache to share it:
 
-- `docker` — runs the process in the public uv image
-  `ghcr.io/astral-sh/uv:python3.11-bookworm` (`docker.enabled = true`).
-- `test` — sets `--parser zarr`, `--input` to the bundled `visium_hne.zarr`, and
-  `--recipe` to the bundled `07_neighborhood_enrichment.json`. Combine with
-  `docker`: `-profile test,docker`.
+```groovy
+docker.runOptions = '-v $HOME/.cache/uv:/root/.cache/uv'
+```
 
-## uv-at-runtime rationale
+squidpy does not support Python 3.13+, so the venv is pinned to 3.11 both by the image
+tag and by `uv venv --python 3.11`.
 
-There is no custom Docker image to build or maintain. The process runs in the
-public, upstream uv image (or on the host, if you drop the `docker` profile) and,
-on each run, creates a venv with `uv venv --python 3.11` and installs
-`backend/requirements.txt` with `uv pip install`. uv caches downloaded wheels and
-built packages, so the install is only expensive the first time and is fast on
-subsequent runs that reuse the cache.
-
-Cache note: under the `docker` profile each task runs in a fresh container, so the
-uv cache is not shared across containers unless you mount a persistent cache
-directory (e.g. via `docker.runOptions = '-v $HOME/.cache/uv:/root/.cache/uv'`).
-Running without the `docker` profile uses the host uv cache in `~/.cache/uv`
-directly.
-
-## Python 3.11 constraint
-
-squidpy does not support Python 3.13+. The venv is pinned to Python 3.11 both by
-the base image tag (`python3.11-bookworm`) and by `uv venv --python 3.11`, which
-downloads a matching interpreter when the host lacks one.
-
-## OS libraries
-
-The uv base image is Debian bookworm-slim and lacks some OS libraries that certain
-image-backed squidpy functions need at runtime: `libgl1`, `libglib2.0-0`,
-`libgomp1` (the same set installed in `docker/Dockerfile`). Pure compute/plot
-recipes — including the `test` recipe — do not need them.
-
-If a recipe hits a function that does, install them at runtime with `--os_packages`
-(the container runs as root under the docker executor):
+Because every supported type carries images, `--os_packages` installs
+`libgl1 libglib2.0-0 libgomp1` by default. To run without the `docker` profile on a host
+that has no `apt-get`, turn it off — Nextflow drops an empty value given on the command
+line, so this has to go through a config file:
 
 ```bash
-nextflow run nextflow/main.nf -profile docker \
-    --os_packages 'libgl1 libglib2.0-0 libgomp1' \
-    --parser io.xenium --input /path/to/xenium_bundle \
-    --recipe backend/app/recipes/12_preprocess_cluster_raw_counts.json
+echo "params.os_packages = ''" > no-pkgs.config
+nextflow run nextflow/main.nf -profile test -c no-pkgs.config
 ```
 
-## Output layout
+## Tests
 
-The published `--outdir` contains a single `analysis/` directory produced by
-`cli.py`:
-
-```
-results/
-  analysis/
-    <name>.zarr.zip                       # full SpatialData object + app_state
-    plots/
-      <NN>_<namespace>.<function>/
-        figure.svg
-        figure.pdf
+```bash
+python nextflow/tests/check_catalog.py
 ```
 
-One `plots/<NN>_...` folder is written per plot step in the recipe; compute-only
-recipes produce just the `.zarr.zip`.
+Validates the catalog against its schema, checks every recipe it names exists, verifies
+that each parameter's `applies_to` really is the set of types whose recipes declare it,
+checks the parameters agree across `nextflow.config` and `nextflow_schema.json`, and runs
+discovery over a synthetic tree of every catalogued type. CI runs this alongside
+`nextflow lint nextflow/`.
