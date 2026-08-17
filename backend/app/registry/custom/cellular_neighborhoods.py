@@ -1,23 +1,22 @@
 """Cellular Neighborhoods — cluster cells into recurring multicellular niches
 (Schürch/Bhate-style CN analysis) from spatial windows of cell-type composition.
-Wraps the vendored `_vendor/cn_compute.py` / `_vendor/cn_plot.py` (unmodified)."""
+Wraps the vendored `_vendor/cn_compute.py` / `_vendor/cn_plot.py`."""
 from __future__ import annotations
 
 import pandas as pd
 
 from ..base import CallResult, Function, ParamSpec, missing_obs_column, run_compute, run_plot
 
-_CLUSTER_METHODS = ["minibatch", "kmeans"]
-
 _COMPUTE_DOC = """Cellular Neighborhoods
 
 Partition the tissue into recurring multicellular niches: for each cell, take
 its spatial window (its `n_neighs` nearest neighbors), summarize the window as
-a vector of cell-type proportions, and cluster those vectors into
-`n_neighborhoods` groups. Cells in the same group sit in the same kind of
-neighborhood even if they are far apart in the tissue. Writes a categorical CN
-label per cell, the per-cell composition matrix, and per-neighborhood
-enrichment/composition summary tables for the paired plot step.
+a vector of cell-type proportions, and group those vectors with Leiden community
+detection. Cells in the same group sit in the same kind of neighborhood even if
+they are far apart in the tissue. The number of neighborhoods is not fixed up
+front — `resolution` sets how finely the compositions are split. Writes a
+categorical CN label per cell, the per-cell composition matrix, and
+per-neighborhood enrichment/composition summary tables for the paired plot step.
 
 Parameters
 ----------
@@ -28,10 +27,16 @@ library_key
     sample only. Leave blank for a single sample.
 n_neighs
     Window size — number of nearest neighbors (including self) per cell.
-n_neighborhoods
-    Number of neighborhoods (k) to cluster into.
-cluster_method
-    Clustering algorithm: `minibatch` (scalable, default) or `kmeans` (exact).
+resolution
+    Leiden resolution; higher values yield more, smaller neighborhoods.
+    Composition space is far more modular than expression space, so useful values
+    sit well below the 1.0 customary for clustering cells: the 0.1 default lands
+    around ten neighborhoods on a typical slide.
+n_neighbors
+    Neighborhood size of the kNN graph Leiden runs on, built over the window
+    composition vectors.
+n_iterations
+    Number of Leiden refinement iterations over that graph.
 random_state
     Seed for reproducible clustering.
 key_added
@@ -63,7 +68,7 @@ def _deserialize_table(data: dict) -> pd.DataFrame:
 
 class _CNResultView:
     """Lightweight stand-in for CNResult, rebuilt from `adata.uns[key_added]` so
-    the plot step doesn't need the live estimator/composition matrix."""
+    the plot step doesn't need the live composition matrix."""
 
     def __init__(self, labels, enrichment, mean_composition, celltype_order):
         self.labels = labels
@@ -76,7 +81,9 @@ from ._docs import custom_doc
 
 _CITATION = ("Schurch, C.M. et al. Coordinated Cellular Neighborhoods Orchestrate Antitumoral "
              "Immunity at the Colorectal Cancer Invasive Front. Cell 182, 1341-1359 (2020). "
-             "doi:10.1016/j.cell.2020.07.005.")
+             "doi:10.1016/j.cell.2020.07.005. Window compositions are grouped by Leiden "
+             "community detection (Traag, Waltman & van Eck, Sci Rep 9:5233, 2019) in place "
+             "of the paper's k-means step.")
 _DOC = custom_doc("cellular-neighborhoods")
 
 
@@ -99,10 +106,12 @@ class CellularNeighborhoods(Function):
                   required=False, tooltip="sample/slide column (blank = single sample); windows stay within a sample"),
         ParamSpec("n_neighs", {"type": "integer", "default": 20}, "number", None,
                   required=False, tooltip="window size (nearest neighbors per cell, including self)"),
-        ParamSpec("n_neighborhoods", {"type": "integer", "default": 10}, "number", None,
-                  required=False, tooltip="number of neighborhoods (k) to cluster into"),
-        ParamSpec("cluster_method", {"type": "string", "enum": _CLUSTER_METHODS, "default": "minibatch"},
-                  "select", None, required=False, tooltip="minibatch (scalable) or kmeans (exact)"),
+        ParamSpec("resolution", {"type": "number", "default": 0.1}, "number", None,
+                  required=False, tooltip="higher = more, smaller neighborhoods"),
+        ParamSpec("n_neighbors", {"type": "integer", "default": 15}, "number", None,
+                  required=False, tooltip="kNN graph size over window compositions, for Leiden"),
+        ParamSpec("n_iterations", {"type": "integer", "default": 2}, "number", None,
+                  required=False, tooltip="Leiden refinement iterations"),
         ParamSpec("random_state", {"type": "integer", "default": 0}, "number", None,
                   required=False, tooltip="random seed"),
         ParamSpec("key_added", {"type": "string", "default": "cellular_neighborhood"}, "text", None,
@@ -113,8 +122,9 @@ class CellularNeighborhoods(Function):
         cell_type_key = params.get("cell_type_key")
         library_key = (params.get("library_key") or "").strip() or None
         n_neighs = int(params.get("n_neighs") or 20)
-        n_neighborhoods = int(params.get("n_neighborhoods") or 10)
-        cluster_method = params.get("cluster_method") or "minibatch"
+        resolution = float(params.get("resolution") or 0.1)
+        n_neighbors = int(params.get("n_neighbors") or 15)
+        n_iterations = int(params.get("n_iterations") or 2)
         random_state = int(params.get("random_state") or 0)
         key_added = (params.get("key_added") or "cellular_neighborhood").strip()
 
@@ -133,9 +143,9 @@ class CellularNeighborhoods(Function):
             cellular_neighborhoods_adata(
                 ad, cell_type_key,
                 spatial_key="spatial", library_key=library_key,
-                n_neighs=n_neighs, n_neighborhoods=n_neighborhoods,
-                cluster_method=cluster_method, random_state=random_state,
-                key_added=key_added,
+                n_neighs=n_neighs, resolution=resolution,
+                cluster_n_neighbors=n_neighbors, n_iterations=n_iterations,
+                random_state=random_state, key_added=key_added,
             )
             tables = ad.uns[key_added]
             ad.uns[key_added] = {

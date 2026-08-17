@@ -125,12 +125,12 @@
         "cosmx"
       ]
     },
-    "n_neighborhoods": {
-      "description": "Number of recurring cellular neighborhoods (niches) to find.",
-      "type": "integer",
-      "default": 10,
+    "neighborhood_resolution": {
+      "description": "Leiden resolution for cellular neighborhoods: higher gives more, smaller niches.",
+      "type": "number",
+      "default": 0.1,
       "recipe_params": [
-        "n_neighborhoods"
+        "neighborhood_resolution"
       ],
       "applies_to": [
         "xenium",

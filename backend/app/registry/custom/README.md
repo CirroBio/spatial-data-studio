@@ -78,14 +78,18 @@ tissue-specific features in humans*, Science 376:eabl5197 (2022).
 
 `custom.cellular_neighborhoods` (compute) + `custom.cellular_neighborhoods_plot`
 (plot). For each cell, takes the cell-type composition of its spatial window
-(its k nearest neighbours), then clusters those composition vectors into a set of
-recurring multicellular niches ("cellular neighborhoods"), written to a new `obs`
-column. The plot step shows the neighborhood map, an enrichment heatmap, and
-composition bars. numpy/scipy/scikit-learn only.
+(its k nearest neighbours), then groups those composition vectors into recurring
+multicellular niches ("cellular neighborhoods") with Leiden community detection
+over a kNN graph in composition space, written to a new `obs` column. `resolution`
+sets how finely the compositions are split, so the number of niches follows from
+the data instead of being fixed up front. The plot step shows the neighborhood
+map, an enrichment heatmap, and composition bars.
 
 **Citation:** Schürch et al., *Coordinated Cellular Neighborhoods Orchestrate
 Antitumoral Immunity at the Colorectal Cancer Invasive Front*, Cell
-182:1341–1359 (2020).
+182:1341–1359 (2020). The paper clusters the window compositions with k-means;
+this implementation substitutes Leiden (Traag, Waltman & van Eck, *Sci Rep*
+9:5233, 2019), sharing the same graspologic-native core as `custom.leiden`.
 
 ## Milo differential abundance
 

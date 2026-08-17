@@ -31,13 +31,15 @@ Four steps, each a function below:
      neighbors, self included), encoded as a sparse membership matrix.
   2. neighborhood_composition — turn each window into a vector of cell-type
      PROPORTIONS via one sparse matrix product (counts) + row normalization.
-  3. cluster_neighborhoods    — k-means over those composition vectors; each
-     cluster is one cellular neighborhood.
+  3. cluster_neighborhoods    — Leiden community detection over those composition
+     vectors; each community is one cellular neighborhood.
   4. characterize_neighborhoods — summarize each CN as mean composition and as
      log2 enrichment over the tissue-wide cell-type frequencies.
 
-The core depends only on numpy / scipy / scikit-learn and operates on plain
-arrays. ``cellular_neighborhoods_adata`` is a thin AnnData wrapper.
+The core operates on plain arrays, depending on numpy / scipy / scikit-learn plus
+the app's shared Leiden partitioner (``custom/_leiden.py``, graspologic-native).
+``cellular_neighborhoods_adata`` is a thin AnnData wrapper. Run the demo below as
+``python -m app.registry.custom._vendor.cn_compute`` from ``backend/``.
 
 NOTE: this is distinct from ``squidpy.gr.nhood_enrichment``, which is a
 permutation test for *pairwise* cell-type co-localization. CN analysis instead
@@ -46,14 +48,13 @@ assigns every cell to a multicellular niche by clustering composition vectors.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional, Sequence, Union
 
 import numpy as np
 import pandas as pd
 from scipy.sparse import csr_matrix, spmatrix
-from sklearn.cluster import KMeans, MiniBatchKMeans
-from sklearn.neighbors import NearestNeighbors
+from sklearn.neighbors import NearestNeighbors, kneighbors_graph
 
 # Convenience alias: anything that can be coerced to a 1-D/2-D numpy array.
 ArrayLike = Union[np.ndarray, Sequence]
@@ -81,24 +82,20 @@ class CNResult:
     labels            (n_cells,) int   CN id assigned to each cell.
     composition       (n_cells, n_types) float   per-cell window composition.
     celltype_order    list             column order shared by all matrices/tables.
-    centroids         (n_cn, n_types)  k-means cluster centers (= idealized niche).
     enrichment        DataFrame        log2(CN proportion / global frequency).
     mean_composition  DataFrame        mean cell-type proportion within each CN.
-    estimator         fitted k-means   the clustering object (for reuse/predict).
     """
 
     labels: np.ndarray                     # (n_cells,) integer neighborhood id per cell
     composition: np.ndarray               # (n_cells, n_types) proportion matrix
     celltype_order: list                  # ordered cell-type names = matrix columns
-    centroids: np.ndarray                 # (n_cn, n_types) k-means centroids
     enrichment: pd.DataFrame              # (n_cn x n_types) log2 fold-enrichment
     mean_composition: pd.DataFrame       # (n_cn x n_types) mean proportion per CN
-    estimator: object = field(repr=False)  # fitted (MiniBatch)KMeans instance
 
     @property
     def n_neighborhoods(self) -> int:
-        """Number of neighborhoods = number of centroid rows."""
-        return self.centroids.shape[0]   # rows of centroid matrix = one per CN
+        """Number of neighborhoods Leiden found = number of summary-table rows."""
+        return self.mean_composition.shape[0]   # one row per CN
 
 
 # --------------------------------------------------------------------------- #
@@ -255,56 +252,56 @@ def neighborhood_composition(
 def cluster_neighborhoods(
     composition: np.ndarray,
     *,
-    n_neighborhoods: int = 10,
-    method: str = "minibatch",
+    resolution: float = 0.1,
+    n_neighbors: int = 15,
     random_state: int = 0,
-    **kwargs,
-):
+    n_iterations: int = 2,
+) -> np.ndarray:
     """Cluster per-cell composition vectors into discrete neighborhoods.
 
     BIOLOGICAL CONTEXT
         Cells whose surroundings look alike get grouped into the same niche.
-        `n_neighborhoods` sets granularity: too few and distinct niches merge, too
-        many and one biological niche fragments. It is worth scanning a few values
-        and reading the enrichment heatmap to pick an interpretable number.
+        `resolution` sets granularity: too low and distinct niches merge, too high
+        and one biological niche fragments. The number of niches is not fixed up
+        front — it falls out of the data — so it is worth scanning a few
+        resolutions and reading the enrichment heatmap to pick an interpretable
+        partition.
 
     COMPUTATIONAL APPROACH
-        k-means in composition space (each point is a length-n_types proportion
-        vector). MiniBatchKMeans is the default because the original method used it
-        for scalability to millions of cells; plain KMeans is available for small
-        datasets. Euclidean k-means on proportions is the field-standard choice.
+        Build a k-nearest-neighbor graph in composition space (each point is a
+        length-n_types proportion vector), then run Leiden community detection on
+        it. Leiden finds modular communities without being told how many to look
+        for, and unlike Euclidean k-means it does not assume niches are equally
+        sized, isotropic blobs. Composition space has only n_types dimensions and
+        its kNN graph is far more modular than an expression-space one, so useful
+        resolutions sit well below the 1.0 that is customary for clustering cells:
+        the 0.1 default lands around ten niches on a typical slide.
 
     Parameters
     ----------
-    composition      (n_cells, n_types) window compositions.
-    n_neighborhoods  number of neighborhoods (k) to fit.
-    method           "minibatch" (default) or "kmeans".
-    random_state     seed for reproducible cluster assignments.
-    **kwargs         forwarded to the scikit-learn estimator.
+    composition   (n_cells, n_types) window compositions.
+    resolution    Leiden resolution; higher yields more, smaller neighborhoods.
+    n_neighbors   neighborhood size of the kNN graph built over compositions.
+    random_state  seed for reproducible cluster assignments.
+    n_iterations  Leiden refinement iterations over the graph.
 
     Returns
     -------
-    labels     (n_cells,) integer CN id per cell.
-    estimator  the fitted (MiniBatch)KMeans object.
+    labels  (n_cells,) integer CN id per cell, contiguous from 0.
     """
-    if method == "minibatch":
-        est = MiniBatchKMeans(                              # est = scalable k-means estimator
-            n_clusters=n_neighborhoods,                    # k = number of niches
-            random_state=random_state,                     # reproducibility seed
-            n_init=kwargs.pop("n_init", 10),               # restarts to avoid poor local minima
-            **kwargs,
-        )
-    elif method == "kmeans":
-        est = KMeans(                                       # est = exact k-means estimator
-            n_clusters=n_neighborhoods,
-            random_state=random_state,
-            n_init=kwargs.pop("n_init", 10),
-            **kwargs,
-        )
-    else:
-        raise ValueError(f"Unknown method {method!r}; use 'minibatch' or 'kmeans'.")
-    labels = est.fit_predict(composition)                  # labels = (n_cells,) CN id per cell
-    return labels, est                                     # assignments + fitted model
+    from .._leiden import leiden_labels                     # shared graspologic-native Leiden core
+
+    n = composition.shape[0]                                # n = number of cells
+    graph = kneighbors_graph(                               # graph = binary kNN graph over compositions
+        composition,
+        n_neighbors=min(n_neighbors, n - 1),               # cap for inputs smaller than the graph size
+        mode="connectivity",                               # unweighted: many cells tie on distance
+        include_self=False,
+    )
+    partition = leiden_labels(                              # partition = Categorical of string cluster ids
+        graph, resolution=resolution, random_state=random_state, n_iterations=n_iterations
+    )
+    return np.asarray(partition.codes, dtype=int)           # codes = CN id per cell, contiguous from 0
 
 
 # --------------------------------------------------------------------------- #
@@ -379,11 +376,12 @@ def cellular_neighborhoods(
     cell_types: ArrayLike,
     *,
     n_neighs: int = 20,
-    n_neighborhoods: int = 10,
+    resolution: float = 0.1,
+    cluster_n_neighbors: int = 15,
+    n_iterations: int = 2,
     method: str = "knn",
     radius: Optional[float] = None,
     batch: Optional[ArrayLike] = None,
-    cluster_method: str = "minibatch",
     random_state: int = 0,
     adjacency: Optional[spmatrix] = None,
 ) -> CNResult:
@@ -400,16 +398,17 @@ def cellular_neighborhoods(
 
     Parameters
     ----------
-    coords           (n_cells, 2 or 3) spatial coordinates.
-    cell_types       (n_cells,) cell-type calls.
-    n_neighs         window size W (knn).
-    n_neighborhoods  number of niches (k) to fit.
-    method           graph type "knn" or "radius".
-    radius           radius for method="radius".
-    batch            (n_cells,) sample ids to keep windows within-sample.
-    cluster_method   "minibatch" or "kmeans".
-    random_state     reproducibility seed.
-    adjacency        optional prebuilt window-membership matrix.
+    coords               (n_cells, 2 or 3) spatial coordinates.
+    cell_types           (n_cells,) cell-type calls.
+    n_neighs             window size W (knn).
+    resolution           Leiden resolution; higher yields more, smaller niches.
+    cluster_n_neighbors  kNN graph size in composition space, for Leiden.
+    n_iterations         Leiden refinement iterations.
+    method               graph type "knn" or "radius".
+    radius               radius for method="radius".
+    batch                (n_cells,) sample ids to keep windows within-sample.
+    random_state         reproducibility seed.
+    adjacency            optional prebuilt window-membership matrix.
 
     Returns
     -------
@@ -427,9 +426,9 @@ def cellular_neighborhoods(
     comp, order = neighborhood_composition(               # comp = (n, n_types) proportions; order = type names
         adjacency, cell_types, normalize=True
     )
-    labels, est = cluster_neighborhoods(                  # labels = per-cell CN id; est = fitted k-means
-        comp, n_neighborhoods=n_neighborhoods,
-        method=cluster_method, random_state=random_state,
+    labels = cluster_neighborhoods(                        # labels = per-cell CN id from Leiden
+        comp, resolution=resolution, n_neighbors=cluster_n_neighbors,
+        random_state=random_state, n_iterations=n_iterations,
     )
     mean_df, enr_df = characterize_neighborhoods(         # mean_df / enr_df = per-CN summary tables
         labels, comp, order, cell_types
@@ -439,10 +438,8 @@ def cellular_neighborhoods(
         labels=labels,
         composition=comp,
         celltype_order=order,
-        centroids=est.cluster_centers_,                  # (n_cn, n_types) idealized niche compositions
         enrichment=enr_df,
         mean_composition=mean_df,
-        estimator=est,
     )
 
 
@@ -456,10 +453,11 @@ def cellular_neighborhoods_adata(
     spatial_key: str = "spatial",
     library_key: Optional[str] = None,
     n_neighs: int = 20,
-    n_neighborhoods: int = 10,
+    resolution: float = 0.1,
+    cluster_n_neighbors: int = 15,
+    n_iterations: int = 2,
     method: str = "knn",
     radius: Optional[float] = None,
-    cluster_method: str = "minibatch",
     random_state: int = 0,
     use_squidpy_graph: bool = False,
     key_added: str = "cellular_neighborhood",
@@ -507,10 +505,10 @@ def cellular_neighborhoods_adata(
 
     res = cellular_neighborhoods(                        # res = CNResult from the array pipeline
         coords, cell_types,
-        n_neighs=n_neighs, n_neighborhoods=n_neighborhoods,
+        n_neighs=n_neighs, resolution=resolution,
+        cluster_n_neighbors=cluster_n_neighbors, n_iterations=n_iterations,
         method=method, radius=radius, batch=batch,
-        cluster_method=cluster_method, random_state=random_state,
-        adjacency=adjacency,
+        random_state=random_state, adjacency=adjacency,
     )
 
     adata.obs[key_added] = pd.Categorical(               # write per-cell CN label as an ordered categorical
@@ -525,10 +523,11 @@ def cellular_neighborhoods_adata(
         "params": {                                      # record settings for provenance/reproducibility
             "cell_type_key": cell_type_key,
             "n_neighs": n_neighs,
-            "n_neighborhoods": n_neighborhoods,
+            "resolution": resolution,
+            "cluster_n_neighbors": cluster_n_neighbors,
+            "n_iterations": n_iterations,
             "method": method,
             "radius": radius,
-            "cluster_method": cluster_method,
             "random_state": random_state,
             "used_squidpy_graph": use_squidpy_graph,
         },
@@ -579,7 +578,7 @@ def _demo():
     """Run the pipeline on synthetic tissue and print the summary tables."""
     coords, cell_types, true_domain = make_synthetic_tissue()  # generate toy tissue with known truth
     res = cellular_neighborhoods(                              # res = CNResult from the pipeline
-        coords, cell_types, n_neighs=20, n_neighborhoods=3, random_state=0
+        coords, cell_types, n_neighs=20, resolution=0.02, random_state=0
     )
     print("Mean cell-type composition per neighborhood (proportions):")
     print(res.mean_composition.round(2).to_string())

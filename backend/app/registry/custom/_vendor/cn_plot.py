@@ -514,7 +514,7 @@ def _demo(outfile: str = "cn_plots_demo.png"):
 
     coords, cell_types, _ = make_synthetic_tissue()                 # coords/cell_types = toy tissue
     result = cellular_neighborhoods(                                # result = CNResult
-        coords, cell_types, n_neighs=20, n_neighborhoods=3, random_state=0
+        coords, cell_types, n_neighs=20, resolution=0.02, random_state=0
     )
     batch = np.repeat(["sampleA", "sampleB"], len(coords) // 2)     # batch = fake 2-sample split for demos
 

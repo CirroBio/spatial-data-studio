@@ -269,7 +269,9 @@ Type → widget fallback (before the Term Dictionary refines it):
   *Region boundary / infiltration distance* + *Infiltration profile*
   (`boundary.py`), and *Pseudobulk DE (DESeq2)* (`pseudobulk_deseq2.py`). Each of
   these six wraps a dependency-light (numpy/scipy/scikit-learn) compute/plot module
-  vendored unmodified under `registry/custom/_vendor/` — the wrapper adapts the
+  under `registry/custom/_vendor/`, vendored as-is except where a step is replaced
+  by an app-shared one (`cn_compute.py` clusters window compositions with the
+  Leiden core in `custom/_leiden.py` rather than k-means) — the wrapper adapts the
   module's thin AnnData entry point to the `Function` contract (obs/obsm/uns writes,
   `ParamSpec`s, zarr-safe serialization of any result the module returns as a live
   DataFrame/array) rather than reimplementing the algorithm. They register in

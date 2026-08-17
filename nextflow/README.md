@@ -147,7 +147,7 @@ per-gene cell floor. A parameter is simply ignored by a type that does not use i
 | `--resolution` | `1.0` | (Xenium, MERSCOPE, CosMx, Steinbock, MCMICRO) |
 | `--marker_method` | `wilcoxon` | (Xenium, MERSCOPE, CosMx, Visium, Visium HD, Curio) |
 | `--n_marker_genes` | `5` | (Xenium, MERSCOPE, CosMx) |
-| `--n_neighborhoods` | `10` | (all) |
+| `--neighborhood_resolution` | `0.1` | (all) |
 | `--neighborhood_key` | `cellular_neighborhood` | (all) |
 
 Profiles: `docker` enables Docker (each process declares its own image); `test` points

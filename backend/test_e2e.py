@@ -118,7 +118,7 @@ def run_custom_methods_flow(client):
     interior_label, target_label = cell_type_counts.index[0], cell_type_counts.index[1]
     print(f"[ok] cell_type counts (top 2 used below): {cell_type_counts.head(2).to_dict()}")
 
-    run_job("custom", "cellular_neighborhoods", {"cell_type_key": "cell_type", "n_neighborhoods": 6})
+    run_job("custom", "cellular_neighborhoods", {"cell_type_key": "cell_type", "resolution": 0.2})
     run_plot("custom", "cellular_neighborhoods_plot", {})
 
     run_job("custom", "proximity_test", {"cell_type_key": "cell_type", "n_perm": 30})

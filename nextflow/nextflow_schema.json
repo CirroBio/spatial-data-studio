@@ -101,10 +101,10 @@
           "default": 5,
           "description": "Top marker genes per cluster shown in the marker dotplot. (10x Xenium, Vizgen MERSCOPE, NanoString CosMx)"
         },
-        "n_neighborhoods": {
-          "type": "integer",
-          "default": 10,
-          "description": "Number of recurring cellular neighborhoods (niches) to find. (10x Xenium, Vizgen MERSCOPE, NanoString CosMx, 10x Visium, 10x Visium HD, Curio Seeker, Steinbock (imaging mass cytometry), MCMICRO (multiplexed tissue imaging))"
+        "neighborhood_resolution": {
+          "type": "number",
+          "default": 0.1,
+          "description": "Leiden resolution for cellular neighborhoods: higher gives more, smaller niches. (10x Xenium, Vizgen MERSCOPE, NanoString CosMx, 10x Visium, 10x Visium HD, Curio Seeker, Steinbock (imaging mass cytometry), MCMICRO (multiplexed tissue imaging))"
         },
         "neighborhood_key": {
           "type": "string",
