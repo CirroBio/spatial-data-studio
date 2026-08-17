@@ -6,21 +6,9 @@ nextflow.enable.dsl = 2
 // Xenium recipe chain over it, and publish one deployable folder that renders every
 // resulting checkpoint plus a MultiQC report comparing the samples.
 //
-// The analysis is not defined here — it is the three bundled recipes below, run back
-// to back in one session by `backend/cli.py` (which takes --recipe more than once).
-// Dependencies are installed at runtime with uv, as in ../main.nf; see README.md.
-RECIPES = [
-    '01_xenium_preprocess_qc.json',   // QC -> filter -> normalize -> log1p -> PCA/neighbors/UMAP
-    '02_leiden_cluster_markers.json', // Leiden clusters + ranked marker genes (+ dotplot)
-    '04_neighborhood_analysis.json',  // cellular neighborhoods over those clusters (+ plot)
-]
-
-// Sample names become file names, publish paths and shell words in the scripts below,
-// so they are held to a conservative character set rather than escaped everywhere.
-SAMPLE_NAME = ~/[A-Za-z0-9][A-Za-z0-9._-]*/
-
-// How cli.py --lowres-copy names the reduced checkpoint it writes alongside the full one.
-LOWRES_SUFFIX = '.lowres.zarr.zip'
+// The analysis is not defined here — it is three bundled recipes, run back to back in
+// one session by `backend/cli.py` (which takes --recipe more than once). Dependencies
+// are installed at runtime with uv, as in ../main.nf; see README.md.
 
 process XENIUM_ANALYSIS {
     tag "${sample}"
@@ -61,7 +49,14 @@ process XENIUM_ANALYSIS {
         n_neighborhoods : params.n_neighborhoods,
         neighborhood_key: params.neighborhood_key,
     ])
-    def recipe_args = RECIPES.collect { "--recipe ${backend}/app/recipes/${it}" }.join(' \\\n        ')
+    def recipes = [
+        '01_xenium_preprocess_qc.json',   // QC -> filter -> normalize -> log1p -> PCA/neighbors/UMAP
+        '02_leiden_cluster_markers.json', // Leiden clusters + ranked marker genes (+ dotplot)
+        '04_neighborhood_analysis.json',  // cellular neighborhoods over those clusters (+ plot)
+    ]
+    def recipe_args = recipes
+        .collect { recipe -> "--recipe ${backend}/app/recipes/${recipe}" }
+        .join(' \\\n        ')
     def reader_params_arg = params.reader_params ? "--reader-params '${params.reader_params}'" : ''
     def lowres_arg = params.lowres_copy ? '--lowres-copy' : ''
     // The uv base image is bookworm-slim; Xenium bundles are image-backed, so the OS
@@ -152,8 +147,10 @@ process PUBLISH_VIEWER {
     // deployment (DESIGN §14.3); the checkpoints themselves are published into this
     // same folder by XENIUM_ANALYSIS. Sorted so the listing order is run-independent,
     // with each sample's low-res copy (when there is one) just after its full one.
+    // How cli.py --lowres-copy names the reduced checkpoint beside the full one.
+    def lowres_suffix = '.lowres.zarr.zip'
     def entries = manifest
-        .collect { sample, name -> [sample: sample, path: name, lowres: name.endsWith(LOWRES_SUFFIX)] }
+        .collect { sample, name -> [sample: sample, path: name, lowres: name.endsWith(lowres_suffix)] }
         .sort { a, b -> (a.sample <=> b.sample) ?: ((a.lowres ? 1 : 0) <=> (b.lowres ? 1 : 0)) }
         .collect { e -> e.lowres
             ? [path: e.path, label: "${e.sample} (low-res image)".toString(),
@@ -174,16 +171,23 @@ INDEX_JSON
 workflow {
     if( !params.input ) error "Missing --input (comma-separated list of Xenium bundle folders)"
 
-    def samples = params.input.tokenize(',').collect { it.trim() }.findAll { it }.collect { entry ->
-        def dir = file(entry)
-        if( !dir.isDirectory() ) error "--input entry is not a directory: ${entry}"
-        if( !(dir.name ==~ SAMPLE_NAME) )
-            error "folder name '${dir.name}' is not usable as a sample name " +
-                  "(letters, digits, '.', '_' and '-' only): ${entry}"
-        [dir.name, dir]
-    }
+    // Sample names become file names, publish paths and shell words in the processes
+    // above, so they are held to a conservative character set rather than escaped
+    // everywhere.
+    def sample_name = ~/[A-Za-z0-9][A-Za-z0-9._-]*/
+    def samples = params.input.tokenize(',')
+        .collect { entry -> entry.trim() }
+        .findAll { entry -> entry }
+        .collect { entry ->
+            def dir = file(entry)
+            if( !dir.isDirectory() ) error "--input entry is not a directory: ${entry}"
+            if( !(dir.name ==~ sample_name) )
+                error "folder name '${dir.name}' is not usable as a sample name " +
+                      "(letters, digits, '.', '_' and '-' only): ${entry}"
+            [dir.name, dir]
+        }
     if( !samples ) error "--input listed no folders"
-    def repeated = samples.countBy { it[0] }.findAll { it.value > 1 }.keySet()
+    def repeated = samples.countBy { pair -> pair[0] }.findAll { _name, count -> count > 1 }.keySet()
     if( repeated ) error "--input folders share the name(s) ${repeated.join(', ')}; " +
                          "sample names come from the folder name and must be unique"
 
@@ -195,7 +199,7 @@ workflow {
               "`npm ci && npm run build` at the repo root, or point --viewer_dist at a build."
 
     XENIUM_ANALYSIS(
-        Channel.fromList(samples),
+        channel.fromList(samples),
         file(params.backend),
         file("${projectDir}/bin/xenium_metrics.py"),
     )
@@ -209,7 +213,9 @@ workflow {
         viewer_dist,
         // A sample emits one checkpoint, or two under --lowres_copy; both are listed.
         XENIUM_ANALYSIS.out.checkpoint
-            .flatMap { sample, ckpts -> (ckpts instanceof List ? ckpts : [ckpts]).collect { [sample, it.name] } }
+            .flatMap { sample, ckpts ->
+                (ckpts instanceof List ? ckpts : [ckpts]).collect { ckpt -> [sample, ckpt.name] }
+            }
             .toList(),
     )
 }

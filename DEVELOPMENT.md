@@ -614,6 +614,10 @@ collection as well as embeddable per page. Pull requests build but do not publis
   for `SelectiveGZipMiddleware`: which content types compress, round-trip/passthrough
   correctness, and the regression guard that gzip runs off the event loop (a
   concurrent request is not stalled for the whole compress on the single worker).
+- `nextflow lint nextflow/` — Nextflow's own linter over every `.nf` and
+  `nextflow.config` in the repo. Required to be clean (see `CLAUDE.md`): it catches what
+  the legacy parser silently accepts but the language spec does not, such as top-level
+  variable assignments in a script. `-format` reformats the files it can parse.
 - `cd frontend && npx tsc --noEmit -p tsconfig.app.json && npm run build` — typecheck
   + build.
 - `cd frontend && npm run check:tours` — static guard that every guided-tour anchor

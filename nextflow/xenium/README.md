@@ -153,4 +153,14 @@ so it costs a couple of dataframes rather than unpacking the whole archive.
 Same as the single-dataset workflow — see [`../README.md`](../README.md) for the
 rationale and the uv cache note. One difference: because a Xenium bundle always carries
 a morphology image, `--os_packages` defaults to `libgl1 libglib2.0-0 libgomp1` here
-instead of being empty.
+instead of being empty. A failed install stops the task rather than falling through to
+a confusing `ImportError` later.
+
+To run without the `docker` profile — on a host that has no `apt-get` — turn the
+install off. Nextflow drops an empty value given on the command line, so this has to go
+through a config file rather than `--os_packages ''`:
+
+```bash
+echo "params.os_packages = ''" > no-pkgs.config
+nextflow run nextflow/xenium/main.nf -profile test -c no-pkgs.config
+```

@@ -42,6 +42,20 @@ dev environment" section of `DEVELOPMENT.md`) in the same commit. A change
 that leaves `run.sh` unable to boot the app, or `stop.sh` unable to stop it, is
 incomplete.
 
+## Nextflow code must pass the official linter (always)
+
+Every `.nf` script and `nextflow.config` in the repo must lint clean with Nextflow's
+own linter. Run it over the whole `nextflow/` tree before committing a change that
+touches any of it:
+
+```bash
+nextflow lint nextflow/
+```
+
+A change that leaves an error is incomplete — fix the code, not the report. The linter
+is also the formatter (`nextflow lint -format`), so it is the arbiter of layout too;
+don't hand-argue with its indentation.
+
 ## Reuse code elements (always)
 
 Before adding a new function, class, component, hook, endpoint, or other
