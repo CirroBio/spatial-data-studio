@@ -2,7 +2,7 @@
 #
 # Backend job runs the full in-process round trip (backend/test_e2e.py), including
 # the snapshot save/open flow. Frontend job typechecks and builds the canvas library
-# and the app.
+# and the app. Nextflow job lints the workflows (CLAUDE.md requires a clean report).
 name: ci
 
 on:
@@ -49,6 +49,38 @@ jobs:
         run: |
           cd backend
           PYTHONPATH=. python test_e2e.py
+
+  nextflow:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17" # Nextflow 25.x requires 17+
+
+      - name: Install Nextflow
+        # Pinned: the linter ships with Nextflow, so an unpinned version would let a
+        # new upstream rule fail an unrelated PR.
+        env:
+          NXF_VER: "25.10.4"
+        run: |
+          curl -s https://get.nextflow.io | bash
+          sudo mv nextflow /usr/local/bin/
+
+      - name: Lint workflows
+        # `nextflow lint` exits non-zero on errors but 0 on warnings, and the warnings
+        # are deprecations that become errors in a later release — fail on either, so
+        # the report stays clean rather than accumulating them.
+        run: |
+          nextflow lint nextflow/ 2>&1 | tee lint.log
+          if grep -q 'Warn' lint.log; then
+            echo "::error::nextflow lint reported warnings; see the log above"
+            exit 1
+          fi
 
   frontend:
     runs-on: ubuntu-latest
