@@ -19,6 +19,11 @@ the app, write a recipe.** It is just JSON, there is no Python to write, and it
 is far easier to review and merge. Only write a custom function when the
 computation itself does not yet exist.
 
+Before you start, read the [Contributor Policy](#contributor-policy) at the end of
+this guide: contributions are accepted only once you've executed Cirro Bio's
+Contributor Assignment Agreement, and if you're contributing through your employer
+that may need their sign-off too.
+
 ---
 
 ## Orientation: function vs. recipe
@@ -502,6 +507,9 @@ Then confirm:
       rely on process-pool parallelism (e.g. squidpy's `spatial_autocorr`
       `n_perms` permutation path). Also avoid plots that assume `uns["spatial"]`
       (`spatial_scatter`/`spatial_segment`) on app sessions.
+- [ ] **Your CAA is in place.** Per the [Contributor Policy](#contributor-policy),
+      a contribution can be reviewed without an executed Contributor Assignment
+      Agreement but cannot be merged. Ask the maintainers if you don't have one.
 - [ ] **You ran it against real data.** The gate validates structure but does not
       execute your function. Launch the app with `./run.sh` (from the repo root),
       open a session, and actually run your function/recipe once — it's the only way
@@ -539,3 +547,87 @@ Then confirm:
 - **`$param` silently dropped.** A `$param` resolving to `None` drops the step
   param. If a step seems to ignore your recipe param, check that the param has a
   non-`None` default or that the caller supplied a value.
+
+---
+
+## Contributor Policy
+
+This is the policy [`LICENSE.md`](LICENSE.md) §4 refers to — the intellectual-property
+terms your contribution is accepted under. The sections above remain the practical
+guide to *how* to build and check a contribution; this one governs the terms.
+
+### Purpose
+
+This project is developed and maintained by Cirro Bio, Inc. We welcome
+contributions from collaborators, customers, research partners, and the broader
+community that help improve the quality, functionality, and long-term
+sustainability of the library.
+
+To maintain a clear and consistent intellectual property framework, all
+accepted contributions are subject to the ownership requirements described
+below.
+
+### Ownership of Contributions
+
+As a condition of contributing code, documentation, tests, examples, or other
+materials to this repository, contributors must execute Cirro Bio's
+Contributor Assignment Agreement (CAA) prior to their contribution being
+accepted.
+
+Upon execution of the CAA, all right, title, and interest in accepted
+contributions will be assigned to Cirro Bio, Inc.
+
+Contributions submitted without a completed Contributor Assignment Agreement
+may be reviewed but will not be merged into the project.
+
+### Employer Authorization
+
+If you are contributing as part of your employment or on behalf of another
+organization, you are responsible for ensuring that you have the necessary
+authority to make the contribution.
+
+Cirro Bio may require written authorization or a corporate assignment
+agreement from your employer or institution before accepting contributions.
+
+### Original Work
+
+By submitting a contribution, you represent and warrant that:
+
+- You are the original author of the contribution or otherwise have the legal
+  right to submit it.
+- The contribution does not knowingly infringe the intellectual property
+  rights of any third party.
+- The contribution does not include confidential, proprietary, or
+  export-controlled information that you are not authorized to disclose.
+- You have obtained all approvals required by your employer or institution, if
+  applicable.
+
+### Review Process
+
+All contributions are subject to technical review and may be accepted,
+modified, or rejected at the sole discretion of the project maintainers.
+
+Submission of a pull request does not guarantee that a contribution will be
+accepted.
+
+### Coding Standards
+
+Contributors should:
+
+- Follow the project's coding conventions.
+- Include appropriate tests where applicable.
+- Update documentation when introducing new functionality.
+- Ensure all automated tests pass before submitting a pull request.
+
+### License
+
+This repository is licensed under the Cirro Bio Source Available License (see
+[LICENSE.md](LICENSE.md)). Use of the Software beyond evaluation, review, and
+the preparation of contributions requires written authorization from
+Cirro Bio, Inc. Assignment of copyright under the Contributor Assignment
+Agreement does not change the license under which the project is distributed.
+
+### Questions
+
+Questions regarding contributions or intellectual property should be directed
+to the project maintainers before submitting a pull request.

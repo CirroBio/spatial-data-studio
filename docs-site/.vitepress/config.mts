@@ -88,6 +88,7 @@ export default defineConfig({
           { text: 'Checkpoint format', link: '/docs/CHECKPOINT_FORMAT' },
           { text: 'Embed protocol', link: '/docs/EMBED_PROTOCOL' },
           { text: 'Governance rules', link: '/sds-governance/RULES' },
+          { text: 'License', link: '/LICENSE' },
         ],
       },
     ],

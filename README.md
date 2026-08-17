@@ -239,7 +239,11 @@ of inactivity or when you disconnect.
   behind it.
 - **[`docs/CONTRACT.md`](docs/CONTRACT.md)** — the REST / SSE / Arrow API contract.
 - **[`CONTRIBUTING.md`](CONTRIBUTING.md)** — add a recipe (one JSON file) or a custom
-  analysis function.
+  analysis function, and the Contributor Policy those contributions are accepted
+  under.
+- **[`LICENSE.md`](LICENSE.md)** — the Cirro Bio Source Available License. The default
+  grant covers evaluation, review, and preparing contributions; any other use,
+  including production use, needs a written authorization from Cirro Bio, Inc.
 
 > **Maintenance rule:** this README is the source of truth for **what the app does
 > and how a user runs it**; [`DEVELOPMENT.md`](DEVELOPMENT.md) is the source of truth
