@@ -32,6 +32,11 @@ export default defineConfig({
   optimizeDeps: {
     include: ['@vivjs/loaders', '@vivjs/layers'],
   },
+  test: {
+    // The canvas library has no runner of its own; `npm test` here covers both
+    // workspaces so its unit tests run in CI with everything else.
+    include: ['src/**/*.test.ts', '../packages/viewer/src/**/*.test.ts'],
+  },
   server: {
     proxy: {
       '/api': {

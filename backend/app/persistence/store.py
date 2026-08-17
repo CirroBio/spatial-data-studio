@@ -25,11 +25,16 @@ a checkpoint written before them is rejected by the viewer with a re-save messag
   multi-gigabyte level contributes tens of entries to the zip central directory
   instead of tens of thousands (the browser downloads that directory in full before
   the first tile).
+- `_index_shapes` rewrites each polygonal `shapes/<el>/shapes.parquet` as spatially
+  indexed GeoParquet 1.1 — Hilbert-sorted rows, a `covering` bbox column, small row
+  groups — so the browser can prune row groups from the footer and range-read only the
+  ones its viewport touches instead of downloading every boundary.
 - `_write_viewer_sidecar` writes a `viewer/` group holding what the browser cannot
   cheaply derive: the per-image manifest from `imaging.image_info`, the points->global
-  affine, a gene-major (CSC) mirror of each table's `X` so coloring by one gene is
-  a couple of range reads instead of a download of the whole CSR `data`+`indices` pair,
-  and the drawn plot figures (`_write_figures`) the Plots view renders.
+  affine, the per-shapes-element index report, a gene-major (CSC) mirror of each
+  table's `X` so coloring by one gene is a couple of range reads instead of a download
+  of the whole CSR `data`+`indices` pair, and the drawn plot figures (`_write_figures`)
+  the Plots view renders.
 - `_consolidate` re-runs consolidated metadata last, so the tree the browser reads
   reports the sharded codec and includes `viewer/`.
 """
@@ -90,8 +95,8 @@ _SHARD_SIZE = 4096
 # `test_e2e.run_full_flow` covers.
 VIEWER_GROUP = "viewer"
 # Bumped when the sidecar layout changes so a viewer can refuse a shape it predates.
-# Additive keys (e.g. `figures`) don't bump it: an older reader ignores what it doesn't
-# know, and bumping would make it refuse files it can still render.
+# Additive keys (e.g. `figures`, `shapes`) don't bump it: an older reader ignores what
+# it doesn't know, and bumping would make it refuse files it can still render.
 VIEWER_SIDECAR_VERSION = 1
 # Subgroup of `viewer/` holding one group per plot id, one uint8 array per format.
 FIGURES_GROUP = "figures"
@@ -108,6 +113,17 @@ FIGURE_FORMATS = ("svg", "pdf", "png")
 # 256k, against 72 KB vs 843 KB per gene read — latency is what this mirror exists for.
 _CSC_CHUNK_MIN = 16384
 _CSC_CHUNK_MAX = 1 << 20
+
+# Shape spatial index (see `_index_shapes`). Row groups are the browser's pruning
+# granularity, so their count is what matters: too few and a viewport read drags in
+# most of the file, too many and the footer the browser downloads on every query
+# outgrows the geometry it saves. `_ROW_GROUP_TARGET` row groups keeps the footer
+# around a few hundred KiB at the top end (~1.9 KiB per row group for a boundary set's
+# handful of columns), and the row bounds keep small elements from being split into
+# row groups too thin to be worth a request.
+_ROW_GROUP_TARGET = 256
+_ROW_GROUP_ROWS_MIN = 4096
+_ROW_GROUP_ROWS_MAX = 65536
 
 
 def strip_checkpoint_ext(name: str) -> str:
@@ -586,9 +602,12 @@ def update_checkpoint(sdata, path: str, app_state: dict, *, tables: set[str],
         sdata.write_attrs()
         _write_logs(work_dir, logs)
         # Rasters are untouched here so they need no re-shard, but the sidecar does
-        # need refreshing: a changed table invalidates its CSC mirror, and a changed
-        # transform moves `pixel_to_world`. The image manifest is cheap, so it is
-        # always rebuilt; the CSC rebuild is limited to the dirty tables.
+        # need refreshing: a changed table invalidates its CSC mirror and its shape
+        # `cell_index` mirrors, and a changed transform moves `pixel_to_world`. The
+        # image manifest is cheap, so it is always rebuilt; the CSC rebuild is limited
+        # to the dirty tables. The shape index is re-derived (not passed in): it is
+        # idempotent on a store already indexed, and this is the path that upgrades a
+        # checkpoint first saved before the index existed.
         _write_viewer_sidecar(work_dir, sdata, tables=tables, figures=figures)
         sdata.write_consolidated_metadata()
         written = _zip_from_dir(work_dir, path, hash_name)
@@ -647,10 +666,12 @@ def _zip_dir(src_dir: str, dest_zip: str) -> str:
 def _write_browser_reader_support(zarr_dir: str, sdata,
                                   figures: dict[str, dict[str, bytes]] | None = None) -> None:
     """Make a freshly-written store directly readable by the serverless viewer.
-    Order matters: consolidation runs last so the tree the browser fetches reports
-    the sharded codec and lists the `viewer/` sidecar."""
+    Order matters: the shape index runs before the sidecar, which publishes its report,
+    and consolidation runs last so the tree the browser fetches reports the sharded
+    codec and lists the `viewer/` sidecar."""
     _shard_rasters(zarr_dir)
-    _write_viewer_sidecar(zarr_dir, sdata, figures=figures)
+    _write_viewer_sidecar(zarr_dir, sdata, figures=figures,
+                          shapes=_index_shapes(zarr_dir, sdata))
     _consolidate(zarr_dir)
 
 
@@ -665,7 +686,8 @@ def _consolidate(zarr_dir: str) -> None:
 
 
 def _write_viewer_sidecar(zarr_dir: str, sdata, tables: set[str] | None = None,
-                          figures: dict[str, dict[str, bytes]] | None = None) -> None:
+                          figures: dict[str, dict[str, bytes]] | None = None,
+                          shapes: dict[str, dict] | None = None) -> None:
     """Write the `viewer/` group: what the browser needs but cannot cheaply derive
     from the SpatialData elements themselves.
 
@@ -682,6 +704,11 @@ def _write_viewer_sidecar(zarr_dir: str, sdata, tables: set[str] | None = None,
       the table is large.
     - `viewer/figures/<plot_id>` holds the rendered plots (`_write_figures`), listed
       in the `figures` attr so a reader knows what is there without walking the tree.
+    - `shapes` is `_index_shapes`' report, and `viewer/shapes/<el>/<table>/cell_index`
+      the label->obs-row mapping written alongside it. Together they let the viewer plan
+      a boundary query — pick an element, invert its viewport, prune row groups, check
+      the cost — entirely from consolidated metadata, without a single speculative read
+      against the geometry.
 
     `tables` limits the CSC rebuild to those keys (the incremental save path knows
     which tables changed); None rebuilds all of them. `figures` is the complete set to
@@ -709,12 +736,57 @@ def _write_viewer_sidecar(zarr_dir: str, sdata, tables: set[str] | None = None,
         },
         "figures": {pid: {fmt: len(blob) for fmt, blob in blobs.items()}
                     for pid, blobs in (figures or {}).items() if blobs},
+        "shapes": shapes if shapes is not None else _index_shapes(zarr_dir, sdata),
     }
     checkpoint_schemas.validate_viewer_sidecar(sidecar)
     group.attrs.update(sidecar)
     _write_figures(zarr_dir, group, figures or {})
     for key in table_keys if tables is None else (tables & set(table_keys)):
         _write_csc_mirror(group, key, sdata.tables[key])
+    for element in sidecar["shapes"]:
+        _write_shape_cell_index(group, zarr_dir, element, sdata, table_keys)
+
+
+def _write_shape_cell_index(group, zarr_dir: str, element: str, sdata,
+                            table_keys: list[str]) -> None:
+    """`viewer/shapes/<element>/<table>/cell_index`: for each row of the indexed
+    `shapes.parquet`, that shape's row position in `table`'s obs (-1 unmatched) — the
+    int32 column the boundary layer gathers per-cell colors from.
+
+    It is baked because the browser cannot cheaply reproduce it. The mapping is by
+    index *label* (`transport.geometry.cell_index`), so deriving it in JS would mean
+    downloading the element's whole label column and the table's whole obs index just
+    to align two orderings. Labels are read back from the parquet rather than taken
+    from the in-memory GeoDataFrame so the array is aligned with the file's actual row
+    order even when `_index_shapes` skipped an already-indexed file whose order no
+    longer matches the live object's.
+
+    Chunked at the file's row-group length, so the viewer's read for one surviving row
+    group is one chunk."""
+    from ..transport import geometry
+
+    labels = _parquet_row_labels(os.path.join(zarr_dir, "shapes", element, "shapes.parquet"))
+    dest = group.require_group("shapes").require_group(element)
+    for key in table_keys:
+        values = geometry.cell_index(sdata.tables[key], labels)
+        arr = dest.require_group(key).create_array(
+            "cell_index", shape=values.shape, dtype=values.dtype,
+            chunks=(max(1, min(_row_group_rows(len(labels)), len(values))),), overwrite=True)
+        arr[:] = values
+
+
+def _parquet_row_labels(path: str) -> list:
+    """The row labels of a shapes parquet, in file order: the pandas index column if
+    one was written, else the implicit 0..n-1 of a RangeIndex. Reads that one column,
+    never the geometry."""
+    import pyarrow.parquet as pq
+
+    pf = pq.ParquetFile(path)
+    pandas_meta = json.loads((pf.metadata.metadata or {}).get(b"pandas") or b"{}")
+    index_cols = [c for c in pandas_meta.get("index_columns", []) if isinstance(c, str)]
+    if not index_cols:
+        return list(range(pf.metadata.num_rows))
+    return pf.read(columns=index_cols).column(0).to_pylist()
 
 
 def _write_figures(zarr_dir: str, viewer_group, figures: dict[str, dict[str, bytes]]) -> None:
@@ -777,6 +849,247 @@ def _csc_chunk(indptr: np.ndarray) -> int:
         return _CSC_CHUNK_MIN
     target = max(1.0, float(np.percentile(lengths, 95))) * 2
     return int(min(_CSC_CHUNK_MAX, max(_CSC_CHUNK_MIN, 1 << int(np.ceil(np.log2(target))))))
+
+
+# ---- shape spatial index ----------------------------------------------------
+def _index_shapes(zarr_dir: str, sdata) -> dict[str, dict]:
+    """Rewrite every polygonal `shapes/<el>/shapes.parquet` in the store as spatially
+    indexed GeoParquet 1.1, and return the per-element report the sidecar publishes.
+
+    spatialdata writes shapes with a bare `GeoDataFrame.to_parquet()`: WKB geometry,
+    snappy, one row group, rows in whatever order the reader produced. Every one of
+    those defeats a range-reading browser. Parquet's own min/max statistics on a WKB
+    binary column are lexicographic over the bytes and so spatially meaningless, and
+    with a single row group there is nothing to prune anyway — the viewer's only option
+    is to download every boundary in the sample to draw the few hundred on screen.
+
+    Three changes make the same file range-queryable:
+
+    - **Hilbert sort.** Rows are ordered by a space-filling curve over their centroids,
+      so a row group holds geometry that is actually adjacent on the slide. Without it
+      the remaining two steps are decoration: every row group's bbox approximates the
+      whole extent and pruning eliminates nothing.
+    - **`covering` bbox column.** A `bbox` struct of per-feature bounds, registered in
+      the `geo` metadata's `covering` key. Its FLOAT64 members get real numeric
+      row-group statistics, which is what the viewer intersects its viewport against.
+      `geopandas.read_parquet` recognizes `covering` and drops the column again on read,
+      so the GeoDataFrame the backend loads back is unchanged.
+    - **Small row groups + zstd.** `_row_group_rows` sizes the pruning granularity;
+      zstd over snappy is ~30% off the wire on real boundary geometry (measured on the
+      Xenium test element: 2.13 MB snappy vs 1.51 MB zstd).
+
+    Point/circle shapes are left alone — they are served as scatter, not outlines, and
+    the viewer reads their coordinates from the table. `annotations` is skipped too: it
+    is a handful of user-drawn shapes whose row order is the order they appear in the
+    annotation list, and re-sorting it would shuffle that for no gain.
+
+    Idempotent: an element already carrying `covering` is left untouched, so the
+    incremental save path can call this over a store it has already indexed.
+    """
+    report: dict[str, dict] = {}
+    from ..sessions import shape_annotations
+    from ..transport import geometry
+
+    for element, gdf in getattr(sdata, "shapes", {}).items():
+        path = os.path.join(zarr_dir, "shapes", element, "shapes.parquet")
+        if element == shape_annotations.ELEMENT or not os.path.isfile(path):
+            continue
+        if not geometry.is_polygonal(gdf):
+            continue
+        entry = _index_shape_parquet(path, gdf)
+        if entry is not None:
+            report[element] = entry
+            _log.info("shape index %s: %d rows, %d row groups, footer %.1f KiB, "
+                      "selectivity %.4f", element, entry["num_rows"], entry["row_groups"],
+                      entry["footer_bytes"] / 1024, entry["selectivity"])
+    return report
+
+
+def _index_shape_parquet(path: str, gdf) -> dict | None:
+    """Rewrite one `shapes.parquet` in indexed form and report on the result. Returns None
+    when there is nothing to publish: an element with no rows, or one whose every geometry
+    is empty or missing."""
+    if len(gdf) == 0:
+        return None
+    if _has_covering(path):
+        return _shape_index_report(path)
+    tmp = path + ".indexing"
+    gdf.iloc[_hilbert_order(gdf)].to_parquet(
+        tmp, write_covering_bbox=True, schema_version="1.1.0", compression="zstd",
+        row_group_size=_row_group_rows(len(gdf)),
+        # Page-level pruning below the row group, for free at ~85 bytes per row group.
+        write_page_index=True,
+    )
+    os.replace(tmp, path)
+    return _shape_index_report(path)
+
+
+def _hilbert_order(gdf) -> np.ndarray:
+    """Row positions in Hilbert-curve order over feature centroids.
+
+    Empty and missing geometries are sorted to the end rather than mixed in:
+    `hilbert_distance` refuses a GeoSeries containing either (it has no centroid to
+    place them by), and raising here would fail the whole checkpoint save over one bad
+    cell — which a filtered element or an upstream geometry op can easily produce. They
+    keep their labels and their row order, and get a null `covering` bbox, so the viewer
+    prunes them away instead of drawing them."""
+    import shapely
+
+    geoms = gdf.geometry
+    # shapely's predicates rather than `notna()`/`is_empty`: geopandas is mid-change on
+    # what those mean for an empty geometry and warns on every call, while these two say
+    # exactly what is meant and take the array as it is.
+    values = geoms.to_numpy()
+    drawable = ~(shapely.is_missing(values) | shapely.is_empty(values))
+    if drawable.all():
+        return np.argsort(geoms.hilbert_distance().to_numpy(), kind="stable")
+    at = np.flatnonzero(drawable)
+    if at.size == 0:
+        # Nothing to order, and `hilbert_distance` cannot reduce over zero rows. The
+        # file is still written (the element keeps its rows for the Python reader); the
+        # report then finds no bounds and omits it, so no viewer offers its boundaries.
+        return np.arange(len(gdf))
+    sorted_at = at[np.argsort(geoms.iloc[at].hilbert_distance().to_numpy(), kind="stable")]
+    return np.concatenate([sorted_at, np.flatnonzero(~drawable)])
+
+
+def _row_group_rows(n: int) -> int:
+    """Rows per row group: `n / _ROW_GROUP_TARGET` clamped to
+    [`_ROW_GROUP_ROWS_MIN`, `_ROW_GROUP_ROWS_MAX`]. The ratio bounds the footer on a
+    large element (a million-cell sample gets ~250 row groups, not ~250 thousand); the
+    floor stops a small one from being cut into row groups so thin that the per-request
+    overhead dwarfs the geometry, and it is also why a small element ends up with a
+    handful of row groups and correspondingly weak selectivity — such a file is small
+    enough for the viewer to read whole, which is what its budget check decides."""
+    return int(min(_ROW_GROUP_ROWS_MAX, max(_ROW_GROUP_ROWS_MIN, -(-n // _ROW_GROUP_TARGET))))
+
+
+def _has_covering(path: str) -> bool:
+    import pyarrow.parquet as pq
+    geo = pq.ParquetFile(path).metadata.metadata.get(b"geo")
+    if not geo:
+        return False
+    parsed = json.loads(geo)
+    column = parsed.get("columns", {}).get(parsed.get("primary_column"), {})
+    return "covering" in column
+
+
+def _shape_index_report(path: str) -> dict | None:
+    """Everything the viewer needs to plan a query against this element without touching
+    the file first: its geometry kinds and extent (so it can skip an element the viewport
+    misses entirely), its size in rows and row groups, and the measured selectivity +
+    footer size its budget check reads. Bounds are intrinsic — the same space the
+    `covering` statistics are in, and the space the viewer inverts its viewport into
+    using the element's transform.
+
+    Every field is read from the file, never from the in-memory GeoDataFrame, so the
+    report cannot disagree with what it describes. That matters on the idempotent path:
+    an already-indexed file is deliberately *not* rewritten to match the live object, so
+    a report taken from that object could claim a narrower extent than the file holds
+    (viewports over the difference would draw nothing) or claim Polygon-only for a file
+    holding MultiPolygons (the reader would pick the wrong GeoArrow nesting)."""
+    import pyarrow.parquet as pq
+
+    md = pq.ParquetFile(path).metadata
+    geo = json.loads(md.metadata[b"geo"])
+    column = geo["columns"][geo["primary_column"]]
+    boxes = _covering_boxes(md)
+    if not boxes:
+        # No row group has usable bounds, so every geometry in the file is empty or
+        # missing: there is nothing for the viewer to draw and no extent to publish.
+        # Omitting the element leaves the boundary overlay off, which is the honest
+        # outcome — a zero-area `bounds` would instead reject every viewport that misses
+        # the origin and look like a bug.
+        return None
+    return {
+        # Required of every GeoParquet column, and written from the data itself. The
+        # dimension band is dropped ("Polygon Z" -> "Polygon"): the reader and the
+        # boundary picker both match the bare names, and a 3-D element is drawn from its
+        # x/y like any other (`wkbGeoArrow` skips the Z/M ordinates).
+        "geometry_types": sorted({str(t).split()[0] for t in column["geometry_types"]}),
+        "num_rows": int(md.num_rows),
+        "row_groups": int(md.num_row_groups),
+        "file_bytes": int(os.path.getsize(path)),
+        "footer_bytes": int(md.serialized_size),
+        "bounds": _union_box(boxes),
+        "selectivity": _selectivity(md, boxes),
+    }
+
+
+def _selectivity(md, boxes: list[tuple] | None = None) -> float:
+    """Median fraction of the element's extent covered by a single row group's bbox —
+    the number that decides whether range-querying this file actually pays. The ideal
+    is 1/num_row_groups (disjoint row groups tiling the extent); a well-sorted file
+    lands within a small factor of that, an unsorted one near 1.0 because every row
+    group spans everything. Measured from the `covering` column's row-group statistics,
+    i.e. from exactly the values the viewer prunes on."""
+    if boxes is None:
+        boxes = _covering_boxes(md)
+    if not boxes:
+        return 1.0
+    denom = _box_area(_union_box(boxes))
+    if denom <= 0:
+        # A degenerate extent (every feature on one line, or a single feature) has no
+        # area to take a ratio against; report the no-pruning-benefit end of the scale
+        # rather than dividing by zero.
+        return 1.0
+    ratios = sorted(_box_area(b) / denom for b in boxes)
+    return float(ratios[len(ratios) // 2])
+
+
+def _covering_boxes(md) -> list[tuple]:
+    """Bounding boxes of the row groups that have usable `covering` statistics. A row
+    group with none is omitted rather than poisoning the result — Parquet permits unset
+    min/max, and a row group holding only empty/missing geometry has exactly that (see
+    `_hilbert_order`, which sorts such rows to the end and so can fill one)."""
+    stats = _covering_stats(md)
+    if stats is None:
+        return []
+    return [(s["xmin"].min, s["ymin"].min, s["xmax"].max, s["ymax"].max)
+            for s in stats if s is not None]
+
+
+def _union_box(boxes: list[tuple]) -> list[float]:
+    """The element's extent: the union of its row-group boxes, which is exactly the union
+    of every feature's bbox and therefore the same number `total_bounds` would give — but
+    derived from the file, and from the very statistics the viewer prunes against."""
+    return [float(min(b[0] for b in boxes)), float(min(b[1] for b in boxes)),
+            float(max(b[2] for b in boxes)), float(max(b[3] for b in boxes))]
+
+
+def _covering_stats(md) -> list[dict | None] | None:
+    """Statistics of the four `covering` bbox members, one entry per row group in
+    row-group order, or None when the file carries no covering column at all.
+
+    An individual entry is None when that row group's statistics are unset — Parquet
+    permits a `Statistics` object with no min/max, which must be read as absent, not as
+    an empty range. Only that row group is unknown, so callers ignore it rather than
+    discarding every other row group's box with it."""
+    geo = json.loads(md.metadata[b"geo"])
+    covering = geo["columns"][geo["primary_column"]].get("covering")
+    if not covering:
+        return None
+    paths = {k: ".".join(v) for k, v in covering["bbox"].items()}
+    first = md.row_group(0)
+    col_at = {first.column(i).path_in_schema: i for i in range(first.num_columns)}
+    if not all(p in col_at for p in paths.values()):
+        return None
+    out: list[dict | None] = []
+    for r in range(md.num_row_groups):
+        rg = md.row_group(r)
+        entry = {}
+        for member, p in paths.items():
+            s = rg.column(col_at[p]).statistics
+            if s is None or not s.has_min_max:
+                entry = None
+                break
+            entry[member] = s
+        out.append(entry or None)
+    return out
+
+
+def _box_area(b) -> float:
+    return max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
 
 
 # ---- raster sharding --------------------------------------------------------

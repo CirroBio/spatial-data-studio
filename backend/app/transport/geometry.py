@@ -49,13 +49,16 @@ def is_polygonal(gdf) -> bool:
     return bool(set(str(g) for g in gdf.geom_type.unique()) & _POLYGON_GEOM_TYPES)
 
 
-def _cell_index(table, index_labels) -> np.ndarray:
+def cell_index(table, index_labels) -> np.ndarray:
     """Map each shape's index label to its row position in the active table, so the
     frontend can gather the already-loaded per-cell color. Label-based, never
     positional: `cell_boundaries` is keyed by the cell name (== the table's obs
     index), while boundary sets keyed by the SpatialData instance id (e.g.
     `nucleus_boundaries`) match the table's `instance_key` column. Unmatched shapes
-    get -1."""
+    get -1.
+
+    Shared with the checkpoint writer, which bakes the same mapping into the viewer
+    sidecar for the serverless reader (`persistence.store._write_shape_cell_index`)."""
     obs = table.obs
     name_to_pos = {label: i for i, label in enumerate(obs.index)}
     inst_to_pos: dict = {}
@@ -119,8 +122,7 @@ def clipped_polygons(sdata, table, element: str, bbox, limit: int | None = None)
     sub = gdf.iloc[hits]
     aff = [m[0, 0], m[0, 1], m[1, 0], m[1, 1], m[0, 2], m[1, 2]]  # shapely: a,b,d,e,xoff,yoff
     geoms = [affine_transform(g, aff) for g in sub.geometry.to_numpy()]
-    cell_index = _cell_index(table, list(sub.index))
-    return geoms, cell_index
+    return geoms, cell_index(table, list(sub.index))
 
 
 def polygons_geoarrow(sdata, table, element: str, bbox, limit: int | None = None) -> bytes:

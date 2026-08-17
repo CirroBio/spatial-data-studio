@@ -114,7 +114,9 @@ packages/viewer/  @cirrobio/spatial-viewer — the deck.gl canvases and the chec
                   palettes/view-fit helpers a host's own controls need
   src/data/       the DataSource contract the canvas renders through, the DataSourceProvider,
                   and checkpointSource (a .zarr.zip read directly with zarrita over HTTP
-                  Range — the serverless viewer, DESIGN §14.2)
+                  Range — the serverless viewer, DESIGN §14.2). parquetShapes.ts +
+                  wkbGeoArrow.ts are the boundary half: the shape file is GeoParquet, not
+                  zarr, so it is range-queried with hyparquet against its covering index
   src/types.ts    the display model (DisplaySpec/DisplayEncoding/SessionFields/ImageInfo)
   src/defaults.ts the fallbacks the canvases apply for absent encoding fields, exported so
                   a host that authors a display agrees with what will actually render
@@ -168,6 +170,7 @@ Component-level notes: [`backend/README.md`](backend/README.md),
 | Change which elements a save can leave out, at what resolution images are written, or how their sizes are estimated | `backend/app/persistence/store.py` (`select_elements`, `trim_pyramid`, `element_size_mb`, `image_levels`) + `sessions/appstate.py` (`prune_to_elements`) + `frontend/src/components/SaveCheckpointDialog.tsx` | below |
 | Change how rendered plot figures are stored, served or shown | `backend/app/persistence/store.py` (`_write_figures`, `read_figure`, `figure_index`) + `sessions/session.py` (`figure`, `figure_index`, `figures_to_persist`) + `frontend/src/lib/figures.ts` + `components/PlotGallery.tsx` / `FigureLightbox.tsx` / `PlotDetail.tsx` | below |
 | Change what the serverless viewer can read from a checkpoint | `backend/app/persistence/store.py` (`_write_viewer_sidecar`, the writer half) + `packages/viewer/src/data/checkpointSource.ts` (the reader half) — the two must move together | [DESIGN.md](DESIGN.md) §14.1–14.2, [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) §4 |
+| Change how cell boundaries are indexed or range-queried | `backend/app/persistence/store.py` (`_index_shapes`, `_row_group_rows`, `_selectivity` — the writer half) + `packages/viewer/src/data/parquetShapes.ts` and `wkbGeoArrow.ts` (the reader half). A change to the on-disk index must keep `test_e2e.run_shape_index_check` passing: it re-derives the pruning from the file and compares it against a brute-force row scan | [DESIGN.md](DESIGN.md) §14.1–14.2, [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) §4.4 |
 | Change the shape of `app_state`, the `viewer/` sidecar, `X_csc`, or `index.json` | `backend/app/schemas/checkpoint/*.schema.json` (the JSON Schema is validated against on every write) + [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) in the same commit — `sds-governance/checks/check_checkpoint_schema_docs.py` fails the build otherwise | [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) |
 | Add a render-path call the canvas makes | `packages/viewer/src/data/types.ts` (the `DataSource` interface), then **both** `frontend/src/data/apiSource.ts` and `packages/viewer/src/data/checkpointSource.ts` | [DESIGN.md](DESIGN.md) §14.2 |
 | Change what the serverless viewer shows (collapsed-by-default sidebar with the analysis history only, the Plots view, PNG export) | `frontend/src/components/Sidebar.tsx` (the serverless branch), `store/sessionStore.ts` (`leftMenuOpen` default), `components/PlotGallery.tsx`, `packages/viewer/src/lib/canvasCapture.ts` | [DESIGN.md](DESIGN.md) §14.2 |
@@ -558,7 +561,9 @@ a URL (DESIGN §14.2). `lib/urlViewState.ts` owns the schema and the diff;
   the camera *and* keeps the controls.
 
 Tests: `src/lib/urlViewState.test.ts` (vitest, `npm run test -w spatial-data-studio-frontend`)
-covers the encoder; `e2e/serverless-share.spec.ts` covers the wiring by sharing a link
+covers the encoder. That one vitest run covers both workspaces — `frontend/vite.config.ts`
+includes `../packages/viewer/src/**/*.test.ts`, since the canvas library has no runner of
+its own. Also `e2e/serverless-share.spec.ts` covers the wiring by sharing a link
 between two browser contexts. The e2e drives the camera through the zoom buttons —
 `onZoom` writes the viewport directly, bypassing deck's controller, which synthetic drag
 and wheel events never reach.
@@ -642,7 +647,13 @@ collection as well as embeddable per page. Pull requests build but do not publis
   endpoints, cross-session isolation, saving a session that ran
   `filter_rank_genes_groups` (whose `uns` record arrays carry NaN gene names), the
   eight spatial/multi-sample custom methods on `xenium_tma.zarr`, the
-  cell-segmentation `/shapes/{element}/geoarrow` polygons on `xenium.zarr`, viewer
+  cell-segmentation `/shapes/{element}/geoarrow` polygons on `xenium.zarr` (including
+  `run_shape_index_check`: the saved checkpoint's boundary GeoParquet is spatially
+  queryable — covering column present, footer and row groups bounded, row-group pruning
+  a superset of a brute-force row scan over 200 random windows, selectivity within
+  2.5x of ideal and better than an unsorted copy, the `cell_index` mirror aligned with
+  the file's Hilbert-sorted row order and agreeing with `/geoarrow`, and re-indexing a
+  no-op), viewer
   presence + the per-session edit lock (auto-lock on attach, 423 for everyone else,
   release → take, and the heartbeat timeout freeing a lock — `run_session_lock_flow`),
   the MCP assistant surface over the real `/api/mcp` transport (`run_mcp_flow`:

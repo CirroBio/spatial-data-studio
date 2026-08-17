@@ -456,6 +456,201 @@ def run_csc_mirror_check(client, sid, checkpoint_path):
           f"(nnz {lengths.min()}..{lengths.max()}, chunk {csc['data'].chunks[0]})")
 
 
+def _probe_square(cx, cy, r=2.0, z=None):
+    """A small square polygon for the shape-index edge-case probes; `z` makes it 3-D."""
+    from shapely.geometry import Polygon
+    corners = [(cx - r, cy - r), (cx + r, cy - r), (cx + r, cy + r), (cx - r, cy + r)]
+    return Polygon([(x, y, z) for x, y in corners] if z is not None else corners)
+
+
+def run_shape_index_check(client, sid, checkpoint_path):
+    """The `shapes/<el>/shapes.parquet` spatial index is what lets the serverless viewer
+    range-read a viewport's boundaries instead of downloading every polygon in the
+    sample. Assert the file is actually queryable — not merely well-formed — and that the
+    sidecar report and `cell_index` mirror the browser plans from agree with it.
+
+    The load-bearing check is the pruning one: covering statistics that are subtly wrong
+    (a min where a max belongs) still produce a valid file and still render, just with
+    cells silently missing. So the row groups the statistics keep are compared against a
+    brute-force scan of every row's true bounds."""
+    import zipfile as _zip
+
+    import anndata
+    import geopandas as gpd
+    import numpy as np
+    import pyarrow.parquet as pq
+    import zarr
+
+    from app.persistence import store
+    from app.sessions import shape_annotations
+    from app.transport import geometry
+
+    with tempfile.TemporaryDirectory() as tmp:
+        with _zip.ZipFile(checkpoint_path) as zf:
+            zf.extractall(tmp)
+        group = zarr.open_group(tmp, mode="r")
+        sidecar = dict(group[store.VIEWER_GROUP].attrs)
+        assert sidecar["sidecar_version"] == store.VIEWER_SIDECAR_VERSION, sidecar["sidecar_version"]
+        report = sidecar["shapes"]
+        assert "cell_boundaries" in report, f"no shape index written: {list(report)}"
+        # Point shapes are scatter, not outlines, and `annotations` row order is what the
+        # annotation list shows — neither is indexed.
+        for element in report:
+            assert element != shape_annotations.ELEMENT, element
+
+        path = os.path.join(tmp, "shapes", "cell_boundaries", "shapes.parquet")
+        md = pq.ParquetFile(path).metadata
+        geo = json.loads(md.metadata[b"geo"])
+        column = geo["columns"][geo["primary_column"]]
+        assert geo["version"].startswith("1.1"), geo["version"]
+        assert "covering" in column, f"no covering column: {list(column)}"
+        assert md.num_row_groups > 1, "one row group leaves nothing to prune"
+        # The browser pays the footer on every query, and one row group per request.
+        assert md.serialized_size < 1_000_000, f"footer too large: {md.serialized_size}"
+        largest = max(md.row_group(i).total_byte_size for i in range(md.num_row_groups))
+        assert largest < 32 << 20, f"row group too large: {largest}"
+
+        entry = report["cell_boundaries"]
+        for key, actual in (("num_rows", md.num_rows), ("row_groups", md.num_row_groups),
+                            ("footer_bytes", md.serialized_size),
+                            ("file_bytes", os.path.getsize(path))):
+            assert entry[key] == actual, f"sidecar {key} {entry[key]} != file {actual}"
+        print(f"[ok] shape index: {entry['num_rows']} rows, {entry['row_groups']} row groups, "
+              f"{entry['file_bytes'] / 1e6:.1f} MB, footer {entry['footer_bytes'] / 1024:.1f} KiB")
+
+        # --- pruning vs brute force -------------------------------------------------
+        gdf = gpd.read_parquet(path)
+        x0, y0, x1, y1 = (float(v) for v in gdf.total_bounds)
+        assert np.allclose(entry["bounds"], [x0, y0, x1, y1]), (entry["bounds"], gdf.total_bounds)
+        rows = gdf.bounds.to_numpy()  # minx, miny, maxx, maxy per row, read independently
+        boxes = [(s["xmin"].min, s["ymin"].min, s["xmax"].max, s["ymax"].max)
+                 for s in store._covering_stats(md)]
+        starts = np.cumsum([0] + [md.row_group(i).num_rows for i in range(md.num_row_groups)])
+
+        rng = np.random.default_rng(0)
+        checked = 0
+        for _ in range(200):
+            wx = np.sort(rng.uniform(x0, x1, 2))
+            wy = np.sort(rng.uniform(y0, y1, 2))
+            window = (wx[0], wy[0], wx[1], wy[1])
+            kept = {i for i, b in enumerate(boxes)
+                    if b[0] <= window[2] and b[2] >= window[0]
+                    and b[1] <= window[3] and b[3] >= window[1]}
+            hit_rows = np.nonzero((rows[:, 0] <= window[2]) & (rows[:, 2] >= window[0])
+                                  & (rows[:, 1] <= window[3]) & (rows[:, 3] >= window[1]))[0]
+            needed = {int(np.searchsorted(starts, r, side="right") - 1) for r in hit_rows}
+            # Superset, never equal: a row group's box is the union of its rows', so it
+            # may intersect a window none of its rows do. Missing one is the bug.
+            assert needed <= kept, \
+                f"pruning dropped row groups {sorted(needed - kept)} for window {window}"
+            checked += len(hit_rows)
+        print(f"[ok] row-group pruning is a superset of a brute-force row scan over 200 "
+              f"random windows ({checked} row hits)")
+
+        # --- selectivity: the number that decides whether pruning pays --------------
+        # Measured *relative* to what this file could achieve, not against an absolute
+        # threshold: the ideal is 1/num_row_groups, so a small element with a handful of
+        # row groups is capped low however well it is sorted, and only the ratio says
+        # whether the sort worked. Measured ratios are 1.14x on the 11.9k-cell element
+        # and 1.27x on a 428k-cell one, so 2.5x leaves room for dataset variation while
+        # still failing an unsorted file (which lands at 1/ideal, i.e. num_row_groups).
+        ideal = 1 / md.num_row_groups
+        assert entry["selectivity"] < ideal * 2.5, \
+            f"selectivity {entry['selectivity']:.4f} vs ideal {ideal:.4f} " \
+            f"({entry['selectivity'] / ideal:.1f}x): rows are not spatially sorted"
+        # An unsorted copy of the same rows, as the regression baseline: every row group
+        # then spans the whole extent (selectivity 1.0), and this is what would silently
+        # regress if a writer upgrade dropped the sort.
+        unsorted_path = os.path.join(tmp, "unsorted.parquet")
+        gdf.sample(frac=1.0, random_state=0).to_parquet(
+            unsorted_path, write_covering_bbox=True, schema_version="1.1.0",
+            row_group_size=store._row_group_rows(len(gdf)))
+        unsorted = store._selectivity(pq.ParquetFile(unsorted_path).metadata)
+        assert entry["selectivity"] < unsorted / 2, \
+            f"sorted selectivity {entry['selectivity']:.4f} not better than unsorted {unsorted:.4f}"
+        print(f"[ok] selectivity {entry['selectivity']:.4f} = {entry['selectivity'] / ideal:.2f}x "
+              f"ideal {ideal:.4f} (unsorted would be {unsorted:.4f}) — pruning is effective")
+
+        # --- cell_index mirror ------------------------------------------------------
+        # It must be aligned with the *file's* row order, which the Hilbert sort changed,
+        # and carry the same label-based mapping the live route computes.
+        table_key = sidecar["table_keys"][0]
+        mirror = group[f"{store.VIEWER_GROUP}/shapes/cell_boundaries/{table_key}/cell_index"][:]
+        assert len(mirror) == md.num_rows, (len(mirror), md.num_rows)
+        expected = geometry.cell_index(
+            anndata.read_zarr(os.path.join(tmp, "tables", table_key)), list(gdf.index))
+        assert np.array_equal(mirror, expected), "cell_index mirror is out of order with the parquet"
+        served = client.get(f"/api/sessions/{sid}/shapes/cell_boundaries/geoarrow",
+                            params={"bbox": f"{x0},{y0},{x1},{y1}"})
+        live = np.asarray(ipc.open_stream(io.BytesIO(served.content)).read_all().column("cell_index"))
+        assert sorted(mirror.tolist()) == sorted(live.tolist()), \
+            "cell_index mirror disagrees with what /geoarrow serves"
+        print(f"[ok] cell_index mirror ({len(mirror)} rows, chunk "
+              f"{group[f'{store.VIEWER_GROUP}/shapes/cell_boundaries/{table_key}/cell_index'].chunks[0]}) "
+              f"matches the parquet order and /geoarrow")
+
+        # --- idempotence, and the report describing the FILE ------------------------
+        # The incremental save path re-runs this over a store it already indexed; a
+        # rewrite there would be wasted work on every save.
+        before = os.stat(path).st_mtime_ns
+        again = store._index_shape_parquet(path, gdf)
+        assert os.stat(path).st_mtime_ns == before, "re-indexing rewrote an indexed file"
+        assert again == entry, (again, entry)
+        # That skip is exactly why the report must be read from the file and never from
+        # the live GeoDataFrame: the file is deliberately left alone, so a report taken
+        # from the object would describe geometry that isn't there. Re-run with an object
+        # that contradicts the file on both counts a reader acts on — extent (a narrower
+        # one silently blanks viewports outside it) and geometry kind (the wrong one makes
+        # the reader build the wrong GeoArrow nesting).
+        from shapely.geometry import MultiPolygon, Polygon
+        square = Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])
+        decoy = gpd.GeoDataFrame(
+            geometry=[MultiPolygon([square]), square], index=list(gdf.index[:2]))
+        assert store._index_shape_parquet(path, decoy) == entry, \
+            "the shape index report follows the in-memory GeoDataFrame, not the file"
+        print("[ok] re-indexing an indexed parquet is a no-op, and its report still "
+              "describes the file rather than the live object")
+
+        # --- geometry a Hilbert sort can't place, and 3-D geometry -------------------
+        # An empty or missing polygon has no centroid, and `hilbert_distance` refuses a
+        # GeoSeries containing one — so a single filtered cell must not fail the whole
+        # save. And GeoParquet spells a 3-D kind "Polygon Z", which neither the reader
+        # nor the boundary picker matches, so the report has to publish the bare name.
+        from shapely import wkt
+        mixed = gpd.GeoDataFrame(
+            geometry=[_probe_square(100, 100), None, _probe_square(10, 10),
+                      wkt.loads("POLYGON EMPTY"), _probe_square(50, 50)],
+            index=list("abcde"))
+        mixed_path = os.path.join(tmp, "mixed.parquet")
+        mixed.to_parquet(mixed_path)
+        mixed_entry = store._index_shape_parquet(mixed_path, mixed)
+        mixed_labels = store._parquet_row_labels(mixed_path)
+        assert mixed_entry is not None, "one bad geometry disabled the whole element"
+        assert mixed_labels[-2:] == ["b", "d"], \
+            f"unplaceable geometry must sort to the end, got {mixed_labels}"
+        assert len(gpd.read_parquet(mixed_path)) == len(mixed), "a row was dropped"
+        # The extent must come from the drawable rows only; a null bbox contributes none.
+        assert mixed_entry["bounds"] == [8.0, 8.0, 102.0, 102.0], mixed_entry["bounds"]
+
+        allbad = gpd.GeoDataFrame(geometry=[None, wkt.loads("POLYGON EMPTY")], index=["x", "y"])
+        allbad_path = os.path.join(tmp, "allbad.parquet")
+        allbad.to_parquet(allbad_path)
+        assert store._index_shape_parquet(allbad_path, allbad) is None, \
+            "an element with nothing drawable must be omitted, not published with a zero extent"
+
+        three_d = gpd.GeoDataFrame(
+            geometry=[_probe_square(1, 1, z=0.0), _probe_square(9, 9, z=1.0)], index=["p", "q"])
+        three_d_path = os.path.join(tmp, "three_d.parquet")
+        three_d.to_parquet(three_d_path)
+        three_d_entry = store._index_shape_parquet(three_d_path, three_d)
+        assert three_d_entry["geometry_types"] == ["Polygon"], \
+            f"3-D geometry must report the bare kind, got {three_d_entry['geometry_types']}"
+        print("[ok] unplaceable geometry sorts to the end (element still indexed), an "
+              "all-empty element is omitted, and 3-D geometry reports as 'Polygon'")
+
+    print("\nSHAPE INDEX CHECKS PASSED")
+
+
 def run_snapshot_flow(client, sid):
     """A snapshot is now a rendered figure (vector PDF + raster PNG) of a display, with
     provenance metadata embedded in each file and a sidecar `.figure.json`. Verify
@@ -1417,6 +1612,10 @@ def run_segmentation_flow(client):
     r2 = client.get(f"/api/sessions/{sid2}/shapes/cell_boundaries/geoarrow", params={"bbox": covering})
     assert ipc.open_stream(io.BytesIO(r2.content)).read_all().num_rows > 0
     print("[ok] cell_boundaries survived save + reload; geoarrow still serves it")
+
+    # The same checkpoint, checked as the serverless viewer reads it: is the boundary
+    # parquet spatially queryable over HTTP Range?
+    run_shape_index_check(client, sid, out)
 
     # a session with no polygons (visium_hne): no polygon element; geoarrow 404s
     sid_v = new_session(client)

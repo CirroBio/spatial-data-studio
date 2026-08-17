@@ -1240,11 +1240,12 @@ full on open) into gzipped `logs/<record_id>.log.gz`, read back lazily by
 `session.get_log` (the `/jobs/{id}/log` endpoint).
 
 A checkpoint is **directly readable by a browser** over HTTP Range, with no backend
-(§14.2). `ZIP_STORED` is what makes that possible — a zarr chunk is a contiguous byte
-span — and three write-time steps in `_write_browser_reader_support` serve it. They
-are what the serverless viewer needs to exist at all, not an optimization: a
-checkpoint written before them is rejected on open (§14.2), because a Zarr v3 store
-carries no child index and the reader could not even name the table.
+(§14.2). `ZIP_STORED` is what makes that possible — a zarr chunk, and equally a shape
+parquet, is a contiguous byte span — and four write-time steps in
+`_write_browser_reader_support` serve it. The first three are what the serverless viewer
+needs to exist at all, not an optimization: a checkpoint written before them is rejected
+on open (§14.2), because a Zarr v3 store carries no child index and the reader could not
+even name the table.
 
 - **`_shard_rasters`** rewrites image/label arrays with the Zarr v3 sharding codec
   (inner chunk `_SHARD_INNER` 512, shard `_SHARD_SIZE` 4096), region-by-region so
@@ -1255,12 +1256,41 @@ carries no child index and the reader could not even name the table.
   the browser downloads it in full before the first tile, and an unsharded Xenium s0
   puts tens of thousands of entries in it. On the Visium test checkpoint it took the
   image from 2172 entries to 22, and slightly *reduced* total size.
+- **`_index_shapes`** rewrites each polygonal `shapes/<el>/shapes.parquet` as
+  spatially indexed GeoParquet 1.1, so the browser can range-read a viewport's
+  boundaries. spatialdata writes them with a bare `to_parquet()`: WKB geometry, snappy,
+  **one row group**, rows in reader order. Parquet's statistics on a WKB binary column
+  are lexicographic over the bytes and so spatially meaningless, and one row group
+  leaves nothing to prune — the only way to draw the few hundred boundaries on screen
+  was to download all of them. The fix is three ordinary GeoParquet features: a
+  **Hilbert sort** on centroids (without which the other two are decoration — every
+  row group's bbox would approximate the full extent), a **`covering` bbox column**
+  whose FLOAT64 members get real per-row-group statistics, and **small row groups**
+  (`_row_group_rows`: `n/256` clamped to `[4096, 65536]`, bounding the footer the
+  browser pays on every query while keeping row groups thick enough to be worth a
+  request) with zstd (~30% off snappy on real boundary geometry). It costs no disk —
+  the indexed file is *smaller* — and stays a plain GeoParquet: `read_parquet`
+  recognizes `covering` and drops the column, so the backend reads the element back
+  unchanged. The sort does reorder rows, which is safe because every shape->table
+  linkage is by index label, never position (`geometry.cell_index`). Point/circle
+  shapes are skipped (drawn as scatter, not outlines) and so is `annotations`, whose
+  row order is what the annotation list shows. Idempotent, so the incremental path can
+  re-run it — which is also how a checkpoint saved before the index gets one.
 - **`_write_viewer_sidecar`** writes a top-level `viewer/` group (not a SpatialData
   element — `sd.read_zarr` ignores unknown root groups) holding what the browser
   can't cheaply derive: the per-image manifest from `imaging.image_info`, keyed
   `[element][table_key]` because `pixel_to_world` reconciles the image against a
   table's spots; `coords_transform`, the points->global affine `GET /data/obsm:spatial`
-  applies; and `tables/<key>/X_csc`, a gene-major mirror of a sparse `X`.
+  applies; `tables/<key>/X_csc`, a gene-major mirror of a sparse `X`; and the
+  `shapes` report — per element, its geometry kinds, row/row-group counts, intrinsic
+  bounds, `file_bytes`/`footer_bytes` and measured selectivity — plus a
+  `shapes/<el>/<table>/cell_index` int32 array per element. The report lets the reader
+  plan a boundary query entirely from consolidated metadata: reject an element the
+  viewport misses without a request, and size the footer fetch exactly instead of
+  speculating. `cell_index` is baked for the same reason the CSC mirror is: the
+  shape->obs mapping is by label, so deriving it in JS would mean downloading the
+  element's whole label column and the table's whole `obs` index to align two
+  orderings.
   The CSC mirror is the one place this trades disk for latency: it duplicates `X`
   (+66 MB on the 372 MB Visium checkpoint), but without it coloring by one gene means
   downloading the whole CSR `data`+`indices` pair — worse exactly when the table is
@@ -1281,6 +1311,9 @@ carries no child index and the reader could not even name the table.
   rewrites the store the live session reads its own figures through, so before pruning it
   the session pulls anything it is about to lose into memory (`_hold_dropped_figures`):
   deselecting a figure changes the file, never what the open session can still show.
+
+Order matters between them: the shape index runs before the sidecar, which publishes
+its report, and consolidation runs last.
 
 ### 14.2 Serverless viewer
 
@@ -1318,6 +1351,32 @@ Details that make it work:
   Plots grid, the fullscreen carousel and the figure exports are therefore the same
   components in both modes, and a plot the file carries no figure for reads
   "No saved figure" rather than offering a redraw that has no backend to run it.
+- **Boundaries** (`packages/viewer/src/data/parquetShapes.ts`) are the one thing not
+  read through zarrita: the shape file is GeoParquet, so the reader treats it as a
+  plain zip entry and drives `hyparquet` over a `ZipFileStore.getRange`-backed
+  `AsyncBuffer`. A viewport is answered in increasing order of cost — reject on the
+  sidecar's `bounds` (no request); parse the footer once per element, sized exactly
+  from `footer_bytes`; prune row groups against the `covering` statistics (free, the
+  footer already holds them); read only the surviving row groups' **`bbox` column**
+  (~10% of the file's bytes) and test each row exactly; only then read `geometry` for
+  those row groups and decode just the hit rows. Reading `bbox` before `geometry` is
+  what makes the `POLYGON_LIMIT` gate cheap — a zoomed-out viewport is rejected having
+  moved the covering column and nothing else. On a 428k-cell boundary set (55 MB,
+  105 row groups) a typical viewport costs ~1 MB in 3–4 requests and an over-limit pan
+  ~0.5 MB, against 68 MB for every viewport unindexed.
+  A file that resists pruning needs no separate code path: every row group survives,
+  the same two passes read it whole, and `MAX_QUERY_DOWNLOAD_BYTES` bounds the result —
+  which is the right answer for the small elements where that happens. Requests are
+  coalesced at a 128 KiB gap, chosen from the two chunk spacings the writer produces
+  (a row group's four `bbox` leaves are contiguous, consecutive `geometry` chunks sit
+  ~71 KiB apart, consecutive `bbox` blocks ~478 KiB apart), so it merges the first two
+  and never bridges a geometry chunk to join two bbox reads. Decoding goes from WKB
+  straight into flat Arrow buffers (`wkbGeoArrow.ts`) rather than via GeoJSON objects,
+  and produces byte-identical GeoArrow to what `polygons_geoarrow` serves — separated
+  `struct<x, y>` coordinates and an int32 `cell_index` — so `usePolygonBbox` and its
+  `GeoArrowPolygonLayer` are shared verbatim. The reader is **code-split**: a parquet
+  reader plus a zstd decompressor is ~100 KB gzipped, and only a checkpoint with
+  indexed boundaries loads it.
 - The checkpoint is presented as a synthetic **read-only session**, so
   `editBlockReason`'s existing `summary.read_only` gate disables compute, regions,
   annotations, subsetting and transform edits with no second notion of "can't write".
@@ -1378,12 +1437,16 @@ A Cirro upload bundle **is** this layout (§15): `cirro._write_viewer_index` wri
 manifest and `_symlink_viewer` colocates the built SPA, so an uploaded set of
 checkpoints is a complete, self-hosting deployment rather than just a pile of files.
 
+Cell-boundary overlays work here too, but not through zarrita: `shapes/<name>/shapes.parquet`
+is GeoParquet, so `parquetShapes.ts` range-reads it as a plain zip entry with `hyparquet`
+(§14.1). `getShapesGeoArrow`/`getElements` stay *optional* on the interface, because a
+checkpoint saved before the write-side index exists carries no `covering` column to prune
+on — such a file leaves both methods undefined and the Cells layer on its points-only
+path, the same fallback as a display with no shapes element.
+
 Not possible without the backend, by construction: compute (squidpy/scanpy/recipes),
 real subsetting (`sd.polygon_query`), saving, and the matplotlib vector-PDF snapshot
-export. Cell-boundary overlays are also absent — `shapes/<name>/shapes.parquet` is
-GeoParquet, which zarrita cannot decode, so `getShapesGeoArrow`/`getElements` are
-optional on the interface and the Cells layer stays on its points-only path (the same
-fallback as a display with no shapes element).
+export.
 
 Display settings are the one thing that does survive a reload, because they ride in the
 URL rather than in storage. Whatever differs from the checkpoint's own saved encodings

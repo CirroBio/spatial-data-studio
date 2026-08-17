@@ -54,12 +54,13 @@ i.e. unzip it anywhere and you have an ordinary Zarr v3 store on disk.
 ├── images/<element>/...          # SpatialData images (multiscale OME-Zarr-ish arrays)
 ├── labels/<element>/...          # SpatialData labels (segmentation masks)
 ├── points/<element>/...          # SpatialData points
-├── shapes/<element>/...          # SpatialData shapes (GeoParquet-backed)
+├── shapes/<element>/...          # SpatialData shapes (GeoParquet, spatially indexed — §4.4)
 ├── tables/<key>/...              # SpatialData tables (AnnData: X, obs, var, obsm, obsp, layers, uns)
 ├── viewer/                       # APP-DEFINED sidecar — not a SpatialData element (§4)
-│   ├── zarr.json                 #   sidecar_version, table_keys, images, coords_transform, figures
+│   ├── zarr.json                 #   sidecar_version, table_keys, images, coords_transform, figures, shapes
 │   ├── tables/<key>/X_csc/       #   gene-major mirror of a sparse table's X
-│   └── figures/<plot_id>/<fmt>   #   rendered plot figures, one uint8 array per format (§4.3)
+│   ├── figures/<plot_id>/<fmt>   #   rendered plot figures, one uint8 array per format (§4.3)
+│   └── shapes/<el>/<key>/cell_index  #   each shape row's obs row position (§4.4)
 ├── logs/<record_id>.log.gz       # APP-DEFINED — relocated worker stdout/stderr (§6)
 └── .zmetadata / consolidated…    # Zarr consolidated metadata, written last (see §2)
 ```
@@ -91,8 +92,12 @@ anndata (see `backend/requirements.txt` for exact pins).
   recorded in SpatialData's own `coordinateTransformations` metadata (not this
   app's `coords_transform`, which is a different, narrower affine — see §4).
 - **`points/`, `shapes/`** — points as Parquet-backed dataframes; shapes as
-  GeoParquet (geometry column + attribute columns). Not app-defined; a reader
-  needs GeoParquet support to decode `shapes/`.
+  GeoParquet (geometry column + attribute columns) at
+  `shapes/<element>/shapes.parquet`. The container is not app-defined and a reader
+  needs GeoParquet support to decode it; what *is* app-defined is that polygonal
+  shape files are written **spatially indexed** so a range-reading client can query
+  a viewport without downloading them whole (§4.4). The index is additive — the
+  file stays an ordinary GeoParquet that `spatialdata.read_zarr()` reads unchanged.
 - **`tables/<key>/`** — one AnnData per table: `X` (dense or CSR sparse
   expression/intensity matrix), `obs`/`var` (row/column metadata, categoricals
   stored the anndata-zarr way), `obsm` (arrays keyed by name, e.g. `spatial`,
@@ -294,6 +299,9 @@ Group attrs (`viewer/zarr.json`'s `attributes`):
   },
   "figures": {                          // rendered plot figures in this file, §4.3
     "<plots[].id>": { "svg": 53392, "pdf": 22054, "png": 40940 }   // byte length per format
+  },
+  "shapes": {                           // boundary spatial index, §4.4
+    "<shapes_element>": { /* shape index report, §4.4 */ }
   }
 }
 ```
@@ -405,6 +413,68 @@ group existed has neither the groups nor the attr — in both cases the plot
 record survives on its own and the figure has to be redrawn, which is why this
 app reloads such a plot as `invalidated` (§3.2).
 
+### 4.4 `shapes` — the boundary spatial index
+
+`shapes/<element>/shapes.parquet` is written **spatially indexed** for every
+polygonal shapes element, so a range-reading client can fetch the boundaries in a
+viewport instead of the whole file. Written by
+`backend/app/persistence/store.py:_index_shapes`; read by
+`packages/viewer/src/data/parquetShapes.ts`.
+
+Three properties make the file queryable. All are ordinary GeoParquet 1.1 features,
+so the file remains readable by any GeoParquet reader, and `geopandas.read_parquet`
+recognizes the `covering` column and drops it again — the `GeoDataFrame` a Python
+reader gets back is unchanged.
+
+1. **Rows are Hilbert-sorted** on feature centroids, so a row group holds geometry
+   that is adjacent on the slide. Without this the other two are decoration: every
+   row group's bounding box would approximate the whole extent and pruning would
+   eliminate nothing. **Note this reorders rows** relative to the in-memory order —
+   row labels are preserved and all linkage is by label, never by position.
+2. **A `covering` bbox column**: a `bbox` struct of `{xmin, ymin, xmax, ymax}`
+   doubles per feature, registered under the `geo` metadata's `covering` key. Its
+   members carry real numeric per-row-group statistics, which is what a client
+   intersects a viewport against — Parquet's own statistics on the WKB `geometry`
+   column are lexicographic over bytes and spatially meaningless. Readers must
+   resolve the column paths from `covering` rather than assuming the name `bbox`.
+3. **Small row groups, zstd, page index.** Row groups are `n / 256` rows clamped to
+   `[4096, 65536]`: the ratio bounds the footer (which every query pays) on a large
+   element, the floor stops a small one being cut into row groups too thin to be
+   worth a request.
+
+Point/circle shapes are not indexed (they are drawn as scatter from the table's
+coordinates, not as outlines), nor is the `annotations` element (a handful of
+user-drawn shapes whose row order is the order the annotation list shows).
+
+Per-element report in the sidecar attrs — schema
+[`viewer_sidecar.schema.json`](../backend/app/schemas/checkpoint/viewer_sidecar.schema.json)
+`#/$defs/shape_index`. Only indexed elements appear:
+
+| field | meaning |
+|---|---|
+| `geometry_types` | e.g. `["Polygon"]` — decides the GeoArrow nesting a reader builds |
+| `num_rows`, `row_groups` | file shape, for planning a read |
+| `file_bytes` | entry size, so a reader can address the parquet without consulting the zip directory for it |
+| `footer_bytes` | lets a reader fetch the footer in **one** exactly-sized request instead of a speculative 512 KiB tail |
+| `bounds` | `[x0, y0, x1, y1]` in the element's **intrinsic** space (the space the covering statistics are in) — a viewport that misses this costs zero requests |
+| `selectivity` | median fraction of the extent one row group covers. Ideal is `1/row_groups`; near 1.0 means the rows are not sorted and pruning will not pay. This is the regression signal if a writer upgrade ever drops the sort |
+
+The intrinsic → global affine is **not** repeated here: a reader uses
+`coords_transform[table]`, the same affine it applies to `obsm:spatial`. A boundary
+element carries its own element→global transform, but on Xenium that transform
+disagrees with the region element's, and matching the points is what makes the
+overlay line up (see `backend/app/transport/geometry.py`).
+
+**`viewer/shapes/<element>/<table_key>/cell_index`** — an int32 array, one entry per
+parquet row **in file order**, giving that shape's row position in `table_key`'s
+`obs` (`-1` if unmatched). This is what a client gathers per-cell colors from. It is
+baked because the mapping is by index *label* (`cell_boundaries` is keyed by cell
+name, an instance-keyed set like `nucleus_boundaries` by the table's
+`instance_key` column), so deriving it client-side would mean downloading the
+element's whole label column and the table's whole `obs` index just to align two
+orderings. Chunked at the file's row-group length, so reading one surviving row
+group's slice is one chunk.
+
 ## 5. Raster sharding
 
 Not a new structure, but a **codec requirement** a reader must support: every
@@ -495,7 +565,9 @@ granularities:
   underlying SpatialData is still perfectly readable even if some app-state
   fields are unrecognized.
 - **`viewer.sidecar_version`** (currently `1`) — the shape of the `viewer/`
-  group (§4). Bumped only on a breaking layout change. Unlike `schema_version`,
+  group (§4). Bumped only on a breaking layout change; **additive** keys (`figures`,
+  `shapes`) do not bump it, since an older reader ignores what it doesn't know and
+  bumping would make it refuse a file it can still render. Unlike `schema_version`,
   a backend-less reader has no data to fall back to if the sidecar it finds is
   newer than the version it understands, so this app's own reader **refuses**
   to open a checkpoint whose `sidecar_version` exceeds what it was built
@@ -543,7 +615,19 @@ capability:
    index (§4.3) and fetch `viewer/figures/<plots[].id>/<format>` — one uint8
    array holding that file's bytes. A plot absent from the index has no
    rendered copy in this file.
-7. To reproduce **which record's log** goes with which compute/plot entry:
+7. To draw **cell boundaries** without downloading every polygon: use the
+   `shapes` report (§4.4). Fetch the footer of
+   `shapes/<element>/shapes.parquet` at the size `footer_bytes` gives, prune row
+   groups by intersecting your viewport (mapped into intrinsic space through the
+   inverse of `coords_transform[table]`) against the `covering` column's
+   per-row-group statistics, then range-read only the surviving row groups'
+   `bbox` column to find the exact hits and only then their `geometry`. Gather
+   per-cell values through `viewer/shapes/<element>/<table>/cell_index`. Reading
+   the `bbox` column before the geometry is what keeps a zoomed-out viewport
+   cheap; note the statistics asymmetry — a row group's box needs the **min** of
+   `bbox.xmin` and the **max** of `bbox.xmax`, and reversing that drops features
+   with no error raised anywhere.
+8. To reproduce **which record's log** goes with which compute/plot entry:
    match `compute_history[].id` / `plots[].id` against `logs/<id>.log.gz` (§6).
 
 ## Schema files

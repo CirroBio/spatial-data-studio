@@ -16,7 +16,8 @@ import {
   type FigureFormat, type FigureIndex, type ImageInfo, type ObsField, type ObsmField,
   type SessionFields,
 } from '../types';
-import type { DataSource, ImageLoader, LocalCategorical } from './types';
+import type { ShapeIndexEntry, ShapeReader } from './parquetShapes';
+import type { DataSource, ElementInventory, ImageLoader, LocalCategorical } from './types';
 
 // Highest `viewer/` sidecar layout this build understands. Mirrors
 // `persistence.store.VIEWER_SIDECAR_VERSION`; bumped only by a breaking layout change.
@@ -121,6 +122,9 @@ interface ViewerSidecar {
   // Absent in a checkpoint saved without figures, and in every one written before
   // they were persisted at all.
   figures?: FigureIndex;
+  // Polygonal shapes elements that carry a spatial index. Absent in a checkpoint
+  // written before the index existed, whose boundaries stay unread (`parquetShapes`).
+  shapes?: Record<string, ShapeIndexEntry>;
 }
 
 type Root = zarr.Location<AsyncReadable>;
@@ -238,6 +242,26 @@ export async function openCheckpoint(
   // the store, so a local column can also shadow one of the same name.
   const localColumns = new Map<string, LocalCategorical>();
 
+  // Boundary reader, code-split: a parquet reader plus a zstd decompressor is ~100 KB
+  // gzipped, and most sessions (every live one, and any checkpoint without boundaries)
+  // never touch it. Absent for a v1 sidecar, whose shape parquets carry no spatial index
+  // — the overlay then stays on its points-only path, exactly as before this existed.
+  const shapeIndex = sidecar.shapes;
+  const hasShapes = !!shapeIndex && Object.keys(shapeIndex).length > 0;
+  let shapesOnce: Promise<ShapeReader> | null = null;
+  const shapeReader = (): Promise<ShapeReader> => {
+    if (!shapesOnce) {
+      // Reads the parquet as a plain zip entry, so it takes `rawStore` rather than the
+      // consolidated-metadata wrapper.
+      shapesOnce = import('./parquetShapes').then(({ createShapeReader }) => createShapeReader(
+        rawStore, shapeIndex!, sidecar.coords_transform[table],
+        async (element, start, stop) => Int32Array.from(
+          await readSpan(root, `viewer/shapes/${element}/${table}/cell_index`, start, stop)),
+      ));
+    }
+    return shapesOnce;
+  };
+
   const source: DataSource = {
     kind: 'checkpoint',
     id: url,
@@ -286,8 +310,39 @@ export async function openCheckpoint(
       return data;
     },
 
-    // getShapesGeoArrow / getElements are deliberately absent: the boundary overlay
-    // reads `shapes/<name>/shapes.parquet`, which zarrita cannot decode.
+    // Boundaries come from `shapes/<name>/shapes.parquet` by HTTP Range, pruned to the
+    // viewport against its GeoParquet covering index (`parquetShapes`). Both methods
+    // stay undefined without an index, which leaves the overlay on its points-only
+    // fallback rather than reading every boundary in the sample to draw a screenful.
+    ...(hasShapes ? {
+      async getShapesGeoArrow(
+        element: string, bbox: [number, number, number, number], limit?: number,
+      ): Promise<Table> {
+        const { table: geometry, report } = await (await shapeReader()).query(element, bbox, limit);
+        // The 0-row table the caller reads as "not shown" covers four different
+        // reasons; without this the overlay silently failing to appear is unexplainable
+        // from the browser.
+        if (report.outcome !== 'ok') {
+          console.debug('[shapes] %s: %s (%d/%d row groups, %d candidates, %d hits)',
+            report.element, report.outcome, report.rowGroupsKept, report.rowGroupsTotal,
+            report.candidateRows, report.hitRows);
+        }
+        return geometry;
+      },
+
+      async getElements(): Promise<ElementInventory> {
+        // Only what the boundary overlay reads is populated: it picks the polygonal
+        // shape sets out of `shapes` and ignores the rest. The data inspector, which
+        // uses the other facets, is a live-session panel.
+        return {
+          tables: [], points: [], labels: [],
+          images: Object.keys(sidecar.images).map((name) => ({ name })),
+          shapes: Object.entries(shapeIndex!).map(([name, entry]) => ({
+            name, count: entry.num_rows, geometry: entry.geometry_types, columns: [],
+          })),
+        };
+      },
+    } : {}),
 
     // No server to composite one, and the minimap already falls back to the cell
     // scatter. Compositing the coarsest level in JS just for an inset isn't worth

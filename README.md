@@ -97,12 +97,15 @@ the analysis history that produced this view.*
 - **Open a checkpoint without the app running.** A saved checkpoint is a single
   `.zarr.zip` the viewer can read on its own. Open the app with `?checkpoint=<url>`
   and it reads that file directly over HTTP range requests: the tissue image, the
-  cells, and every display setting (color by any obs column or gene, palettes and
-  per-category colors, point size and shape, channel colors and contrast, legends,
-  layer visibility, pan and zoom) work exactly as they do live, with no backend and no
-  server to run. It streams only what the current view needs rather than downloading
-  the file — opening a 438 MB checkpoint and coloring by a gene costs under a
-  megabyte. Any host that serves the file with HTTP range requests will do — put the
+  cells, the cell-boundary shapes, and every display setting (color by any obs column
+  or gene, palettes and per-category colors, point size and shape, channel colors and
+  contrast, legends, layer visibility, pan and zoom) work exactly as they do live, with
+  no backend and no server to run. It streams only what the current view needs rather
+  than downloading the file — opening a 438 MB checkpoint and coloring by a gene costs
+  under a megabyte, and zooming in far enough to draw real segmentation outlines fetches
+  only the boundaries on screen (about a megabyte out of a 55 MB boundary set).
+  Boundaries need a checkpoint saved by this version or later; open an older one in the
+  app and save it again to add them. Any host that serves the file with HTTP range requests will do — put the
   built app, your `.zarr.zip` files, and a small `index.json` listing them in one
   folder and the page becomes a browsable collection you can switch between.
   The **Plots** view works here too: the figures saved with the checkpoint are in the
@@ -112,8 +115,8 @@ the analysis history that produced this view.*
   and click an entry for its parameters and timing. Anything that would act on the data
   (running an analysis, annotating, subsetting, drawing a new plot, saving) needs the
   live app.
-  You can still export what you see as a PNG; the publication-quality PDF figure and
-  cell-boundary outlines aren't available this way.
+  You can still export what you see as a PNG; the publication-quality PDF figure of the
+  current view isn't available this way.
 - **Share the exact view you're looking at.** In that no-backend viewer, every display
   setting you change from what the checkpoint was saved with — color by, palettes and
   per-category colors, channels and contrast, point size and shape, legends, layer
