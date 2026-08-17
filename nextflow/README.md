@@ -220,12 +220,19 @@ python nextflow/tests/check_containers.py
 ## Tests
 
 ```bash
-python nextflow/tests/check_catalog.py
-python nextflow/tests/check_containers.py
+python nextflow/tests/check_catalog.py     # run by CI
+python nextflow/tests/check_containers.py  # run by hand, when changing an image
 ```
 
-Validates the catalog against its schema, checks every recipe it names exists, verifies
-that each parameter's `applies_to` really is the set of types whose recipes declare it,
-checks the parameters agree across `nextflow.config` and `nextflow_schema.json`, and runs
-discovery over a synthetic tree of every catalogued type. CI runs this alongside
-`nextflow lint nextflow/`.
+`check_catalog.py` validates the catalog against its schema, checks every recipe it names
+exists, verifies that each parameter's `applies_to` really is the set of types whose
+recipes declare it, checks the parameters agree across `nextflow.config` and
+`nextflow_schema.json`, and runs discovery over a synthetic tree of every catalogued type.
+CI runs it alongside `nextflow lint nextflow/`.
+
+`check_containers.py` is **not** in CI: it has to pull the images (~2.4 GB) to look
+inside them, which would make that job the slowest in the suite and tie every PR to a
+registry being reachable. Run it yourself when you change `--analysis_container` or
+`--multiqc_container`. Skipping it is not silent in practice — Nextflow reports
+`Command 'ps' required by nextflow ... cannot be found` and fails the task — this check
+just tells you before you have waited on a long run.

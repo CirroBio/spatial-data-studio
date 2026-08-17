@@ -633,8 +633,9 @@ collection as well as embeddable per page. Pull requests build but do not publis
 - `python nextflow/tests/check_containers.py` — asserts every `*_container` image named
   in `nextflow.config` provides `ps`. Nextflow runs `nxf_trace` inside the container
   under `-with-trace`/`-with-report` and **exits 1** when `ps` is absent, so an image
-  without procps fails every task rather than just losing resource metrics. Pulls the
-  images; skips cleanly when Docker is unavailable.
+  without procps fails every task rather than just losing resource metrics. Not in CI —
+  it has to pull the images (~2.4 GB) to inspect them; run it when changing an image.
+  Skips cleanly when Docker is unavailable.
 - `cd frontend && npx tsc --noEmit -p tsconfig.app.json && npm run build` — typecheck
   + build.
 - `cd frontend && npm run check:tours` — static guard that every guided-tour anchor
