@@ -361,12 +361,18 @@ class Session:
                                    "descriptor": {"kind": kind}, "position": self._queue.qsize()})
         return job_id
 
-    def enqueue_load(self, path: str, load_id: str | None = None) -> str:
+    def enqueue_load(self, path: str, load_id: str | None = None,
+                     adopt_name: bool = True) -> str:
         """Open a saved checkpoint as this session's first job (create_from_load). The
         unzip/read/re-tile is too slow to run inside the POST — a large store blows past a
         fronting proxy's origin timeout (a 504) — so it runs here on the worker and adopts
-        the object under the write lock, exactly like a read bootstrap."""
-        return self.enqueue_special("load", {"path": path, "load_id": load_id})
+        the object under the write lock, exactly like a read bootstrap.
+
+        `adopt_name` lets the checkpoint's own recorded name (`app_state["name"]`, see
+        `_rename`) replace the filename-derived one the shell was created with; the caller
+        clears it when the user named this session explicitly."""
+        return self.enqueue_special("load", {"path": path, "load_id": load_id,
+                                             "adopt_name": adopt_name})
 
     def cancel(self, job_id: str) -> bool:
         """Cancel a QUEUED job only (RUNNING is non-interruptible, §6.1). Claims the
@@ -791,7 +797,28 @@ class Session:
         self._save_and_finish(job_id, payload, "set_transform", bump_fields=["obsm:spatial"])
 
     def _run_save(self, job_id, payload):
+        name = payload.get("name")
+        # Also renames when only `app_state` lacks the name: a session that has never
+        # been renamed still needs it recorded, or a file saved under a different prefix
+        # would reopen named after that prefix.
+        if name and (name != self.name or name != self.app_state.get("name")):
+            self._rename(name)
         self._save_and_finish(job_id, payload, "save")
+
+    def _rename(self, name: str) -> None:
+        """Adopt a new display name for the session, recording it in `app_state` so the
+        checkpoint carries it (`_run_load` reads it back). The filename is only a storage
+        name — a save can write the same session under any prefix, or into a folder of
+        many — so the name a reload shows has to travel inside the object.
+
+        Runs on the worker as the first step of the save job, so the name in the file is
+        the name the header ends up showing, and a save that fails to even start leaves
+        the session named as it was."""
+        with self.lock.writing():
+            self.name = name
+            self.app_state["name"] = name
+        self.saved = False  # on disk the checkpoint still carries the old name
+        self._publish_summary()
 
     def _run_subset(self, job_id, payload):
         # No lock held here: perform_subset reads self.sdata under its own read lock
@@ -825,6 +852,11 @@ class Session:
                 self.app_state = app_state
                 self.extract_dir = extract_dir
                 self.hash_check = hash_check
+                # The file's own name (set by a save that renamed the session) beats the
+                # one derived from its filename — the two differ whenever the save used a
+                # different prefix. An explicitly named session keeps the caller's name.
+                if payload.get("adopt_name") and app_state.get("name"):
+                    self.name = app_state["name"]
                 # Older stores hold huge-chunked rasters; re-tile them so canvas tiles
                 # stay cheap (a no-op for stores already in canonical form). See rasters.py.
                 self._adopt_rasters(self.raster_stores, report)

@@ -49,9 +49,12 @@ export function useCheckpointSession(
     openCheckpoint(target, refreshUrl)
       .then(({ source: opened, appState, fields, figures }) => {
         if (stale) return;
+        const saved = appState as unknown as AppState;
         const summary = {
           id: opened.id,
-          name: displayName(typeof target === 'string' ? target : target.name),
+          // The name the session was saved under, which a save can write to any
+          // filename; only a file that carries none falls back to what it is called.
+          name: saved.name || displayName(typeof target === 'string' ? target : target.name),
           status: 'ready' as const,
           resident_mb: 0,
           parent_id: null,
@@ -64,7 +67,6 @@ export function useCheckpointSession(
         // against and applied to, so capture them before the overlay goes on. Applying
         // it here rather than after `setSessionState` is what keeps the first canvas
         // render already correct instead of flashing the saved view.
-        const saved = appState as unknown as AppState;
         setViewBaseline({
           spatial: saved.displays.find(isSpatialDisplay) ?? null,
           embedding: saved.displays.find(isEmbeddingDisplay) ?? null,

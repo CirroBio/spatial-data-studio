@@ -168,6 +168,7 @@ Component-level notes: [`backend/README.md`](backend/README.md),
 | Change the MCP assistant surface (tools, vision render, agent guidance) | `backend/app/mcp/server.py` (tools) + `vision.py` (render/coords/membership) + `agent.py` (presence/lock) + `guides/*.md` (guidance text); mounted in `main.py` | [DESIGN.md](DESIGN.md) §29 |
 | Change the checkpoint/persistence format | `backend/app/persistence/store.py` | [DESIGN.md](DESIGN.md) §3, §14.1, [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) |
 | Change which elements a save can leave out, at what resolution images are written, or how their sizes are estimated | `backend/app/persistence/store.py` (`select_elements`, `trim_pyramid`, `element_size_mb`, `image_levels`) + `sessions/appstate.py` (`prune_to_elements`) + `frontend/src/components/SaveCheckpointDialog.tsx` | below |
+| Change where a save writes, what the file is named, or what the session is called | `backend/app/main.py` (`_validated_destination`, `_validated_name`) + `deps.py` (`default_save_path`) + `sessions/session.py` (`_rename`, `_run_load`) + `frontend/src/components/SaveCheckpointDialog.tsx` | below |
 | Change how rendered plot figures are stored, served or shown | `backend/app/persistence/store.py` (`_write_figures`, `read_figure`, `figure_index`) + `sessions/session.py` (`figure`, `figure_index`, `figures_to_persist`) + `frontend/src/lib/figures.ts` + `components/PlotGallery.tsx` / `FigureLightbox.tsx` / `PlotDetail.tsx` | below |
 | Change what the serverless viewer can read from a checkpoint | `backend/app/persistence/store.py` (`_write_viewer_sidecar`, the writer half) + `packages/viewer/src/data/checkpointSource.ts` (the reader half) — the two must move together | [DESIGN.md](DESIGN.md) §14.1–14.2, [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) §4 |
 | Change how cell boundaries are indexed or range-queried | `backend/app/persistence/store.py` (`_index_shapes`, `_row_group_rows`, `_selectivity` — the writer half) + `packages/viewer/src/data/parquetShapes.ts` and `wkbGeoArrow.ts` (the reader half). A change to the on-disk index must keep `test_e2e.run_shape_index_check` passing: it re-derives the pruning from the file and compares it against a brute-force row scan | [DESIGN.md](DESIGN.md) §14.1–14.2, [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) §4.4 |
@@ -251,9 +252,31 @@ lines — plus milestone progress and a terminal `done`/`hash_check` event — o
 `session.loading` channel keyed by the client-minted `load_id`. The frontend accumulates
 these in per-job / per-load buffers (`sessionStore`) and renders them with `AnsiLog`.
 
+### Where a save writes, and what the file calls itself
+
+`POST /api/sessions/{id}/save` takes three destination fields, all validated at the
+route boundary (`main._validated_destination` / `_validated_name`) so a bad one is a 400
+rather than a job that fails minutes into a multi-GB write:
+
+- `folder` — a directory under `DATA_DIR`, created by the writer if it doesn't exist
+  (`store._zip_from_dir` / `_save_zip` both `mkdir(parents=True)` before staging beside
+  the destination).
+- `prefix` — the filename stem `-<content hash>` is appended to, defaulting to the
+  session's current name. `deps.default_save_path(sess, folder, prefix)` is the single
+  seam that composes both; the points-transform route and the MCP `save_checkpoint` tool
+  call it with neither and so keep the flat-in-`DATA_DIR` default.
+- `name` — the session name. `Session._rename` (run on the worker as the save job's
+  first step) sets it and records it in `app_state["name"]`, so it survives into the file
+  and `Session._run_load` adopts it back in place of the filename-derived one. That is
+  what lets the file's name and the session's name diverge at all;
+  `useCheckpointSession.ts` prefers it the same way in serverless mode.
+
+`path` remains the verbatim escape hatch — honored exactly, no hash suffix — and cannot
+be combined with `folder`/`prefix`.
+
 ### Selective checkpoint saves
 
-`POST /api/sessions/{id}/save` takes an optional `include` (facet -> element names, see
+`POST /api/sessions/{id}/save` also takes an optional `include` (facet -> element names, see
 [docs/CONTRACT.md](docs/CONTRACT.md)) so a copy can be written without a multi-gigabyte
 raster, and an optional `levels` (image name -> finest pyramid level) so an image can be
 written at reduced resolution instead of being dropped outright.

@@ -1043,6 +1043,49 @@ def run_content_hash_flow(client):
     print("[ok] hashed checkpoint reloads; re-save doesn't stack a second hash")
 
 
+def run_save_destination_flow(client):
+    """The Save dialog's three destination options: the folder the file lands in (created
+    if new), the filename prefix the content hash is appended to, and the session name the
+    file records — which a reload adopts in place of the filename."""
+    import re
+    from app.deps import MANAGER
+    sid = new_session(client)
+    folder, prefix, name = "runs/pass-2", "cluster-pass2", "Cluster pass 2"
+
+    sv = client.post(f"/api/sessions/{sid}/save",
+                     json={"folder": folder, "prefix": prefix, "name": name}).json()
+    assert wait_job(client, sid, sv["job_id"])["status"] == "completed"
+    written = MANAGER.get(sid).store_path
+    assert os.path.dirname(written) == str(config.DATA_DIR / folder), written
+    base = os.path.basename(written)
+    assert re.fullmatch(rf"{re.escape(prefix)}-[0-9a-f]+\.sdata\.zarr\.zip", base), base
+    # The name is the session's now, and it is not what the file is called.
+    assert MANAGER.get(sid).name == name, MANAGER.get(sid).name
+    print(f"[ok] save wrote {folder}/{base} and renamed the session to {name!r}")
+
+    # ...so reopening the file shows the recorded name rather than the prefix.
+    sid2 = new_session(client, written)
+    assert MANAGER.get(sid2).name == name, MANAGER.get(sid2).name
+    assert client.get("/api/sessions").json()["sessions"], "session list went empty"
+    print("[ok] reloaded checkpoint adopted its recorded name over its filename")
+    # An explicitly named load keeps the caller's name instead.
+    r = client.post("/api/sessions", json={"source": {"kind": "load", "path": written},
+                                           "name": "explicit"})
+    poll(client, r.json()["id"], lambda s: s["summary"]["status"] in ("ready", "errored"))
+    assert MANAGER.get(r.json()["id"]).name == "explicit"
+    print("[ok] an explicitly named load ignores the file's recorded name")
+
+    for body, why in [({"folder": "../escape"}, "folder escaping the data dir"),
+                      ({"prefix": "sub/dir"}, "prefix with a path separator"),
+                      ({"prefix": "  "}, "blank prefix"),
+                      ({"prefix": ".hidden"}, "dot-prefixed (scanner-invisible) prefix"),
+                      ({"name": ""}, "blank name"),
+                      ({"path": "/tmp/x.zarr.zip", "prefix": "x"}, "path plus prefix")]:
+        bad = client.post(f"/api/sessions/{sid}/save", json=body)
+        assert bad.status_code == 400, f"{why} accepted: {bad.status_code}"
+    print("[ok] save rejects an escaping folder, a bad prefix, a blank name, path+prefix")
+
+
 def run_invalidation_flow(client):
     """data_versions bump + plot invalidation + redraw, and reload turning a drawn
     plot into invalidated (recent invalidation wiring)."""
@@ -2375,6 +2418,7 @@ def main():
         run_incremental_save_flow(client, out)
         run_selective_save_flow(client, out)
         run_content_hash_flow(client)
+        run_save_destination_flow(client)
         run_invalidation_flow(client)
         run_encoding_persistence_flow(client)
         run_inspector_flow(client)

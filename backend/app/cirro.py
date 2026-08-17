@@ -354,8 +354,9 @@ def _write_viewer_index(bundle: Path, session_paths: list[str]) -> None:
     """List the bundled checkpoints in `index.json`, the manifest the serverless viewer
     reads (`frontend/src/data/checkpointIndex.ts`). Paths are relative to the manifest,
     so the listing works wherever the bundle is served from. The label is the
-    checkpoint's own name with the content hash and extension stripped — what the user
-    named the session, rather than the storage filename."""
+    checkpoint's filename prefix (content hash and extension stripped) — the name a save
+    chose for the file, read without opening it; the session's own name travels inside
+    the file (`app_state["name"]`) and is what the viewer's header shows once opened."""
     from .persistence.store import strip_checkpoint_ext, strip_content_hash
 
     entries = [

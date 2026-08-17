@@ -123,6 +123,9 @@ export interface RegionSet {
 
 export interface AppState {
   schema_version: number;
+  // What the session was named when it was saved. Absent in files written before the
+  // Save dialog recorded it, and in plain imports; a reader falls back to the filename.
+  name?: string;
   compute_history: HistEntry[];
   plots: PlotEntry[];
   displays: DisplaySpec[];

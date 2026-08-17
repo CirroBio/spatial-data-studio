@@ -625,6 +625,21 @@ export async function setPointsTransform(
   return res.json() as Promise<{ job_id: string }>;
 }
 
+export interface SaveOptions {
+  // Where the file goes: a folder under the data directory (relative to it, `''` for the
+  // directory itself) and the filename stem the backend appends `-<content hash>` and
+  // the checkpoint extension to. Omitted, the file lands flat in the data directory
+  // under the session's name.
+  folder?: string;
+  prefix?: string;
+  // Renames the session and is recorded inside the file, so reopening it shows this
+  // name however the file itself was named.
+  name?: string;
+  include?: Partial<Record<SdataFacet, string[]>>;
+  levels?: Record<string, number>;
+  figures?: string[];
+}
+
 /** `include` writes only the named elements: a facet left out keeps that facet whole,
  * a facet present keeps exactly the names listed, so `{ images: [] }` drops every
  * image. `levels` maps an image name to the index of the finest pyramid level to
@@ -633,18 +648,19 @@ export async function setPointsTransform(
  * carries (omit for every one; `[]` for none). Omit all three for the ordinary
  * whole-object save. */
 export async function saveSession(
-  sessionId: string, path?: string, include?: Partial<Record<SdataFacet, string[]>>,
-  levels?: Record<string, number>, figures?: string[],
-): Promise<{ job_id: string }> {
+  sessionId: string, opts: SaveOptions = {},
+): Promise<{ job_id: string; path: string }> {
+  const { folder, prefix, name, include, levels, figures } = opts;
   const res = await apiFetch(`/api/sessions/${sessionId}/save`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      ...(path ? { path } : {}), ...(include ? { include } : {}), ...(levels ? { levels } : {}),
-      ...(figures ? { figures } : {}),
+      ...(folder !== undefined ? { folder } : {}), ...(prefix ? { prefix } : {}),
+      ...(name ? { name } : {}), ...(include ? { include } : {}),
+      ...(levels ? { levels } : {}), ...(figures ? { figures } : {}),
     }),
   });
-  return res.json() as Promise<{ job_id: string }>;
+  return res.json() as Promise<{ job_id: string; path: string }>;
 }
 
 export async function annotateSession(

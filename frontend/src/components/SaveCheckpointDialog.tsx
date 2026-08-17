@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  getElements, saveSession, type ImageLevel, type SdataFacet, type SizedElements,
+  browsePath, getElements, saveSession, type ImageLevel, type SdataFacet, type SizedElements,
 } from '../api';
 import { formatError, isSpatialDisplay, reportError } from '@cirrobio/spatial-viewer';
 import { useAppStore } from '../store/sessionStore';
 import { figureBytes, figureFormats } from '../lib/figures';
 import type { SessionState } from '../types';
 import { ModalHeader, ModalOverlay } from './DetailModal';
+import FsPicker from './forms/FsPicker';
 
 interface Props {
   sessionId: string;
@@ -90,6 +91,17 @@ function formatSize(mb: number | null): string {
 
 const formatDims = (l: ImageLevel) => `${l.width.toLocaleString()} × ${l.height.toLocaleString()} px`;
 
+// The extension every checkpoint carries, between the stem's content hash and the end
+// of the name (backend: persistence/store.CHECKPOINT_EXT). Shown in the filename preview.
+const CHECKPOINT_EXT = '.sdata.zarr.zip';
+
+/** A session name turned into the filename stem it suggests. Only characters that make
+ * a filename awkward to handle are folded away — the backend rejects a prefix with a
+ * path separator or a leading dot outright, and everything else is the user's call. */
+function suggestedPrefix(name: string): string {
+  return name.trim().replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[-.]+|-+$/g, '');
+}
+
 /** What a row contributes to the file: for an image, only the pyramid levels from
  * `finest` down to the coarsest, which is the slice the save actually writes. */
 function keptSize(r: Row, finest: number): number | null {
@@ -147,6 +159,26 @@ export default function SaveCheckpointDialog({ sessionId, onClose }: Props) {
   // pyramid. Keyed by name because that is what the save body wants back.
   const [finestLevel, setFinestLevel] = useState<Record<string, number>>({});
   const [saving, setSaving] = useState(false);
+  // Destination. `name` is what the file records as its own name; `folder` is relative
+  // to the data directory (`''` for the directory itself); `prefix` is the filename
+  // stem, left null while it should keep following the name.
+  const [name, setName] = useState(sessionState?.summary.name ?? '');
+  const [folder, setFolder] = useState('');
+  const [prefix, setPrefix] = useState<string | null>(null);
+  const [browsing, setBrowsing] = useState(false);
+  // The data directory itself: the folder field stays relative to it (which is what the
+  // save body wants), so its absolute path is needed only to root the browser and to
+  // spell out the full destination. `browsePath()` with no path lists the roots, of
+  // which there is exactly one.
+  const [dataRoot, setDataRoot] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    browsePath()
+      .then((listing) => { if (live) setDataRoot(listing.entries[0]?.path ?? null); })
+      .catch(() => { /* the folder field falls back to relative-only display */ });
+    return () => { live = false; };
+  }, []);
 
   useEffect(() => {
     let live = true;
@@ -173,6 +205,11 @@ export default function SaveCheckpointDialog({ sessionId, onClose }: Props) {
     }
     return refs;
   }, [sessionState]);
+
+  // The stem the file is written under: the name's suggestion until the user types their
+  // own. Empty is not saveable — the backend rejects it, and there'd be no filename.
+  const filePrefix = prefix ?? suggestedPrefix(name);
+  const folderLabel = dataRoot ? [dataRoot, folder].filter(Boolean).join('/') : folder || '.';
 
   const finestOf = (r: Row) => (r.levels ? finestLevel[r.name] ?? 0 : 0);
   const kept = rows?.filter((r) => selected[rowKey(r)]) ?? [];
@@ -214,7 +251,10 @@ export default function SaveCheckpointDialog({ sessionId, onClose }: Props) {
       ? keptFigures.map((r) => r.plotId!)
       : undefined;
     setSaving(true);
-    saveSession(sessionId, undefined, include, coarsenedAny ? levels : undefined, figures)
+    saveSession(sessionId, {
+      folder, prefix: filePrefix, name: name.trim(),
+      include, levels: coarsenedAny ? levels : undefined, figures,
+    })
       .then(({ job_id }) => {
         useAppStore.getState().setBlockingJob({ id: job_id, label: 'Saving session…' });
         onClose();
@@ -226,11 +266,74 @@ export default function SaveCheckpointDialog({ sessionId, onClose }: Props) {
     <ModalOverlay onClose={onClose} widthClassName="w-[32rem]">
       <ModalHeader
         title="Save session"
-        subtitle="Choose what the checkpoint file contains, and at what resolution. The session itself keeps everything."
+        subtitle="Name the session, choose where the checkpoint file goes, and choose what it contains and at what resolution. The session itself keeps everything."
         onClose={onClose}
       />
 
       <div className="flex-1 overflow-y-auto px-4 py-3 min-h-0">
+        <div className="mb-4 flex flex-col gap-2">
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] text-muted font-mono uppercase tracking-wide">
+              Session name
+            </span>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              spellCheck={false}
+              className="w-full bg-bg border border-border rounded px-2 py-1 text-xs text-text placeholder-muted/50 focus:outline-none focus:border-accent"
+            />
+            <span className="text-[11px] text-muted">
+              Stored in the file, so reopening it shows this name whatever the file is called.
+            </span>
+          </label>
+
+          <div className="flex flex-col gap-1">
+            <span className="text-[11px] text-muted font-mono uppercase tracking-wide">Folder</span>
+            <div className="flex items-center gap-2 min-w-0">
+              <input
+                type="text"
+                value={folder}
+                onChange={(e) => setFolder(e.target.value.replace(/^\/+/, ''))}
+                placeholder="data directory"
+                spellCheck={false}
+                className="flex-1 min-w-0 bg-bg border border-border rounded px-2 py-1 text-xs font-mono text-text placeholder-muted/50 focus:outline-none focus:border-accent"
+              />
+              <button
+                type="button"
+                onClick={() => setBrowsing((b) => !b)}
+                className="shrink-0 px-2 py-1 text-[11px] rounded border border-border text-muted hover:text-text hover:bg-bg transition-colors"
+              >
+                {browsing ? 'Done' : 'Browse…'}
+              </button>
+            </div>
+            {browsing && dataRoot && (
+              <FsPicker mode="folder" value={folder} onSelect={setFolder} rootDir={dataRoot} />
+            )}
+            <span className="text-[11px] text-muted">
+              Under the data directory; created if it doesn't exist yet.
+            </span>
+          </div>
+
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] text-muted font-mono uppercase tracking-wide">
+              File prefix
+            </span>
+            <input
+              type="text"
+              value={filePrefix}
+              onChange={(e) => setPrefix(e.target.value)}
+              spellCheck={false}
+              className="w-full bg-bg border border-border rounded px-2 py-1 text-xs font-mono text-text placeholder-muted/50 focus:outline-none focus:border-accent"
+            />
+            <span className="text-[11px] text-muted font-mono break-all">
+              {filePrefix
+                ? `${folderLabel}/${filePrefix}-<content hash>${CHECKPOINT_EXT}`
+                : 'A file prefix is required.'}
+            </span>
+          </label>
+        </div>
+
         {error && <p className="text-xs text-warn">Could not list elements: {error}</p>}
         {!rows && !error && <p className="text-xs text-muted">Measuring elements…</p>}
         {rows && rows.length === 0 && <p className="text-xs text-muted">This session has no elements to save.</p>}
@@ -298,7 +401,7 @@ export default function SaveCheckpointDialog({ sessionId, onClose }: Props) {
         <button
           type="button"
           onClick={handleSave}
-          disabled={!rows || saving}
+          disabled={!rows || saving || !filePrefix || !name.trim()}
           className="px-3 py-1.5 text-xs rounded bg-accent text-bg font-medium disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {saving ? 'Saving…' : droppedAny || coarsenedAny ? 'Save selected' : 'Save'}

@@ -86,7 +86,8 @@ class SessionManager:
         sess = Session(sid, name or _basename(resolved), None, appstate.fresh(), self,
                       store_path=resolved, read_only=read_only)
         self.sessions[sid] = sess
-        sess.enqueue_load(resolved, load_id)  # heavy load is the first queue job (§12)
+        # heavy load is the first queue job (§12)
+        sess.enqueue_load(resolved, load_id, adopt_name=name is None)
         BUS.publish("session.created", {"session_id": sid, "summary": self.summary(sess)})
         return sess
 

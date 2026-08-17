@@ -8,6 +8,10 @@
   "additionalProperties": false,
   "properties": {
     "schema_version": { "const": 3 },
+    "name": {
+      "type": "string",
+      "description": "What the session was named when it was saved. Optional (files predating it, and imports, carry none); a reader falls back to the filename."
+    },
     "compute_history": { "type": "array", "items": { "$ref": "#/$defs/compute_history_entry" } },
     "plots": { "type": "array", "items": { "$ref": "#/$defs/plot_entry" } },
     "displays": { "type": "array", "items": { "$ref": "#/$defs/display" } },

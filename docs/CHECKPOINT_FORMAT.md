@@ -128,6 +128,7 @@ Schema file: [`backend/app/schemas/checkpoint/app_state.schema.json`](../backend
 ```jsonc
 {
   "schema_version": 3,
+  "name": "Cluster pass 2",                 // optional; what the session was called
   "compute_history": [ /* §3.1 */ ],
   "plots":           [ /* §3.2 */ ],
   "displays":        [ /* §3.3 */ ],
@@ -135,6 +136,13 @@ Schema file: [`backend/app/schemas/checkpoint/app_state.schema.json`](../backend
   "regions":         [ /* §3.4 */ ]
 }
 ```
+
+`name` is what the session was called when it was saved. It is optional — files
+written before it existed, and plain imports, carry none — and it exists because
+the filename is only a storage name: a save chooses its folder and filename
+prefix independently of the name, so a reader that wants to *show* the session's
+name reads it here and falls back to the file's basename (§7) only when it is
+absent.
 
 `data_versions` is a flat map from a **field path** (the same address grammar
 used throughout the app — `obs:<col>`, `obsm:<key>`, `X:<gene>`, `var:<col>`,
@@ -505,7 +513,10 @@ output.
 
 An auto-named checkpoint (one this app names itself, as opposed to an explicit
 "save as") gets a 12-hex-character content hash appended to its stem:
-`<stem>-<12 lowercase hex chars>.sdata.zarr.zip`. The hash is a SHA-256 over
+`<stem>-<12 lowercase hex chars>.sdata.zarr.zip`. The stem is the save's chosen
+filename prefix, which defaults to the session's name but is set independently of
+it — so the stem is a storage name, not the session's name (§3 records that inside
+the file). The hash is a SHA-256 over
 the archive's **logical contents**, computed like this:
 
 1. List every file in the (uncompressed) Zarr directory store, as
@@ -550,7 +561,9 @@ Schema file: [`backend/app/schemas/checkpoint/checkpoint_index.schema.json`](../
 relative to the page. This app's own writer (`backend/app/cirro.py`,
 `_write_viewer_index`) only ever emits `path` and `label` — `title` and
 `description` are reader-side conveniences a hand-authored manifest can add,
-not something this app currently produces.
+not something this app currently produces. Its `label` is each file's stem (§7),
+derived without opening the file; the session name recorded *inside* the file
+(§3) is what a reader shows once it has actually opened it.
 
 ## 9. Versioning and compatibility
 

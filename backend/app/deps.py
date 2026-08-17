@@ -83,14 +83,22 @@ async def _in_executor(fn, *a):
     return await asyncio.get_running_loop().run_in_executor(None, fn, *a)
 
 
-def default_save_path(sess) -> str:
+def default_save_path(sess, folder: str | None = None, prefix: str | None = None) -> str:
     """Checkpoint path to use when the caller doesn't give one explicitly — shared by
     the save/points-transform routes and the MCP save_checkpoint tool. The filename's
     content-hash suffix is (re)computed from the written bytes on every save (see
     `_save_zip`), so this only needs the checkpoint's clean base name - stripping any
-    hash a previous save already appended keeps it from stacking a new one on top."""
-    from .persistence.store import strip_content_hash, CHECKPOINT_EXT
-    return str(config.DATA_DIR / f"{strip_content_hash(sess.name)}{CHECKPOINT_EXT}")
+    hash (or extension) a previous save already appended keeps it from stacking a new
+    one on top.
+
+    `folder` (a directory under DATA_DIR, relative to it or absolute) and `prefix` (the
+    filename stem the hash is appended to) are the Save dialog's destination fields;
+    without them the file lands flat in DATA_DIR under the session's name. Both are
+    validated at the route boundary (`main._validated_destination`) — a caller reaching
+    this directly must have checked them itself."""
+    from .persistence.store import strip_content_hash, strip_checkpoint_ext, CHECKPOINT_EXT
+    stem = strip_content_hash(strip_checkpoint_ext(prefix or sess.name))
+    return str(config.DATA_DIR / (folder or "") / f"{stem}{CHECKPOINT_EXT}")
 
 
 async def search_var_names(sess, q: str = "", limit: int = 50) -> list[str]:

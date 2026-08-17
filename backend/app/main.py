@@ -6,7 +6,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocke
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from .config import config, data_roots
+from .config import config, data_roots, within_data_dir
 from .registry.introspect import REGISTRY
 from .sessions.manager import SessionManager
 from .sessions.presence import PRESENCE, clean_name
@@ -507,18 +507,70 @@ def _validated_figures(sess, figures) -> list[str] | None:
     return figures
 
 
+def _validated_name(body) -> str | None:
+    """The save body's session name: what the checkpoint records as its own name
+    (`app_state["name"]`, adopted again when the file is reloaded) and what the live
+    session is renamed to. Absent leaves both alone."""
+    name = body.get("name")
+    if name is None:
+        return None
+    if not isinstance(name, str) or not name.strip():
+        raise HTTPException(400, "name must be a non-empty string")
+    return name.strip()
+
+
+def _validated_destination(sess, body) -> tuple[str, bool]:
+    """Resolve the save body's destination to (path, hash_name).
+
+    `path` is the verbatim escape hatch — written exactly as given, with no content-hash
+    suffix (the MCP save_checkpoint tool and the offline harness use it). The Save dialog
+    instead sends `folder` (a directory under DATA_DIR, created if it doesn't exist) and
+    `prefix` (the filename stem), which compose onto `default_save_path` and so keep the
+    hash suffix. A folder outside DATA_DIR or a prefix that isn't a plain filename is a
+    400 here rather than a job that fails minutes into a multi-GB write."""
+    explicit = body.get("path")
+    folder, prefix = body.get("folder"), body.get("prefix")
+    if explicit is not None and (folder is not None or prefix is not None):
+        raise HTTPException(400, "path cannot be combined with folder or prefix")
+    if explicit is not None:
+        if not isinstance(explicit, str) or not explicit.strip():
+            raise HTTPException(400, "path must be a non-empty string")
+        return explicit, False
+    if folder is not None:
+        if not isinstance(folder, str):
+            raise HTTPException(400, "folder must be a string")
+        target = (config.DATA_DIR / folder).resolve()
+        if not within_data_dir(target):
+            raise HTTPException(400, "folder is outside the data directory")
+        if target.exists() and not target.is_dir():
+            raise HTTPException(400, f"'{folder}' is not a directory")
+    if prefix is not None:
+        if not isinstance(prefix, str) or not prefix.strip():
+            raise HTTPException(400, "prefix must be a non-empty string")
+        prefix = prefix.strip()
+        # One path component, and not dot-prefixed: the dataset scanner skips names
+        # starting with "." (it is how save staging hides itself), so such a checkpoint
+        # would never appear in the load picker.
+        if "/" in prefix or "\\" in prefix or prefix.startswith("."):
+            raise HTTPException(400, "prefix must be a filename with no path separators")
+    return default_save_path(sess, folder, prefix), True
+
+
 @app.post("/api/sessions/{sid}/save")
 async def save(sid: str, body: dict | None = None):
     sess = _writable_session(sid)
     body = body or {}
-    explicit = body.get("path")
-    path = explicit or default_save_path(sess)
+    name = _validated_name(body)
+    # The stem `prefix` falls back to is the session's name as it stands now; the rename
+    # lands on the worker together with the write (Session._run_save), so a save that
+    # never runs leaves both the name and the file alone.
+    path, hash_name = _validated_destination(sess, body)
     include = _validated_include(sess, body.get("include"))
     levels = _validated_levels(sess, body.get("levels"))
     figures = _validated_figures(sess, body.get("figures"))
-    job_id = sess.enqueue_special("save", {"path": path, "hash_name": not explicit,
-                                           "include": include, "levels": levels,
-                                           "figures": figures})
+    job_id = sess.enqueue_special("save", {"path": path, "hash_name": hash_name,
+                                           "name": name, "include": include,
+                                           "levels": levels, "figures": figures})
     return {"job_id": job_id, "path": path}
 
 

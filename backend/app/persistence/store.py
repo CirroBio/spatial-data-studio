@@ -538,6 +538,7 @@ def _save_dir(sdata, path: str, logs: dict[str, str],
 
 def _save_zip(sdata, path: str, hash_name: bool, logs: dict[str, str],
               figures: dict[str, dict[str, bytes]] | None = None) -> str:
+    Path(path).parent.mkdir(parents=True, exist_ok=True)  # may be a new subfolder
     tmpdir = tempfile.mkdtemp(dir=str(Path(path).parent), prefix=".save-")
     zarr_dir = os.path.join(tmpdir, "store.zarr")
     try:
@@ -622,13 +623,15 @@ def _zip_from_dir(src_dir: str, path: str, hash_name: bool) -> str:
     `path`. Stages the archive next to the destination (dot-prefixed so the dataset
     scanner ignores it) so the final commit is a same-filesystem rename rather than a
     cross-device copy of the whole (multi-GB) archive — correct whether the
-    destination is in DATA_DIR or an arbitrary CLI output dir."""
-    tmpdir = tempfile.mkdtemp(dir=str(Path(path).parent), prefix=".save-")
+    destination is in DATA_DIR or an arbitrary CLI output dir. The destination folder is
+    created first, since staging beside a folder that doesn't exist yet cannot work (a
+    save into a new subfolder is one of the Save dialog's options)."""
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmpdir = tempfile.mkdtemp(dir=str(p.parent), prefix=".save-")
     staging = os.path.join(tmpdir, "staged.zarr.zip")
     try:
         digest = _zip_dir(src_dir, staging)
-        p = Path(path)
-        p.parent.mkdir(parents=True, exist_ok=True)
         if hash_name:
             stem = strip_content_hash(strip_checkpoint_ext(p.name))
             final = p.with_name(f"{stem}-{digest}{CHECKPOINT_EXT}")

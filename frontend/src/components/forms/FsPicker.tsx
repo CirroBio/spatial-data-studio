@@ -48,7 +48,12 @@ export default function FsPicker({ mode, value, onSelect, rootDir }: Props) {
   const activePath = value ? (rootDir ? `${trim(rootDir)}/${value}` : value) : '';
 
   const q = filter.trim().toLowerCase();
-  const entries = (listing?.entries ?? []).filter((e) => e.name.toLowerCase().includes(q));
+  // Folder mode lists plain directories only: a `.zarr`/`.zarr.zip` "dataset" entry is
+  // a store to open, never a folder to acquire a reader's raw bundle from or to write a
+  // checkpoint into, and selecting one would just be rejected downstream.
+  const entries = (listing?.entries ?? []).filter(
+    (e) => e.name.toLowerCase().includes(q) && (mode !== 'folder' || e.kind === 'dir'),
+  );
 
   function select(absPath: string) {
     onSelect(rootDir ? toRelative(absPath, rootDir) : absPath);

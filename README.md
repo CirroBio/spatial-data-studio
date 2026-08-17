@@ -62,10 +62,13 @@ the analysis history that produced this view.*
   you can still explore freely and change any display setting (color by, channels,
   zoom, render mode); those changes stay on your screen instead of going into the
   session.
-- **Save and share.** Save a checkpoint you can reopen later — choosing what goes into
-  the file from a checklist of the dataset's elements *and* the figures you've drawn,
-  each with its size, so you can leave a multi-gigabyte tissue image out of a copy you
-  want to send someone. An image you do keep has a resolution slider: it lists what each
+- **Save and share.** Save a checkpoint you can reopen later — naming the session,
+  picking the folder the file goes in (a new one is created for you) and the filename
+  it's written under, then choosing what goes into the file from a checklist of the
+  dataset's elements *and* the figures you've drawn, each with its size, so you can leave
+  a multi-gigabyte tissue image out of a copy you want to send someone. The name travels
+  inside the file, so reopening it shows the name you gave the session however the file
+  itself is named. An image you do keep has a resolution slider: it lists what each
   level of the image pyramid costs, and you pick the most detailed one worth keeping,
   trading zoomed-in detail for a much smaller file (the session on screen keeps
   everything either way). Reopening a checkpoint brings its plots back as pictures, not
