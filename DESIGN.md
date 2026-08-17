@@ -2144,12 +2144,25 @@ python cli.py --parser <reader|zarr> --input <path> --recipe <file|name> --outpu
 - **Recipe** — `--recipe` is a recipe JSON file (the §12.1 bundle format) or a bundled
   recipe name; its `steps` are enqueued through `Session.enqueue_descriptor` exactly as
   the UI's "Run recipe" does, and completion is awaited per step (validate-on-dequeue,
-  §6.2, still applies).
+  §6.2, still applies). The flag is **repeatable**: several recipes run back to back in
+  one session (one load, one save), so a longer analysis composes the bundled recipes
+  rather than restating their steps in a new bundle. `--recipe-params` is shared by all
+  of them — each recipe substitutes only the `$param` names it declares.
 - **Output** — the resulting `SpatialData` + app state is written with
   `persistence.store.save_spatialdata` to `<output>/<name>.zarr.zip` (reloadable in the
   app), and every plot step's captured `figure_svg`/`figure_pdf` (§4.6, held in
   `Session.plot_figures`) is written to `<output>/plots/<NN>_<namespace>.<function>/
-  figure.{svg,pdf}`.
+  figure.{svg,pdf}`. `--lowres-copy` writes a second checkpoint,
+  `<output>/<name>.lowres.zarr.zip`, through the same call with
+  `drop_image_levels=1`: `store.drop_finest_levels` builds a view whose multiscale
+  images have lost their finest pyramid level and renumbered the rest from `scale0`.
+  Nothing is resampled — each kept level already carries its own transform to the
+  coordinate system, so the trimmed pyramid occupies the identical world extent and
+  `pixel_to_world` reads the new `scale0` exactly as it read the old one. Since the
+  finest level is the bulk of an imaging-based checkpoint, the copy holds the whole
+  analysis at a fraction of the size and renders everything but the deepest zoom.
+  Labels are left alone: their pyramids are runs of a few integer values and compress
+  hard enough that the finest level is a rounding error.
 - **Boundary reconciliation** — the server's data-root allowlist and
   `within_data_dir` save guard (§16, §19) exist for the shared multi-tenant
   server. The CLI owns its own paths, so it sets `SDS_DATA_DIR` (the input's parent)
@@ -2169,6 +2182,27 @@ so there is **no custom image to build**. The output folder is published via
 `publishDir`. A `test` profile runs the bundled neighborhood-enrichment recipe against
 `test-data/visium_hne.zarr` in `zarr` mode. Python 3.11 is required (squidpy does not
 support 3.13+).
+
+`nextflow/xenium/main.nf` is the batch counterpart: `--input` is a comma-separated list
+of raw Xenium bundles, each folder's own name becoming the sample name, and each sample
+is one CLI invocation running the bundled recipes `01_xenium_preprocess_qc`,
+`02_leiden_cluster_markers` and `04_neighborhood_analysis` back to back (the repeatable
+`--recipe` above; the neighborhood step's `cell_type_key` is the cluster column the
+Leiden step just wrote). Two things are then published that the single-dataset workflow
+does not produce:
+
+- **A MultiQC report** over every sample. `nextflow/xenium/bin/xenium_metrics.py` reads
+  the instrument's `metrics_summary.csv` plus the checkpoint's `obs`/`var` — through
+  zarr's ZipStore, so it costs two dataframes rather than unpacking the archive — and
+  writes MultiQC custom-content `*_mqc.json`; MultiQC merges the per-sample files that
+  share an `id` into cross-sample sections.
+- **A serverless deployment** (§14.3): `results/viewer/` holds the built SPA, the
+  checkpoints, and the `index.json` listing them, so serving that one directory renders
+  every sample with no backend. The SPA is an input, not an output — the workflow uses
+  the existing `frontend/dist` build rather than adding a third build path.
+
+`--lowres_copy` turns on the CLI's `--lowres-copy` per sample, and the reduced
+checkpoint is listed in `index.json` as its own entry beside the full one.
 
 ---
 

@@ -326,8 +326,46 @@ def select_elements(sdata, include: dict[str, list[str]]):
     return view
 
 
+def drop_finest_levels(sdata, levels: int):
+    """Shallow view whose multiscale images keep only their coarser pyramid levels: the
+    `levels` finest are dropped and the rest renumbered from `scale0`.
+
+    The image pyramid is the bulk of an imaging-based checkpoint — its finest level
+    alone is around three quarters of it — so a copy without that level carries the
+    whole analysis at a fraction of the size and still renders, just without the
+    deepest zoom. Nothing is resampled: each kept level already stores its own
+    transform to the coordinate system, so the renumbered pyramid sits exactly where
+    the original did, and `pixel_to_world` reads the new `scale0`'s transform the same
+    way it read the old one.
+
+    At least one level always survives, and a single-scale image passes through
+    untouched. Only images are trimmed — label pyramids are long runs of a few integer
+    values and compress hard enough that their finest level is a rounding error.
+    """
+    import xarray as xr
+
+    from ..registry.base import sdata_facets
+    from .. import imaging
+
+    kept = {facet: dict(getattr(sdata, facet, {}) or {}) for facet in sdata_facets()}
+    for name, el in kept.get("images", {}).items():
+        if not imaging._is_multiscale(el):
+            continue
+        scales = imaging._scale_names(el)
+        drop = min(levels, len(scales) - 1)
+        if drop <= 0:
+            continue
+        kept["images"][name] = xr.DataTree.from_dict(
+            {f"scale{i}": el[s].dataset for i, s in enumerate(scales[drop:])})
+
+    view = sd.SpatialData(**kept)
+    view.attrs = dict(sdata.attrs)
+    return view
+
+
 def save_spatialdata(sdata, path: str, app_state: dict, hash_name: bool = False,
-                     include: dict[str, list[str]] | None = None) -> str:
+                     include: dict[str, list[str]] | None = None,
+                     drop_image_levels: int = 0) -> str:
     """`hash_name` renames a `.zarr.zip` checkpoint to embed a hash of its own
     contents once written (auto-managed saves only — explicit save-as paths are
     honored verbatim). Worker logs are stripped from the persisted `app_state` and
@@ -337,12 +375,18 @@ def save_spatialdata(sdata, path: str, app_state: dict, hash_name: bool = False,
     `include` (facet -> element names) writes only those elements — see
     `select_elements` for the absent-vs-present rule. Displays naming a dropped
     element are neutralised so the file still renders; the live object keeps
-    everything."""
+    everything.
+
+    `drop_image_levels` writes the images without their N finest pyramid levels — see
+    `drop_finest_levels`. It drops resolution, not elements, so nothing in
+    `app_state` needs neutralising."""
     if include is not None:
         from ..registry.base import sdata_facets
         sdata = select_elements(sdata, include)
         app_state = appstate.prune_to_elements(
             app_state, {f: set(getattr(sdata, f, {}) or {}) for f in sdata_facets()})
+    if drop_image_levels:
+        sdata = drop_finest_levels(sdata, drop_image_levels)
     persisted, logs = _split_logs(app_state)
     checkpoint_schemas.validate_app_state(persisted)
     original = sdata.attrs.get("app_state")

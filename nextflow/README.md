@@ -9,6 +9,10 @@ The workflow does **not** reimplement any analysis: it stages `backend/`, instal
 the pinned Python deps at runtime with [uv](https://docs.astral.sh/uv/), and invokes
 `cli.py` exactly as documented in that file.
 
+For a **batch of raw Xenium bundles** — a fixed recipe chain per sample, a MultiQC
+report across all of them, and a browsable viewer folder of the results — use
+[`xenium/main.nf`](xenium/README.md) instead.
+
 ## Quick run (test profile + docker)
 
 Runs the bundled `07_neighborhood_enrichment` recipe over the bundled

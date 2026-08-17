@@ -126,7 +126,10 @@ frontend/   React + TS + Vite + Tailwind SPA around that canvas (an npm workspac
                   panels (CanvasControls / EmbeddingControls and their fields), and the
                   StudioSpatialCanvas / StudioEmbeddingCanvas adapters that drop them
                   into the library canvas' `controls` slot
-nextflow/   Nextflow workflow wrapping backend/cli.py (uv installs deps at runtime; no image build)
+nextflow/   Nextflow workflows wrapping backend/cli.py (uv installs deps at runtime; no image build)
+  main.nf         one dataset, one recipe
+  xenium/         batch Xenium: many bundles -> recipe chain -> MultiQC report + a
+                  serverless viewer/ folder of the resulting checkpoints
 docker/     single-image build (multi-stage), nginx edge, supervisor
 docs/       CONTRACT.md (REST/SSE/Arrow API), images/ (README screenshots)
 docs-site/  VitePress documentation site published to GitHub Pages. Renders the repo's own
@@ -663,24 +666,37 @@ cd backend
 |---|---|
 | `--parser` | reader registry key (`io.xenium`), bare reader name (`xenium`), or `zarr`/`spatialdata` to load an existing `.zarr`/`.zarr.zip` |
 | `--input` | raw data folder (reader mode) or the `.zarr`/`.zarr.zip` (zarr mode) |
-| `--recipe` | path to a recipe JSON file, or a bundled recipe name |
+| `--recipe` | path to a recipe JSON file, or a bundled recipe name; repeat to run several recipes back to back in one session |
 | `--recipe-params` | JSON object of recipe-parameter overrides (fills the recipe's `$param` refs) |
 | `--output` | output directory (created if absent) |
 | `--reader-params` | JSON object of extra kwargs for the reader (reader mode) |
 | `--name` | base name for the output `.zarr.zip` (default: from `--input`) |
+| `--lowres-copy` | also write `<name>.lowres.zarr.zip` — the same session with the finest pyramid level dropped from every image |
 
 The output folder holds `<name>.zarr.zip` (the full SpatialData + app state, reloadable
 in the app) and `plots/<NN>_<namespace>.<function>/figure.{svg,pdf}` per plot step.
+Repeating `--recipe` runs the recipes in order in the same session — one load, one
+save — so a longer analysis composes the bundled recipes instead of restating their
+steps in a new file. `--recipe-params` is shared by all of them: each recipe fills only
+the `$param` names it declares, and ignores the rest.
 
-**Nextflow.** `nextflow/main.nf` wraps the CLI and exposes the same parameters; its
-container installs the pinned Python deps at runtime with `uv`, so there is no image
-to build. Quick run against the test dataset:
+**Nextflow.** Two workflows, both wrapping the CLI in a container that installs the
+pinned Python deps at runtime with `uv`, so there is no image to build.
+
+- `nextflow/main.nf` — one dataset, one recipe; exposes the CLI's own parameters.
+- `nextflow/xenium/main.nf` — a batch: many raw Xenium bundles, each run through the
+  standard preprocess → Leiden → cellular-neighborhoods recipe chain, publishing a
+  MultiQC report over all of them and a `viewer/` folder that is a complete serverless
+  deployment (§14.3) of the resulting checkpoints. It needs a built SPA at
+  `frontend/dist` (`npm ci && npm run build`) — it does not build one.
 
 ```bash
 nextflow run nextflow/main.nf -profile test,docker
+nextflow run nextflow/xenium/main.nf -profile test,docker
 ```
 
-See [`nextflow/README.md`](nextflow/README.md) for the full parameter list.
+See [`nextflow/README.md`](nextflow/README.md) and
+[`nextflow/xenium/README.md`](nextflow/xenium/README.md) for the full parameter lists.
 
 ## Snapshots
 

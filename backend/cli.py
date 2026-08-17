@@ -17,9 +17,13 @@ Run from the `backend/` directory (like `test_e2e.py`):
 `--parser` selects a spatialdata-io / squidpy reader by its registry key
 (`io.xenium`) or bare function name (`xenium`), or the sentinel `zarr`/
 `spatialdata` to load an existing SpatialData `.zarr`/`.zarr.zip` (the app's
-New Session "load" path). The output folder receives `<name>.zarr.zip` (the full
-object + app_state) and, per plot step, `plots/<NN>_<namespace>.<function>/
-figure.{svg,pdf}`.
+New Session "load" path). `--recipe` may be repeated to run several recipes back
+to back in the same session, so a longer analysis composes the bundled recipes
+instead of restating their steps. The output folder receives `<name>.zarr.zip`
+(the full object + app_state) and, per plot step,
+`plots/<NN>_<namespace>.<function>/figure.{svg,pdf}`. `--lowres-copy` adds
+`<name>.lowres.zarr.zip`: the same session with the finest pyramid level dropped
+from every image, so it holds the whole analysis in a much smaller file.
 """
 from __future__ import annotations
 
@@ -41,8 +45,9 @@ def _parse_args(argv):
                         "or 'zarr'/'spatialdata' to load an existing SpatialData store")
     p.add_argument("--input", required=True,
                    help="path to the raw data folder (reader mode) or the .zarr/.zarr.zip (zarr mode)")
-    p.add_argument("--recipe", required=True,
-                   help="path to a recipe JSON file, or the name of a bundled recipe")
+    p.add_argument("--recipe", required=True, action="append", metavar="RECIPE",
+                   help="path to a recipe JSON file, or the name of a bundled recipe; "
+                        "repeat to run several recipes back to back in one session")
     p.add_argument("--recipe-params", default=None,
                    help="JSON object of recipe-level parameter overrides (see the recipe's "
                         "`params`); values fill the recipe's $param references, defaults apply otherwise")
@@ -51,6 +56,10 @@ def _parse_args(argv):
                    help="JSON object of extra kwargs merged into the reader call (reader mode only)")
     p.add_argument("--name", default=None,
                    help="base name for the output .zarr.zip (default: derived from --input)")
+    p.add_argument("--lowres-copy", action="store_true",
+                   help="also write <name>.lowres.zarr.zip: the same session with the finest "
+                        "pyramid level dropped from every image — a much smaller file that "
+                        "still carries the full analysis, minus the deepest zoom")
     p.add_argument("--list-parsers", action="store_true",
                    help="print the available parser names and exit")
     return p.parse_args(argv)
@@ -99,21 +108,26 @@ def _output_name(args) -> str:
     return stem or "session"
 
 
-def _load_recipe_steps(recipe_arg: str, param_values: dict | None) -> list:
-    """Resolved steps of a recipe given as a file path, or (fallback) a bundled
-    recipe name. `param_values` fills the recipe's $param references (declared
-    defaults apply where a value is absent)."""
+def _load_recipe_steps(recipe_args: list[str], param_values: dict | None) -> list:
+    """Resolved steps of every recipe named, concatenated in the order given — each a
+    file path or (fallback) a bundled recipe name. `param_values` fills each recipe's
+    $param references (declared defaults apply where a value is absent); a name a
+    recipe does not declare is ignored by that recipe, so one mapping can drive a
+    chain of them."""
     from app import recipes
-    path = Path(recipe_arg)
-    if path.is_file():
-        recipe = json.loads(path.read_text())
-    else:
-        recipe = next((r for r in recipes.catalog() if r["name"] == recipe_arg), None)
-        if recipe is None:
-            names = ", ".join(r["name"] for r in recipes.catalog())
-            raise SystemExit(f"recipe {recipe_arg!r} is neither an existing file nor a bundled "
-                             f"recipe. Bundled: {names}")
-    return recipes.resolve_steps(recipe, param_values)
+    steps = []
+    for recipe_arg in recipe_args:
+        path = Path(recipe_arg)
+        if path.is_file():
+            recipe = json.loads(path.read_text())
+        else:
+            recipe = next((r for r in recipes.catalog() if r["name"] == recipe_arg), None)
+            if recipe is None:
+                names = ", ".join(r["name"] for r in recipes.catalog())
+                raise SystemExit(f"recipe {recipe_arg!r} is neither an existing file nor a bundled "
+                                 f"recipe. Bundled: {names}")
+        steps.extend(recipes.resolve_steps(recipe, param_values))
+    return steps
 
 
 def _open_session(manager, args, reader):
@@ -202,20 +216,25 @@ def main(argv=None) -> int:
     manager = SessionManager(REGISTRY)
     sess = _open_session(manager, args, reader)
     print(f"[ok] loaded via {args.parser}: {args.input}")
+    name = _output_name(args)
     try:
         plots_written = _run_steps(sess, steps, out_dir)
-        out_zip = out_dir / f"{_output_name(args)}.zarr.zip"
         # Save directly rather than through the queued save job, whose write-path guard
         # (within_data_dir) is a multi-tenant server concern; offline output goes
         # wherever the caller asked.
         with sess.lock.reading():
-            saved = save_spatialdata(sess.sdata, str(out_zip), sess.app_state, hash_name=False)
+            written = [save_spatialdata(sess.sdata, str(out_dir / f"{name}.zarr.zip"),
+                                        sess.app_state, hash_name=False)]
+            if args.lowres_copy:
+                written.append(save_spatialdata(
+                    sess.sdata, str(out_dir / f"{name}.lowres.zarr.zip"), sess.app_state,
+                    hash_name=False, drop_image_levels=1))
     finally:
         sess.shutdown()
 
-    size_mb = os.path.getsize(saved) / 1e6
     print(f"\n[ok] ran {len(steps)} step(s), wrote {plots_written} plot(s)")
-    print(f"[ok] saved {saved} ({size_mb:.1f} MB)")
+    for saved in written:
+        print(f"[ok] saved {saved} ({os.path.getsize(saved) / 1e6:.1f} MB)")
     return 0
 
 

@@ -1,0 +1,19 @@
+# MultiQC settings for the batch Xenium report. Every section is custom content
+# written by bin/xenium_metrics.py — MultiQC merges the per-sample files that share an
+# `id` into one cross-sample section, so the ordering below is the report's outline.
+report_comment: >
+  Aggregate metrics for every Xenium bundle in this run: the instrument's own run
+  summary, then what the analysis recipes produced. The interactive viewer for the
+  same samples is the sibling <code>viewer/</code> folder.
+
+custom_content:
+  order:
+    - xenium_run
+    - xenium_analysis
+    - xenium_clusters
+    - xenium_neighborhoods
+
+# The analysis paths are Nextflow work directories, and the timestamp defeats
+# byte-identical reruns; neither tells a reader anything.
+show_analysis_paths: false
+show_analysis_time: false
