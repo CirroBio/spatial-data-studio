@@ -67,6 +67,9 @@ jobs:
         # new upstream rule fail an unrelated PR.
         env:
           NXF_VER: "25.10.4"
+        # Installed outside the checkout: the installer writes a file named `nextflow`
+        # into the working directory, which collides with the repo's `nextflow/` tree.
+        working-directory: ${{ runner.temp }}
         run: |
           curl -s https://get.nextflow.io | bash
           sudo mv nextflow /usr/local/bin/
