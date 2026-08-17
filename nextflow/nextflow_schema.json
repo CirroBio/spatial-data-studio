@@ -135,8 +135,7 @@
         },
         "viewer_dist": {
           "type": "string",
-          "format": "directory-path",
-          "description": "A built viewer SPA. The workflow does not build one: run `npm ci && npm run build` at the repo root."
+          "description": "A built viewer SPA, as a viewer-dist.tar.gz (local or a URL) or a build directory. The workflow does not build one; the default is the archive attached to the latest release."
         },
         "analysis_container": {
           "type": "string",

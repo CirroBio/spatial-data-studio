@@ -1,0 +1,55 @@
+name: release
+
+# Attaches the built viewer SPA to a release as viewer-dist.tar.gz, which is what the
+# workflow's --viewer_dist points at by default. `frontend/dist` is gitignored, so a
+# fresh clone carries no build and a run launched straight from the repository — how
+# Cirro runs it — has no other way to obtain one.
+on:
+  push:
+    tags: ["v*"]
+  # Attach the asset to a tag that was released before this job existed, or re-attach
+  # after a failed upload.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build the viewer from
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  viewer:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20" # matches ci.yml and docs.yml
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Build the viewer SPA
+        # Same build the docs site publishes: packages/viewer then frontend.
+        run: |
+          npm ci
+          npm run build
+
+      - name: Pack the viewer
+        # Contents at the archive root rather than under a dist/ prefix, so
+        # PUBLISH_VIEWER unpacks it straight into the site directory.
+        run: tar -czf viewer-dist.tar.gz -C frontend/dist .
+
+      - name: Attach it to the release
+        # A tag push usually arrives before the release exists, so create it if needed.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --generate-notes
+          gh release upload "$TAG" viewer-dist.tar.gz --clobber

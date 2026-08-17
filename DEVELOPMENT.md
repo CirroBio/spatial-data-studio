@@ -792,8 +792,11 @@ installs the pinned Python deps at runtime with `uv`, so there is no image to bu
 Point it at a folder; it finds the spatial datasets inside (all eight readers), loads
 each with the right one, runs that data type's recipes, and publishes the checkpoints in
 a tree mirroring where they were found, plus a MultiQC report and a serverless viewer
-(§14.3). It needs a built SPA at `frontend/dist` (`npm ci && npm run build`) — it does
-not build one.
+(§14.3). It does not build the SPA: `--viewer_dist` defaults to the `viewer-dist.tar.gz`
+that [`.github/workflows/release.yml`](.github/workflows/release.yml) attaches to each
+`v*` tag, so a run works from a fresh clone (where `frontend/dist` is gitignored and
+absent) as well as from a working tree. Point it at `frontend/dist` to publish a local
+`npm ci && npm run build` instead.
 
 ```bash
 nextflow run nextflow/main.nf -profile test,docker

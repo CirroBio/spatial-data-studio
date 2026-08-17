@@ -171,7 +171,11 @@ process PUBLISH_VIEWER {
         groovy.json.JsonOutput.toJson([title: params.title, checkpoints: entries]))
     """
     mkdir site
-    cp -RL ${viewer_dist}/. site/
+    if [ -d ${viewer_dist} ]; then
+        cp -RL ${viewer_dist}/. site/
+    else
+        tar -xzf ${viewer_dist} -C site
+    fi
     cat > site/index.json <<'INDEX_JSON'
 ${index_json}
 INDEX_JSON
@@ -268,11 +272,18 @@ workflow {
     }
 
     // A built SPA is the one input this workflow does not produce: the repo builds it
-    // once (`npm ci && npm run build`) for the docs site and the Docker image alike.
+    // once (`npm ci && npm run build`) for the docs site and the Docker image alike, and
+    // CI attaches that build to each release as viewer-dist.tar.gz, which is the default.
+    // Either form works here; only a local one can be checked before the run, since a
+    // remote archive is fetched when PUBLISH_VIEWER stages it.
     def viewer_dist = file(params.viewer_dist)
-    if( !viewer_dist.resolve('index.html').exists() )
-        error "no built viewer at ${viewer_dist} (expected index.html there). Build it with " +
-              "`npm ci && npm run build` at the repo root, or point --viewer_dist at a build."
+    def viewer_is_remote = params.viewer_dist.toString().contains('://')
+    if( !viewer_is_remote && !(viewer_dist.isDirectory()
+                                   ? viewer_dist.resolve('index.html').exists()
+                                   : viewer_dist.exists()) )
+        error "no built viewer at ${viewer_dist}. Build one with `npm ci && npm run build` " +
+              "at the repo root (writes frontend/dist), or point --viewer_dist at a " +
+              "viewer-dist.tar.gz from a release."
 
     ANALYSE(
         channel.fromList(work),

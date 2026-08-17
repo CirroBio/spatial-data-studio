@@ -158,17 +158,24 @@ downloads, and trims the analysis task's resources.
 nextflow run nextflow/main.nf -profile test,docker
 ```
 
-## The viewer has to be built first
+## Where the viewer comes from
 
 The workflow does not build the SPA — the repo already builds it in two other places
-(the docs site and the Docker image), and a third build path would be one too many:
+(the docs site and the Docker image), and a third build path would be one too many. It
+downloads one instead: `--viewer_dist` defaults to the `viewer-dist.tar.gz` attached to
+the [latest release](https://github.com/CirroBio/spatial-data-studio/releases/latest),
+which `.github/workflows/release.yml` builds and uploads on every `v*` tag. That is what
+makes the workflow runnable from a fresh clone — `frontend/dist` is gitignored, so a
+checkout carries no build.
 
-```bash
-npm ci && npm run build
-```
+Two reasons to override it:
 
-That writes `frontend/dist`, which `--viewer_dist` defaults to. The run stops
-immediately if there is no `index.html` there.
+- **To pin the viewer to a version** rather than tracking the newest release, pass that
+  release's asset URL:
+  `--viewer_dist https://github.com/CirroBio/spatial-data-studio/releases/download/v1.2.3/viewer-dist.tar.gz`
+- **To publish a local build**, point it at the directory `npm ci && npm run build`
+  writes: `--viewer_dist frontend/dist`. A local path that is missing, or a directory
+  with no `index.html` in it, stops the run before any work starts.
 
 ## uv at runtime
 
