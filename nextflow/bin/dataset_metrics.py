@@ -10,9 +10,9 @@ columns to surface arrive as `--run-metrics`, straight out of the catalog entry 
 data_types.schema.json); everything else is derived from the checkpoint itself.
 
 The checkpoint is read through `zarr`'s ZipStore rather than
-`persistence.store.load_spatialdata`: only `obs` and `var` are needed, and the loader
-unpacks the whole archive first — for an imaging dataset that is the image pyramid,
-gigabytes of it, for two dataframes.
+`persistence.store.load_spatialdata`: only `obs`, `var` and the app state in the root
+attrs are needed, and the loader unpacks the whole archive first — for an imaging
+dataset that is the image pyramid, gigabytes of it, for two dataframes.
 """
 from __future__ import annotations
 
@@ -54,15 +54,25 @@ def _parse_args():
     return p.parse_args()
 
 
-def _read_table(checkpoint: str) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """`(obs, var)` of the checkpoint's single table."""
+def _read_checkpoint(checkpoint: str) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+    """`obs` and `var` of the checkpoint's single table, plus its `app_state`."""
     with zarr.storage.ZipStore(checkpoint, mode="r") as store:
-        tables = zarr.open_group(store, mode="r")["tables"]
+        root = zarr.open_group(store, mode="r")
+        tables = root["tables"]
         keys = list(tables)
         if len(keys) != 1:
             raise SystemExit(f"{checkpoint}: expected exactly one table, found {keys}")
         group = tables[keys[0]]
-        return read_elem(group["obs"]), read_elem(group["var"])
+        return read_elem(group["obs"]), read_elem(group["var"]), dict(root.attrs).get("app_state", {})
+
+
+def _failed_steps(app_state: dict) -> int:
+    """How many recipe steps the analysis could not complete. A step that fails is kept
+    in the checkpoint's history as `failed` with its log and the recipe carries on
+    (backend/cli.py), so a dataset can be analysed and published with some of its steps
+    missing — this is what says so in the report."""
+    return sum(1 for coll in ("compute_history", "plots")
+               for rec in app_state.get(coll, []) if rec.get("status") == "failed")
 
 
 def _run_metrics(source_dir: Path, config: dict | None) -> dict:
@@ -99,7 +109,11 @@ def main() -> int:
     analysis: dict = {}
 
     if args.status == "ok":
-        obs, var = _read_table(args.checkpoint)
+        obs, var, app_state = _read_checkpoint(args.checkpoint)
+        status["steps_failed"] = _failed_steps(app_state)
+        if status["steps_failed"]:
+            # The analysis ran and published a checkpoint, but not all of it succeeded.
+            status["status"] = "partial"
         analysis["cells"] = len(obs)
         analysis["features"] = len(var)
         # These come from the QC step, which runs before the filter, so they describe
@@ -170,15 +184,18 @@ def main() -> int:
         "id": "dataset_status",
         "section_name": "Datasets",
         "description": "Every folder the run picked up, the data type it was recognised as, "
-                       "and whether its analysis completed. A failed row has its log "
-                       "published next to where its checkpoint would have gone.",
+                       "and whether its analysis completed. A failed row could not be read "
+                       "at all; a partial row was analysed and published with some recipe "
+                       "steps failing. Either way its log is published next to where its "
+                       "checkpoint went (or would have gone), and a partial checkpoint "
+                       "carries each failed step and its log in its own history.",
         "plot_type": "table",
         "pconfig": {"id": "dataset_status_table", "title": "Datasets"},
         "data": {sample: {**status, **{k: analysis[k] for k in ("cells", "n_clusters")
                                        if k in analysis}}},
     })
 
-    print(f"[ok] {sample} ({args.data_type}): {args.status}"
+    print(f"[ok] {sample} ({args.data_type}): {status['status']}"
           + (f", {analysis['cells']} cells" if "cells" in analysis else ""))
     return 0
 

@@ -1,8 +1,10 @@
 """End-to-end test for the offline CLI (backend/cli.py). Drives cli.main in-process
 (the registry build + squidpy compute is the same work test_e2e.py does) against the
 real visium_hne dataset in zarr-load mode, then asserts the output SpatialData, its
-display settings and the plot files are produced and reload cleanly. A second pass over
-the Xenium fixture covers the display an embedding-producing recipe leaves behind.
+display settings and the plot files are produced and reload cleanly — and that a step
+which cannot complete is kept as a `failed` history entry with its log while the rest of
+the recipe still runs. A second pass over the Xenium fixture covers the display an
+embedding-producing recipe leaves behind.
 
 Run from backend/:  python test_cli.py
 Needs test-data/visium_hne.zarr (scripts/prepare_test_data.py writes it, ~375 MB).
@@ -20,16 +22,26 @@ os.environ.setdefault("SDS_MAX_SESSIONS", "64")
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 DATA = os.path.join(_REPO_ROOT, "test-data", "visium_hne.zarr")
 
-# The three steps below are the exact compute + plot chain test_e2e.py proves runs
-# clean on visium_hne (log-normalised X, obs["leiden"], obsm["spatial"]).
+# Steps 1, 2 and 5 are the exact compute + plot chain test_e2e.py proves runs clean on
+# visium_hne (log-normalised X, obs["leiden"], obsm["spatial"]). Steps 3 and 4 are
+# deliberate failures, one from each layer that can reject a step: 3 fails
+# validate-on-dequeue (the obs column does not exist), 4 fails inside the compute
+# subprocess (more components than the data has). They assert the run keeps going and
+# each failure is kept with its log, rather than aborting the recipe.
+BAD_OBS_STEP, BAD_COMPUTE_STEP = 3, 4
+PLOT_STEP = 5
 RECIPE = {
     "schema_version": 1,
-    "meta": {"name": "cli-smoke", "description": "spatial neighbors -> nhood enrichment (+plot)"},
+    "meta": {"name": "cli-smoke", "description": "spatial neighbors -> nhood enrichment (+plot), "
+                                                 "with two failing steps in between"},
     "steps": [
         {"namespace": "gr", "function": "spatial_neighbors",
          "params": {"coord_type": "generic", "n_neighs": 6}},
         {"namespace": "gr", "function": "nhood_enrichment",
          "params": {"cluster_key": "leiden", "seed": 0, "show_progress_bar": False}},
+        {"namespace": "gr", "function": "nhood_enrichment",
+         "params": {"cluster_key": "no_such_obs_column", "seed": 0, "show_progress_bar": False}},
+        {"namespace": "sc.pp", "function": "pca", "params": {"n_comps": 100_000}},
         {"namespace": "pl", "function": "nhood_enrichment", "params": {"cluster_key": "leiden"}},
     ],
 }
@@ -100,6 +112,7 @@ def main() -> int:
             json.dump(RECIPE, f)
         out_dir = os.path.join(tmp, "out")
 
+        # A failing step must not abort the run: rc is 0 and the output is written.
         rc = cli.main(["--parser", "zarr", "--input", DATA, "--name", "cli_result",
                        "--recipe", recipe_path, "--output", out_dir,
                        "--display-color-by", "obs:leiden",
@@ -111,7 +124,7 @@ def main() -> int:
             f"output zip missing/too small: {out_zip}"
         print(f"[ok] wrote {out_zip} ({os.path.getsize(out_zip)/1e6:.1f} MB)")
 
-        plot_dir = os.path.join(out_dir, "plots", "03_pl.nhood_enrichment")
+        plot_dir = os.path.join(out_dir, "plots", f"{PLOT_STEP:02d}_pl.nhood_enrichment")
         svg = os.path.join(plot_dir, "figure.svg")
         pdf = os.path.join(plot_dir, "figure.pdf")
         assert os.path.exists(svg) and os.path.exists(pdf), f"missing plot files in {plot_dir}"
@@ -121,10 +134,13 @@ def main() -> int:
         print(f"[ok] plot written: {plot_dir}/figure.{{svg,pdf}}")
 
         # the saved store reloads with the recipe's compute history + plot record
-        from app.persistence.store import load_spatialdata
-        sdata, app_state, _newer, _extract, _hash = load_spatialdata(out_zip)
-        fns = [c["function"] for c in app_state["compute_history"]]
-        assert fns == ["spatial_neighbors", "nhood_enrichment"], fns
+        from app.persistence.store import load_spatialdata, read_log
+        sdata, app_state, _newer, extract, _hash = load_spatialdata(out_zip)
+        history = app_state["compute_history"]
+        fns = [c["function"] for c in history]
+        assert fns == ["spatial_neighbors", "nhood_enrichment", "nhood_enrichment", "pca"], fns
+        statuses = [c["status"] for c in history]
+        assert statuses == ["completed", "completed", "failed", "failed"], statuses
         assert any(p["function"] == "nhood_enrichment" for p in app_state["plots"]), app_state["plots"]
         # the computed graph survived the round trip
         assert "spatial_distances" in sdata.tables[next(iter(sdata.tables))].obsp, "obsp not persisted"
@@ -142,6 +158,14 @@ def main() -> int:
         assert emb["encoding"]["obsm_key"] == "X_umap", emb["encoding"]["obsm_key"]
         print(f"[ok] display settings persisted: color_by=obs:leiden, {modes}, "
               f"embedding on {emb['encoding']['obsm_key']}")
+
+        # each failure kept its log in the checkpoint, so reopening the store in the app
+        # shows the same log the live session would have
+        for step_no, rec in ((BAD_OBS_STEP, history[2]), (BAD_COMPUTE_STEP, history[3])):
+            log = read_log(extract or out_zip, rec["id"])
+            assert log, f"step {step_no} ({rec['function']}) failed with no persisted log"
+            print(f"[ok] step {step_no} ({rec['function']}) failed, log kept "
+                  f"({len(log)} chars): {log.splitlines()[-1][:80]}")
 
     check_embedding_display(cli)
 

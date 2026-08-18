@@ -814,6 +814,13 @@ POST a display to, so `EmbeddingEmptyState` authors one browser-locally there �
 fallback for checkpoints written before the CLI filled the view in, not a substitute for
 writing it, since a local display is gone on reload.
 
+A step that cannot complete does not stop the run. It is kept as a `failed` history
+entry with its log — the same model the live app uses for a queued function that fails —
+the log is printed and saved into the output checkpoint, and the next step runs. The exit
+status is 0 for any run whose input loaded (the failure count is reported on the last
+lines of stdout); only a failed read/load is fatal. Reopening the output in the app shows
+each failed step and its log.
+
 **Nextflow.** One workflow, `nextflow/main.nf`, wrapping the CLI in a container that
 installs the pinned Python deps at runtime with `uv`, so there is no image to build.
 Point it at a folder; it finds the spatial datasets inside (all eight readers), loads

@@ -132,6 +132,13 @@ checkpoint would have gone, it appears in the report's Datasets table as `failed
 the other datasets carry on. A broken environment (the dependency install) still stops
 the task — that is not the data's fault.
 
+**A recipe step that fails does not stop the analysis either.** The step is kept in the
+checkpoint's history as `failed` with its log and the following steps still run, so the
+dataset is analysed and published with the part that worked. The Datasets table reports
+it as `partial` with the number of failed steps, its published log holds each failure,
+and opening the checkpoint in the full app shows the failed steps and their logs the way
+the live app shows a function that failed.
+
 ### The low-resolution copy
 
 Every checkpoint is published alongside a copy whose image pyramid has had its finest

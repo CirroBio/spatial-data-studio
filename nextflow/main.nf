@@ -76,11 +76,13 @@ process ANALYSE {
     uv venv --python 3.11
     uv pip install -r ${backend}/requirements.txt
 
-    # Reading and analysing is the part allowed to fail: a folder can look like a data
-    # type and still be truncated, mis-exported or unreadable. Its log is published and
-    # the run carries on with the other candidates, rather than one bad folder in a
-    # thousand aborting the sweep. A broken venv above is not caught — that is the
-    # environment failing, not the data.
+    # Reading is the part allowed to fail: a folder can look like a data type and still be
+    # truncated, mis-exported or unreadable. Its log is published and the run carries on
+    # with the other candidates, rather than one bad folder in a thousand aborting the
+    # sweep. A broken venv above is not caught — that is the environment failing, not the
+    # data. An individual recipe step that fails no longer reaches here at all: cli.py
+    # keeps it in the checkpoint's history as `failed` with its log and runs the rest, so
+    # rc is 0 and the metrics below report the dataset as `partial`.
     set +e
     .venv/bin/python ${backend}/cli.py \\
         --parser ${spec.reader} \\

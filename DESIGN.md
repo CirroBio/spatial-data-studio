@@ -2301,9 +2301,18 @@ python cli.py --parser <reader|zarr> --input <path> --recipe <file|name> --outpu
   server. The CLI owns its own paths, so it sets `SDS_DATA_DIR` (the input's parent)
   from its arguments *before* importing `config`, lifts the memory/session admission
   caps (single-shot, single-tenant), and saves by calling `save_spatialdata` directly
-  rather than through the guarded save job. A step failure aborts the run non-zero with
-  the captured log (fail-fast batch semantics), rather than the UI's keep-in-history
-  model. `backend/test_cli.py` exercises the whole path on `visium_hne`.
+  rather than through the guarded save job. `backend/test_cli.py` exercises the whole
+  path on `visium_hne`.
+- **Step failures** — a step that cannot complete does **not** stop the run: it keeps the
+  UI's audit-log model (§6.1), staying in history as `failed` with its captured log while
+  the next step runs. This is safe because the call commits nothing — it ran on a pickled
+  copy in the compute subprocess (§20.2), so the steps after it see exactly the object the
+  last successful step left. The log is printed to stdout *and* relocated into the saved
+  checkpoint's `logs/<job_id>.log.gz` like any other, so reopening the output in the app
+  shows the failure and its log the way the live session would have. The exit status is
+  therefore 0 for any run whose input loaded, however many steps failed, with the failure
+  count reported on the last lines of stdout; only a failed read/load is fatal, because
+  then there is no object to analyse.
 
 ### 28.2 Nextflow workflow (`nextflow/`)
 

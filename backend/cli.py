@@ -27,6 +27,14 @@ finest pyramid levels dropped to fit that budget, so it holds the whole analysis
 in a much smaller file. `--display-color-by` and `--display-render-mode` set how
 the saved checkpoint opens in the viewer, which otherwise shows the display built
 from the raw object before any recipe ran.
+
+A step that cannot complete does not stop the run: it is marked `failed`, its log is
+printed and saved with the checkpoint, and the next step is run — the same
+keep-in-history model the live app uses for a queued function that fails. Only a
+failure to read/load the input is fatal (there is no object to analyse). The exit
+status is therefore 0 for a run whose input loaded, however many steps failed; the
+failure count is reported on the last lines of stdout, and every failure is in the
+saved history.
 """
 from __future__ import annotations
 
@@ -206,22 +214,45 @@ def _apply_display_settings(sess, color_by: str | None, render_mode: str | None)
         sess.update_display(display["id"], {**display, "encoding": encoding})
 
 
-def _run_steps(sess, steps: list, out_dir: Path) -> int:
+def _run_steps(sess, steps: list, out_dir: Path) -> tuple[int, list[str]]:
+    """Run every step in order, whatever happens to any one of them, returning
+    (plots written, labels of the steps that failed).
+
+    A step that fails is left in the session's history as `failed` with its captured
+    log — the interactive app's keep-in-history model (DESIGN §6.1) — and the next step
+    runs. That is safe because a failed call commits nothing: it ran on a pickled copy
+    in the compute subprocess (registry/kernel.py) and `_run_call` returns before the
+    write lock, so the remaining steps see exactly the object the last successful step
+    left behind. The log travels into the output checkpoint (`logs/<job_id>.log.gz`, via
+    `save_spatialdata`), so reopening it in the app shows the failure and its log the
+    same way the live session did."""
     plots_written = 0
+    failed = []
     for i, step in enumerate(steps, start=1):
         label = f"{step['namespace']}.{step['function']}"
-        job_id = sess.enqueue_descriptor(step)
+        try:
+            job_id = sess.enqueue_descriptor(step)
+        except RuntimeError as e:
+            # The session refused the descriptor outright (a read step whose path lies
+            # outside the data root). It never became a job, so there is no history
+            # record to mark failed — this failure is reported here only.
+            failed.append(f"{i:02d} {label}")
+            print(f"[{i:02d}] {label} rejected: {e}")
+            continue
         status = _wait(sess, job_id)
         if status in ("failed", "cancelled"):
             log, _ = sess.get_log(job_id)
-            raise SystemExit(f"step {i} ({label}) {status}:\n{log}")
+            failed.append(f"{i:02d} {label}")
+            print(f"[{i:02d}] {label} {status}; kept in history, running the next step. Log:")
+            print(log or f"(no log captured for {label})")
+            continue
         if status == "drawn" and job_id in sess.plot_figures:
             folder = _write_plot(out_dir, i, step, sess.plot_figures[job_id])
             plots_written += 1
             print(f"[{i:02d}] {label} drawn -> {folder}")
         else:
             print(f"[{i:02d}] {label} {status}")
-    return plots_written
+    return plots_written, failed
 
 
 def main(argv=None) -> int:
@@ -258,7 +289,7 @@ def main(argv=None) -> int:
     print(f"[ok] loaded via {args.parser}: {args.input}")
     name = _output_name(args)
     try:
-        plots_written = _run_steps(sess, steps, out_dir)
+        plots_written, failed_steps = _run_steps(sess, steps, out_dir)
         # The embedding a recipe computes does not exist when the read bootstrap builds
         # the session's displays, so the checkpoint would carry no embedding canvas —
         # and nobody can add one in the serverless viewer, which is read-only. Fill in
@@ -281,6 +312,11 @@ def main(argv=None) -> int:
         sess.shutdown()
 
     print(f"\n[ok] ran {len(steps)} step(s), wrote {plots_written} plot(s)")
+    if failed_steps:
+        print(f"[warn] {len(failed_steps)} of {len(steps)} step(s) failed; each is saved as a "
+              f"`failed` history entry with its log, inspectable in the app:")
+        for label in failed_steps:
+            print(f"[warn]   {label}")
     for saved in written:
         print(f"[ok] saved {saved} ({os.path.getsize(saved) / 1e6:.1f} MB)")
     return 0
