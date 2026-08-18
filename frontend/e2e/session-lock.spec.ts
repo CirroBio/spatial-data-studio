@@ -1,27 +1,12 @@
-import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
+import { loadVisium } from './fixtures';
 
 // Two browsers on one session: the viewer who opens it holds the edit lock, the second
 // can look but not change anything, and the lock hands over on unlock → take. Each
 // Playwright context has its own localStorage, so the two pages are genuinely two
 // viewers with two client ids (see frontend/src/lib/presence.ts).
-//
-// The session is created over the API rather than through the New Session dialog —
-// session-flow.spec.ts covers that flow, and here it would only add a way to fail.
 
 let sessionId: string | null = null;
-
-async function loadVisium(request: APIRequestContext): Promise<string> {
-  const roots = (await (await request.get('/api/fs/browse')).json()) as { entries: { path: string }[] };
-  const created = (await (await request.post('/api/sessions', {
-    data: { source: { kind: 'load', path: `${roots.entries[0].path}/visium_hne.zarr` } },
-  })).json()) as { id: string };
-  await expect.poll(async () => {
-    const st = (await (await request.get(`/api/sessions/${created.id}`)).json()) as
-      { summary: { status: string } };
-    return st.summary.status;
-  }, { timeout: 60_000 }).toBe('ready');
-  return created.id;
-}
 
 function lockBadge(page: Page) {
   return page.getByRole('button', { name: /^Session lock:/ });

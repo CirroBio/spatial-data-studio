@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { TourAnchors } from '../../tours';
 
 interface Props {
   collapsed: boolean;
@@ -16,6 +17,7 @@ export default function CanvasSettingsShell({ collapsed, onToggleCollapsed, chil
         onClick={() => onToggleCollapsed(false)}
         title="Show controls"
         aria-label="Show controls"
+        data-tour={TourAnchors.DisplaySettings}
         className="absolute top-3 right-3 z-10 p-1.5 rounded border border-border bg-surface/90 text-muted hover:text-accent hover:border-accent transition-colors backdrop-blur-sm"
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -27,7 +29,7 @@ export default function CanvasSettingsShell({ collapsed, onToggleCollapsed, chil
   }
 
   return (
-    <div className="absolute top-3 right-3 z-10 bg-surface/90 border border-border rounded p-3 flex flex-col gap-2 min-w-[200px] max-h-[calc(100vh-1.5rem)] backdrop-blur-sm">
+    <div data-tour={TourAnchors.DisplaySettings} className="absolute top-3 right-3 z-10 bg-surface/90 border border-border rounded p-3 flex flex-col gap-2 min-w-[200px] max-h-[calc(100vh-1.5rem)] backdrop-blur-sm">
       <div className="flex items-center justify-between -mt-1 -mr-1">
         <span className="text-xs font-semibold text-muted uppercase tracking-wide">Display Settings</span>
         <button

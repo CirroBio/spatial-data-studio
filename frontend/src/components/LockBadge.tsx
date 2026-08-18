@@ -4,6 +4,7 @@ import { takeSessionLock, releaseSessionLock } from '../api';
 import { reportError } from '@cirrobio/spatial-viewer';
 import { lockStateOf, randomClientName } from '../lib/presence';
 import { useClickOutside } from '../hooks/useClickOutside';
+import { TourAnchors } from '../tours';
 
 // Header status control for the active session's edit lock: a closed padlock when it
 // is locked (to you, or to the viewer named on the badge) and an open one when it is
@@ -64,6 +65,7 @@ export default function LockBadge() {
         title={explain}
         aria-label={`Session lock: ${label}`}
         aria-expanded={open}
+        data-tour={TourAnchors.SessionLock}
       >
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
           <rect x="4" y="11" width="16" height="10" rx="2" />

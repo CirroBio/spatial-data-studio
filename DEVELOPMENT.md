@@ -743,7 +743,9 @@ collection as well as embeddable per page. Pull requests build but do not publis
 - `cd frontend && npm run test:e2e` — Playwright browser e2e tests (`frontend/e2e/`).
   Boots the real backend (against `test-data/`) and the Vite dev server, drives the
   app in Chromium to import `visium_hne` through the New Session reader form, run a
-  compute function end-to-end, browse the result, and walk the guided tour. The
+  compute function end-to-end, browse the result, and walk the guided tour twice — once
+  with no session open (the state the first-visit tour fires in) and once with a dataset
+  loaded, since half the tour's targets only exist in one of the two. The
   webServer entries reuse whatever already listens on 5173/8000, so make sure those
   are this app's servers and not another project's.
 

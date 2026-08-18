@@ -246,6 +246,7 @@ export default function App() {
           <span className="text-lg">No session open</span>
           <button
             onClick={() => setShowNewSession(true)}
+            data-tour={TourAnchors.NewSession}
             className="px-4 py-2 bg-accent hover:bg-accent/80 text-on-accent rounded text-sm transition-colors"
           >
             New Session

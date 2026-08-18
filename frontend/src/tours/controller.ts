@@ -60,7 +60,10 @@ export function createTourController(
   tour: Tour,
   hooks: { onStepShown?: (id: string) => void; onDone?: () => void } = {},
 ): TourController {
-  const steps = tour.steps;
+  // Narrowed at `start` to the steps whose targets are actually present, so the
+  // progress counter numbers what the reader sees. `goTo` still skips a target that
+  // vanishes after that (the count is then one optimistic, which beats stalling).
+  let steps = tour.steps;
   let driverObj: Driver | null = null;
   let clickTarget: { el: Element; handler: EventListener } | null = null;
 
@@ -140,15 +143,23 @@ export function createTourController(
 
   return {
     start: () => {
-      // Find the first showable step so we never open on a missing target.
+      // Resolve every target up front and drive only the ones that are there — both so
+      // we never open on a missing target and so "3 of 7" counts the steps this reader
+      // will actually be shown. A step with `waitForMs` is waited on here, delaying the
+      // tour's opening by that much, which is the price of an honest count.
       void (async () => {
-        let i = 0;
-        while (i < steps.length) {
-          const selector = toSelector(steps[i]);
-          if (!selector || (await waitForElement(selector, steps[i].waitForMs))) break;
-          i += 1;
+        const showable: TourStep[] = [];
+        for (const step of tour.steps) {
+          const selector = toSelector(step);
+          if (!selector || (await waitForElement(selector, step.waitForMs))) showable.push(step);
         }
-        if (i < steps.length) driverObj?.drive(i);
+        if (showable.length === 0) {
+          console.warn('[tour] no step target resolved, not starting');
+          return;
+        }
+        steps = showable;
+        driverObj?.setSteps(steps.map(buildDriveStep));
+        driverObj?.drive(0);
       })();
     },
     destroy: () => driverObj?.destroy(),
