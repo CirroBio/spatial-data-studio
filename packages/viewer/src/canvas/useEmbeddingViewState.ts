@@ -50,15 +50,35 @@ export function useEmbeddingViewState(
     return { target: [centerX, centerY, 0], zoom, ...ZOOM_LIMITS };
   }, [positions, is3d, containerRef]);
 
-  // A freshly loaded session always frames its data; the persisted display viewport
-  // is not restored here (the canvas is remounted per session — key on the session id
-  // in App — so this runs once per session load).
+  // Frames the data on first load, and re-frames whenever the data occupies a different
+  // extent — the camera IS in the plotted coordinate space, so one framed for a UMAP's
+  // single digits points somewhere arbitrary once the same canvas plots a PCA's tens or
+  // pixel coordinates in the thousands. This used to fit only while there was no camera
+  // at all, which held for the Studio (a canvas per session) but left any host that
+  // switches coordinates in place — or any switch of the plotted key here — pointed at
+  // the wrong place.
+  //
+  // Keyed on the extent rather than on the obsm key, because only the extent is in step
+  // with `positions`: the key changes on the pick, the fetch is marked in flight a render
+  // later, and the positions arrive a commit after the table does. Every key-derived
+  // identity tried here fitted the outgoing data and then refused the incoming. Panning
+  // and recolouring leave the extent alone, so neither re-frames; recomputed coordinates
+  // legitimately do.
+  const framedExtent = useRef<string | null>(null);
   useEffect(() => {
-    if (viewState) return;
     if (!positions) return;
+    const { d0min, d0max, d1min, d1max, d2min, d2max } = positions.bounds;
+    const extent = `${d0min},${d0max},${d1min},${d1max},${d2min},${d2max},${is3d}`;
+    if (viewState && framedExtent.current === extent) return;
+    // Not against an unmeasured canvas: `fitToData` falls back to the window, which is
+    // itself zero for a hidden one, and the resulting camera frames nothing. Leaving the
+    // marker alone means the real size arriving retries, as `useCanvasViewState` does.
+    if (!canvasSize) return;
     const fit = fitToData();
-    if (fit) setViewState(fit);
-  }, [fitToData, positions, viewState]);
+    if (!fit) return;
+    framedExtent.current = extent;
+    setViewState(fit);
+  }, [fitToData, positions, viewState, canvasSize, is3d]);
 
   // The 2D and 3D view-state shapes aren't interchangeable — re-fit on toggle
   // rather than trying to carry an orthographic pan/zoom into an orbit camera.
