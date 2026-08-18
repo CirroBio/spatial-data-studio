@@ -63,14 +63,19 @@ export function ChannelLegend({
   show,
   showLegend,
   channels,
+  scale = 1,
 }: {
   show: boolean;
   showLegend: boolean;
   channels: Channel[];
+  scale?: number;
 }) {
   if (!(show && showLegend && channels.some((c) => c.visible))) return null;
   return (
-    <div style={CHANNEL_LEGEND}>
+    // Scaled as a whole rather than by restating each size: the swatches, the type and
+    // the colorbar keep their proportions, and the origin is the corner the panel is
+    // anchored to, so growing it moves it inward instead of off the canvas.
+    <div style={{ ...CHANNEL_LEGEND, transform: `scale(${scale})`, transformOrigin: 'bottom left' }}>
       {channels.filter((c) => c.visible).map((c) => (
         <div key={c.index} style={LEGEND_ROW}>
           <span style={{ ...SWATCH, background: c.color }} />
@@ -86,14 +91,16 @@ export function CellColorLegend({
   visible,
   legend,
   title,
+  scale = 1,
 }: {
   visible: boolean;
   legend: ColorLegend | null;
   title: string;
+  scale?: number;
 }) {
   if (!(visible && legend)) return null;
   return (
-    <div style={CELL_LEGEND}>
+    <div style={{ ...CELL_LEGEND, transform: `scale(${scale})`, transformOrigin: 'bottom right' }}>
       <div
         style={{ ...TRUNCATE, fontSize: 11, fontWeight: 500, color: themeColor('text'), marginBottom: 4 }}
         title={title}

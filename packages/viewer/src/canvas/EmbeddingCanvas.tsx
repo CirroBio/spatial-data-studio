@@ -5,6 +5,7 @@ import type { Layer, PickingInfo } from '@deck.gl/core';
 import { useArrowField } from '../data/useArrowField';
 import { indicesInRings } from '../lib/pointInPolygon';
 import { isEmbeddingDisplay, type EmbeddingDisplaySpec, type ObsField, type ObsmField, type Viewport } from '../types';
+import { EMBEDDING_ENCODING_DEFAULTS } from '../defaults';
 import { useArrowPositions } from './useArrowPositions';
 import { useCanvasHost, useDisplayEditor } from './canvas-host';
 import { useEmbeddingViewState, type EmbeddingViewState } from './useEmbeddingViewState';
@@ -293,7 +294,8 @@ export default function EmbeddingCanvas({
         }}
         onClick={handleClick}
         layers={[...layers, ...drawLayers]}
-        controller={lassoMode ? { doubleClickZoom: false } : true}
+        controller={(display.encoding.lock_view ?? EMBEDDING_ENCODING_DEFAULTS.lock_view) ? false
+          : lassoMode ? { doubleClickZoom: false } : true}
         getCursor={lassoMode ? () => 'crosshair' : ({ isDragging }) => (isDragging ? 'grabbing' : 'grab')}
       />
 
@@ -319,7 +321,8 @@ export default function EmbeddingCanvas({
 
       <LoadingCue coordsLoading={coordsLoading} colorLoading={colorLoading} boundariesLoading={false} />
 
-      <CellColorLegend visible={legendVisible} legend={colorLegend} title={legendTitle} />
+      <CellColorLegend visible={legendVisible} legend={colorLegend} title={legendTitle}
+        scale={display.encoding.legend_scale ?? EMBEDDING_ENCODING_DEFAULTS.legend_scale} />
 
       {controls?.({
         display,

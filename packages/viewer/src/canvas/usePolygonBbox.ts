@@ -21,7 +21,7 @@ type FetchShapes = NonNullable<DataSource['getShapesGeoArrow']>;
 // remain the view) until the user zooms in far enough that the visible set fits,
 // rather than showing a partial subset. A source with no boundary support at all
 // (a checkpoint, whose shapes are GeoParquet) is the same no-layer case.
-const POLYGON_LIMIT = 20000;
+export const POLYGON_LIMIT = 20000;
 // Debounce viewport moves before firing a fetch, and pad the fetched bbox past the
 // viewport so a small pan reuses the cached table instead of refetching.
 const SETTLE_MS = 180;

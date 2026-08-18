@@ -114,6 +114,8 @@
         },
         "legend_visible": { "type": "boolean" },
         "legend_title": { "type": "string" },
+        "legend_scale": { "type": "number", "exclusiveMinimum": 0 },
+        "lock_view": { "type": "boolean" },
         "show_points": { "type": "boolean" },
         "show_image": { "type": "boolean" },
         "show_channel_legend": { "type": "boolean" },
@@ -145,6 +147,8 @@
         "colormap": { "type": "string" },
         "legend_visible": { "type": "boolean" },
         "legend_title": { "type": "string" },
+        "legend_scale": { "type": "number", "exclusiveMinimum": 0 },
+        "lock_view": { "type": "boolean" },
         "category_colors": { "$ref": "#/$defs/category_colors" }
       }
     },

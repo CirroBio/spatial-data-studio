@@ -27,6 +27,8 @@ export const SPATIAL_ENCODING_DEFAULTS = {
   shapes_layer: null,
   legend_visible: true,
   legend_title: '',
+  legend_scale: 1,
+  lock_view: false,
   show_points: true,
   show_channel_legend: true,
   show_minimap: true,
@@ -48,6 +50,8 @@ export const EMBEDDING_ENCODING_DEFAULTS = {
   is_3d: false,
   legend_visible: true,
   legend_title: '',
+  legend_scale: 1,
+  lock_view: false,
 } as const satisfies Partial<EmbeddingEncoding>;
 
 /** Image-layer visibility: on unless the display has no image to show. */
