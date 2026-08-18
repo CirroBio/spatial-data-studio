@@ -346,17 +346,33 @@ export interface ImageLevel {
   size_mb: number;
 }
 
+/** One slot of a table — `X`, `obs`, `var`, `uns`, `raw`, or a `<mapping>/<key>` entry
+ * of layers/obsm/varm/obsp/varp — with the bytes it contributes to a checkpoint. What
+ * the save dialog's per-table checkboxes are drawn from. `required` slots hold the
+ * table's shape and its SpatialData linkage, so they can't be dropped. */
+export interface TableSlot {
+  path: string;
+  size_mb: number;
+  required: boolean;
+}
+
 /** `ElementInventory` with the per-element checkpoint size estimate the save dialog
- * needs (`?sizes=1`), and for images the same broken down per pyramid level. Declared
- * here rather than on the library's `ElementInventory`: the canvas has no use for a
- * size, so widening a published type for one Studio dialog would be the wrong
- * direction. `null` means "not estimable" — see `store.element_size_mb`. */
+ * needs (`?sizes=1`), and the same broken down per pyramid level for images and per
+ * AnnData slot for tables. Declared here rather than on the library's
+ * `ElementInventory`: the canvas has no use for a size, so widening a published type
+ * for one Studio dialog would be the wrong direction. `null` means "not estimable" —
+ * see `store.element_size_mb`. */
 export type SizedElements = {
-  [F in Exclude<SdataFacet, 'images'>]: (ElementInventory[F][number] & { size_mb: number | null })[];
+  [F in Exclude<SdataFacet, 'images' | 'tables'>]:
+    (ElementInventory[F][number] & { size_mb: number | null })[];
 } & {
   images: (ElementInventory['images'][number] & {
     size_mb: number | null;
     levels: ImageLevel[];
+  })[];
+  tables: (ElementInventory['tables'][number] & {
+    size_mb: number | null;
+    slots: TableSlot[];
   })[];
 };
 
@@ -639,6 +655,7 @@ export interface SaveOptions {
   name?: string;
   include?: Partial<Record<SdataFacet, string[]>>;
   levels?: Record<string, number>;
+  slots?: Record<string, string[]>;
   figures?: string[];
 }
 
@@ -646,20 +663,23 @@ export interface SaveOptions {
  * a facet present keeps exactly the names listed, so `{ images: [] }` drops every
  * image. `levels` maps an image name to the index of the finest pyramid level to
  * write, coarser levels always kept, so `{ hne: 2 }` writes that image without its two
- * most detailed levels. `figures` names the drawn plots whose rendered figures the file
- * carries (omit for every one; `[]` for none). Omit all three for the ordinary
+ * most detailed levels. `slots` maps a table name to the slot paths to write, so
+ * `{ table: ['obs', 'var', 'uns', 'obsm/spatial'] }` writes that table without its
+ * expression matrix. `figures` names the drawn plots whose rendered figures the file
+ * carries (omit for every one; `[]` for none). Omit all four for the ordinary
  * whole-object save. */
 export async function saveSession(
   sessionId: string, opts: SaveOptions = {},
 ): Promise<{ job_id: string; path: string }> {
-  const { folder, prefix, name, include, levels, figures } = opts;
+  const { folder, prefix, name, include, levels, slots, figures } = opts;
   const res = await apiFetch(`/api/sessions/${sessionId}/save`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       ...(folder !== undefined ? { folder } : {}), ...(prefix ? { prefix } : {}),
       ...(name ? { name } : {}), ...(include ? { include } : {}),
-      ...(levels ? { levels } : {}), ...(figures ? { figures } : {}),
+      ...(levels ? { levels } : {}), ...(slots ? { slots } : {}),
+      ...(figures ? { figures } : {}),
     }),
   });
   return res.json() as Promise<{ job_id: string; path: string }>;

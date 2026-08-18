@@ -71,7 +71,13 @@ the analysis history that produced this view.*
   itself is named. An image you do keep has a resolution slider: it lists what each
   level of the image pyramid costs, and you pick the most detailed one worth keeping,
   trading zoomed-in detail for a much smaller file (the session on screen keeps
-  everything either way). Reopening a checkpoint brings its plots back as pictures, not
+  everything either way). A table you keep breaks out the same way, into its parts —
+  the gene-expression matrix, the cell and gene tables, each embedding, layer and
+  neighbor graph — each with its own size and its own checkbox, so an analysis whose
+  findings live in the annotations can be shared without the expression matrix that
+  dwarfs them. Such a file keeps everything else and stays fully readable; it just has
+  no gene expression to color by, and the app says so instead of showing you zeros.
+  Reopening a checkpoint brings its plots back as pictures, not
   just as a list of what was run. Save a **snapshot** — a
   high-quality figure of the current view exported as a vector PDF and/or raster PNG,
   framed and sized in a dialog with a live preview, optionally with the minimap inset

@@ -81,6 +81,8 @@ def _gene_batch(adata, gene: str, layer: str | None = None) -> pa.RecordBatch:
         raise KeyError(f"gene not found: {gene}")
     idx = adata.var_names.get_loc(gene)
     mat = adata.layers[layer] if layer else adata.X
+    if mat is None:  # a checkpoint saved without X (store.trim_table)
+        raise KeyError("this checkpoint was saved without X, so it holds no expression values")
     col = mat[:, idx]
     col = col.toarray().ravel() if sparse.issparse(col) else np.asarray(col).ravel()
     return pa.record_batch({"value": pa.array(col.astype("float32"))})
@@ -141,6 +143,11 @@ def describe_fields(adata, sdata) -> dict:
         "obsp": list(adata.obsp.keys()),
         "layers": list(adata.layers.keys()),
         "n_obs": int(adata.n_obs),
+        # False for a checkpoint saved without its expression matrix
+        # (`store.trim_table`), which is what stops the pickers offering gene coloring
+        # the file cannot answer. The checkpoint viewer derives the same flag from the
+        # absence of a `tables/<key>/X` node.
+        "has_x": adata.X is not None,
         "var_names_count": int(adata.n_vars),
         "var_names_sample": [str(v) for v in adata.var_names[:50]],
         "images": images,

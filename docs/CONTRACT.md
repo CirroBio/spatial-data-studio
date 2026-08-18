@@ -81,7 +81,7 @@ ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_cate
 | POST | `/api/sessions/{id}/shape-annotations` | `ShapeAnnotation` (no id) | `{job_id}` (create one shape) |
 | PUT  | `/api/sessions/{id}/shape-annotations/{shapeId}` | `ShapeAnnotation` | `{job_id}` (replace one shape's geometry/style) |
 | DELETE | `/api/sessions/{id}/shape-annotations/{shapeId}` | — | `{job_id}` |
-| POST | `/api/sessions/{id}/save` | `{folder?, prefix?, name?, path?, include?, levels?, figures?}` | `{job_id, path}` (queued save). `folder` is a directory under `DATA_DIR` (relative to it or absolute, created if absent) and `prefix` the filename stem the `-<content hash>` suffix is appended to (default: the session's current name) — **400** for a folder outside `DATA_DIR`, or a prefix that is blank, dot-prefixed or holds a path separator. `name` renames the session and is recorded in the file as `app_state.name`, which a later load adopts in place of the filename; **400** if blank. `path` is the verbatim escape hatch — written as given, no hash suffix — and **400** if combined with `folder`/`prefix`. `figures` is the list of drawn-plot ids whose rendered figures the file should carry — omit for all of them, `[]` for none; **400** for an id that isn't a drawn plot |
+| POST | `/api/sessions/{id}/save` | `{folder?, prefix?, name?, path?, include?, levels?, slots?, figures?}` | `{job_id, path}` (queued save). `folder` is a directory under `DATA_DIR` (relative to it or absolute, created if absent) and `prefix` the filename stem the `-<content hash>` suffix is appended to (default: the session's current name) — **400** for a folder outside `DATA_DIR`, or a prefix that is blank, dot-prefixed or holds a path separator. `name` renames the session and is recorded in the file as `app_state.name`, which a later load adopts in place of the filename; **400** if blank. `path` is the verbatim escape hatch — written as given, no hash suffix — and **400** if combined with `folder`/`prefix`. `figures` is the list of drawn-plot ids whose rendered figures the file should carry — omit for all of them, `[]` for none; **400** for an id that isn't a drawn plot |
 | GET  | `/api/sessions/{id}/points-transform` | — | `{affine:[a,b,c,d,e,f], element}` (points→global affine of the active table's region element) |
 | POST | `/api/sessions/{id}/points-transform` | `{affine:[a,b,c,d,e,f], path?}` | `{job_id, path}` (sets the affine and persists to disk) |
 | POST | `/api/sessions/{id}/snapshot` | `{viewport:{target,zoom}, width_px, height_px, dpi, formats:["pdf"\|"png"], label?, display_id?, include_minimap?}` | `{status,name,formats,rasterized_points}` — renders + writes `<base>.figure.{pdf,png,thumb.png,json}` in DATA_DIR; 400 on an unrenderable spec, 503 (retryable) if a compute holds the write lock past `READ_LOCK_TIMEOUT_S` |
@@ -102,7 +102,7 @@ ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_cate
 | POST | `/api/cirro/upload` | `{project_id, dataset_name, description?, session_paths:[str], folder?}` | `{status:"started", id}` (background; announces `cirro.upload.completed`/`failed` over SSE; always uses the generic "Files" ingest process; `folder` → `folder://<path>` dataset tag; the bundle also carries `index.json` and, where `SDS_STATIC_DIR` is set, the built SPA, so the dataset is a serverless deployment (DESIGN §14.3); needs at least one session; 401 if not connected) |
 | GET  | `/api/sessions/{id}/data/{fieldPath}` | fieldPath e.g. `obs:leiden`, `obsm:spatial`, `X:Sox17`, `obsp:spatial_distances` | Arrow IPC stream (application/vnd.apache.arrow.stream) |
 | GET  | `/api/sessions/{id}/shapes/{element}/geoarrow?bbox=minx,miny,maxx,maxy[&limit=N]` | `bbox` in the `obsm:spatial` world space; optional `limit` caps the returned feature count | Arrow IPC stream (`application/vnd.apache.arrow.stream`) of viewport-clipped boundary polygons — `geometry` (GeoArrow) + `cell_index:int32`; 400 on a malformed bbox; 404 if the element is absent or non-polygonal |
-| GET  | `/api/sessions/{id}/elements` | `?sizes` | `{tables:[{name,n_obs,n_vars,active}], shapes, points, images, labels}` (data inspector inventory; `?sizes=1` adds `size_mb: number\|null` to every entry, and `levels:[{level,width,height,size_mb}]` — finest first, summing to `size_mb` — to every image) |
+| GET  | `/api/sessions/{id}/elements` | `?sizes` | `{tables:[{name,n_obs,n_vars,active}], shapes, points, images, labels}` (data inspector inventory; `?sizes=1` adds `size_mb: number\|null` to every entry, `levels:[{level,width,height,size_mb}]` — finest first, summing to `size_mb` — to every image, and `slots:[{path,size_mb,required}]` — also summing to `size_mb` — to every table) |
 | GET  | `/api/sessions/{id}/table?path=&offset=&limit=` | path = `obs`, `var` (the active table), `tables:<name>:obs`, `tables:<name>:var` (a named table, active or not), `shapes:<name>`, `points:<name>`; 404 for an unknown table/element | `{total_rows, offset, limit, index_name, index, columns:[{name,dtype}], rows}` (JSON page) |
 | GET  | `/api/sessions/{id}/image/{element}/info` | — | `{levels:[{level,width,height}], channels, channel_names, bounds, pixel_to_world, tile_size, client_compositing, raster_base_url, zarr_group_path, contrast_limits, contrast_range, is_rgb}` (see below) |
 | GET  | `/api/sessions/{id}/image/{element}/thumbnail?max_px=&channels=` | — | composited WebP (`image/webp`, LRU-cached) |
@@ -193,9 +193,29 @@ and `pixel_to_world` scales accordingly — the sidecar manifest is written from
 trimmed pyramid, so a reader never asks for a level that isn't in the file. 400 on an
 unknown image or an index outside `0..levels-1` (see `/elements?sizes=1` for the levels).
 
-Omitting both `include` and `levels` saves the whole object, which is the only form that
-takes the incremental fast path and that the session adopts as its own checkpoint — a
-filtered or trimmed write is an export, so `saved`/`store_path` are left alone.
+### Save `slots`
+`{"table": ["obs", "var", "uns", "obsm/spatial"]}` — table element name to the slot
+paths to write. A table **absent** from `slots` is written whole; a table **present**
+keeps exactly the paths listed. The vocabulary is `X`, `obs`, `var`, `uns`, `raw` and
+one `<mapping>/<key>` per entry of `layers`/`obsm`/`varm`/`obsp`/`varp` (see
+`/elements?sizes=1` for the paths a table has and what each costs).
+
+Dropping `X` — the usual reason to reach for this — writes a table with **no** `X`,
+not an empty one: AnnData takes its shape from `obs`/`var`, so the file is still a
+valid SpatialData object with every annotation intact, and the gene-major CSC mirror is
+skipped along with the matrix. Both readers detect the absence (`has_x` in `fields`;
+no `tables/<key>/X` node for the browser reader) and stop offering gene expression
+rather than serving zeros. Display colorings that read a dropped slot are rewritten to
+`null`, as dropped elements' references are.
+
+400 on an unknown table or slot path, on a selection that omits `obs`, `var` or `uns`
+(the table's shape and its SpatialData linkage live there), or one that omits an `obsm`
+key a display draws from — `coords`/`obsm_key` are non-nullable, so unlike a coloring
+they cannot be neutralised.
+
+Omitting `include`, `levels` and `slots` saves the whole object, which is the only form
+that takes the incremental fast path and that the session adopts as its own checkpoint —
+a filtered or trimmed write is an export, so `saved`/`store_path` are left alone.
 
 ### SessionSummary
 ```jsonc
@@ -210,7 +230,7 @@ filtered or trimmed write is an export, so `saved`/`store_path` are left alone.
 { "summary": SessionSummary,
   "app_state": { "schema_version":1, "compute_history":[HistEntry], "plots":[PlotEntry], "displays":[DisplaySpec] },
   "queue": [ {job_id, descriptor, status, position} ],
-  "fields": { "obs":[{name,kind:"categorical|numeric"}], "obsm":[{name,n_components}], "var_names_count":N, "obsp":[..], "layers":[..], "images":[..], "shapes":[..] },
+  "fields": { "obs":[{name,kind:"categorical|numeric"}], "obsm":[{name,n_components}], "has_x":true, "var_names_count":N, "obsp":[..], "layers":[..], "images":[..], "shapes":[..] },   // has_x is false for a checkpoint saved without its expression matrix (save `slots`), and the gene pickers hide themselves
   "figures": { "<plotId>": {"svg":53392, "pdf":22054, "png":40940} },   // rendered figures available to fetch, byte length per format; drawn plots only
   "data_versions": { "obs:leiden": 3, ... } }
 ```

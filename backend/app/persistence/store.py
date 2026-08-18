@@ -384,15 +384,60 @@ def trim_pyramid(el, finest: int):
     return xarray.DataTree.from_dict(kept)
 
 
+# The keyed mappings of an AnnData, whose entries are selectable one by one (`obsm`
+# holds the embeddings and the spatial coordinates, `obsp` the neighbor graphs, and a
+# `layers` entry is as big as `X`). `obs`/`var`/`uns` are not selectable: the frames
+# give the table its shape and every field path, and `uns` carries the
+# `spatialdata_attrs` without which the table is not a valid SpatialData table.
+_TABLE_MAPPINGS = ("layers", "obsm", "varm", "obsp", "varp")
+REQUIRED_TABLE_SLOTS = ("obs", "var", "uns")
+
+
+def trim_table(adata, keep: set[str]):
+    """AnnData carrying only the slots named in `keep` (`table_slot_paths` spells the
+    vocabulary: `X`, `obs`, `var`, `uns`, `raw`, `<mapping>/<key>`).
+
+    Container-level sharing, like `select_elements` one level up and like
+    `session._shallow_adata`: the surviving matrices and frames are the live object's,
+    not copies, so trimming a multi-gigabyte table costs nothing.
+
+    Dropping `X` — usually the biggest thing in the file, and the point of the exercise
+    — writes the table with **no** `X` at all rather than an all-zero stand-in. AnnData
+    takes its shape from `obs`/`var`, so the table is still structurally valid and still
+    a valid SpatialData table; the difference is that a reader can see the matrix is
+    absent (`arrow.describe_fields`'s `has_x`, and the checkpoint viewer's equivalent
+    test for a `tables/<key>/X` node) and stop offering gene expression, where zeros
+    would have read as real measurements. `_write_csc_mirror` skips a `None` X for the
+    same reason, so the gene-major mirror doesn't smuggle the matrix back in.
+    """
+    import anndata as ad
+    entries = {m: {k: v for k, v in (getattr(adata, m, None) or {}).items()
+                   if f"{m}/{k}" in keep}
+               for m in _TABLE_MAPPINGS}
+    out = ad.AnnData(
+        X=adata.X if "X" in keep else None,
+        obs=adata.obs.copy(deep=False), var=adata.var.copy(deep=False),
+        uns=dict(adata.uns), **entries)
+    if adata.raw is not None and "raw" in keep:
+        # `.raw` is a `Raw`, and the setter only takes an AnnData; `to_adata()` is
+        # anndata's own way to spell that conversion.
+        out.raw = adata.raw.to_adata()
+    return out
+
+
 def select_elements(sdata, include: dict[str, list[str]] | None = None,
-                    levels: dict[str, int] | None = None):
+                    levels: dict[str, int] | None = None,
+                    slots: dict[str, list[str]] | None = None):
     """Shallow view over `sdata` carrying only the named elements.
 
     A facet absent from `include` is kept whole; a facet present keeps exactly the
     names listed, so `{"images": []}` is how a caller drops every image. `levels` maps
     an image name to the finest pyramid level to keep (`trim_pyramid`), which shrinks an
     image rather than dropping it — for the same trim driven by a byte budget instead of
-    a per-image choice, see `cap_image_levels`. Element
+    a per-image choice, see `cap_image_levels`. `slots` is the table-scoped counterpart
+    of `levels`: table name -> the slot paths to keep (`trim_table`), so a table can be
+    written without its expression matrix or its neighbor graphs instead of being
+    dropped whole. Element
     objects are shared with `sdata` rather than copied — the same dask arrays, the
     same AnnData — so building a view costs nothing and cannot mutate the live
     session's object. `attrs` is a fresh dict so `save_spatialdata`'s app_state swap
@@ -411,6 +456,9 @@ def select_elements(sdata, include: dict[str, list[str]] | None = None,
     for name, finest in (levels or {}).items():
         if name in kept["images"]:
             kept["images"][name] = trim_pyramid(kept["images"][name], finest)
+    for name, paths in (slots or {}).items():
+        if name in kept["tables"]:
+            kept["tables"][name] = trim_table(kept["tables"][name], set(paths))
     view = sd.SpatialData(**kept)
     view.attrs = dict(sdata.attrs)
     return view
@@ -488,6 +536,7 @@ def cap_image_levels(sdata, max_mb: float):
 def save_spatialdata(sdata, path: str, app_state: dict, hash_name: bool = False,
                      include: dict[str, list[str]] | None = None,
                      levels: dict[str, int] | None = None,
+                     slots: dict[str, list[str]] | None = None,
                      max_image_mb: float | None = None,
                      figures: dict[str, dict[str, bytes]] | None = None) -> str:
     """`hash_name` renames a `.zarr.zip` checkpoint to embed a hash of its own
@@ -506,13 +555,23 @@ def save_spatialdata(sdata, path: str, app_state: dict, hash_name: bool = False,
     `select_elements` and `cap_image_levels`). Both drop resolution, not elements, so
     nothing in `app_state` needs neutralising for them.
 
+    `slots` (table name -> the slot paths to keep, `trim_table`) writes a table without
+    some of its parts. Colorings that read a dropped slot are neutralised the way
+    dropped elements' references are.
+
     `figures` (plot id -> format -> bytes) are the rendered plots to persist; see
     `_write_figures`."""
-    if include is not None or levels:
+    if include is not None or levels or slots:
         from ..registry.base import sdata_facets
-        sdata = select_elements(sdata, include, levels)
+        sdata = select_elements(sdata, include, levels, slots)
         app_state = appstate.prune_to_elements(
             app_state, {f: set(getattr(sdata, f, {}) or {}) for f in sdata_facets()})
+        # Displays resolve their color_by against the first table (`Session
+        # ._default_table_key`, and the checkpoint viewer's own table pick), so that is
+        # the one whose surviving slots decide which colorings still have data.
+        active = next(iter(getattr(sdata, "tables", {}) or {}), None)
+        if active is not None and active in (slots or {}):
+            app_state = appstate.prune_to_table_slots(app_state, set(slots[active]))
     if max_image_mb is not None:
         sdata = cap_image_levels(sdata, max_image_mb)
     persisted, logs = _split_logs(app_state)
@@ -1335,18 +1394,46 @@ def _matrix_nbytes(m) -> int:
     return int(getattr(m, "nbytes", 0))
 
 
-def _table_nbytes(adata) -> int:
-    """Uncompressed bytes of an AnnData. A sparse `X` counts twice: the checkpoint also
-    carries the gene-major CSC mirror written by `_write_csc_mirror`."""
-    total = _matrix_nbytes(adata.X) * (2 if hasattr(adata.X, "nnz") else 1)
-    for layer in getattr(adata, "layers", {}).values():
-        total += _matrix_nbytes(layer)
-    for frame in (adata.obs, adata.var):
-        total += int(frame.memory_usage(deep=True).sum())
-    for mapping in ("obsm", "varm", "obsp"):
-        for m in (getattr(adata, mapping, None) or {}).values():
-            total += _matrix_nbytes(m)
-    return total
+def table_slot_paths(adata) -> list[str]:
+    """The slot paths one AnnData contributes to a checkpoint, in the order the save
+    dialog lists them: `X` (absent if the table has none), `obs`, `var`, one
+    `<mapping>/<key>` per entry of layers/obsm/varm/obsp/varp, `uns`, and `raw` when
+    there is one. This is the vocabulary `trim_table` keeps and the save body's `slots`
+    names."""
+    paths = (["X"] if adata.X is not None else []) + ["obs", "var"]
+    for mapping in _TABLE_MAPPINGS:
+        paths += [f"{mapping}/{k}" for k in (getattr(adata, mapping, None) or {})]
+    paths.append("uns")
+    if adata.raw is not None:
+        paths.append("raw")
+    return paths
+
+
+def _uns_nbytes(value) -> int:
+    """Uncompressed bytes of an `uns` value. Walks dicts and sequences down to the
+    arrays that actually carry weight (a `rank_genes_groups` recarray, a color palette);
+    scalars and strings count as nothing, which is what they are next to a matrix."""
+    if isinstance(value, dict):
+        return sum(_uns_nbytes(v) for v in value.values())
+    if isinstance(value, (list, tuple)):
+        return sum(_uns_nbytes(v) for v in value)
+    return _matrix_nbytes(value)
+
+
+def _slot_nbytes(adata, path: str) -> int:
+    """Uncompressed bytes of one table slot. A sparse `X` counts twice: the checkpoint
+    also carries the gene-major CSC mirror written by `_write_csc_mirror`."""
+    if path == "X":
+        return _matrix_nbytes(adata.X) * (2 if hasattr(adata.X, "nnz") else 1)
+    if path in ("obs", "var"):
+        return int(getattr(adata, path).memory_usage(deep=True).sum())
+    if path == "uns":
+        return _uns_nbytes(dict(adata.uns))
+    if path == "raw":
+        return (_matrix_nbytes(adata.raw.X)
+                + int(adata.raw.var.memory_usage(deep=True).sum()))
+    mapping, key = path.split("/", 1)
+    return _matrix_nbytes(getattr(adata, mapping)[key])
 
 
 def _shapes_nbytes(gdf) -> int:
@@ -1413,6 +1500,39 @@ def image_levels(sdata, name: str, stores: dict[str, str] | None = None) -> list
     return out
 
 
+def table_slots(sdata, name: str, stores: dict[str, str] | None = None) -> list[dict]:
+    """Per-slot breakdown of one table: `path` (`table_slot_paths`), the `size_mb` that
+    slot contributes to a written checkpoint, and whether it is `required` — the
+    per-table counterpart of `image_levels`, and what the save dialog draws its table
+    checkboxes from.
+
+    Sizes follow `element_size_mb`'s two tiers and its accuracy contract, per slot: the
+    real compressed bytes when that slot sits in a store on disk (the `X` slot counting
+    the gene-major CSC mirror alongside it, since dropping `X` drops both), otherwise an
+    estimate from shape, dtype and sparsity. A slot the live object grew since the store
+    was written — a freshly computed `obsm` key — falls back to the estimate on its own
+    while the rest still read off disk. Summed over the slots they come to that
+    function's whole-element number.
+    """
+    adata = sdata.tables[name]
+    d = _element_dir(sdata, "tables", name, stores)
+    # `d` is `<store root>/tables/<name>`, so the sidecar's mirror of this table's X
+    # sits at `<store root>/viewer/tables/<name>/X_csc`.
+    csc = (d.parent.parent / VIEWER_GROUP / "tables" / name / "X_csc") if d is not None else None
+    out = []
+    for path in table_slot_paths(adata):
+        on_disk = d / path if d is not None else None
+        if on_disk is not None and on_disk.is_dir():
+            mb = _dir_bytes(on_disk) / 1e6
+            if path == "X" and csc.is_dir():
+                mb += _dir_bytes(csc) / 1e6
+        else:
+            mb = _slot_nbytes(adata, path) * _COMPRESSION / 1e6
+        out.append({"path": path, "size_mb": round(mb, 1),
+                    "required": path in REQUIRED_TABLE_SLOTS})
+    return out
+
+
 def element_size_mb(sdata, facet: str, name: str,
                     stores: dict[str, str] | None = None) -> float | None:
     """Estimated contribution of one element to a written checkpoint, in MB.
@@ -1421,12 +1541,19 @@ def element_size_mb(sdata, facet: str, name: str,
     the object's own backing directory, or the per-element store a rebuilt raster was
     written to (`Session.raster_stores`) — its real compressed bytes are read, which is
     what a full re-save writes out again. Otherwise the size is estimated from shape,
-    dtype and sparsity and scaled by a compression factor.
+    dtype and sparsity and scaled by a compression factor. A table applies the two tiers
+    slot by slot (`table_slots`) and sums them.
 
     The estimate is rough: within roughly 2x, and worse for fluorescence than for H&E.
     `None` means "not estimable" (a dask points frame), so a total built from these is
     a lower bound.
     """
+    if facet == "tables":
+        # Summed from the slot breakdown rather than the table's directory, so the two
+        # numbers the save dialog shows for one table always agree.
+        if (getattr(sdata, "tables", None) or {}).get(name) is None:
+            return None
+        return round(sum(s["size_mb"] for s in table_slots(sdata, name, stores)), 1)
     if (d := _element_dir(sdata, facet, name, stores)) is not None:
         return round(_dir_bytes(d) / 1e6, 1)
 
@@ -1435,8 +1562,6 @@ def element_size_mb(sdata, facet: str, name: str,
         return None
     if facet in ("images", "labels"):
         raw = _raster_nbytes(el)
-    elif facet == "tables":
-        raw = _table_nbytes(el)
     elif facet == "shapes":
         raw = _shapes_nbytes(el)
     else:

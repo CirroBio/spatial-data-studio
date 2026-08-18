@@ -454,6 +454,9 @@ async function deriveFields(
     obs,
     obsm,
     n_obs: await arrayLength(root, `tables/${table}/obs/${indexName}`),
+    // A checkpoint saved without X (`store.trim_table`) simply has no `X` node — the
+    // backend reports the same absence as `has_x` off the live object.
+    has_x: kindByPath.has(`tables/${table}/X`),
     var_names_count: await arrayLength(root, `tables/${table}/var/_index`),
     obsp: childrenOf(contents, `tables/${table}/obsp`),
     layers: childrenOf(contents, `tables/${table}/layers`),

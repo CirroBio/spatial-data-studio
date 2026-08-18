@@ -87,6 +87,44 @@ def bump_versions(st: dict, field_paths) -> dict:
 _ELEMENT_REFS = {"image_layer": "images", "shapes_layer": "shapes"}
 
 
+def color_by_slot(path: str) -> str | None:
+    """The table slot a `color_by` field path reads, in `store.table_slot_paths`'
+    vocabulary — `X:CD3` -> `X`, `layers:counts/CD3` -> `layers/counts`, `obs:leiden`
+    -> `obs`. None for a path that names no slot (an empty or malformed one)."""
+    element, _, key = path.partition(":")
+    if not element or not key:
+        return None
+    if element == "layers":
+        layer, _, gene = key.partition("/")
+        return f"layers/{layer}" if gene else None
+    return element
+
+
+def prune_to_table_slots(st: dict, kept: set[str]) -> dict:
+    """Copy of `st` with display `color_by` paths that read a dropped table slot
+    cleared.
+
+    The table half of `prune_to_elements`: a save can leave out the expression matrix
+    or a layer (`store.trim_table`), and a display still coloring by `X:<gene>` would
+    then look up a matrix the file doesn't hold. `color_by` is nullable in
+    `app_state.schema.json`, so clearing it leaves the display rendering in its flat
+    default color. `kept` is the surviving slot paths of the table displays resolve
+    against. Returns `st` unchanged (same object) when nothing needs clearing.
+    """
+    stale = [
+        i for i, d in enumerate(st.get("displays", []))
+        if (slot := color_by_slot((d.get("encoding") or {}).get("color_by") or ""))
+        and slot not in kept
+    ]
+    if not stale:
+        return st
+    out = dict(st)
+    out["displays"] = [dict(d) for d in st["displays"]]
+    for i in stale:
+        out["displays"][i]["encoding"] = {**out["displays"][i]["encoding"], "color_by": None}
+    return out
+
+
 def prune_to_elements(st: dict, kept: dict[str, set[str]]) -> dict:
     """Copy of `st` with display encodings that name a dropped element neutralised.
 

@@ -7,6 +7,7 @@ import type { EmbeddingDisplaySpec, ObsField, ObsmField } from '@cirrobio/spatia
 interface Props {
   display: EmbeddingDisplaySpec;
   obsFields: ObsField[];
+  hasX: boolean;
   layers: string[];
   obsmFields: ObsmField[];
   colorByName: string;
@@ -49,6 +50,7 @@ function AxisComponentSelect({
 export default function EmbeddingControls({
   display,
   obsFields,
+  hasX,
   layers,
   obsmFields,
   colorByName,
@@ -116,6 +118,7 @@ export default function EmbeddingControls({
           value={display.encoding.color_by ?? ''}
           obsFields={obsFields}
           layers={layers}
+          hasX={hasX}
           onChange={(color_by) => updateEncoding({ color_by })}
         />
       </div>

@@ -103,7 +103,13 @@ anndata (see `backend/requirements.txt` for exact pins).
   stored the anndata-zarr way), `obsm` (arrays keyed by name, e.g. `spatial`,
   `X_umap`), `obsp` (sparse graphs), `layers`, `uns` (free-form).
   `obs["<region>"]`-style linkage back to a shapes/labels/points element is
-  recorded in `uns["spatialdata_attrs"]["region"]`.
+  recorded in `uns["spatialdata_attrs"]["region"]`. A save can leave individual
+  slots out (the dialog's per-table checkboxes, `slots` in
+  [docs/CONTRACT.md](CONTRACT.md)); `obs`, `var` and `uns` are always present, and
+  **`X` may legitimately be absent**. A table with no `X` node still has its full
+  shape — AnnData takes it from `obs`/`var` — and carries no §4.2 mirror either. A
+  reader must treat the missing node as "this file holds no expression values" and
+  offer no gene coloring, never as a zero matrix or as corruption.
 - **Consolidated metadata** — `_write_browser_reader_support` (§9) always
   finishes a write by re-running Zarr's consolidated-metadata pass
   (`zarr.consolidate_metadata` / spatialdata's own wrapper around it) so the
@@ -365,7 +371,8 @@ per-channel math.
 ### 4.2 `viewer/tables/<table_key>/X_csc/` — gene-major mirror
 
 Written only when the table's `X` is **sparse**; skipped for a dense `X`
-(already column-sliceable by its own chunk grid, so no mirror is needed). This
+(already column-sliceable by its own chunk grid, so no mirror is needed) and for a
+table saved without an `X` at all (§2). This
 duplicates the sparse matrix in gene-major (CSC) order so that fetching one
 gene's expression column is two contiguous byte-range reads instead of
 downloading the entire CSR `data`+`indices` arrays.

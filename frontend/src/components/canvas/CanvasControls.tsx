@@ -16,6 +16,7 @@ interface CanvasControlsProps {
   display: SpatialDisplaySpec;
   obsFields: ObsField[];
   layers: string[];
+  hasX: boolean;
   colorByName: string;
   legendVisible: boolean;
   updateEncoding: (patch: Partial<SpatialDisplaySpec['encoding']>) => void;
@@ -120,6 +121,7 @@ export default function CanvasControls({
   display,
   obsFields,
   layers,
+  hasX,
   colorByName,
   legendVisible,
   updateEncoding,
@@ -378,6 +380,7 @@ export default function CanvasControls({
               value={display.encoding.color_by ?? ''}
               obsFields={obsFields}
               layers={layers}
+              hasX={hasX}
               onChange={(color_by) => updateEncoding({ color_by })}
             />
           </div>

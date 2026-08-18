@@ -168,7 +168,7 @@ Component-level notes: [`backend/README.md`](backend/README.md),
 | Change who may edit a session (presence, the edit lock, viewer names) | `backend/app/sessions/presence.py` + `deps.py` (`_claim_lock`) + `frontend/src/lib/presence.ts` (identity + gate) + `hooks/usePresence.ts` (heartbeat) + `components/LockBadge.tsx` | [DESIGN.md](DESIGN.md) §16.5 |
 | Change the MCP assistant surface (tools, vision render, agent guidance) | `backend/app/mcp/server.py` (tools) + `vision.py` (render/coords/membership) + `agent.py` (presence/lock) + `guides/*.md` (guidance text); mounted in `main.py` | [DESIGN.md](DESIGN.md) §29 |
 | Change the checkpoint/persistence format | `backend/app/persistence/store.py` | [DESIGN.md](DESIGN.md) §3, §14.1, [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) |
-| Change which elements a save can leave out, at what resolution images are written, or how their sizes are estimated | `backend/app/persistence/store.py` (`select_elements`, `trim_pyramid`, `element_size_mb`, `image_levels`) + `sessions/appstate.py` (`prune_to_elements`) + `frontend/src/components/SaveCheckpointDialog.tsx` | below |
+| Change which elements a save can leave out, which parts of a table it can leave out, at what resolution images are written, or how their sizes are estimated | `backend/app/persistence/store.py` (`select_elements`, `trim_pyramid`, `trim_table`, `element_size_mb`, `image_levels`, `table_slots`) + `sessions/appstate.py` (`prune_to_elements`, `prune_to_table_slots`) + `frontend/src/components/SaveCheckpointDialog.tsx` | below |
 | Change where a save writes, what the file is named, or what the session is called | `backend/app/main.py` (`_validated_destination`, `_validated_name`) + `deps.py` (`default_save_path`) + `sessions/session.py` (`rename`, `_run_load`) + `frontend/src/components/SaveCheckpointDialog.tsx` | below |
 | Change how rendered plot figures are stored, served or shown | `backend/app/persistence/store.py` (`_write_figures`, `read_figure`, `figure_index`) + `sessions/session.py` (`figure`, `figure_index`, `figures_to_persist`) + `frontend/src/lib/figures.ts` + `components/PlotGallery.tsx` / `FigureLightbox.tsx` / `PlotDetail.tsx` | below |
 | Change what the serverless viewer can read from a checkpoint | `backend/app/persistence/store.py` (`_write_viewer_sidecar`, the writer half) + `packages/viewer/src/data/checkpointSource.ts` (the reader half) — the two must move together | [DESIGN.md](DESIGN.md) §14.1–14.2, [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) §4 |
@@ -279,24 +279,47 @@ be combined with `folder`/`prefix`.
 
 `POST /api/sessions/{id}/save` also takes an optional `include` (facet -> element names, see
 [docs/CONTRACT.md](docs/CONTRACT.md)) so a copy can be written without a multi-gigabyte
-raster, and an optional `levels` (image name -> finest pyramid level) so an image can be
-written at reduced resolution instead of being dropped outright.
+raster, an optional `levels` (image name -> finest pyramid level) so an image can be
+written at reduced resolution instead of being dropped outright, and an optional `slots`
+(table name -> slot paths) so a table can be written without some of its parts.
 `SaveCheckpointDialog.tsx` opens on every save with everything ticked and every image at
-full resolution, and sends `include`/`levels` **only** when something was unticked or
-coarsened — an untouched selection is byte-for-byte the old save.
+full resolution, and sends `include`/`levels`/`slots` **only** when something was unticked
+or coarsened — an untouched selection is byte-for-byte the old save.
 
-The per-element size the dialog shows comes from `store.element_size_mb` and, for images,
-its per-level counterpart `store.image_levels`, which the `?sizes=1` inventory carries.
-Both read the real compressed bytes when the element sits in a store on disk and fall
-back to a shape/dtype estimate otherwise; the level sizes sum to the element size, so the
-dialog can subtract dropped levels from its running total.
+The per-element size the dialog shows comes from `store.element_size_mb` and, broken down,
+from its per-level counterpart `store.image_levels` and its per-slot counterpart
+`store.table_slots`, which the `?sizes=1` inventory carries. All read the real compressed
+bytes when the element (or that one level, or that one slot) sits in a store on disk and
+fall back to a shape/dtype estimate otherwise; the level sizes sum to the image's size and
+the slot sizes to the table's, so the dialog can subtract what was dropped from its
+running total. A table's number counts the sidecar's CSC mirror against its `X` slot,
+since dropping `X` drops both.
 
 Filtering happens in `store.select_elements`, a shallow `SpatialData` view sharing the
 live object's element objects (same dask arrays, same AnnData), so it costs nothing and
 cannot mutate the session. A `levels` entry additionally swaps in `store.trim_pyramid`'s
 DataTree over the surviving levels — also shared, not copied. Because every level carries
 its own transform to the global coordinate system, the level promoted to `scale0` keeps
-the downscale its old position implied, so a trimmed image still lands where it did.
+the downscale its old position implied, so a trimmed image still lands where it did. A
+`slots` entry swaps in `store.trim_table`'s AnnData over the surviving slots, again
+container-level sharing.
+
+`obs`, `var` and `uns` are not droppable (`store.REQUIRED_TABLE_SLOTS`): the frames give
+the table its shape and every field path, and `uns` holds the `spatialdata_attrs` without
+which it is not a valid SpatialData table. Nor is an `obsm` key a display draws from —
+`coords`/`obsm_key` are non-nullable in the schema, so unlike a coloring they have no
+neutral form; `main._validated_slots` rejects both and the dialog locks the checkboxes to
+match. Everything else, `X` included, can go.
+
+**Dropping `X`.** It is usually the largest thing in the file and the reason the control
+exists, and the table has to stay valid without it. `trim_table` writes **no** `X` rather
+than a fabricated empty matrix: AnnData takes its shape from `obs`/`var`, so the object
+round-trips through `sd.read_zarr` at full shape with every annotation, and
+`_write_csc_mirror` skips a `None` X so the gene-major mirror doesn't smuggle it back in.
+The absence is what both readers key on — `arrow.describe_fields` reports `has_x`, and
+`checkpointSource.deriveFields` tests the consolidated tree for a `tables/<key>/X` node —
+and `ColorBySelect` then hides gene expression the way it already hides layers a table
+doesn't have. Zeros would have read as real measurements; nothing at all reads as nothing.
 `store.cap_image_levels` (`save_spatialdata(max_image_mb=…)`, the CLI's
 `--lowres-max-image-mb` and the Nextflow low-res copy) is the batch half of the same
 trim — it picks the levels from a byte budget instead of per image, then lands in
@@ -315,8 +338,10 @@ Three consequences worth knowing before changing it:
   elements — and pyramid levels — the file doesn't.
 
 `appstate.prune_to_elements` clears `image_layer` / `shapes_layer` on any display naming
-a dropped element (both are nullable in `app_state.schema.json`), so the file still opens
-cleanly instead of rendering a missing layer. Nothing records *which* elements were
+a dropped element, and `appstate.prune_to_table_slots` clears `color_by` on any display
+reading a dropped slot (all three are nullable in `app_state.schema.json`), so the file
+still opens cleanly instead of rendering a missing layer or coloring by a matrix that
+isn't there. Nothing records *which* elements were
 dropped — deliberately, since that would mean a `viewer/` sidecar schema change and drag
 [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) in under rule R17 for no gain.
 

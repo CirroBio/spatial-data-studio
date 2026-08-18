@@ -23,6 +23,10 @@ export interface SessionFields {
   obs: ObsField[];
   obsm: ObsmField[];
   n_obs: number;
+  /** False for a checkpoint saved without its expression matrix (the save dialog's
+   * per-table slots), which is what stops the pickers offering gene coloring the file
+   * cannot answer. */
+  has_x: boolean;
   var_names_count: number;
   obsp: string[];
   layers: string[];

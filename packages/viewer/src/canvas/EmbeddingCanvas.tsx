@@ -31,6 +31,7 @@ export interface EmbeddingCanvasControls {
   display: EmbeddingDisplaySpec;
   obsFields: ObsField[];
   layers: string[];
+  hasX: boolean;
   obsmFields: ObsmField[];
   colorByName: string;
   legendVisible: boolean;
@@ -66,7 +67,7 @@ export default function EmbeddingCanvas({
   followDisplayViewport = false,
 }: Props) {
   const host = useCanvasHost();
-  const { dataVersions, isolatedCategory, hiddenCells, theme } = host;
+  const { fields, dataVersions, isolatedCategory, hiddenCells, theme } = host;
   // The lasso is an optional host feature; absent, this canvas is view-only.
   const regions = host.regions;
   const drawPolygons = regions?.drawPolygons ?? NO_POLYGONS;
@@ -328,6 +329,7 @@ export default function EmbeddingCanvas({
         display,
         obsFields,
         layers: layerNames,
+        hasX: fields?.has_x ?? true,
         obsmFields,
         colorByName,
         legendVisible,

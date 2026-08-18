@@ -64,6 +64,7 @@ export interface SpatialCanvasControls {
   display: SpatialDisplaySpec;
   obsFields: ObsField[];
   layers: string[];
+  hasX: boolean;
   colorByName: string;
   legendVisible: boolean;
   updateEncoding: (patch: Partial<SpatialDisplaySpec['encoding']>) => void;
@@ -771,6 +772,7 @@ export default function SpatialCanvas({
         display,
         obsFields,
         layers: layerNames,
+        hasX: fields?.has_x ?? true,
         colorByName,
         legendVisible,
         updateEncoding,

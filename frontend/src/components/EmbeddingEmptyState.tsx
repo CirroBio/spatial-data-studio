@@ -14,11 +14,13 @@ export default function EmbeddingEmptyState({
   obsmFields,
   obsFields,
   layers,
+  hasX,
 }: {
   sessionId: string;
   obsmFields: ObsmField[];
   obsFields: ObsField[];
   layers: string[];
+  hasX: boolean;
 }) {
   const addDisplay = useAppStore((s) => s.addDisplay);
   const firstCategorical = obsFields.find((f) => f.kind === 'categorical');
@@ -105,6 +107,7 @@ export default function EmbeddingEmptyState({
             value={colorBy}
             obsFields={obsFields}
             layers={layers}
+            hasX={hasX}
             onChange={setColorBy}
           />
         </div>

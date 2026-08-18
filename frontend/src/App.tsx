@@ -332,6 +332,7 @@ export default function App() {
             obsmFields={sessionState.fields.obsm.filter((f) => f.name !== 'spatial')}
             obsFields={sessionState.fields.obs}
             layers={sessionState.fields.layers}
+            hasX={sessionState.fields.has_x}
           />
         );
       }

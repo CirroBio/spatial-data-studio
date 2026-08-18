@@ -893,12 +893,13 @@ def run_incremental_save_flow(client, checkpoint_path):
 
 
 def run_selective_save_flow(client, checkpoint_path):
-    """A save can name which elements go in the file, and at what resolution. Asserts
-    the per-element (and per pyramid level) size breakdown, that a filtered write drops
-    exactly what was deselected (file, sidecar and the displays pointing at it), that a
-    level-trimmed image comes back smaller but in the same place, that neither write
-    takes the incremental path or rewrites the source rasters, and that the live session
-    keeps everything."""
+    """A save can name which elements go in the file, at what resolution, and which
+    slots of a table. Asserts the per-element (and per pyramid level, per table slot)
+    size breakdown, that a filtered write drops exactly what was deselected (file,
+    sidecar and the displays pointing at it), that a level-trimmed image comes back
+    smaller but in the same place, that a table saved without X reloads valid and
+    matrix-less, that none of those writes takes the incremental path or rewrites the
+    source rasters, and that the live session keeps everything."""
     import zipfile
     import zarr
     from app.deps import MANAGER
@@ -1007,6 +1008,63 @@ def run_selective_save_flow(client, checkpoint_path):
     bad = client.post(f"/api/sessions/{sid}/save", json={"levels": {"nope": 1}})
     assert bad.status_code == 400, f"unknown image in levels accepted: {bad.status_code}"
     print("[ok] resolution trim rejects out-of-range levels and unknown images")
+
+    # Per-table slots: the same contract one level down, drawn from `slots` in the sized
+    # inventory and summing to the table's own number the way the pyramid levels do.
+    table = sized["tables"][0]
+    slots = table["slots"]
+    paths = [s["path"] for s in slots]
+    assert "X" in paths and {"obs", "var", "uns"} <= set(paths), f"slot breakdown incomplete: {paths}"
+    assert all(s["required"] == (s["path"] in ("obs", "var", "uns")) for s in slots), \
+        f"wrong slots marked required: {slots}"
+    drift = abs(sum(s["size_mb"] for s in slots) - table["size_mb"])
+    assert drift <= 0.1 * (len(slots) + 1), f"slot sizes don't sum to the table size: {slots}"
+    print(f"[ok] table slots: {[(s['path'], s['size_mb']) for s in slots]}")
+
+    # Dropping X is the headline case: the file has to stay a valid SpatialData object
+    # with the table's shape intact, hold no matrix (nor its CSC mirror), and neutralise
+    # the coloring that read it.
+    disp = client.get(f"/api/sessions/{sid}").json()["app_state"]["displays"][0]
+    gene = client.get(f"/api/sessions/{sid}").json()["fields"]["var_names_sample"][0]
+    disp["encoding"]["color_by"] = f"X:{gene}"
+    assert client.put(f"/api/sessions/{sid}/displays/{disp['id']}", json=disp).status_code == 200
+    noX = os.path.join(str(config.DATA_DIR), "no_x_session.zarr.zip")
+    keep = [p for p in paths if p != "X"]
+    sv = client.post(f"/api/sessions/{sid}/save",
+                     json={"path": noX, "slots": {table["name"]: keep}}).json()
+    assert wait_job(client, sid, sv["job_id"])["status"] == "completed"
+    assert sess.store_path == before_store and sess.saved == before_saved, \
+        f"slot-trimmed save adopted the export: store_path={sess.store_path} saved={sess.saved}"
+
+    with zipfile.ZipFile(noX) as z:
+        names = z.namelist()
+    assert not any(n.startswith(f"tables/{table['name']}/X/") for n in names), \
+        "table saved without X still wrote the matrix"
+    assert not any("X_csc" in n for n in names), "table saved without X still wrote the CSC mirror"
+    trimmed_table, _, _ = store.read_spatialdata_archive(noX)
+    tb = trimmed_table.tables[table["name"]]
+    assert tb.X is None, f"expected no X, got {type(tb.X)}"
+    assert (tb.n_obs, tb.n_vars) == (table["n_obs"], table["n_vars"]), \
+        f"table lost its shape without X: {tb.shape}"
+    assert tb.uns.get("spatialdata_attrs"), "table saved without X lost its SpatialData linkage"
+    assert trimmed_table.attrs["app_state"]["displays"][0]["encoding"]["color_by"] is None, \
+        "a gene coloring survived the save that dropped X"
+    assert sess.active_table().X is not None, "slot-trimmed save mutated the live table"
+    print(f"[ok] table saved without X: {os.path.getsize(noX) // 1000}kB, shape {tb.shape} kept")
+
+    bad = client.post(f"/api/sessions/{sid}/save",
+                      json={"slots": {table["name"]: [p for p in paths if p != "obs"]}})
+    assert bad.status_code == 400, f"dropping a required slot accepted: {bad.status_code}"
+    bad = client.post(f"/api/sessions/{sid}/save", json={"slots": {table["name"]: paths + ["nope"]}})
+    assert bad.status_code == 400, f"unknown slot accepted: {bad.status_code}"
+    bad = client.post(f"/api/sessions/{sid}/save", json={"slots": {"nosuch": paths}})
+    assert bad.status_code == 400, f"unknown table in slots accepted: {bad.status_code}"
+    coords = disp["encoding"]["coords"].split(":", 1)
+    if coords[0] == "obsm":
+        bad = client.post(f"/api/sessions/{sid}/save", json={
+            "slots": {table["name"]: [p for p in paths if p != f"obsm/{coords[1]}"]}})
+        assert bad.status_code == 400, f"dropping a display's coordinates accepted: {bad.status_code}"
+    print("[ok] slot selection rejects required slots, unknown slots and a display's coordinates")
 
     bad = client.post(f"/api/sessions/{sid}/save", json={"include": {"images": ["nope"]}})
     assert bad.status_code == 400, f"unknown element name accepted: {bad.status_code}"

@@ -495,6 +495,54 @@ def _validated_levels(sess, levels) -> dict[str, int] | None:
     return out or None
 
 
+def _validated_slots(sess, slots) -> dict[str, list[str]] | None:
+    """Check the save body's per-table slot selection — table name -> the slot paths to
+    write (`store.table_slot_paths`' vocabulary). A table absent from `slots` is written
+    whole; a table present keeps exactly the paths listed. Two things a selection may
+    not drop, because the resulting file would not open onto what it claims to hold:
+    the structurally required slots (`store.REQUIRED_TABLE_SLOTS`), and an `obsm` key a
+    display reads its coordinates or its embedding from — `coords` and `obsm_key` are
+    non-nullable in `app_state.schema.json`, so unlike a coloring they cannot be
+    neutralised."""
+    if not slots:
+        return None
+    if not isinstance(slots, dict):
+        raise HTTPException(400, "slots must be an object of table name -> slot paths")
+    from .persistence import store
+    out: dict[str, list[str]] = {}
+    for name, paths in slots.items():
+        adata = (getattr(sess.sdata, "tables", None) or {}).get(name)
+        if adata is None:
+            raise HTTPException(400, f"unknown tables element '{name}'")
+        if not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
+            raise HTTPException(400, f"slots['{name}'] must be a list of slot paths")
+        have = store.table_slot_paths(adata)
+        if unknown := sorted(set(paths) - set(have)):
+            raise HTTPException(400, f"unknown slot(s) in table '{name}': {', '.join(unknown)}")
+        if missing := [p for p in store.REQUIRED_TABLE_SLOTS if p not in paths]:
+            raise HTTPException(
+                400, f"table '{name}' cannot be saved without: {', '.join(missing)}")
+        for key in _display_obsm_keys(sess) if name == sess.active_table_key else ():
+            if f"obsm/{key}" in have and f"obsm/{key}" not in paths:
+                raise HTTPException(400, f"obsm/{key} is used by a display and must be saved")
+        out[name] = list(paths)
+    return out
+
+
+def _display_obsm_keys(sess) -> set[str]:
+    """The obsm keys the session's displays resolve against: an embedding's `obsm_key`
+    and a spatial display's `coords` (an `obsm:<key>` field path)."""
+    keys = set()
+    for d in sess.app_state.get("displays", []):
+        enc = d.get("encoding") or {}
+        if key := enc.get("obsm_key"):
+            keys.add(key)
+        element, _, key = (enc.get("coords") or "").partition(":")
+        if element == "obsm" and key:
+            keys.add(key)
+    return keys
+
+
 def _validated_figures(sess, figures) -> list[str] | None:
     """Check the save body's figure selection: `null`/absent keeps every drawn plot's
     figure, a list keeps exactly those plot ids (`[]` writes no figures at all). Ids that
@@ -569,10 +617,12 @@ async def save(sid: str, body: dict | None = None):
     path, hash_name = _validated_destination(sess, body)
     include = _validated_include(sess, body.get("include"))
     levels = _validated_levels(sess, body.get("levels"))
+    slots = _validated_slots(sess, body.get("slots"))
     figures = _validated_figures(sess, body.get("figures"))
     job_id = sess.enqueue_special("save", {"path": path, "hash_name": hash_name,
                                            "name": name, "include": include,
-                                           "levels": levels, "figures": figures})
+                                           "levels": levels, "slots": slots,
+                                           "figures": figures})
     return {"job_id": job_id, "path": path}
 
 

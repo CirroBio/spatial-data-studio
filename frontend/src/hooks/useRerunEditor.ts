@@ -6,7 +6,8 @@ import { useEditGate } from './usePresence';
 import type { SessionFields } from '@cirrobio/spatial-viewer';
 
 export const EMPTY_FIELDS: SessionFields = {
-  obs: [], obsm: [], n_obs: 0, var_names_count: 0, obsp: [], layers: [], images: [], image_dims: [], shapes: [],
+  obs: [], obsm: [], n_obs: 0, has_x: false, var_names_count: 0, obsp: [], layers: [],
+  images: [], image_dims: [], shapes: [],
 };
 
 interface RerunItem {

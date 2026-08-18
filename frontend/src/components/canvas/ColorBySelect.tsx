@@ -7,6 +7,7 @@ interface Props {
   value: string;          // color_by path
   obsFields: ObsField[];
   layers: string[];
+  hasX: boolean;          // false for a checkpoint saved without its expression matrix
   onChange: (path: string) => void;
 }
 
@@ -16,7 +17,7 @@ const SELECT_CLASS =
 // Picks the cell value that colors the points: first a slot (obs / X / layer),
 // then the column within it. The slot is tracked locally so a user can switch to
 // X or a layer and search for a gene before the color_by path is committed.
-export default function ColorBySelect({ value, obsFields, layers, onChange }: Props) {
+export default function ColorBySelect({ value, obsFields, layers, hasX, onChange }: Props) {
   const cur = parseColorBy(value);
   const [slot, setSlot] = useState<ColorBySlot>(cur.slot);
   const [layer, setLayer] = useState(cur.layer || layers[0] || '');
@@ -42,7 +43,10 @@ export default function ColorBySelect({ value, obsFields, layers, onChange }: Pr
         title="Value source"
       >
         <option value="obs">obs</option>
-        <option value="X">X (gene expression)</option>
+        {/* A checkpoint can be saved without X (the save dialog's per-table slots), and
+            then there are no expression values to color by — the same reason `layers`
+            only appears when the table has some. */}
+        {hasX && <option value="X">X (gene expression)</option>}
         {layers.length > 0 && <option value="layers">layer</option>}
       </select>
 
@@ -54,7 +58,7 @@ export default function ColorBySelect({ value, obsFields, layers, onChange }: Pr
         />
       )}
 
-      {slot === 'X' && (
+      {slot === 'X' && hasX && (
         <VarNameSelect
           value={cur.slot === 'X' ? cur.gene : ''}
           onChange={(gene) => onChange(`X:${gene}`)}

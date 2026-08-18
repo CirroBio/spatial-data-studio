@@ -18,10 +18,12 @@ def describe_elements(adata, sdata, active_table_key: str | None, *,
     """Inventory of the object's elements for the inspector's navigator.
 
     `sizes` additionally annotates every entry with `size_mb` — the estimated
-    contribution that element makes to a written checkpoint — and every image with the
-    same breakdown per pyramid level (`levels`), for the save dialog's per-element size
-    and its resolution slider. Off by default: it stats the backing store, which the
-    inspector has no use for. See `store.element_size_mb` for the accuracy contract."""
+    contribution that element makes to a written checkpoint — every image with the same
+    breakdown per pyramid level (`levels`), and every table with the same breakdown per
+    AnnData slot (`slots`), for the save dialog's per-element size, its resolution
+    slider and its per-slot checkboxes. Off by default: it stats the backing store,
+    which the inspector has no use for. See `store.element_size_mb` for the accuracy
+    contract."""
     tables = []
     if sdata is not None and sdata.tables:
         for name, t in sdata.tables.items():
@@ -51,12 +53,14 @@ def describe_elements(adata, sdata, active_table_key: str | None, *,
     out = {"tables": tables, "shapes": shapes, "points": points,
            "images": images, "labels": labels}
     if sizes and sdata is not None:
-        from ..persistence.store import element_size_mb, image_levels
+        from ..persistence.store import element_size_mb, image_levels, table_slots
         for facet, entries in out.items():
             for e in entries:
                 e["size_mb"] = element_size_mb(sdata, facet, e["name"], stores)
                 if facet == "images":
                     e["levels"] = image_levels(sdata, e["name"], stores)
+                elif facet == "tables":
+                    e["slots"] = table_slots(sdata, e["name"], stores)
     return out
 
 

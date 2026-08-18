@@ -747,6 +747,7 @@ class Session:
     def _write_checkpoint(self, path: str, hash_name: bool,
                           include: dict[str, list[str]] | None = None,
                           levels: dict[str, int] | None = None,
+                          slots: dict[str, list[str]] | None = None,
                           figures: dict[str, dict[str, bytes]] | None = None) -> str:
         """Persist the object to `path`, incrementally when possible: rewrite only the
         changed table/transform elements (reusing the on-disk rasters untouched) when
@@ -755,16 +756,17 @@ class Session:
         the read lock and updates saved-state after this returns.
 
         `include` writes only the named elements, `levels` writes named images at
-        reduced resolution. Both short-circuit above the incremental branch because
-        `update_checkpoint` reuses the on-disk rasters wholesale, which would put back
-        exactly the elements and pyramid levels the caller asked to drop.
+        reduced resolution, `slots` writes named tables without some of their parts. All
+        three short-circuit above the incremental branch because `update_checkpoint`
+        reuses the on-disk store wholesale, which would put back exactly the elements,
+        pyramid levels and table slots the caller asked to drop.
 
         `figures` is the complete set of rendered plots to end up in the file (see
         `figures_to_persist`) — on both routes, whatever it omits is not in the file."""
         from ..persistence.store import (save_spatialdata, update_checkpoint,
                                           can_update_incrementally)
         with self._save_lock:
-            if (include is None and not levels and path.endswith(".zarr.zip")
+            if (include is None and not levels and not slots and path.endswith(".zarr.zip")
                     and not self.force_full
                     and can_update_incrementally(self.sdata, self.extract_dir)):
                 self._hold_dropped_figures(figures or {})
@@ -772,7 +774,8 @@ class Session:
                                          tables=self.dirty_tables, transforms=self.dirty_transforms,
                                          hash_name=hash_name, figures=figures)
             return save_spatialdata(self.sdata, path, self.app_state, hash_name=hash_name,
-                                    include=include, levels=levels, figures=figures)
+                                    include=include, levels=levels, slots=slots,
+                                    figures=figures)
 
     def _hold_dropped_figures(self, keeping: dict[str, dict[str, bytes]]) -> None:
         """Read into memory any drawn plot's figure that the incremental save is about to
@@ -799,14 +802,15 @@ class Session:
         if not within_data_dir(target):
             raise ValueError("save path is outside the data directory")
         include, levels = payload.get("include"), payload.get("levels")
+        slots = payload.get("slots")
         with self.lock.reading():
             written = self._write_checkpoint(payload["path"], payload.get("hash_name", False),
-                                             include=include, levels=levels,
+                                             include=include, levels=levels, slots=slots,
                                              figures=self.figures_to_persist(payload.get("figures")))
         # A filtered write is an export, not this session's checkpoint: the object still
-        # holds elements — or pyramid levels — the file doesn't contain, so adopting it
-        # as `store_path` and calling the session saved would both be false.
-        if include is None and not levels:
+        # holds elements — or pyramid levels, or table slots — the file doesn't contain,
+        # so adopting it as `store_path` and calling the session saved would both be false.
+        if include is None and not levels and not slots:
             self.store_path = written
             self.saved = True
             self._clear_dirty()

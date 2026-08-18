@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   browsePath, getElements, saveSession, type ImageLevel, type SdataFacet, type SizedElements,
+  type TableSlot,
 } from '../api';
-import { formatError, isSpatialDisplay, reportError } from '@cirrobio/spatial-viewer';
+import {
+  formatError, isEmbeddingDisplay, isSpatialDisplay, reportError,
+} from '@cirrobio/spatial-viewer';
 import { useAppStore } from '../store/sessionStore';
 import { figureBytes, figureFormats } from '../lib/figures';
 import type { SessionState } from '../types';
@@ -26,6 +29,8 @@ interface Row {
   size: number | null;
   // Images only: their pyramid levels, finest first. What the resolution slider trims.
   levels?: ImageLevel[];
+  // Tables only: the AnnData slots the table is made of, each separately droppable.
+  slots?: TableSlot[];
   // The active table anchors every field path and display in the checkpoint, so it
   // can't be dropped — the backend rejects that too.
   locked?: boolean;
@@ -41,6 +46,9 @@ const GROUP_ORDER: RowGroup[] = ['tables', 'images', 'labels', 'shapes', 'points
 
 // Two plots of the same function share a label, so figure rows key on the plot id.
 const rowKey = (r: Row) => `${r.facet}/${r.plotId ?? r.name}`;
+// Slots live in the same `selected` map as the rows; `::` can't occur in a row key,
+// whose parts are a facet and an element name.
+const slotKey = (r: Row, path: string) => `${rowKey(r)}::${path}`;
 
 // One row per drawn plot whose figure the file can carry, sized from the bytes the
 // session holds (`SessionState.figures`) so the totals below stay honest.
@@ -61,6 +69,7 @@ function buildRows(inv: SizedElements): Row[] {
   return [
     ...inv.tables.map((t) => ({
       facet: 'tables' as const, name: t.name, size: t.size_mb, locked: t.active,
+      slots: t.slots,
       detail: `${t.n_obs.toLocaleString()} obs × ${t.n_vars.toLocaleString()} vars`,
     })),
     // An image's detail line is the finest level it will be saved at, so it follows the
@@ -103,10 +112,71 @@ function suggestedPrefix(name: string): string {
 }
 
 /** What a row contributes to the file: for an image, only the pyramid levels from
- * `finest` down to the coarsest, which is the slice the save actually writes. */
-function keptSize(r: Row, finest: number): number | null {
-  if (!r.levels) return r.size;
-  return r.levels.slice(finest).reduce((sum, l) => sum + l.size_mb, 0);
+ * `finest` down to the coarsest; for a table, only the slots still ticked. Both are the
+ * slice the save actually writes. */
+function keptSize(r: Row, finest: number, slotOn: (path: string) => boolean): number | null {
+  if (r.levels) return r.levels.slice(finest).reduce((sum, l) => sum + l.size_mb, 0);
+  if (r.slots) return r.slots.filter((s) => slotOn(s.path)).reduce((sum, s) => sum + s.size_mb, 0);
+  return r.size;
+}
+
+/** Why a slot can't be unticked, or null when it can. The required ones hold the
+ * table's shape and its SpatialData linkage; an obsm key a display reads its
+ * coordinates or embedding from can't be dropped either, because unlike a coloring
+ * those references have no null form to fall back to — the backend rejects both. */
+function slotLock(slot: TableSlot, usedObsm: Set<string>): string | null {
+  if (slot.required) return 'The table\'s shape and linkage live here, so it is always saved.';
+  if (usedObsm.has(slot.path)) return 'A display is drawn from here, so it is always saved.';
+  return null;
+}
+
+/** Picks which parts of one table the file keeps. A table is an AnnData: an expression
+ * matrix, the cell and gene frames, and named embeddings, layers and graphs — of which
+ * only `X` is usually large enough to be worth the file it costs. Dropping it writes a
+ * table with no matrix at all rather than a fabricated empty one, and the reader then
+ * offers no gene coloring instead of showing zeros. */
+function SlotList({ slots, usedObsm, on, onToggle }: {
+  slots: TableSlot[];
+  usedObsm: Set<string>;
+  on: (path: string) => boolean;
+  onToggle: (path: string) => void;
+}) {
+  return (
+    <div className="pl-7 pr-2 pb-2">
+      <div className="text-[10px] text-muted font-mono uppercase tracking-wide">Contents</div>
+      {slots.map((slot) => {
+        const lock = slotLock(slot, usedObsm);
+        const kept = on(slot.path);
+        return (
+          <label
+            key={slot.path}
+            title={lock ?? undefined}
+            className={`flex items-center gap-2 py-0.5 text-[11px] font-mono ${
+              lock ? 'opacity-70' : 'cursor-pointer'
+            }`}
+          >
+            <input
+              type="checkbox"
+              className="accent-accent"
+              checked={kept}
+              disabled={!!lock}
+              onChange={() => onToggle(slot.path)}
+            />
+            <span className={`flex-1 min-w-0 truncate ${kept ? 'text-text' : 'text-muted'}`}>
+              {slot.path}
+            </span>
+            <span className="text-muted shrink-0">{formatSize(slot.size_mb)}</span>
+          </label>
+        );
+      })}
+      {!on('X') && slots.some((s) => s.path === 'X') && (
+        <p className="text-[11px] text-warn pt-1">
+          Saved without X: the file keeps every annotation, but nothing in it can be
+          colored by gene expression.
+        </p>
+      )}
+    </div>
+  );
 }
 
 /** Picks how much of one image's pyramid the file keeps, and shows what each level
@@ -188,7 +258,10 @@ export default function SaveCheckpointDialog({ sessionId, onClose }: Props) {
         // Figure sizes are already in the session state; only the elements need measuring.
         const next = [...buildRows(inv), ...figureRows(useAppStore.getState().sessionState)];
         setRows(next);
-        setSelected(Object.fromEntries(next.map((r) => [rowKey(r), true])));
+        setSelected(Object.fromEntries([
+          ...next.map((r) => [rowKey(r), true]),
+          ...next.flatMap((r) => (r.slots ?? []).map((slot) => [slotKey(r, slot.path), true])),
+        ]));
       })
       .catch((err) => { if (live) setError(formatError(err)); });
     return () => { live = false; };
@@ -206,15 +279,33 @@ export default function SaveCheckpointDialog({ sessionId, onClose }: Props) {
     return refs;
   }, [sessionState]);
 
+  // The obsm slots a display resolves against: a spatial canvas's `coords` (an
+  // `obsm:<key>` path) and an embedding's `obsm_key`. `slotLock` keeps them ticked.
+  const usedObsm = useMemo(() => {
+    const keys = new Set<string>();
+    for (const d of sessionState?.app_state.displays ?? []) {
+      if (isSpatialDisplay(d)) {
+        const [element, key] = d.encoding.coords.split(':');
+        if (element === 'obsm' && key) keys.add(`obsm/${key}`);
+      } else if (isEmbeddingDisplay(d)) {
+        keys.add(`obsm/${d.encoding.obsm_key}`);
+      }
+    }
+    return keys;
+  }, [sessionState]);
+
   // The stem the file is written under: the name's suggestion until the user types their
   // own. Empty is not saveable — the backend rejects it, and there'd be no filename.
   const filePrefix = prefix ?? suggestedPrefix(name);
   const folderLabel = dataRoot ? [dataRoot, folder].filter(Boolean).join('/') : folder || '.';
 
   const finestOf = (r: Row) => (r.levels ? finestLevel[r.name] ?? 0 : 0);
+  const slotOn = (r: Row) => (path: string) => !!selected[slotKey(r, path)];
   const kept = rows?.filter((r) => selected[rowKey(r)]) ?? [];
-  const total = kept.reduce((sum, r) => sum + (keptSize(r, finestOf(r)) ?? 0), 0);
-  const droppedAny = !!rows && kept.length < rows.length;
+  const total = kept.reduce((sum, r) => sum + (keptSize(r, finestOf(r), slotOn(r)) ?? 0), 0);
+  const droppedAny = !!rows
+    && (kept.length < rows.length
+      || kept.some((r) => (r.slots ?? []).some((slot) => !slotOn(r)(slot.path))));
   const coarsenedAny = kept.some((r) => finestOf(r) > 0);
   // An unsized element makes the total a floor rather than an estimate. "<0.1 MB"
   // already reads as approximate, so it takes no extra qualifier.
@@ -243,6 +334,12 @@ export default function SaveCheckpointDialog({ sessionId, onClose }: Props) {
     const levels = Object.fromEntries(
       kept.filter((r) => finestOf(r) > 0).map((r) => [r.name, finestOf(r)]),
     );
+    // Same rule one level down: only tables missing a slot are named, and a named table
+    // lists every slot it keeps.
+    const trimmed = kept.filter((r) => (r.slots ?? []).some((slot) => !slotOn(r)(slot.path)));
+    const slots = Object.fromEntries(trimmed.map((r) => [
+      r.name, r.slots!.filter((slot) => slotOn(r)(slot.path)).map((slot) => slot.path),
+    ]));
     // Unlike `include`, an omitted `figures` keeps every drawn plot's figure, so the
     // list only has to be sent when one was deselected.
     const figureRowCount = rows.length - elements.length;
@@ -253,7 +350,8 @@ export default function SaveCheckpointDialog({ sessionId, onClose }: Props) {
     setSaving(true);
     saveSession(sessionId, {
       folder, prefix: filePrefix, name: name.trim(),
-      include, levels: coarsenedAny ? levels : undefined, figures,
+      include, levels: coarsenedAny ? levels : undefined,
+      slots: trimmed.length ? slots : undefined, figures,
     })
       .then(({ job_id }) => {
         useAppStore.getState().setBlockingJob({ id: job_id, label: 'Saving session…' });
@@ -266,7 +364,7 @@ export default function SaveCheckpointDialog({ sessionId, onClose }: Props) {
     <ModalOverlay onClose={onClose} widthClassName="w-[32rem]">
       <ModalHeader
         title="Save session"
-        subtitle="Name the session, choose where the checkpoint file goes, and choose what it contains and at what resolution. The session itself keeps everything."
+        subtitle="Name the session, choose where the checkpoint file goes, and choose what it contains — which elements, which parts of a table, and at what resolution. The session itself keeps everything."
         onClose={onClose}
       />
 
@@ -376,7 +474,7 @@ export default function SaveCheckpointDialog({ sessionId, onClose }: Props) {
                         )}
                       </span>
                       <span className="text-[11px] text-muted font-mono shrink-0">
-                        {formatSize(keptSize(r, finest))}
+                        {formatSize(keptSize(r, finest, slotOn(r)))}
                       </span>
                     </label>
                     {on && r.levels && r.levels.length > 1 && (
@@ -384,6 +482,16 @@ export default function SaveCheckpointDialog({ sessionId, onClose }: Props) {
                         levels={r.levels}
                         finest={finest}
                         onChange={(level) => setFinestLevel((f) => ({ ...f, [r.name]: level }))}
+                      />
+                    )}
+                    {on && r.slots && (
+                      <SlotList
+                        slots={r.slots}
+                        usedObsm={usedObsm}
+                        on={slotOn(r)}
+                        onToggle={(path) => setSelected(
+                          (sel) => ({ ...sel, [slotKey(r, path)]: !sel[slotKey(r, path)] }),
+                        )}
                       />
                     )}
                   </div>
