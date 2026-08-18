@@ -65,6 +65,13 @@ export interface DisplayEncoding {
   channels?: Record<string, ChannelState>;  // per-channel on/off + rename (v3 Part 10)
   legend_visible?: boolean;  // cell-color legend (colorbar / category swatches); defaults on
   legend_title?: string;     // overrides the default title (color_by column, sans "obs:")
+  // Multiplies every legend's type and swatch size (1 = as drawn until now). For a
+  // legend that has to stay readable in a dashboard tile a few hundred pixels wide, or
+  // in a figure printed at a fraction of screen size.
+  legend_scale?: number;
+  // Freezes the camera: no zoom, no pan, no rotate. A dashboard tile framed on one
+  // field of view stays on it, however the viewer's mouse wanders.
+  lock_view?: boolean;
   show_points?: boolean;     // cells-layer visibility; defaults on
   show_image?: boolean;      // image-layer visibility; defaults to (image_layer != null)
   show_channel_legend?: boolean;  // image channel legend visibility; defaults on
@@ -99,6 +106,8 @@ export interface Viewport {
 }
 
 export interface EmbeddingEncoding {
+  legend_scale?: number;   // see DisplayEncoding.legend_scale
+  lock_view?: boolean;     // see DisplayEncoding.lock_view
   obsm_key: string;
   x_component: number;
   y_component: number;

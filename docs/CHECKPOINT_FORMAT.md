@@ -231,6 +231,8 @@ Common envelope:
 | `channels` | object | no | keyed by **stringified channel index** (`"0"`, `"1"`, …) → `{visible: bool, name: string, color?: string, contrast_limits?: [number, number]}` |
 | `legend_visible`, `show_points`, `show_image`, `show_channel_legend`, `show_minimap` | boolean | no | layer/legend visibility toggles |
 | `legend_title` | string | no | |
+| `legend_scale` | number | no | multiplies every legend's type and swatch size; defaults to 1. `> 0` |
+| `lock_view` | boolean | no | freezes the camera (no zoom/pan/rotate); defaults to false |
 | `isolated_category` | string \| null | no | dim every category except this one |
 | `category_colors` | object | no | `{color_by_path: {category_label: "#rrggbb"}}` |
 | `render_mode` | enum | no | `points` \| `points+shapes` \| `shapes` |
@@ -250,7 +252,7 @@ Common envelope:
 | `color_by` | string \| null | yes | |
 | `point_size`, `opacity` | number | yes | |
 | `colormap` | string | yes | |
-| `legend_visible`, `legend_title`, `category_colors` | — | no | same as spatial canvas |
+| `legend_visible`, `legend_title`, `legend_scale`, `lock_view`, `category_colors` | — | no | same as spatial canvas |
 
 An embedding encoding never carries `image_layer`, `channels`,
 `render_mode`, or any of the spatial-only fields above — don't union the two

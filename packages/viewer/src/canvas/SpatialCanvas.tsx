@@ -26,7 +26,7 @@ import { buildShapeAnnotationLayers, buildShapeHandleLayer, buildDragPreviewLaye
 import { buildLassoLayers } from './buildLassoLayers';
 import { useColorField } from './useColorField';
 import { useSnapshotHandler } from './useSnapshotHandler';
-import { usePolygonBbox } from './usePolygonBbox';
+import { POLYGON_LIMIT, usePolygonBbox } from './usePolygonBbox';
 import { useImageChannels, type Channel, type ChannelPatch } from './useImageChannels';
 import Minimap from './Minimap';
 import { FlipOrthographicView } from './FlipOrthographicView';
@@ -530,6 +530,12 @@ export default function SpatialCanvas({
   }, [currentSpec, persistDisplay]);
 
   const legendVisible = display.encoding.legend_visible !== false;
+  const legendScale = display.encoding.legend_scale ?? SPATIAL_ENCODING_DEFAULTS.legend_scale;
+  // A locked view hands deck.gl no controller at all, so every interaction it owns —
+  // scroll zoom, drag pan, double-click, keyboard — is off in one move rather than
+  // enumerated. Drawing and shape editing set their own controller options below;
+  // locking outranks them, since neither is reachable while the camera is frozen.
+  const lockView = display.encoding.lock_view ?? SPATIAL_ENCODING_DEFAULTS.lock_view;
   const legendTitle = display.encoding.legend_title || colorByLabel(colorByPath);
 
   // GPU-composited image via Viv (the sole image path). While the pyramid loads,
@@ -558,7 +564,9 @@ export default function SpatialCanvas({
   // Polygon shape sets available for this session (elements inventory filtered to
   // polygonal geom types). Empty → the whole shapes path stays dormant, which is
   // also what a source with no element inventory (a checkpoint) gets.
-  const [polygonElements, setPolygonElements] = useState<string[]>([]);
+  // Name + row count: the count decides whether the whole element can be shipped in one
+  // query, which is what the zoom gate below exists to avoid when it cannot.
+  const [polygonElements, setPolygonElements] = useState<{ name: string; count: number }[]>([]);
   useEffect(() => {
     setPolygonElements([]);
     if (!source?.getElements) return;
@@ -569,7 +577,7 @@ export default function SpatialCanvas({
         setPolygonElements(
           inv.shapes
             .filter((s) => s.geometry.some((g) => g === 'Polygon' || g === 'MultiPolygon'))
-            .map((s) => s.name),
+            .map((s) => ({ name: s.name, count: s.count })),
         );
       })
       .catch((err: unknown) => {
@@ -584,8 +592,8 @@ export default function SpatialCanvas({
   // available polygon element (e.g. cell_boundaries). null when none exist.
   const shapesElement = useMemo(() => {
     const chosen = display.encoding.shapes_layer;
-    if (chosen && polygonElements.includes(chosen)) return chosen;
-    return polygonElements[0] ?? null;
+    if (chosen && polygonElements.some((e) => e.name === chosen)) return chosen;
+    return polygonElements[0]?.name ?? null;
   }, [display.encoding.shapes_layer, polygonElements]);
 
   const zoom = effectiveZoom(viewState);
@@ -599,6 +607,13 @@ export default function SpatialCanvas({
   // scale the world-unit mean spacing into that space (radiusScale = px per world unit;
   // 1 in world space) before deciding when cells are big enough on screen to fetch shapes.
   const zoomedInForShapes = meanSpacing > 0 && zoom >= shapesFetchZoomThreshold(meanSpacing * radiusScale);
+  // The zoom gate is a stand-in for "the viewport holds more than one query can return".
+  // When the whole element fits under that limit it never will, so waiting to zoom in
+  // buys nothing and costs the boundaries never appearing on a mode switch alone —
+  // turning on 'points+shapes' looked like nothing happened until the user scrolled.
+  const shapesFitEntirely = polygonElements.some(
+    (e) => e.name === shapesElement && e.count > 0 && e.count <= POLYGON_LIMIT,
+  );
   const shapesOverlay = renderMode === 'points+shapes' && shapesElement !== null;
   const { layer: polygonLayer, loading: polygonsLoading } = usePolygonBbox({
     element: shapesElement,
@@ -609,7 +624,7 @@ export default function SpatialCanvas({
     opacity: display.encoding.opacity,
     outline: boundaryOutline,
     lineWidth: boundaryLineWidth,
-    enabled: shapesOverlay && showPoints && zoomedInForShapes,
+    enabled: shapesOverlay && showPoints && (zoomedInForShapes || shapesFitEntirely),
     modelMatrix: worldToPixelMat,
     pixelToWorld: pixelAffine ?? undefined,
   });
@@ -709,7 +724,9 @@ export default function SpatialCanvas({
           persistDisplay({ ...currentSpec(), viewport: { target: [t[0], t[1]], zoom: v.zoom as number } });
         }}
         layers={[...layers, ...drawLayers, ...shapeLayers]}
-        controller={shapeInteracting ? { dragPan: false, doubleClickZoom: false } : drawMode ? { doubleClickZoom: false } : true}
+        controller={lockView ? false
+          : shapeInteracting ? { dragPan: false, doubleClickZoom: false }
+          : drawMode ? { doubleClickZoom: false } : true}
         onClick={handleClick}
         onHover={shapesMode ? handleHover : undefined}
         onDragStart={handleShapeDragStart}
@@ -743,9 +760,10 @@ export default function SpatialCanvas({
 
       <ImageTileStatus progress={tileProgress} />
 
-      <ChannelLegend show={showImage} showLegend={showLegend} channels={channels} />
+      <ChannelLegend show={showImage} showLegend={showLegend} channels={channels} scale={legendScale} />
 
-      <CellColorLegend visible={legendVisible && showPoints} legend={colorLegend} title={legendTitle} />
+      <CellColorLegend visible={legendVisible && showPoints} legend={colorLegend} title={legendTitle}
+        scale={legendScale} />
 
       <DrawHint drawMode={drawMode} canvasMode={canvasMode} annotationTarget={annotationTarget} />
 
@@ -768,7 +786,7 @@ export default function SpatialCanvas({
         showLegend,
         showMinimap,
         renderMode,
-        shapeSets: polygonElements,
+        shapeSets: polygonElements.map((e) => e.name),
         shapesElement,
         imageSets: fields?.images ?? [],
         imageElement: display.encoding.image_layer,
