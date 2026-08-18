@@ -2106,13 +2106,18 @@ def _write_visium_outs(path, dataset_id, origin, spacing, grid, fullres):
 
 
 def run_subset_coordinate_space_flow(client):
-    """A lasso subset crops the region the user actually drew, on a multi-coordinate-system
-    store. The rings arrive in world space (`obsm['spatial']`, what the canvas plots) while
-    `polygon_query` resolves them against a coordinate system, and a Visium store has three
-    of them and no 'global'. `SpatialData.coordinate_systems` comes off a `set`, so indexing
-    it picks a hash-random one, and a `_downscaled_*` pick resolves a full-resolution ring in
-    a 5x/20x-downscaled space — keeping the wrong spots, or none. See
-    `run_xenium_subset_space_flow` for the case where the two spaces differ in scale."""
+    """Both halves of the coordinate reconciliation on a multi-coordinate-system store:
+    where the image lands, and where a lasso crops.
+
+    A Visium store has three coordinate systems and no 'global', which nothing under
+    test-data/ carries. Asking for `global` by name left `pixel_to_world` at identity, so
+    the H&E drew at `tissue_hires_scalef` of its size in the corner of the spot cloud. For
+    the subset, the rings arrive in world space (`obsm['spatial']`, what the canvas plots)
+    while `polygon_query` resolves them against a coordinate system;
+    `SpatialData.coordinate_systems` comes off a `set`, so indexing it picks a hash-random
+    one, and a `_downscaled_*` pick resolves a full-resolution ring in a 5x/20x-downscaled
+    space — keeping the wrong spots, or none. See `run_xenium_subset_space_flow` for the
+    case where the two spaces differ in scale."""
     import numpy as np
     import spatialdata_io
 
@@ -2135,6 +2140,20 @@ def run_subset_coordinate_space_flow(client):
         cs, m = imaging.world_to_system(sess.sdata, sess.active_table())
         assert cs == dataset_id, f"query system {cs!r} is not the full-resolution one ({systems})"
         assert np.allclose(m, np.eye(3)), m
+
+        # Each image is placed by the inverse of its own scalefactor, so both cover the
+        # full-resolution frame the spots are in. _write_visium_outs writes square images.
+        spots = np.asarray(sess.active_table().obsm["spatial"])[:, :2].astype(float)
+        for element in sess.sdata.images:
+            info = imaging.image_info(sess.sdata, element, sess.active_table())
+            scale = fullres / info["width"]
+            assert np.allclose(info["pixel_to_world"], [scale, 0, 0, 0, scale, 0]), \
+                f"{element}: pixel_to_world {info['pixel_to_world']} != {scale}x scale"
+            x0, y0, x1, y1 = info["bounds"]
+            assert x0 <= spots[:, 0].min() and x1 >= spots[:, 0].max(), (element, info["bounds"])
+            assert y0 <= spots[:, 1].min() and y1 >= spots[:, 1].max(), (element, info["bounds"])
+        print(f"[ok] both Visium images placed over the spots from their scalefactors "
+              f"({', '.join(sess.sdata.images)})")
 
         # A ring on the spot grid, edges halfway between rows/columns so no spot sits on
         # the boundary: the interior 5x5 spots, and nothing else. Read in the hires system

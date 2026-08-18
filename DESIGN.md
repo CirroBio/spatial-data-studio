@@ -693,12 +693,17 @@ WebP, 512px tiles, LRU-cached); `…/info` reports pyramid levels, tile size, an
 
 Because a table's `obsm["spatial"]` and its image can live in different coordinate
 spaces (Xenium spots are in microns; the image is in pixels), the server reconciles
-them — picking the element transform that best overlays spots onto the image — so
-points and image line up, and rotated/aligned images (e.g. an H&E) are placed as
-quadrilaterals. The same reconciliation answers the inverse question for spatial
-queries: `world_to_system` returns the coordinate system to run a `polygon_query` in
-and the affine that maps world coordinates into it (§8.2), so a lasso crops the region
-the user drew rather than one scaled by whatever the store's transforms say.
+them — searching every *coordinate system* the image maps into, and within each the
+element transform that best overlays spots onto the image — so points and image line up,
+and rotated/aligned images (e.g. an H&E) are placed as quadrilaterals. The system search
+is not optional: a store need not declare a `global` system at all. spatialdata-io's
+Visium and Visium HD readers name theirs `<dataset_id>` and give each downscaled image
+its own `<dataset_id>_downscaled_hires`/`_lowres`, so asking for `global` by name left a
+Visium H&E at identity — drawn at `tissue_hires_scalef` of its true size in the corner of
+the spots. The same reconciliation answers the inverse question for spatial queries:
+`world_to_system` returns the coordinate system to run a `polygon_query` in and the
+affine that maps world coordinates into it (§8.2), so a lasso crops the region the user
+drew rather than one scaled by whatever the store's transforms say.
 
 **Ingest-time raster normalization (`backend/app/rasters.py`).** The tile server
 assumes each raster is a multiscale pyramid with tile-sized *store* chunks, but a

@@ -299,7 +299,7 @@ Filtering happens in `store.select_elements`, a shallow `SpatialData` view shari
 live object's element objects (same dask arrays, same AnnData), so it costs nothing and
 cannot mutate the session. A `levels` entry additionally swaps in `store.trim_pyramid`'s
 DataTree over the surviving levels — also shared, not copied. Because every level carries
-its own transform to the global coordinate system, the level promoted to `scale0` keeps
+its own transform to the shared coordinate system, the level promoted to `scale0` keeps
 the downscale its old position implied, so a trimmed image still lands where it did. A
 `slots` entry swaps in `store.trim_table`'s AnnData over the surviving slots, again
 container-level sharing.

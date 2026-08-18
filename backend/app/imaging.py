@@ -277,7 +277,7 @@ def _composite(data_cyx: np.ndarray, norm: np.ndarray,
 
 
 # ---- coordinate reconciliation (spots space vs image space) ----------------
-def _affine_xy(elem, cs="global"):
+def _affine_xy(elem, cs: str):
     """Element -> coordinate system `cs` transform as a 3x3 affine over (x, y), or None
     when the element does not map into `cs` (or maps by something no 2-D affine can
     express)."""
@@ -312,17 +312,19 @@ def _iou(a, b) -> float:
     return inter / union if union > 0 else 0.0
 
 
-def _global_extent(sdata, element) -> list[float]:
+def _image_extent(sdata, element, cs: str) -> list[float]:
+    """One image element's extent in coordinate system `cs`, as [x0, y0, x1, y1] — the
+    per-element counterpart of `system_extent`, which measures the whole object."""
     try:
         from spatialdata import get_extent
-        ext = get_extent(sdata.images[element])
+        ext = get_extent(sdata.images[element], coordinate_system=cs)
         return [float(ext["x"][0]), float(ext["y"][0]), float(ext["x"][1]), float(ext["y"][1])]
     except Exception:
         # get_extent failed: map the level-0 pixel box through the image's own
-        # 'global' transform so the fallback stays in global (spot) coordinates.
-        # Returning coarse-level pixels here scores IOU ~0 against micron spots.
+        # transform so the fallback stays in `cs`'s (spot) coordinates. Returning
+        # coarse-level pixels here scores IOU ~0 against micron spots.
         w, h = image_dims(sdata, element)
-        a = _affine_xy(sdata.images[element])
+        a = _affine_xy(sdata.images[element], cs)
         if a is None:
             a = np.eye(3)
         return bbox_aabb(a, [0.0, 0.0, float(w), float(h)])
@@ -332,22 +334,35 @@ def pixel_to_world(sdata, element, table=None) -> np.ndarray:
     """3x3 affine mapping the image's level-0 intrinsic pixel coords (x=col, y=row)
     into the spots' coordinate space (the space `obsm["spatial"]` is plotted in).
 
-    The image carries its own transform to 'global'; the spots live in some
-    element's intrinsic space. We can't trust the table's declared region (Xenium
-    annotates labels in pixel space while its spots are in microns), so we pick,
-    among all shape/label element transforms plus identity, the one whose mapping
-    of the spot bounding box best overlays the image extent in 'global', and
-    compose image->global with the inverse of that spots->global transform. The
-    result may include rotation/axis-swap (e.g. an aligned H&E), so tiles are
+    The image carries its own transform into one or more coordinate systems; the spots
+    live in some element's intrinsic space. We can't trust the table's declared region
+    (Xenium annotates labels in pixel space while its spots are in microns), so for every
+    system the image maps into we take the best spots->system transform
+    (`_spots_to_system`) against the image's extent there, and compose image->system with
+    the inverse of the overall winner.
+
+    Searching the systems matters as much as searching the transforms within one: a store
+    need not declare a 'global' at all (see `_system_order`), and asking for that name by
+    default left a Visium H&E at identity — drawn at `tissue_hires_scalef` of its true
+    size in the corner of the spot cloud.
+
+    The result may include rotation/axis-swap (e.g. an aligned H&E), so tiles are
     placed as quadrilaterals rather than axis-aligned rectangles.
     """
-    a_image = _affine_xy(sdata.images[element])
-    if a_image is None:
-        a_image = np.eye(3)
-    best_a, best_iou = _spots_to_system(sdata, table, "global", _global_extent(sdata, element))
+    placements = [(cs, a) for cs, a in
+                  ((cs, _affine_xy(sdata.images[element], cs)) for cs in _system_order(sdata))
+                  if a is not None]
+    # No spots to reconcile against (or no usable system): leave the image in its own
+    # first-choice system, which the canvas then treats as world space.
+    fallback = placements[0][1] if placements else np.eye(3)
+    best_spots, best_image, best_iou = np.eye(3), fallback, -1.0
+    for cs, a_image in placements:
+        a, iou = _spots_to_system(sdata, table, cs, _image_extent(sdata, element, cs))
+        if iou > best_iou:
+            best_spots, best_image, best_iou = a, a_image, iou
     if best_iou <= 0:
-        return a_image  # no spots to reconcile against, or none overlaying the image
-    return np.linalg.inv(best_a) @ a_image
+        return fallback
+    return np.linalg.inv(best_spots) @ best_image
 
 
 def _spots_to_system(sdata, table, cs: str, reference_bbox) -> tuple[np.ndarray, float]:
