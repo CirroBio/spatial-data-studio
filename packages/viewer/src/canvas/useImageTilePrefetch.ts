@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { OrthographicViewState } from '@deck.gl/core';
 import { getImageSize, type loadOmeZarr } from '@vivjs/loaders';
+import { effectiveZoom } from './viewFit';
 
 // Idle look-ahead tile prefetch for the Viv image path. deck.gl's TileLayer only ever
 // requests the current viewport, so the first frames of a zoom/pan stall while the newly
@@ -79,9 +80,7 @@ export function useImageTilePrefetch(
   const seenRef = useRef<Set<string>>(new Set());
   const seenKeyRef = useRef<string | null>(null);
 
-  const zoom = viewState
-    ? (Array.isArray(viewState.zoom) ? viewState.zoom[0] : viewState.zoom) ?? 0
-    : 0;
+  const zoom = effectiveZoom(viewState);
   const target = (viewState?.target as number[] | undefined) ?? undefined;
   const cx = target?.[0];
   const cy = target?.[1];

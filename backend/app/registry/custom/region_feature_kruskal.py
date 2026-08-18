@@ -7,7 +7,8 @@ heatmap for one cell type — the same compute-writes/plot-reads split the other
 custom metrics use (e.g. pseudobulk_deseq2). numpy/scipy only; no new deps."""
 from __future__ import annotations
 
-from ..base import CallResult, Function, ParamSpec, missing_obs_column, missing_uns_key, \
+from ..base import CallResult, Function, ParamSpec, missing_layer, missing_obs_column, \
+    missing_uns_key, \
     resolve_per_celltype, run_compute, run_plot
 from ._docs import custom_doc
 
@@ -150,8 +151,9 @@ key_added
         error = missing_obs_column(adata, celltype_key) or missing_obs_column(adata, region_key)
         if error:
             return CallResult(status="failed", error=error)
-        if layer and layer not in adata.layers:
-            return CallResult(status="failed", error=f"layer '{layer}' does not exist")
+        err = missing_layer(adata, layer)
+        if err:
+            return CallResult(status="failed", error=err)
 
         def mutate(ad):
             genes = list(map(str, ad.var_names))

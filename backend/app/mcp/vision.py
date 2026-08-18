@@ -31,6 +31,7 @@ import math
 import numpy as np
 
 from .. import imaging, snapshots
+from ..sessions.appstate import encoding_default
 
 # Claude reads images best around ~1.15 megapixels; anything past ~1568 px on the
 # long side is downscaled by the model anyway, so cap requests there.
@@ -232,7 +233,7 @@ def render_view(session, display_id: str | None = None, viewport=None,
 
         grid_meta = None
         if include_grid:
-            is_dark = (enc.get("background") or "dark") == "dark"
+            is_dark = encoding_default(enc, "background") == "dark"
             grid_meta = _draw_grid(ax, bbox, p2w, w2v, "white" if is_dark else "black")
         if mark_points or mark_polygons:
             _draw_marks(ax, w2v, mark_points, mark_polygons)

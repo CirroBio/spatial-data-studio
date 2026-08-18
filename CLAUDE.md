@@ -56,6 +56,40 @@ A change that leaves an error is incomplete — fix the code, not the report. Th
 is also the formatter (`nextflow lint -format`), so it is the arbiter of layout too;
 don't hand-argue with its indentation.
 
+## Tag a release when the SPA changes (always)
+
+The Nextflow workflow does not build the viewer. `nextflow.config`'s `viewer_dist`
+defaults to the `viewer-dist.tar.gz` attached to the **latest GitHub release**, which
+`.github/workflows/release.yml` builds and uploads on every `v*` tag push. That archive
+is the only SPA a run launched from a fresh clone can obtain — `frontend/dist` is
+gitignored — so **an SPA change that is merged but not tagged does not reach a workflow
+run.** Cirro runs the workflow straight from the repository, so "merged to main" is not
+the thing that ships it; the tag is.
+
+A change that alters what the built SPA does needs a new `v*` tag to take effect:
+
+- anything under `frontend/` or `packages/viewer/` that changes rendered behavior, and
+- anything that changes what the SPA reads out of a checkpoint — the `viewer/` sidecar
+  layout, `VIEWER_SIDECAR_VERSION`, the GeoParquet/CSC mirror shape, or the checkpoint
+  schemas in `backend/app/schemas/checkpoint/`, since a viewer that predates the change
+  will refuse or misread a store written after it.
+
+Backend-only, docs-only, and `nextflow/`-only changes do not.
+
+Tag from `main` once the change has landed there, and let the workflow attach the asset:
+
+```bash
+git tag v1.2.3 && git push origin v1.2.3
+```
+
+Two obligations that come with the tag. Bump the `version` in the root `package.json`,
+`frontend/package.json` and `packages/viewer/package.json` to match it in the same
+commit as the change — a tag whose name disagrees with the manifests makes the shipped
+bundle unidentifiable. And when a checkpoint-format change is what forced the tag, say
+so in the release notes: pinning `--viewer_dist` to an older asset is the documented
+escape hatch (`nextflow/README.md`), and it only works if the incompatibility is
+findable.
+
 ## Reuse code elements (always)
 
 Before adding a new function, class, component, hook, endpoint, or other

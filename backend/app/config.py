@@ -322,3 +322,20 @@ def within_data_dir(target: Path) -> bool:
     """True if `target` is DATA_DIR or somewhere beneath it — the only on-disk
     location the app may read (imports/loads) or write (saves/snapshots)."""
     return _within_dir(target, config.DATA_DIR)
+
+
+def resolve_within_data_dir(path: str) -> Path:
+    """Resolve `path` and ensure it falls within DATA_DIR; raise RuntimeError otherwise.
+
+    The single gate every client-supplied path passes before it reaches the filesystem —
+    session creation (sessions/manager.py), reader params on an already-open session
+    (registry/reader_paths.validate_reader_params), loads and saves. Resolving first is
+    what catches `..` traversal; callers use the returned path so the check and the use
+    can't disagree."""
+    try:
+        target = Path(path).resolve()
+    except OSError:
+        raise RuntimeError(f"bad path: {path}")
+    if not within_data_dir(target):
+        raise RuntimeError(f"path is outside the data directory: {path}")
+    return target

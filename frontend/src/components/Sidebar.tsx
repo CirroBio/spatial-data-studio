@@ -3,7 +3,7 @@ import * as Tabs from '@radix-ui/react-tabs';
 import PanelTabs, { type PanelTab } from './PanelTabs';
 import { useAppStore } from '../store/sessionStore';
 import { checkpointUrlFromLocation } from '../data/checkpointIndex';
-import { deleteHistoryEntry, getRecipe, importRecipe, getSession, runAllPending } from '../api';
+import { deleteHistoryEntry, getRecipe, importRecipe, runAllPending } from '../api';
 import { reportError } from '@cirrobio/spatial-viewer';
 import { useEditGate } from '../hooks/usePresence';
 import StatusBadge, { type Status } from './StatusBadge';
@@ -146,7 +146,7 @@ export default function Sidebar() {
     selectedPlotId,
     setSelectedPlotId,
     activeSessionId,
-    setSessionState,
+    refreshSessionState,
     pushNotification,
     leftMenuOpen,
   } = useAppStore();
@@ -185,7 +185,7 @@ export default function Sidebar() {
       const recipe = JSON.parse(await file.text());
       // Import as pending steps so params can be reviewed/edited before running.
       await importRecipe(activeSessionId, recipe, 'stage');
-      setSessionState(await getSession(activeSessionId));
+      await refreshSessionState(activeSessionId);
       pushNotification({ kind: 'info', message: 'Recipe staged — review and run.' });
     } catch (err) {
       reportError('Load recipe failed', err);
@@ -210,7 +210,7 @@ export default function Sidebar() {
       await deleteHistoryEntry(activeSessionId, id);
       if (selectedComputeId === id) setSelectedComputeId(null);
       if (selectedPlotId === id) setSelectedPlotId(null);
-      setSessionState(await getSession(activeSessionId));
+      await refreshSessionState(activeSessionId);
     } catch (err) {
       reportError('Delete failed', err);
     }

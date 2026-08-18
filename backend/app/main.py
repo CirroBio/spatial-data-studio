@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import config, data_roots, within_data_dir
 from .registry.introspect import REGISTRY
+from .registry.reader_paths import reader_namespace
 from .sessions.manager import SessionManager
 from .sessions.presence import PRESENCE, clean_name
 from .transport.sse import BUS
@@ -18,8 +19,8 @@ from .prewarm import PREWARM
 from . import datasets
 from . import deps
 from .deps import (_session, _writable_session, _claim_lock, _mgr, _in_executor,
-                   _read_locked, bind_client_id, CLIENT_ID, default_save_path,
-                   search_var_names)
+                   _read_locked, _bad_request, bind_client_id, CLIENT_ID,
+                   default_save_path, search_var_names)
 from .routers import imaging as imaging_router, cirro as cirro_router
 from .routers import snapshots as snapshots_router, recipes as recipes_router
 from .mcp.server import mcp_server
@@ -144,18 +145,15 @@ async def create_session(body: dict):
     # this nonce. Absent for older clients, in which case the load emits nothing.
     load_id = body.get("load_id")
 
-    try:
+    with _bad_request():
         if source.get("kind") == "load":
             sess = await _in_executor(_mgr().create_from_load, source["path"], name, load_id)
         elif source.get("kind") == "read":
-            # squidpy `read` namespace or spatialdata-io readers (namespace `io`)
             sess = _mgr().create_from_read(
-                {"namespace": source.get("namespace", "read"), "function": source["function"],
+                {"namespace": reader_namespace(source), "function": source["function"],
                  "params": source.get("params", {})}, name)
         else:
             raise HTTPException(400, "source.kind must be 'load' or 'read'")
-    except (RuntimeError, FileNotFoundError, KeyError) as e:
-        raise HTTPException(400, str(e))
     # `hash_check` now rides the terminal `session.loading` event, since the checkpoint
     # load runs asynchronously (Session._run_load) — the shell returned here always has
     # it None. Kept in the response shape for the read / older-client paths.
@@ -281,7 +279,8 @@ def _require_known(descriptor: dict):
 async def enqueue_job(sid: str, descriptor: dict):
     sess = _writable_session(sid)
     _require_known(descriptor)
-    job_id = sess.enqueue_descriptor(descriptor)
+    with _bad_request():
+        job_id = sess.enqueue_descriptor(descriptor)
     return {"job_id": job_id, "status": "queued"}
 
 
@@ -316,7 +315,9 @@ async def job_log(sid: str, job_id: str):
 @app.post("/api/sessions/{sid}/jobs/stage")
 async def stage_job(sid: str, descriptor: dict):
     _require_known(descriptor)
-    return {"step_id": _writable_session(sid).stage_descriptor(descriptor), "status": "pending"}
+    with _bad_request():
+        step_id = _writable_session(sid).stage_descriptor(descriptor)
+    return {"step_id": step_id, "status": "pending"}
 
 
 @app.post("/api/sessions/{sid}/pending/run-all")
@@ -333,7 +334,9 @@ async def run_pending(sid: str, step_id: str):
 
 @app.put("/api/sessions/{sid}/pending/{step_id}")
 async def edit_pending(sid: str, step_id: str, body: dict):
-    if not _writable_session(sid).edit_pending(step_id, body.get("params", {})):
+    with _bad_request():
+        edited = _writable_session(sid).edit_pending(step_id, body.get("params", {}))
+    if not edited:
         raise HTTPException(409, "not a pending step")
     return {"ok": True}
 
@@ -484,7 +487,7 @@ def _validated_levels(sess, levels) -> dict[str, int] | None:
     for name, finest in levels.items():
         if name not in (getattr(sess.sdata, "images", None) or {}):
             raise HTTPException(400, f"unknown images element '{name}'")
-        depth = len(imaging._levels_meta(sess.sdata, name))
+        depth = len(imaging.image_levels(sess.sdata, name))
         if not isinstance(finest, int) or isinstance(finest, bool) or not 0 <= finest < depth:
             raise HTTPException(400, f"levels['{name}'] must be an integer in 0..{depth - 1}")
         if finest:
@@ -500,8 +503,7 @@ def _validated_figures(sess, figures) -> list[str] | None:
         return None
     if not isinstance(figures, list) or not all(isinstance(p, str) for p in figures):
         raise HTTPException(400, "figures must be a list of plot ids")
-    drawn = {p["id"] for p in sess.app_state["plots"] if p["status"] == "drawn"}
-    missing = sorted(set(figures) - drawn)
+    missing = sorted(set(figures) - sess.drawn_plot_ids())
     if missing:
         raise HTTPException(400, f"no drawn plot(s) with id(s): {', '.join(missing)}")
     return figures

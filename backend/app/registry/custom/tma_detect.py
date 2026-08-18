@@ -27,7 +27,7 @@ NAMING_SCHEMES = ("Row=Letter; Column=Number", "Column=Letter; Row=Number")
 
 
 def _subsample(vals: pd.Series, n: int) -> pd.Series:
-    return vals.sample(min(len(vals), n), random_state=0) if len(vals) > n else vals
+    return vals.sample(n, random_state=0) if len(vals) > n else vals
 
 
 def _rotate(coords: pd.DataFrame, angle: float) -> pd.DataFrame:

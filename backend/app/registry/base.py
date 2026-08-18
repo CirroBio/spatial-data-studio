@@ -300,6 +300,16 @@ def missing_obs_column(adata, name: str | None) -> str | None:
     return None
 
 
+def missing_layer(adata, layer: str | None) -> str | None:
+    """Failure message if `layer` is named but isn't in `adata.layers`, else None. An
+    unset layer is valid (it means X), so this only rejects a name that doesn't resolve.
+    Sibling of `missing_obs_column`, for the several custom functions that take a
+    layer param."""
+    if layer and layer not in adata.layers:
+        return f"layer '{layer}' does not exist"
+    return None
+
+
 def missing_uns_key(adata, key: str, step_label: str) -> str | None:
     """Failure message if `key` isn't in `adata.uns` yet, else None. Guards a step
     that consumes another step's uns[...] output; `step_label` names that

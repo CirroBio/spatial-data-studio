@@ -109,7 +109,10 @@ def table_preview(adata, sdata, path: str, offset: int, limit: int) -> dict:
     total = int(df.shape[0].compute()) if is_dask else int(len(df))
 
     if is_dask:
-        sl = df.head(offset + limit).iloc[offset : offset + limit]
+        # npartitions=-1: dask's head() reads only the FIRST partition by default, so a
+        # page starting past that partition's row count came back empty instead of the
+        # rows it asked for.
+        sl = df.head(offset + limit, npartitions=-1).iloc[offset : offset + limit]
     else:
         sl = df.iloc[offset : offset + limit]
 

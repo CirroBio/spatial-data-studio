@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from '../store/sessionStore';
-import { submitJob, runPendingStep, editPendingStep, getSession } from '../api';
+import { submitJob, runPendingStep, editPendingStep } from '../api';
 import { reportError } from '@cirrobio/spatial-viewer';
 import { useEditGate } from './usePresence';
 import type { SessionFields } from '@cirrobio/spatial-viewer';
@@ -23,7 +23,7 @@ interface RerunItem {
 // callers' buttons — the detail views stay readable without the lock, but rerunning
 // from them does not.
 export function useRerunEditor(item: RerunItem | null, onDone: () => void) {
-  const { functions, sessionState, activeSessionId, setSessionState } = useAppStore();
+  const { functions, sessionState, activeSessionId, refreshSessionState } = useAppStore();
   const { canEdit, reason: editBlockedReason } = useEditGate();
   const [editing, setEditing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -74,7 +74,7 @@ export function useRerunEditor(item: RerunItem | null, onDone: () => void) {
     setSubmitting(true);
     try {
       await editPendingStep(activeSessionId, item.id, params);
-      setSessionState(await getSession(activeSessionId));
+      await refreshSessionState(activeSessionId);
       setEditing(false);
     } catch (err) {
       reportError('Save failed', err);

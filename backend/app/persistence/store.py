@@ -38,6 +38,7 @@ a checkpoint written before them is rejected by the viewer with a re-save messag
 - `_consolidate` re-runs consolidated metadata last, so the tree the browser reads
   reports the sharded codec and includes `viewer/`.
 """
+import contextlib
 import gzip
 import hashlib
 import json
@@ -82,7 +83,7 @@ _HASH_SUFFIX_RE = re.compile(rf"-[0-9a-f]{{{HASH_LEN}}}$")
 # (legacy saves and imported stores), so only the save name carries the `.sdata`
 # infix. Longest-first so `.sdata.zarr.zip` wins over `.zarr.zip`/`.zarr`.
 CHECKPOINT_EXT = ".sdata.zarr.zip"
-_READ_EXTS = (".sdata.zarr.zip", ".zarr.zip", ".zarr.tar.gz", ".zarr.tgz", ".zarr")
+READ_EXTS = (".sdata.zarr.zip", ".zarr.zip", ".zarr.tar.gz", ".zarr.tgz", ".zarr")
 
 # Raster sharding (see module docstring). Inner chunk stays at the tile size the
 # canvas requests so a tile is still one decompress; the shard groups 8x8 of them,
@@ -129,7 +130,7 @@ _ROW_GROUP_ROWS_MAX = 65536
 def strip_checkpoint_ext(name: str) -> str:
     """Strip a checkpoint/zarr extension (longest match) from a filename, leaving
     the stem the content-hash suffix is measured against."""
-    for ext in _READ_EXTS:
+    for ext in READ_EXTS:
         if name.endswith(ext):
             return name[: -len(ext)]
     return name
@@ -149,6 +150,15 @@ def strip_content_hash(stem: str) -> str:
     name (without extension), so re-saving replaces it instead of stacking a new
     one on top."""
     return _HASH_SUFFIX_RE.sub("", stem)
+
+
+def carries_content_hash(path: str) -> bool:
+    """True if `path` is an auto-named checkpoint whose filename embeds a content hash.
+
+    A save over such a file must re-derive the hash (`hash_name=True`), or the name keeps
+    asserting a digest the new bytes no longer have and the next load reports the file as
+    modified — see `SessionManager.close`."""
+    return _expected_content_hash(path) is not None
 
 
 def _expected_content_hash(path: str) -> str | None:
@@ -179,6 +189,25 @@ def _hash_result(name: str, expected: str, actual: str) -> dict:
     return {"ok": ok, "message": message}
 
 
+@contextlib.contextmanager
+def _extraction_dir():
+    """A WORK_DIR temp directory that survives a successful unpack and is removed on any
+    failure during it.
+
+    The caller owns the directory once it holds the opened object (zarr maps chunks out
+    of it lazily), so the success path must NOT delete it — but a corrupt archive or a
+    failed `read_zarr` leaves a session that never adopts one, and nothing else knows the
+    name. WORK_DIR is a tmpfs in the shipped compose file and counts toward
+    `manager._effective_mb`, so an orphan permanently shrinks the memory budget: a couple
+    of failed multi-GB loads would 503 every later load until restart."""
+    extract_dir = tempfile.mkdtemp(suffix=".zarr", dir=str(config.WORK_DIR))
+    try:
+        yield extract_dir
+    except BaseException:
+        shutil.rmtree(extract_dir, ignore_errors=True)
+        raise
+
+
 def read_spatialdata_archive(path: str, progress=None):
     """Read a SpatialData zarr store from a bare `.zarr` directory, a `.zarr.zip`,
     or a `.zarr.tar.gz` archive. Returns (sdata, extract_dir, hash_check);
@@ -190,27 +219,27 @@ def read_spatialdata_archive(path: str, progress=None):
     pct)` (optional) reports extraction/read progress; see `create_from_load`."""
     report = progress or (lambda *a, **k: None)
     if path.endswith((".zarr.tar.gz", ".zarr.tgz")):
-        extract_dir = tempfile.mkdtemp(suffix=".zarr", dir=str(config.WORK_DIR))
-        report("Extracting checkpoint…")
-        with tarfile.open(path, "r:gz") as tf:
-            tf.extractall(extract_dir, filter="data")
-        report("Reading data tables…")
-        return sd.read_zarr(_zarr_root(extract_dir)), extract_dir, None
-    if path.endswith(".zarr.zip") or (os.path.isfile(path) and zipfile.is_zipfile(path)):
-        extract_dir = tempfile.mkdtemp(suffix=".zarr", dir=str(config.WORK_DIR))
-        expected = _expected_content_hash(path)
-        if expected is None:
+        with _extraction_dir() as extract_dir:
             report("Extracting checkpoint…")
-            with zipfile.ZipFile(path) as zf:
-                zf.extractall(extract_dir)
-            hash_check = None
-        else:
-            # Auto-named checkpoint: recompute the embedded content hash while
-            # unzipping (same sorted-arcname + bytes scheme as `_zip_dir`), so the
-            # verification costs no extra read pass over the archive.
-            hash_check = _extract_zip_verifying(path, extract_dir, expected, report)
-        report("Reading data tables…")
-        return sd.read_zarr(_zarr_root(extract_dir)), extract_dir, hash_check
+            with tarfile.open(path, "r:gz") as tf:
+                tf.extractall(extract_dir, filter="data")
+            report("Reading data tables…")
+            return sd.read_zarr(_zarr_root(extract_dir)), extract_dir, None
+    if path.endswith(".zarr.zip") or (os.path.isfile(path) and zipfile.is_zipfile(path)):
+        with _extraction_dir() as extract_dir:
+            expected = _expected_content_hash(path)
+            if expected is None:
+                report("Extracting checkpoint…")
+                with zipfile.ZipFile(path) as zf:
+                    zf.extractall(extract_dir)
+                hash_check = None
+            else:
+                # Auto-named checkpoint: recompute the embedded content hash while
+                # unzipping (same sorted-arcname + bytes scheme as `_zip_dir`), so the
+                # verification costs no extra read pass over the archive.
+                hash_check = _extract_zip_verifying(path, extract_dir, expected, report)
+            report("Reading data tables…")
+            return sd.read_zarr(_zarr_root(extract_dir)), extract_dir, hash_check
     report("Reading data tables…")
     return sd.read_zarr(path), None, None
 
@@ -969,7 +998,10 @@ def _row_group_rows(n: int) -> int:
 
 def _has_covering(path: str) -> bool:
     import pyarrow.parquet as pq
-    geo = pq.ParquetFile(path).metadata.metadata.get(b"geo")
+    # `.metadata.metadata` is None for a parquet carrying no key-value metadata — the
+    # plain-write case this predicate exists to detect — so the `or {}` is what makes it
+    # answer False instead of raising AttributeError. Same guard as _parquet_row_labels.
+    geo = (pq.ParquetFile(path).metadata.metadata or {}).get(b"geo")
     if not geo:
         return False
     parsed = json.loads(geo)
@@ -1354,7 +1386,7 @@ def _level_dirs(d: Path) -> list[Path]:
 
 
 def image_levels(sdata, name: str, stores: dict[str, str] | None = None) -> list[dict]:
-    """Per pyramid level of one image, finest first: `imaging._levels_meta`'s index and
+    """Per pyramid level of one image, finest first: `imaging.image_levels`'s index and
     native pixel dims plus the `size_mb` that level contributes to a written checkpoint.
     A single-scale image reports one level.
 
@@ -1363,7 +1395,7 @@ def image_levels(sdata, name: str, stores: dict[str, str] | None = None) -> list
     from shape and dtype. Summed over the levels they come to that function's whole-
     element number, so the save dialog can subtract dropped levels from the total."""
     from .. import imaging
-    meta = imaging._levels_meta(sdata, name)
+    meta = imaging.image_levels(sdata, name)
     d = _element_dir(sdata, "images", name, stores)
     dirs = _level_dirs(d) if d is not None else []
     # A store written for a different pyramid than the one in memory (a raster rebuilt

@@ -4,6 +4,7 @@ import {
   defaultFill,
   defaultStroke,
   fetchWhenIdle,
+  formatError,
   isSpatialDisplay,
   type DataSource,
   type DisplaySpec,
@@ -98,7 +99,7 @@ function persistShapeJob(
       bumpShapePending(shapeId, -1);
       useAppStore.getState().pushNotification({
         kind: 'error',
-        message: `${label}: ${err instanceof Error ? err.message : String(err)}`,
+        message: `${label}: ${formatError(err)}`,
       });
       return false;
     });
@@ -405,7 +406,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     postPresence(get().activeSessionId, clientName())
       .then(({ sessions }) => set({ presence: sessions }))
       .catch((err) => get().pushNotification({
-        kind: 'error', message: `Rename failed: ${err instanceof Error ? err.message : String(err)}`,
+        kind: 'error', message: `Rename failed: ${formatError(err)}`,
       }));
   },
 
@@ -415,13 +416,23 @@ export const useAppStore = create<AppStore>((set, get) => ({
   // a half-drawn polygon belongs to the old session's coordinates, and the running-job
   // set is per-session (only the active session's jobs are tracked).
   setActiveSessionId: (id) =>
-    set((s) =>
-      id === s.activeSessionId
-        ? { activeSessionId: id }
-        : { activeSessionId: id, isolatedCategory: null, hiddenCells: null, drawPolygons: [], drawRing: [],
-            activeJobIds: new Set(), shapeAnnotations: [], activeShapeTool: null,
-            selectedShapeId: null, draftVertices: [] }
-    ),
+    set((s) => {
+      if (id === s.activeSessionId) return { activeSessionId: id };
+      // The module-scope maps hold per-session data too, and nothing else clears them:
+      // a locally-labelled column is keyed by field path (`obs:<col>`), so switching to
+      // another session or checkpoint reused the PREVIOUS dataset's codes array under the
+      // same key — labels landing on the wrong cells, or dropped when the new table is
+      // larger. The in-flight shape bookkeeping is equally stale once the session is gone.
+      localRegionColumns.clear();
+      shapeJobShape.clear();
+      pendingShapeJobs.clear();
+      // sessionState belongs to the session being left: useSession only clears it when the
+      // id goes null, so without this the tree renders the previous session's displays and
+      // fields for a frame while dataSource already points at the new id.
+      return { activeSessionId: id, sessionState: null, isolatedCategory: null, hiddenCells: null,
+               drawPolygons: [], drawRing: [], activeJobIds: new Set(), shapeAnnotations: [],
+               activeShapeTool: null, selectedShapeId: null, draftVertices: [] };
+    }),
   checkpointIndex: null,
   setCheckpointIndex: (index) => set({ checkpointIndex: index }),
   sessionState: null,
@@ -448,7 +459,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       if (err instanceof ApiError && err.status === 503) return;
       get().pushNotification({
         kind: 'error',
-        message: `Failed to refresh session: ${err instanceof Error ? err.message : String(err)}`,
+        message: `Failed to refresh session: ${formatError(err)}`,
       });
     }
   },
@@ -681,7 +692,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       if (err instanceof ApiError && err.status === 503) return;
       get().pushNotification({
         kind: 'error',
-        message: `Failed to refresh annotations: ${err instanceof Error ? err.message : String(err)}`,
+        message: `Failed to refresh annotations: ${formatError(err)}`,
       });
     }
   },
@@ -801,18 +812,28 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setCirroAuth: (a) => set({ cirroAuth: a }),
   cirroUploads: [],
   setCirroUploads: (u) => set({ cirroUploads: u }),
+  // Guards itself rather than relying on each caller: the `cirro.upload.state` SSE
+  // handler calls this as `void refreshCirroUploads()`, so an expired Cirro token made
+  // getCirroUploads reject into an unhandled promise rejection with nothing on screen.
   refreshCirroUploads: async () => {
     const previous = new Map(get().cirroUploads.map((u) => [u.id, u.state]));
-    const { uploads } = await getCirroUploads();
-    for (const u of uploads) {
-      if (previous.get(u.id) === u.state) continue;
-      if (u.state === 'completed') {
-        get().pushNotification({ kind: 'info', message: `Uploaded to Cirro as "${u.dataset_name}".` });
-      } else if (u.state === 'failed') {
-        get().pushNotification({ kind: 'error', message: `Cirro upload failed: ${u.error}` });
+    try {
+      const { uploads } = await getCirroUploads();
+      for (const u of uploads) {
+        if (previous.get(u.id) === u.state) continue;
+        if (u.state === 'completed') {
+          get().pushNotification({ kind: 'info', message: `Uploaded to Cirro as "${u.dataset_name}".` });
+        } else if (u.state === 'failed') {
+          get().pushNotification({ kind: 'error', message: `Cirro upload failed: ${u.error}` });
+        }
       }
+      set({ cirroUploads: uploads });
+    } catch (err: unknown) {
+      get().pushNotification({
+        kind: 'error',
+        message: `Could not refresh Cirro uploads: ${formatError(err)}`,
+      });
     }
-    set({ cirroUploads: uploads });
   },
   loadProgress: null,
   setLoadProgress: (p) => set({ loadProgress: p }),

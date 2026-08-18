@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from '../store/sessionStore';
-import { getBundledRecipes, importRecipe, getSession, preflightRecipe, type BundledRecipe } from '../api';
+import { getBundledRecipes, importRecipe, preflightRecipe, type BundledRecipe } from '../api';
 import type { FunctionEntry } from '../types';
 import { formatError, reportError } from '@cirrobio/spatial-viewer';
 import { ModalOverlay, ModalHeader } from './DetailModal';
@@ -34,7 +34,7 @@ function recipeAsFn(recipe: BundledRecipe): FunctionEntry {
 }
 
 export default function RecipeGallery({ sessionId, onClose }: Props) {
-  const { setSessionState, pushNotification, sessionState } = useAppStore();
+  const { refreshSessionState, pushNotification, sessionState } = useAppStore();
   // As in FunctionPicker: the gallery is only offered to a viewer who can edit, but the
   // lock can change hands while it is open, and both Run and Stage write to the session.
   const { reason: editBlockedReason } = useEditGate();
@@ -84,7 +84,7 @@ export default function RecipeGallery({ sessionId, onClose }: Props) {
       // mode enqueues jobs whose job.queued events insert the rows live, and a
       // refetch here would block on the session read lock until the first step
       // finishes.
-      if (mode === 'stage') setSessionState(await getSession(sessionId));
+      if (mode === 'stage') await refreshSessionState(sessionId);
       pushNotification({
         kind: 'info',
         message: mode === 'stage'

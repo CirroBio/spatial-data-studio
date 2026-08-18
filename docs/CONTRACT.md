@@ -84,8 +84,8 @@ ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_cate
 | POST | `/api/sessions/{id}/save` | `{folder?, prefix?, name?, path?, include?, levels?, figures?}` | `{job_id, path}` (queued save). `folder` is a directory under `DATA_DIR` (relative to it or absolute, created if absent) and `prefix` the filename stem the `-<content hash>` suffix is appended to (default: the session's current name) — **400** for a folder outside `DATA_DIR`, or a prefix that is blank, dot-prefixed or holds a path separator. `name` renames the session and is recorded in the file as `app_state.name`, which a later load adopts in place of the filename; **400** if blank. `path` is the verbatim escape hatch — written as given, no hash suffix — and **400** if combined with `folder`/`prefix`. `figures` is the list of drawn-plot ids whose rendered figures the file should carry — omit for all of them, `[]` for none; **400** for an id that isn't a drawn plot |
 | GET  | `/api/sessions/{id}/points-transform` | — | `{affine:[a,b,c,d,e,f], element}` (points→global affine of the active table's region element) |
 | POST | `/api/sessions/{id}/points-transform` | `{affine:[a,b,c,d,e,f], path?}` | `{job_id, path}` (sets the affine and persists to disk) |
-| POST | `/api/sessions/{id}/snapshot` | `{viewport:{target,zoom}, width_px, height_px, dpi, formats:["pdf"\|"png"], label?, display_id?, include_minimap?}` | `{status,name,formats,rasterized_points}` — renders + writes `<base>.figure.{pdf,png,thumb.png,json}` in DATA_DIR |
-| POST | `/api/sessions/{id}/snapshot/preview` | same as snapshot | `image/png` bytes — a low-res preview of the framing; writes nothing |
+| POST | `/api/sessions/{id}/snapshot` | `{viewport:{target,zoom}, width_px, height_px, dpi, formats:["pdf"\|"png"], label?, display_id?, include_minimap?}` | `{status,name,formats,rasterized_points}` — renders + writes `<base>.figure.{pdf,png,thumb.png,json}` in DATA_DIR; 400 on an unrenderable spec, 503 (retryable) if a compute holds the write lock past `READ_LOCK_TIMEOUT_S` |
+| POST | `/api/sessions/{id}/snapshot/preview` | same as snapshot | `image/png` bytes — a low-res preview of the framing; writes nothing; same 400/503 as the save above |
 | GET  | `/api/snapshots` | — | `{snapshots:[{name,base,label,created,kind,dataset,formats,output,thumbnail_url,metadata}]}` |
 | GET  | `/api/snapshots/{name}/file?fmt=pdf\|png` | — | the rendered file (`application/pdf` / `image/png`) |
 | GET  | `/api/snapshots/{name}/thumbnail` | — | gallery thumbnail (`image/png`) |
@@ -173,7 +173,7 @@ for 20 s drops out and releases its lock. Full rules: DESIGN §16.5.
 ```
 
 ### Session source on create
-- read:  `{kind:"read", namespace:"read", function:"visium", params:{path:"..."}}` — any `path`/`input`/`image_path`/`alignment_file` param must resolve under `DATA_DIR`, else 400.
+- read:  `{kind:"read", namespace:"read", function:"visium", params:{path:"..."}}` — any `path`/`input`/`image_path`/`alignment_file` param must resolve under `DATA_DIR`, else 400. `namespace` is **required** and must be `read` (squidpy) or `io` (spatialdata-io): several reader names exist in both, so there is no safe default. The same containment check applies to a reader re-run on an already-open session (`POST /jobs`, `/jobs/stage`, `/pending/{id}`, `/recipe/run`, and the MCP `run_function`/`create_session` tools), not only at create time.
 - load:  `{kind:"load", path:"/data/visium_hne.zarr"}` — `path` must resolve under `DATA_DIR` (the same allowlist as `/api/fs/browse`), else 400. `POST /api/sessions/{id}/save`'s `path` (and `folder`) must also resolve under `DATA_DIR`, else 400.
 
 ### Save `include`

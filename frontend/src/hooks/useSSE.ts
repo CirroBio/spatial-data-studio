@@ -305,6 +305,7 @@ export function useSSE(enabled = true): void {
     // backend: reads the event ring, never a session lock.
     let pollTimer: ReturnType<typeof setTimeout> | undefined;
     let stopped = false;
+    let polling = false;
 
     async function pollOnce() {
       try {
@@ -320,7 +321,12 @@ export function useSSE(enabled = true): void {
     }
 
     es.onerror = () => {
-      if (es.readyState === EventSource.CLOSED && pollTimer === undefined && !stopped) {
+      // `polling` is set synchronously here, whereas pollTimer is only assigned in
+      // pollOnce's `finally` — so two onerror events arriving while the first poll is
+      // still in flight both saw pollTimer === undefined and started independent loops
+      // that duplicated every handler and fought over `cursor`.
+      if (es.readyState === EventSource.CLOSED && !polling && !stopped) {
+        polling = true;
         void pollOnce();
       }
     };

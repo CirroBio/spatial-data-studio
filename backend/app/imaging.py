@@ -287,7 +287,15 @@ def _affine_xy(elem, sdata):
         return None
 
 
-def _apply_bbox(a: np.ndarray, bbox) -> list[float]:
+def bbox_aabb(a: np.ndarray, bbox) -> list[float]:
+    """`bbox` (x0, y0, x1, y1) pushed through the 3x3 affine `a`, as the axis-aligned
+    bounding box of the result.
+
+    All four corners are transformed, not just two: `a` may rotate or shear, in which case
+    the opposite-corner pair alone understates the extent. Shared by every place that
+    converts a rectangle between coordinate spaces — image manifests here, the shapes
+    spatial query (transport/geometry), and the figure renderer (snapshots) — since a fix
+    to the corner handling has to land in one place."""
     x0, y0, x1, y1 = bbox
     corners = np.array([[x0, y0, 1], [x1, y0, 1], [x0, y1, 1], [x1, y1, 1]]).T
     p = a @ corners
@@ -315,7 +323,7 @@ def _global_extent(sdata, element) -> list[float]:
         a = _affine_xy(sdata.images[element], sdata)
         if a is None:
             a = np.eye(3)
-        return _apply_bbox(a, [0.0, 0.0, float(w), float(h)])
+        return bbox_aabb(a, [0.0, 0.0, float(w), float(h)])
 
 
 def pixel_to_world(sdata, element, table=None) -> np.ndarray:
@@ -358,7 +366,7 @@ def pixel_to_world(sdata, element, table=None) -> np.ndarray:
 
     best_a, best_iou = np.eye(3), -1.0
     for a in candidates:
-        score = _iou(_apply_bbox(a, spot_bbox), global_ext)
+        score = _iou(bbox_aabb(a, spot_bbox), global_ext)
         if score > best_iou:
             best_iou, best_a = score, a
     if best_iou <= 0:
@@ -368,11 +376,11 @@ def pixel_to_world(sdata, element, table=None) -> np.ndarray:
 
 def _world_bounds(m: np.ndarray, width: int, height: int) -> list[float]:
     """Axis-aligned bounds [x0, y0, x1, y1] of the full image under transform `m`."""
-    return _apply_bbox(m, [0.0, 0.0, float(width), float(height)])
+    return bbox_aabb(m, [0.0, 0.0, float(width), float(height)])
 
 
 # ---- public info + rendering -----------------------------------------------
-def _levels_meta(sdata, element) -> list[dict]:
+def image_levels(sdata, element) -> list[dict]:
     """Per pyramid level: index + native pixel (width=x, height=y), finest first."""
     el = sdata.images[element]
     if not _is_multiscale(el):
@@ -404,7 +412,7 @@ def image_info(sdata, element, table=None) -> dict:
             "channel_names": channel_names(sdata.images[element]),
             "bounds": _world_bounds(m, w, h),
             "pixel_to_world": affine6,
-            "levels": _levels_meta(sdata, element),
+            "levels": image_levels(sdata, element),
             "tile_size": TILE_SIZE,
             "contrast_limits": [[0.0, hi] for hi in channel_contrast_limits(sdata, element)],
             "contrast_range": [[lo, hi] for lo, hi in channel_value_range(sdata, element)],

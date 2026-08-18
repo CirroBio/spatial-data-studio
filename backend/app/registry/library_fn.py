@@ -116,7 +116,15 @@ class LibraryFunction(Function):
             spec = by_name.get(name)
             if value is None or value == "" or value == []:
                 continue  # unset -> let the library's own default apply
-            if spec is not None and adata is not None:
+            if spec is None:
+                # A name this function does not take (a recipe written against another
+                # version, a hand-built MCP descriptor). Rejecting it here names the
+                # parameter; passing it through surfaced as a bare TypeError from inside
+                # scanpy, which says nothing about which key was wrong.
+                raise ValueError(
+                    f"unknown parameter '{name}' for {self.key}; expected one of: "
+                    f"{', '.join(sorted(by_name)) or '(none)'}")
+            if adata is not None:
                 self._validate_reference(spec, value, adata)
             bound[name] = value
         for p in self.params:

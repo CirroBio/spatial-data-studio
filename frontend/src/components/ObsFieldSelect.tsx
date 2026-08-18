@@ -1,5 +1,6 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import type { ObsField } from '@cirrobio/spatial-viewer';
+import { useClickOutside } from '../hooks/useClickOutside';
 
 interface Props {
   fields: ObsField[];
@@ -30,14 +31,7 @@ export default function ObsFieldSelect({
   const [query, setQuery] = useState('');
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, [open]);
+  useClickOutside(wrapRef, () => setOpen(false), open);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

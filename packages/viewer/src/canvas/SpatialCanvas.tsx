@@ -16,7 +16,7 @@ import { geometryFromDrag, applyHandleDrag, translateGeometry } from '../lib/sha
 import { useArrowPositions } from './useArrowPositions';
 import { useVivImageLayer } from './useVivImageLayer';
 import { useCanvasViewState, shapesFetchZoomThreshold } from './useCanvasViewState';
-import { ZOOM_LIMITS, ZOOM_STEP } from './viewFit';
+import { ZOOM_LIMITS, ZOOM_STEP, effectiveZoom } from './viewFit';
 import { useSpotColors, arrowToColorSource } from './useSpotColors';
 import { Matrix4 } from '@math.gl/core';
 import { worldToPixelAffine, affineScale, wx, wy } from './imageAffine';
@@ -36,7 +36,7 @@ import { CANVAS_PLACEHOLDER, CANVAS_ROOT } from './overlayStyles';
 import { SPATIAL_ENCODING_DEFAULTS, showImageDefault } from '../defaults';
 
 // Animate zoom-button clicks so the level eases to the target instead of snapping.
-// Matches the axes deck's OrthographicController interpolates for its own transitions.
+// Matches the interpolation deck's own OrthographicController uses for its transitions.
 const ZOOM_TRANSITION = new LinearInterpolator(['target', 'zoomX', 'zoomY']);
 const ZOOM_TRANSITION_MS = 250;
 
@@ -282,7 +282,7 @@ export default function SpatialCanvas({
       return;
     }
     const t = viewState.target as number[];
-    const zoom = (Array.isArray(viewState.zoom) ? viewState.zoom[0] : viewState.zoom) ?? 0;
+    const zoom = effectiveZoom(viewState);
     if (
       Math.abs(t[0] - vp.target[0]) < 1e-6 &&
       Math.abs(t[1] - vp.target[1]) < 1e-6 &&
@@ -368,7 +368,7 @@ export default function SpatialCanvas({
 
     if (activeShapeTool === 'text') {
       const vs = viewStateRef.current;
-      const z = vs ? (Array.isArray(vs.zoom) ? vs.zoom[0] : vs.zoom) ?? 0 : 0;
+      const z = effectiveZoom(vs);
       // 2^-z is canvas units per screen px — image-pixel units when an image is
       // shown — so divide by radiusScale (px per world unit) to get the WORLD units
       // per screen px textGeometryAt expects (text renders at fontSize * radiusScale).
@@ -572,7 +572,11 @@ export default function SpatialCanvas({
             .map((s) => s.name),
         );
       })
-      .catch(() => { if (!stale) setPolygonElements([]); });
+      .catch((err: unknown) => {
+        if (stale) return;
+        setPolygonElements([]);
+        reportError('Could not list boundary elements', err);
+      });
     return () => { stale = true; };
   }, [source, coordsVersion]);
 
@@ -584,7 +588,7 @@ export default function SpatialCanvas({
     return polygonElements[0] ?? null;
   }, [display.encoding.shapes_layer, polygonElements]);
 
-  const zoom = viewState ? (Array.isArray(viewState.zoom) ? viewState.zoom[0] : viewState.zoom) ?? 0 : 0;
+  const zoom = effectiveZoom(viewState);
 
   // Shapes overlay: cell-boundary fills drawn on top of the points once zoomed in.
   // The outlines are viewport-culled and the backend serves nothing when the viewport

@@ -26,6 +26,7 @@ import pyarrow.ipc as ipc
 import shapely
 from shapely.affinity import affine_transform
 
+from .. import imaging
 from ..sessions import transform
 
 _log = logging.getLogger(__name__)
@@ -100,11 +101,8 @@ def clipped_polygons(sdata, table, element: str, bbox, limit: int | None = None)
         raise KeyError(f"shapes element '{element}' is not polygonal")
 
     m = transform.matrix3x3(transform.get_affine6(sdata, table))
-    minv = np.linalg.inv(m)
-    wx0, wy0, wx1, wy1 = bbox
-    corners = np.array([[wx0, wy0, 1.0], [wx1, wy0, 1.0], [wx0, wy1, 1.0], [wx1, wy1, 1.0]]).T
-    pc = minv @ corners  # world bbox -> intrinsic (M may rotate: take the corner AABB)
-    intrinsic_bbox = (float(pc[0].min()), float(pc[1].min()), float(pc[0].max()), float(pc[1].max()))
+    # world bbox -> intrinsic; M may rotate, so this is the transformed corners' AABB.
+    intrinsic_bbox = tuple(imaging.bbox_aabb(np.linalg.inv(m), bbox))
 
     hits = sorted(gdf.sindex.intersection(intrinsic_bbox))
     if limit is not None and len(hits) > limit:
@@ -131,7 +129,7 @@ def polygons_geoarrow(sdata, table, element: str, bbox, limit: int | None = None
     column, in the coords world space. See `clipped_polygons` for the query."""
     import geoarrow.pyarrow as ga
 
-    geoms, cell_index = clipped_polygons(sdata, table, element, bbox, limit)
+    geoms, cell_indices = clipped_polygons(sdata, table, element, bbox, limit)
     if len(geoms) == 0:
         table_out = pa.table({"geometry": _empty_geoarrow(sdata.shapes[element]),
                               "cell_index": pa.array([], type=pa.int32())})
@@ -140,7 +138,8 @@ def polygons_geoarrow(sdata, table, element: str, bbox, limit: int | None = None
     geoms = shapely.transform(np.asarray(geoms, dtype=object),
                               lambda coords: np.round(coords, _COORD_DECIMALS), include_z=False)
     geometry = ga.as_geoarrow(ga.array([g.wkb for g in geoms]))
-    table_out = pa.table({"geometry": geometry, "cell_index": pa.array(cell_index, type=pa.int32())})
+    table_out = pa.table({"geometry": geometry,
+                          "cell_index": pa.array(cell_indices, type=pa.int32())})
     return _to_ipc(table_out)
 
 

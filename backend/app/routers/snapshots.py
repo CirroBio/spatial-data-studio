@@ -1,5 +1,6 @@
 """Figure-snapshot lifecycle (render/save, preview, list, download, delete) and
 direct checkpoint `.zarr.zip` serving for the in-SPA zarrita viewer."""
+import contextlib
 import os
 
 from fastapi import APIRouter, HTTPException, Response
@@ -12,13 +13,28 @@ from ..deps import _session, _writable_session, _in_executor
 router = APIRouter()
 
 
+@contextlib.contextmanager
+def _snapshot_errors():
+    """Map a render's failure modes onto status codes, shared by save and preview — the
+    two run the same `_render_figure` and previously disagreed, the save endpoint letting
+    a bad `obsm_key` escape as a 500 where the preview answered 400. A read-lock timeout is
+    the same retryable 503 every other read path returns (deps._read_locked)."""
+    try:
+        yield
+    except TimeoutError:
+        raise HTTPException(503, "session busy: compute in progress, retry")
+    except (ValueError, KeyError) as e:
+        raise HTTPException(400, str(e))
+
+
 @router.post("/api/sessions/{sid}/snapshot")
 async def save_snapshot_endpoint(sid: str, body: dict):
     """Render and save a high-quality figure snapshot (vector PDF and/or raster PNG) of
     a display. body: {viewport:{target,zoom}, width_px, height_px, dpi,
     formats:['pdf'|'png'], label?, display_id?, include_minimap?}."""
     sess = _writable_session(sid)
-    result = await _in_executor(snapshots.save_snapshot, sess, body)
+    with _snapshot_errors():
+        result = await _in_executor(snapshots.save_snapshot, sess, body)
     if result.get("status") == "failed":
         raise HTTPException(400, result.get("error", "snapshot failed"))
     return result
@@ -29,10 +45,8 @@ async def snapshot_preview_endpoint(sid: str, body: dict):
     """A low-cost PNG preview of the snapshot framing for the export modal. Same body as
     the save endpoint; renders small and returns image bytes, writing nothing."""
     sess = _session(sid)
-    try:
+    with _snapshot_errors():
         png = await _in_executor(snapshots.render_preview, sess, body)
-    except (ValueError, KeyError) as e:
-        raise HTTPException(400, str(e))
     return Response(content=png, media_type="image/png")
 
 

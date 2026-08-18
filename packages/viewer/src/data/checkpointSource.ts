@@ -145,6 +145,37 @@ async function readNumeric(root: Root, path: string): Promise<Float64Array> {
   return Float64Array.from(chunk.data as ArrayLike<number>, Number);
 }
 
+// True for a zarr array holding strings rather than numbers. AnnData writes an
+// object-dtype (plain string) obs column as such an ARRAY, while a pandas Categorical
+// becomes a group of `codes` + `categories` — so array-ness alone does not mean numeric,
+// and reading one of these through readNumeric yields an all-NaN column. The backend
+// treats object dtype as categorical too (`arrow._is_categorical`), so this keeps the
+// serverless viewer and the live route agreeing on the same column.
+function isStringArray(arr: { dtype?: unknown }): boolean {
+  const dtype = String(arr.dtype ?? '');
+  return dtype.startsWith('v2:U') || dtype.startsWith('v2:S') || dtype.startsWith('v2:O')
+    || dtype === 'string' || dtype.startsWith('r*') || /^[<>|]?[USO]\d*$/.test(dtype);
+}
+
+// Codes + levels for a string column, in the order the levels first appear — the shape a
+// categorical read returns, so a plain string column colors like a categorical one.
+function encodeCategories(values: string[]): { codes: Int32Array; categories: string[] } {
+  const categories: string[] = [];
+  const indexOf = new Map<string, number>();
+  const codes = new Int32Array(values.length);
+  for (let i = 0; i < values.length; i++) {
+    const v = values[i];
+    let code = indexOf.get(v);
+    if (code === undefined) {
+      code = categories.length;
+      indexOf.set(v, code);
+      categories.push(v);
+    }
+    codes[i] = code;
+  }
+  return { codes, categories };
+}
+
 // A whole uint8 array — a persisted figure, written as one chunk so this is a single
 // range read of the zip entry.
 async function readBytes(root: Root, path: string): Promise<Uint8Array<ArrayBuffer>> {
@@ -393,20 +424,29 @@ async function deriveFields(
   const obsAttrs = (await readGroupAttrs(root, `tables/${table}/obs`)) ?? {};
   const indexName = (obsAttrs._index as string) ?? '_index';
   const columnOrder = (obsAttrs['column-order'] as string[]) ?? [];
-  // AnnData stores a categorical column as a group (`codes` + `categories`) and a
-  // plain one as an array — the same distinction `arrow.field_kind` makes.
+  // AnnData stores a pandas Categorical as a group (`codes` + `categories`); a plain
+  // column is an array, whose dtype then decides — a STRING array is categorical too
+  // (`arrow._is_categorical` counts object dtype as categorical, and reading one as
+  // numeric produces an all-NaN column). Opening each plain column costs no request:
+  // its metadata is already in the consolidated tree.
   const kindByPath = new Map(contents.map((e) => [e.path.replace(/^\//, ''), e.kind]));
-  const obs: ObsField[] = columnOrder
-    .filter((name) => name !== indexName)
-    .map((name) => ({
-      name,
-      kind: kindByPath.get(`tables/${table}/obs/${name}`) === 'group' ? 'categorical' : 'numeric',
-    }));
+  const obs: ObsField[] = [];
+  for (const name of columnOrder.filter((n) => n !== indexName)) {
+    const path = `tables/${table}/obs/${name}`;
+    if (kindByPath.get(path) === 'group') {
+      obs.push({ name, kind: 'categorical' });
+      continue;
+    }
+    const arr = await zarr.open.v3(root.resolve(path), { kind: 'array' });
+    obs.push({ name, kind: isStringArray(arr) ? 'categorical' : 'numeric' });
+  }
 
   const obsm: ObsmField[] = [];
   for (const name of childrenOf(contents, `tables/${table}/obsm`)) {
     const arr = await zarr.open.v3(root.resolve(`tables/${table}/obsm/${name}`), { kind: 'array' });
-    obsm.push({ name, n_components: arr.shape[1] ?? 0 });
+    // A 1-D obsm array has one component, not zero — `arrow.py` reports 1 for the same
+    // element, and 0 made the picker offer an embedding with no axes to choose.
+    obsm.push({ name, n_components: arr.shape.length > 1 ? arr.shape[1] : 1 });
   }
 
   const images = Object.keys(sidecar.images);
@@ -442,7 +482,9 @@ async function readObsm(
 ): Promise<Table> {
   const arr = await zarr.open.v3(root.resolve(`tables/${table}/obsm/${key}`), { kind: 'array' });
   const chunk = await zarr.get(arr);
-  const [n, d] = chunk.shape;
+  // Destructuring a 1-D shape left `d` undefined and the table came back empty; treat such
+  // an array as a single d0 column, matching deriveFields' n_components.
+  const [n, d = 1] = chunk.shape;
   const flat = chunk.data as ArrayLike<number>;
   const columns: Record<string, Float32Array> = {};
   for (let axis = 0; axis < d; axis++) {
@@ -478,6 +520,13 @@ async function readObs(root: Root, table: string, key: string): Promise<Table> {
   if (node.kind === 'group') {
     const categories = await readStrings(root, `${path}/categories`);
     const codes = Int32Array.from(await readNumeric(root, `${path}/codes`));
+    return withMetadata(makeTable({ code: codes }), new Map([
+      ['kind', 'categorical'],
+      ['categories', JSON.stringify(categories)],
+    ]));
+  }
+  if (isStringArray(node)) {
+    const { codes, categories } = encodeCategories(await readStrings(root, path));
     return withMetadata(makeTable({ code: codes }), new Map([
       ['kind', 'categorical'],
       ['categories', JSON.stringify(categories)],

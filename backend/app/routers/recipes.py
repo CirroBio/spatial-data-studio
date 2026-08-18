@@ -4,7 +4,7 @@ from fastapi import APIRouter
 
 from .. import recipes
 from ..registry.introspect import REGISTRY
-from ..deps import _session, _writable_session
+from ..deps import _session, _writable_session, _bad_request
 
 router = APIRouter()
 
@@ -29,8 +29,9 @@ async def run_recipe(sid: str, recipe: dict):
     references filled in); an ad-hoc {steps} import resolves to itself."""
     sess = _writable_session(sid)
     mode = recipe.get("mode") or "run"
-    steps = recipes.resolve_steps(recipe, recipe.get("param_values"))
-    n = recipes.run_steps(sess, steps, mode)
+    with _bad_request():
+        steps = recipes.resolve_steps(recipe, recipe.get("param_values"))
+        n = recipes.run_steps(sess, steps, mode)
     return {"staged" if mode == "stage" else "queued": n}
 
 

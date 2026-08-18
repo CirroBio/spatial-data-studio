@@ -9,6 +9,7 @@ import type { GeoArrowPolygonLayerProps } from '@geoarrow/deck.gl-layers';
 import { useDataSource } from '../data/context';
 import type { DataSource } from '../data/types';
 import { wx, wy, type Affine } from './imageAffine';
+import { effectiveZoom } from './viewFit';
 
 // The boundary fetch, once a source is known to provide one. Neither implementation
 // closes over `this`, so detaching it from the source is safe.
@@ -91,7 +92,7 @@ function buildFillColors(table: arrow.Table, colors: Uint8Array): arrow.Vector {
 }
 
 function viewportBbox(vs: OrthographicViewState, size: { width: number; height: number }): Bbox {
-  const zoom = Array.isArray(vs.zoom) ? vs.zoom[0] : vs.zoom ?? 0;
+  const zoom = effectiveZoom(vs);
   const target = vs.target as number[];
   const unitsPerPx = Math.pow(2, -zoom);
   const hw = (size.width / 2) * unitsPerPx * (1 + BBOX_PAD);
@@ -152,7 +153,7 @@ export function usePolygonBbox(
   const lastLayer = useRef<Layer | null>(null);
   const lastIdentity = useRef<string>('');
 
-  const zoom = viewState ? (Array.isArray(viewState.zoom) ? viewState.zoom[0] : viewState.zoom) ?? 0 : 0;
+  const zoom = effectiveZoom(viewState);
   const target = viewState?.target as number[] | undefined;
   const tx = target ? target[0] : 0;
   const ty = target ? target[1] : 0;

@@ -4,6 +4,7 @@ serial (§6.2). A read/write lock keeps async data serving off a half-mutated
 object (§20.2).
 """
 import contextlib
+import os
 import queue
 import shutil
 import threading
@@ -17,6 +18,7 @@ from . import appstate
 from .adapter import ADAPTER
 from ..config import within_data_dir
 from ..registry.introspect import REGISTRY
+from ..registry.reader_paths import validate_reader_params
 from ..transport import livelog
 from ..transport.sse import BUS
 
@@ -207,7 +209,7 @@ class Session:
         # acquire — so it cannot deadlock against the compute write lock.
         self._book = threading.Lock()
         self._queue: "queue.Queue" = queue.Queue()
-        self._jobs = {}                 # job_id -> {descriptor, status, kind, started}
+        self._jobs = {}                 # job_id -> {kind, descriptor, status}
         self._failed_logs = {}          # job_id -> log (FAILED vanish from history; log still fetchable)
         # plot_id -> {"svg":bytes,"pdf":bytes,"png":bytes} for the plots THIS session
         # drew; `figure`/`figure_index` fall back to the ones a loaded checkpoint carries.
@@ -293,9 +295,23 @@ class Session:
                                    "descriptor": descriptor, "position": self._queue.qsize(),
                                    "effect_class": ec})
 
+    def _guard_reader_paths(self, descriptor: dict):
+        """Containment-check a read-effect descriptor's paths before it is recorded.
+
+        Session creation validates its own descriptor (manager.create_from_read), but a
+        reader re-run on an already-open session is a supported flow (see the re-import
+        note in _run_call) and arrives here instead — from /jobs, /jobs/stage,
+        /recipe/run and the MCP run_function tool. Without this, any of those reads a
+        store from outside DATA_DIR and adopts it into the session. Raises RuntimeError,
+        which the routes map to 400."""
+        fn = self.manager.registry.get(f"{descriptor['namespace']}.{descriptor['function']}")
+        if fn is not None and fn.effect_class == "read":
+            validate_reader_params(descriptor.get("params", {}))
+
     def enqueue_descriptor(self, descriptor: dict) -> str:
         """Run-now fast path: record + submit immediately. A failed job stays in
         history for the user to inspect or delete (audit-log model, DESIGN §6.1)."""
+        self._guard_reader_paths(descriptor)
         entry_id = str(uuid.uuid4())
         ec, rec = self._make_record(descriptor, entry_id, "queued")
         self._collection(ec).append(rec)
@@ -304,6 +320,7 @@ class Session:
 
     def stage_descriptor(self, descriptor: dict) -> str:
         """Stage a PENDING step: visible + editable, not submitted (spec §5.4)."""
+        self._guard_reader_paths(descriptor)
         entry_id = str(uuid.uuid4())
         ec, rec = self._make_record(descriptor, entry_id, "pending")
         self._collection(ec).append(rec)
@@ -333,6 +350,10 @@ class Session:
         for ec in ("compute", "plot"):
             rec = self._find_record(entry_id, ec)
             if rec and rec["status"] == "pending":
+                # Re-check: this rewrites the params run_pending will later execute, so
+                # a staged step validated at stage time could otherwise be edited into
+                # an out-of-root path.
+                self._guard_reader_paths({**self._descriptor_of(rec), "params": params})
                 rec["params"] = params
                 if ec == "plot":
                     rec["references"] = self._references(params)
@@ -350,6 +371,10 @@ class Session:
                         return False
                     coll.pop(i)
                     self.plot_figures.pop(entry_id, None)
+                    # Drop the worker-side bookkeeping too, or GET /jobs/{id} and
+                    # /jobs/{id}/log keep answering for an entry the user deleted.
+                    self._jobs.pop(entry_id, None)
+                    self._failed_logs.pop(entry_id, None)
                     return True
         return False
 
@@ -445,7 +470,6 @@ class Session:
         except Exception as e:  # worker must never die
             self._fail(job_id, kind, str(e))
         finally:
-            self._jobs.get(job_id, {}).pop("started", None)
             self._prune_jobs()
 
     _TERMINAL_JOB_CAP = 200
@@ -487,7 +511,14 @@ class Session:
         if new_cache is not None:
             self.raster_cache_dir = new_cache
             self.raster_cache_mb = rasters.cache_size_mb(new_cache)
-            if prev_cache and prev_cache != new_cache:
+            # A PARTIAL rebuild is the common case for an in-place facet merge: only the
+            # changed element moves into new_cache while the rest keep the store dir
+            # normalize_rasters carried forward from `known_stores` — which is prev_cache.
+            # Deleting it then dangles those refs into zarr fill values, i.e. the silent
+            # black canvas described above, so keep it while anything still points inside.
+            if prev_cache and prev_cache != new_cache and not any(
+                    str(s) == prev_cache or str(s).startswith(prev_cache + os.sep)
+                    for s in new_stores.values()):
                 shutil.rmtree(prev_cache, ignore_errors=True)
 
     def _run_call(self, job_id, kind, descriptor):
@@ -749,7 +780,7 @@ class Session:
         its figures through. Deselecting a figure changes what the FILE carries, not what
         the open session can still show."""
         from ..persistence.store import figure_index, read_figure
-        drawn = {p["id"] for p in self.app_state["plots"] if p["status"] == "drawn"}
+        drawn = self.drawn_plot_ids()
         for pid, sizes in figure_index(self.extract_dir).items():
             if pid in keeping or pid not in drawn:
                 continue
@@ -949,7 +980,13 @@ class Session:
         is in app_state["plots"], not compute_history, and redraw_plot/delete_entry
         both refuse queued/running records, so a plot left there is stuck forever."""
         coll_key = "plots" if kind == "plot" else "compute_history"
-        self.app_state[coll_key] = [r for r in list(self.app_state[coll_key]) if r["id"] != job_id]
+        # Mutate the list in place instead of rebinding app_state[coll_key]: enqueue_
+        # descriptor/stage_descriptor append from the event-loop thread without _book, so
+        # a rebind concurrent with a submit drops the just-appended record — the job still
+        # runs, but _set_status/_find_record no longer see it and the row the frontend
+        # added from `job.queued` never reaches a terminal status.
+        coll = self.app_state[coll_key]
+        coll[:] = [r for r in coll if r["id"] != job_id]
 
     def _references(self, params: dict) -> list:
         refs = []
@@ -986,6 +1023,12 @@ class Session:
         from ..persistence.store import read_figure
         return read_figure(self.extract_dir or self.store_path, plot_id, fmt)
 
+    def drawn_plot_ids(self) -> set[str]:
+        """The ids of the plots currently `drawn` — the set every figure path filters on
+        (figure_index, _hold_dropped_figures, the save route's figure validation). An
+        `invalidated` plot's bytes still exist but no longer match the data."""
+        return {p["id"] for p in self.app_state["plots"] if p["status"] == "drawn"}
+
     def figure_index(self) -> dict[str, dict[str, int]]:
         """`{plot_id: {format: byte length}}` over the figures this session can serve —
         what the save dialog sizes its figures group from and what tells a client which
@@ -996,9 +1039,13 @@ class Session:
         memory, or in the store), but they no longer match the data — reporting them
         would put a stale figure on screen instead of the redraw prompt."""
         from ..persistence.store import figure_index
-        drawn = {p["id"] for p in self.app_state["plots"] if p["status"] == "drawn"}
+        drawn = self.drawn_plot_ids()
+        # dict(...) first: the worker inserts into plot_figures after releasing the write
+        # lock (_run_call's plot tail), so a caller's read lock does NOT exclude it and
+        # iterating the live dict raises "dictionary changed size during iteration" when a
+        # plot lands mid-poll — the same hazard manager.state snapshots its lists against.
         index = {pid: {fmt: len(blob) for fmt, blob in blobs.items() if blob}
-                 for pid, blobs in self.plot_figures.items() if pid in drawn}
+                 for pid, blobs in dict(self.plot_figures).items() if pid in drawn}
         for pid, sizes in figure_index(self.extract_dir or self.store_path).items():
             if pid in drawn:
                 index.setdefault(pid, sizes)

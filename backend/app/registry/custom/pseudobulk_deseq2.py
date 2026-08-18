@@ -10,7 +10,8 @@ reads it back, mirroring the compute-writes/plot-reads split squidpy metrics
 use (e.g. nhood_enrichment)."""
 from __future__ import annotations
 
-from ..base import CallResult, Function, ParamSpec, missing_obs_column, missing_uns_key, \
+from ..base import CallResult, Function, ParamSpec, missing_layer, missing_obs_column, \
+    missing_uns_key, \
     resolve_per_celltype, run_compute, run_plot
 
 _SAMPLE_PARAM = ParamSpec(
@@ -138,8 +139,9 @@ key_added
                  or (missing_obs_column(adata, batch_key) if batch_key else None))
         if error:
             return CallResult(status="failed", error=error)
-        if layer and layer not in adata.layers:
-            return CallResult(status="failed", error=f"layer '{layer}' does not exist")
+        err = missing_layer(adata, layer)
+        if err:
+            return CallResult(status="failed", error=err)
 
         counts = adata.layers[layer] if layer else adata.X
         if not pb_compute.looks_like_raw_counts(counts):

@@ -18,8 +18,15 @@ export async function fetchWhenIdle<T>(
     } catch (err) {
       if (attempt < tries && err instanceof ApiError && err.status === 503 && !signal?.aborted) {
         await new Promise<void>((resolve, reject) => {
-          const timer = setTimeout(resolve, delayMs);
-          signal?.addEventListener('abort', () => { clearTimeout(timer); reject(new DOMException('aborted', 'AbortError')); }, { once: true });
+          const timer = setTimeout(() => { signal?.removeEventListener('abort', onAbort); resolve(); }, delayMs);
+          // Removed when the timer wins: `once` only fires the listener once, it does not
+          // detach it on the non-abort path, so a long-lived signal (one canvas mount
+          // spanning many field/image fetches) accumulated one listener per retry.
+          function onAbort() {
+            clearTimeout(timer);
+            reject(new DOMException('aborted', 'AbortError'));
+          }
+          signal?.addEventListener('abort', onAbort, { once: true });
         });
         continue;
       }

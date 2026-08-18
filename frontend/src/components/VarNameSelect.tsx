@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { reportError, useDataSource } from '@cirrobio/spatial-viewer';
+import { useClickOutside } from '../hooks/useClickOutside';
 
 interface Props {
   value: string;
@@ -30,14 +31,7 @@ export default function VarNameSelect({ value, onChange, placeholder = 'Search g
     return () => clearTimeout(t);
   }, [open, query, source]);
 
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, [open]);
+  useClickOutside(wrapRef, () => setOpen(false), open);
 
   function choose(gene: string) {
     onChange(gene);

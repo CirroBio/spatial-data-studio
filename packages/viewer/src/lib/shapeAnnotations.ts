@@ -199,10 +199,7 @@ export function applyHandleDrag(geometry: ShapeGeometry, handleId: string, newPo
     return { ...geometry, vertices: rotated }; // polygon
   }
   if (geometry.kind === 'ellipse') {
-    if (handleId === 'center') {
-      const [dx, dy] = [newPos[0] - geometry.center[0], newPos[1] - geometry.center[1]];
-      return { ...geometry, center: [geometry.center[0] + dx, geometry.center[1] + dy] };
-    }
+    if (handleId === 'center') return { ...geometry, center: newPos };
     // Project the drag into the ellipse's own (unrotated) frame so a radius
     // handle tracks along its rotated axis rather than the world X/Y axis.
     const local = rotatePoint(newPos, geometry.center, -geometry.rotation);

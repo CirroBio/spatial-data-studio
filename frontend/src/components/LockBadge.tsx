@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { useAppStore } from '../store/sessionStore';
 import { takeSessionLock, releaseSessionLock } from '../api';
 import { reportError } from '@cirrobio/spatial-viewer';
 import { lockStateOf, randomClientName } from '../lib/presence';
+import { useClickOutside } from '../hooks/useClickOutside';
 
 // Header status control for the active session's edit lock: a closed padlock when it
 // is locked (to you, or to the viewer named on the badge) and an open one when it is
@@ -17,14 +18,7 @@ export default function LockBadge() {
   const [busy, setBusy] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, [open]);
+  useClickOutside(wrapRef, () => setOpen(false), open);
 
   if (!activeSessionId) return null;
 

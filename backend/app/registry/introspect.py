@@ -8,7 +8,7 @@ function is named here.
 """
 from __future__ import annotations
 
-import importlib
+import contextlib
 import importlib.metadata
 import inspect
 import logging
@@ -23,7 +23,21 @@ from .dictionary import DICTIONARY
 from .library_fn import build_library_function
 from .custom import CUSTOM_FUNCTIONS, check_custom_functions
 
-warnings.filterwarnings("ignore")
+# Reflection touches every public attribute of squidpy/scanpy/spatialdata-io, which makes
+# the libraries emit their own deprecation and future warnings for members the app only
+# looks at and may never call — noise no operator can act on. Silence exactly those two
+# categories for the duration of a build (see `_reflecting`) rather than calling
+# `warnings.filterwarnings("ignore")` at import, which used to disable EVERY warning
+# process-wide for the whole app, including ones from compute the user did ask for.
+_REFLECTION_WARNINGS = (DeprecationWarning, FutureWarning, UserWarning)
+
+
+@contextlib.contextmanager
+def _reflecting():
+    with warnings.catch_warnings():
+        for category in _REFLECTION_WARNINGS:
+            warnings.simplefilter("ignore", category)
+        yield
 
 NAMESPACES = ["gr", "im", "tl", "read", "pl"]
 _CATALOG_PATH = Path(__file__).with_name("library_catalog.yaml")
@@ -58,27 +72,30 @@ class Registry:
         DICTIONARY.load()
         DICTIONARY.coverage = []
         self.entries = {}
-        for ns in NAMESPACES:
-            mod = getattr(sq, ns, None)
-            if mod is None:
-                continue
-            for name in dir(mod):
-                if name.startswith("_"):
+        with _reflecting():
+            for ns in NAMESPACES:
+                mod = getattr(sq, ns, None)
+                if mod is None:
                     continue
-                obj = getattr(mod, name)
-                if not callable(obj) or inspect.isclass(obj):
-                    continue
-                if not getattr(obj, "__module__", "").startswith("squidpy"):
-                    continue
-                entry = build_library_function("squidpy", ns, name, obj)
-                if entry is not None:
-                    self.entries[entry.key] = entry
-        self._load_catalog()
-        self.library_versions = {
-            lib: _module_version(lib)
-            for lib in sorted({e.library for e in self.entries.values()
-                               if getattr(e, "library", None)})
-        }
+                for name in dir(mod):
+                    if name.startswith("_"):
+                        continue
+                    obj = getattr(mod, name)
+                    if not callable(obj) or inspect.isclass(obj):
+                        continue
+                    if not getattr(obj, "__module__", "").startswith("squidpy"):
+                        continue
+                    entry = build_library_function("squidpy", ns, name, obj)
+                    if entry is not None:
+                        self.entries[entry.key] = entry
+            self._load_catalog()
+            # Reading `__version__` off a library is the same introspection: scanpy
+            # deprecates the attribute it is asked for and warns about it.
+            self.library_versions = {
+                lib: _module_version(lib)
+                for lib in sorted({e.library for e in self.entries.values()
+                                   if getattr(e, "library", None)})
+            }
         self.coverage = DICTIONARY.coverage_report()
         for fn in CUSTOM_FUNCTIONS:
             self.entries[fn.key] = fn

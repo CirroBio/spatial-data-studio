@@ -557,6 +557,14 @@ a URL (DESIGN §14.2). `lib/urlViewState.ts` owns the schema and the diff;
   (`packages/viewer/src/defaults.ts`) before comparing, so an absent field and its
   default compare equal — otherwise toggling a setting off and on again would emit it.
   A new encoding field with a constant default belongs in that table.
+- **The backend has to agree, and a test enforces it.** The server-side figure renderer
+  (`backend/app/snapshots.py`) applies the same fallbacks when a checkpoint predates a
+  field, so it reads them from `appstate.POINT_ENCODING_DEFAULTS` /
+  `DISPLAY_ENCODING_DEFAULTS` via `encoding_default(enc, field)` — the one table
+  `manager.auto_displays` writes from too. `test_e2e.run_encoding_defaults_parity` parses
+  `defaults.ts` and asserts the two agree, because they had already drifted (the renderer
+  used `point_size` 6 / `opacity` 1.0 against the canvas's 4 / 0.85, so an exported figure
+  of an older checkpoint did not match the canvas). Add a shared default to both tables.
 - **Nested maps replace wholesale.** `channels` and `category_colors` are two-level
   records; a per-key merge would need tombstones to express "the user removed this
   override".
@@ -859,3 +867,21 @@ function catalog, the term dictionary, or the license allowlist. R17 (a checkpoi
 JSON Schema and [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) change
 together) also runs as a local pre-commit hook — `pip install pre-commit &&
 pre-commit install` once per clone (`.pre-commit-config.yaml`).
+
+**Read the skips, not just the banner.** The gate prints `PASS` when nothing FAILED,
+which is not the same as everything being enforced: the checks run under `pytest -rs`
+so every skipped rule is listed with its reason, and a skipped rule is unenforced.
+Two skip by design until `config.SYNTH_FIXTURE` is wired to a synthetic-SpatialData
+builder — R5's contract smoke test (running every registered function and asserting the
+`CallResult` envelope) and R6/R7 (append-only history). Pass the backend interpreter to
+enforce the import-dependent rules rather than skipping them:
+
+```bash
+make -C sds-governance check PYTHON=../.venv-introspect/bin/python
+```
+
+The rules that do run assert behavior, not source text: R5's static half reads the
+envelope fields off `CallResult` itself, R13 exercises `snapshots._content_hash`, and
+R10 walks `Session._run_call`'s AST for a real `self.lock.writing()` block. Keep new
+checks in that shape — an `assert "<token>" in source` passes on any file that merely
+mentions the token, including in a comment.

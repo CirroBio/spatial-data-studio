@@ -43,7 +43,12 @@ def get_affine6(sdata, table) -> list[float]:
         return list(IDENTITY6)
     try:
         m = np.asarray(get_transformation(elem, "global").to_affine_matrix(("x", "y"), ("x", "y")))
-    except Exception:
+    except (KeyError, ValueError):
+        # No `global` mapping for this element, or one spatialdata cannot express as a
+        # 2-D affine (e.g. a sequence including a non-affine step). Identity is the right
+        # answer for both — the overlay is drawn unaligned rather than not at all — but the
+        # catch stays narrow so a genuine failure in here surfaces instead of silently
+        # rendering a misaligned overlay that looks like a data problem.
         return list(IDENTITY6)
     return [float(m[0, 0]), float(m[0, 1]), float(m[0, 2]),
             float(m[1, 0]), float(m[1, 1]), float(m[1, 2])]

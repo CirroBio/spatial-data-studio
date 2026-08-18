@@ -25,6 +25,7 @@ viewer's canvas for the length of the rebuild.
 import gc
 import math
 import os
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -196,13 +197,21 @@ def normalize_rasters(sdata, progress=None,
     # the 3.8 GB morphology image). The rebuild itself runs in the compute pool
     # (_child_rebuild); waiting on the future blocks this worker thread but releases the
     # GIL, which is the whole point.
-    for i, (kind, name) in enumerate(todo):
-        report(f"Preparing image {i + 1}/{len(todo)}…")
-        store = os.path.join(cache_dir, f"{i}.zarr")  # write() needs a non-existing path
-        compute_pool.executor().submit(
-            _child_rebuild, getattr(sdata, kind)[name], kind, name, store).result()
-        getattr(sdata, kind)[name] = getattr(sd.read_zarr(store), kind)[name]
-        stores[name] = store
+    #
+    # A failure part-way leaves a half-written cache the caller never receives (it only
+    # learns the dir name from this return), so drop it here rather than orphaning tmpfs
+    # bytes that count against the memory budget for the process's life.
+    try:
+        for i, (kind, name) in enumerate(todo):
+            report(f"Preparing image {i + 1}/{len(todo)}…")
+            store = os.path.join(cache_dir, f"{i}.zarr")  # write() needs a non-existing path
+            compute_pool.executor().submit(
+                _child_rebuild, getattr(sdata, kind)[name], kind, name, store).result()
+            getattr(sdata, kind)[name] = getattr(sd.read_zarr(store), kind)[name]
+            stores[name] = store
+    except BaseException:
+        shutil.rmtree(cache_dir, ignore_errors=True)
+        raise
     return cache_dir, stores
 
 

@@ -6,6 +6,7 @@ Session-scoped business logic shared between a route and the MCP surface (the
 default checkpoint path, the var-name search) lives here too, for the same reason.
 """
 import asyncio
+import contextlib
 from contextvars import ContextVar
 
 from fastapi import Header, HTTPException
@@ -31,6 +32,20 @@ def _mgr() -> SessionManager:
     if MANAGER is None:
         raise HTTPException(503, "not ready")
     return MANAGER
+
+
+@contextlib.contextmanager
+def _bad_request():
+    """Map the domain errors a rejected request raises onto 400.
+
+    The session/registry layers signal a caller mistake — a path outside DATA_DIR, an
+    absent element, an unusable descriptor — by raising, since they are also reached
+    off-HTTP (the CLI, the MCP surface) and must not import fastapi. Every route that
+    can trip one wraps it here rather than restating the same except clause."""
+    try:
+        yield
+    except (RuntimeError, FileNotFoundError, KeyError) as e:
+        raise HTTPException(400, str(e))
 
 
 def _session(sid: str):
@@ -127,11 +142,16 @@ async def _read_locked(sess, fn, *a):
     surfaces as a 504), give up after READ_LOCK_TIMEOUT_S with a retryable 503 the
     frontend re-issues once the job completes."""
     def _run():
-        try:
-            with sess.lock.reading(config.READ_LOCK_TIMEOUT_S):
-                return fn(*a)
-        except TimeoutError:
+        # acquire_read reports the timeout as False rather than raising, so the 503 covers
+        # ONLY the acquisition: a TimeoutError raised by fn itself (a slow network read,
+        # say) is a different failure and must not be relabelled as lock contention the
+        # client will retry forever.
+        if not sess.lock.acquire_read(config.READ_LOCK_TIMEOUT_S):
             raise HTTPException(503, "session busy: compute in progress, retry")
+        try:
+            return fn(*a)
+        finally:
+            sess.lock.release_read()
     return await _in_executor(_run)
 
 

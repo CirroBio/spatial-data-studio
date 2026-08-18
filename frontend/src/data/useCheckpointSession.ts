@@ -8,7 +8,7 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from '../store/sessionStore';
 import {
-  isEmbeddingDisplay, isSpatialDisplay, openCheckpoint,
+  formatError, isEmbeddingDisplay, isSpatialDisplay, openCheckpoint,
   type CheckpointUrlRefresher, type DataSource,
 } from '@cirrobio/spatial-viewer';
 import type { AppState, SessionState } from '../types';
@@ -95,7 +95,7 @@ export function useCheckpointSession(
       })
       .catch((err: unknown) => {
         if (stale) return;
-        setError(err instanceof Error ? err.message : String(err));
+        setError(formatError(err));
         setLoading(false);
       });
 

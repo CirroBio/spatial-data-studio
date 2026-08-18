@@ -38,6 +38,7 @@ import numpy as np
 
 from .config import config, within_data_dir
 from . import imaging, recipes
+from .sessions.appstate import encoding_default
 
 # One snapshot is a set of sibling files sharing a base name `<slug>-<hash>`:
 #   <base>.figure.json        sidecar metadata (the gallery lists these)
@@ -46,6 +47,18 @@ from . import imaging, recipes
 FIGURE_EXT = ".figure.json"
 THUMB_SUFFIX = ".figure.thumb.png"
 SNAPSHOT_SCHEMA_VERSION = "3.0"
+
+# Length of the content-hash suffix in a snapshot's base name. Matches
+# persistence/store.HASH_LEN, which does the same job for checkpoints.
+_HASH_LEN = 12
+
+
+def _content_hash(payload: bytes) -> str:
+    """The content-hash suffix a snapshot's artifact names carry, so two renders of the
+    same figure dedupe onto one base name and two different ones never collide. Named
+    (rather than inlined at the one call site) so the governance gate's R13 can exercise
+    the real hashing instead of grepping this module for `hashlib.sha256`."""
+    return hashlib.sha256(payload).hexdigest()[:_HASH_LEN]
 
 # Above this many cells in view, the point layer is rasterized instead of emitted as
 # vector markers — a vector scatter of hundreds of thousands of markers makes a PDF that
@@ -63,6 +76,12 @@ POLYGON_LIMIT = 20000
 SHAPES_MIN_CELL_PX = 6
 
 THUMB_MAX_PX = 320
+
+# Longest windowed edge (px) the image composite will read: the pyramid-level pick in
+# `_composite_window` drops to a coarser level until the read fits, so this bounds the
+# decode regardless of how far out the snapshot is framed. Well above any output size the
+# export offers, so it never costs visible resolution.
+TARGET_READ_PX = 2048
 
 # Minimap (overview inset, drawn when the request sets include_minimap): the whole
 # section with a white rectangle marking the rendered window, mirroring the live
@@ -195,7 +214,7 @@ def _cell_rgba(session, enc: dict, n: int) -> np.ndarray:
     """Nx4 float RGBA in [0,1] for the cells, reproducing useSpotColors + colorUtils
     from the color-by field and the encoding (opacity, isolated category)."""
     from .transport import arrow
-    opacity = float(enc.get("opacity", 1.0))
+    opacity = float(encoding_default(enc, "opacity"))
     color_by = enc.get("color_by")
     rgba = np.empty((n, 4), dtype=np.float64)
     rgba[:, 3] = opacity
@@ -262,19 +281,22 @@ def _composite_window(session, element: str, enc: dict, px_bbox) -> tuple[np.nda
 
     # Pick a pyramid level whose windowed resolution is near the output size: the
     # finest level that still keeps the read modest. levels are a 2x pyramid.
+    # (TARGET_READ_PX caps the composited read; it supersamples typical output sizes.)
     levels = imaging._scale_names(el) if imaging._is_multiscale(el) else ["scale0"]
     win_px = max(x1 - x0, y1 - y0)
-    target_px = 2048  # cap the composited read; supersamples typical output sizes
-    level = 0
-    for lv in range(len(levels)):
-        if win_px / (2 ** lv) <= target_px:
-            level = lv
-            break
-        level = lv
+    # The FINEST level whose windowed read is within the cap, falling back to the coarsest
+    # when even that is over it — stated as one expression because the previous loop
+    # assigned `level` both before its break and as its last statement, leaving which of
+    # the two it meant readable only by simulating it.
+    level = next((lv for lv in range(len(levels)) if win_px / (2 ** lv) <= TARGET_READ_PX),
+                 len(levels) - 1)
     arr = imaging._level_array(el, level)
     factor = 2 ** level
     lx0, ly0, lx1, ly1 = x0 // factor, y0 // factor, -(-x1 // factor), -(-y1 // factor)
-    data = np.asarray(arr[:, ly0:ly1, lx0:lx1].data if hasattr(arr, "data") else arr[:, ly0:ly1, lx0:lx1])
+    # Slice with an ellipsis so a genuinely 2-D (single-channel) element works: indexing
+    # `[:, ...]` assumed 3-D and raised before the ndim == 2 promotion below could run.
+    window = arr[..., ly0:ly1, lx0:lx1]
+    data = np.asarray(window.data if hasattr(window, "data") else window)
     if data.ndim == 2:
         data = data[None]
 
@@ -353,10 +375,7 @@ def _draw_shapes(ax, session, enc, element, view_bbox, p2w, w2p, n_cells, dpi) -
 
     # The query bbox is world space; convert from pixel space when an image is shown.
     if p2w is not None:
-        corners = np.array([[view_bbox[0], view_bbox[1]], [view_bbox[2], view_bbox[1]],
-                            [view_bbox[2], view_bbox[3]], [view_bbox[0], view_bbox[3]]])
-        wc = (p2w[:2, :2] @ corners.T).T + p2w[:2, 2]
-        world_bbox = (wc[:, 0].min(), wc[:, 1].min(), wc[:, 0].max(), wc[:, 1].max())
+        world_bbox = tuple(imaging.bbox_aabb(p2w, view_bbox))
     else:
         world_bbox = (view_bbox[0], view_bbox[1], view_bbox[2], view_bbox[3])
 
@@ -492,10 +511,10 @@ def _render_figure(session, spec: dict):
     # useArrowPositions.estimateMeanSpacing + pointWorldRadius.
     area = max(1.0, (xy[:, 0].max() - xy[:, 0].min()) * (xy[:, 1].max() - xy[:, 1].min()))
     spacing = np.sqrt(area / max(1, len(xy)))
-    world_radius = (float(enc.get("point_size", 6)) / 8.0) * spacing
+    world_radius = (float(encoding_default(enc, "point_size")) / 8.0) * spacing
     radius_data = world_radius / affine_scale  # data-unit radius in the view's space
 
-    background = enc.get("background") or "dark"
+    background = encoding_default(enc, "background")
     facecolor = PLOT_BACKGROUNDS.get(background, PLOT_BACKGROUNDS["dark"])
 
     fig = Figure(figsize=(width_px / dpi, height_px / dpi), dpi=dpi)
@@ -567,7 +586,7 @@ def _render_figure(session, spec: dict):
 def render_preview(session, spec: dict) -> bytes:
     """A low-cost PNG of the framing for the modal preview. Same core, no file writes
     and no embedded metadata."""
-    with session.lock.reading():
+    with session.lock.reading(config.READ_LOCK_TIMEOUT_S):
         fig, _ = _render_figure(session, spec)
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=fig.dpi)
@@ -605,30 +624,35 @@ def save_snapshot(session, spec: dict) -> dict:
         return {"status": "failed", "error": "no display to snapshot"}
     formats = [f for f in (spec.get("formats") or ["pdf"]) if f in ("pdf", "png")] or ["pdf"]
 
-    with session.lock.reading():
+    # Only the render and the metadata read the live object, so only they need the lock —
+    # and it is bounded like every other read path (deps._read_locked) instead of blocking
+    # past a proxy's origin timeout into a 504. The figure is self-contained once drawn, so
+    # the file writes happen after releasing: this lock is writer-preferring, and holding it
+    # across several multi-MB savefig calls stalls a pending compute commit for their whole
+    # duration.
+    with session.lock.reading(config.READ_LOCK_TIMEOUT_S):
         fig, render_meta = _render_figure(session, spec)
         meta = _metadata(session, spec, display, render_meta, formats)
-        meta_json = json.dumps(meta)
 
-        slug = "".join(c if c.isalnum() or c in "-_" else "-" for c in str(meta["label"]))[:48].strip("-") or "snapshot"
-        digest = hashlib.sha256(meta_json.encode()).hexdigest()[:12]
-        base = f"{slug}-{digest}"
-        d = _dir()
+    meta_json = json.dumps(meta)
+    slug = "".join(c if c.isalnum() or c in "-_" else "-" for c in str(meta["label"]))[:48].strip("-") or "snapshot"
+    base = f"{slug}-{_content_hash(meta_json.encode())}"
+    d = _dir()
 
-        for fmt in formats:
-            path = os.path.join(d, f"{base}.figure.{fmt}")
-            if fmt == "pdf":
-                fig.savefig(path, format="pdf", dpi=fig.dpi,
-                            metadata={"Title": meta["label"], "Creator": "Spatial Data Studio",
-                                      "Subject": f"snapshot of {session.name}", "Keywords": meta_json})
-            else:
-                fig.savefig(path, format="png", dpi=fig.dpi, metadata={"sds-snapshot": meta_json})
-        # Thumbnail (always) — a small PNG the gallery grid reads.
-        thumb_dpi = max(1, int(THUMB_MAX_PX / max(fig.get_size_inches())))
-        fig.savefig(os.path.join(d, f"{base}{THUMB_SUFFIX}"), format="png", dpi=thumb_dpi)
+    for fmt in formats:
+        path = os.path.join(d, f"{base}.figure.{fmt}")
+        if fmt == "pdf":
+            fig.savefig(path, format="pdf", dpi=fig.dpi,
+                        metadata={"Title": meta["label"], "Creator": "Spatial Data Studio",
+                                  "Subject": f"snapshot of {session.name}", "Keywords": meta_json})
+        else:
+            fig.savefig(path, format="png", dpi=fig.dpi, metadata={"sds-snapshot": meta_json})
+    # Thumbnail (always) — a small PNG the gallery grid reads.
+    thumb_dpi = max(1, int(THUMB_MAX_PX / max(fig.get_size_inches())))
+    fig.savefig(os.path.join(d, f"{base}{THUMB_SUFFIX}"), format="png", dpi=thumb_dpi)
 
-        with open(os.path.join(d, f"{base}{FIGURE_EXT}"), "w") as f:
-            f.write(meta_json)
+    with open(os.path.join(d, f"{base}{FIGURE_EXT}"), "w") as f:
+        f.write(meta_json)
 
     return {"status": "completed", "name": f"{base}{FIGURE_EXT}", "formats": formats,
             "rasterized_points": render_meta["rasterized_points"]}

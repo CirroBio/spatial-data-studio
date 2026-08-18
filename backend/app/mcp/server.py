@@ -34,6 +34,7 @@ from . import agent, vision
 from .. import datasets, recipes, snapshots
 from ..config import config, data_roots
 from ..registry.introspect import REGISTRY
+from ..registry.reader_paths import reader_namespace
 from ..transport import tables
 from ..transport.sse import BUS
 from .. import deps
@@ -252,7 +253,8 @@ async def create_session(checkpoint_path: str | None = None, reader: dict | None
     """Create a session from a saved checkpoint (checkpoint_path: a .zarr/.zarr.zip
     under the data dir — see list_datasets) OR by importing raw data with a reader
     (reader: {"namespace": "io"|"read", "function": e.g. "xenium", "params": {...}} —
-    see list_readers/browse_data_dir). Waits until the load finishes by default and
+    namespace is required, since several reader names exist in both; see
+    list_readers/browse_data_dir). Waits until the load finishes by default and
     makes the new session the assistant's active one."""
     agent.bind_agent()
     if (checkpoint_path is None) == (reader is None):
@@ -261,7 +263,7 @@ async def create_session(checkpoint_path: str | None = None, reader: dict | None
         if checkpoint_path is not None:
             sess = await _in_executor(_mgr().create_from_load, checkpoint_path, name, None)
         else:
-            descriptor = {"namespace": reader.get("namespace", "io"),
+            descriptor = {"namespace": reader_namespace(reader),
                           "function": reader["function"], "params": reader.get("params", {})}
             if REGISTRY.get(f"{descriptor['namespace']}.{descriptor['function']}") is None:
                 raise RuntimeError(f"unknown reader {descriptor['namespace']}.{descriptor['function']}"
@@ -427,8 +429,11 @@ async def run_function(namespace: str, function: str, params: dict | None = None
     if REGISTRY.get(f"{namespace}.{function}") is None:
         raise ValueError(f"unknown function {namespace}.{function} (see search_functions)")
     sess = _writable(session_id)
-    job_id = sess.enqueue_descriptor({"namespace": namespace, "function": function,
-                                      "params": params or {}})
+    try:
+        job_id = sess.enqueue_descriptor({"namespace": namespace, "function": function,
+                                          "params": params or {}})
+    except RuntimeError as e:  # e.g. a reader param pointing outside the data dir
+        raise ValueError(str(e))
     status = await _await_job(sess, job_id, timeout_s) if wait else "queued"
     return _job_report(sess, job_id, status)
 
@@ -711,8 +716,10 @@ async def list_shape_annotations(session_id: str | None = None) -> dict:
     ellipses/text), with ids for update/delete."""
     agent.bind_agent()
     sess = _sess(session_id)
-    from ..transport import annotations
-    return {"shapes": await _read_locked(sess, annotations.list_shape_annotations, sess)}
+    # Aliased: the bare name `annotations` is already bound module-wide by
+    # `from __future__ import annotations` at the top of this file.
+    from ..transport import annotations as shape_annotations
+    return {"shapes": await _read_locked(sess, shape_annotations.list_shape_annotations, sess)}
 
 
 _STROKE_DEFAULTS = {"color": "#ffcc00", "width": 2.0, "dash": "solid",

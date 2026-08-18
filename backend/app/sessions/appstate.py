@@ -12,6 +12,39 @@ EMPTY = {
     "regions": [],        # region-set registry (post-build spec Part 2)
 }
 
+# Point styling a display falls back to when its encoding omits the field. Older
+# checkpoints predate most of the optional encoding fields, so three readers have to
+# agree on these: `manager.auto_displays` (which writes a session's first display), the
+# canvas (`POINT_DEFAULTS` in packages/viewer/src/defaults.ts), and the server-side
+# figure renderer (`snapshots.py`). They are defined once here because they had already
+# drifted — the renderer defaulted point_size to 6 and opacity to 1.0 against the
+# canvas's 4 and 0.85, so an exported figure of a pre-defaults checkpoint did not match
+# the canvas it came from. `backend/test_e2e.py::run_encoding_defaults_parity` asserts
+# this table still equals the TypeScript one.
+POINT_ENCODING_DEFAULTS = {
+    "point_size": 4,
+    "opacity": 0.85,
+    "colormap": "viridis",
+}
+
+# The rest of the fallbacks the figure renderer needs; the canvas keeps its own copies of
+# these in the same defaults.ts tables.
+DISPLAY_ENCODING_DEFAULTS = {
+    **POINT_ENCODING_DEFAULTS,
+    "legend_visible": True,
+    "legend_title": "",
+    "background": "dark",
+}
+
+
+def encoding_default(enc: dict, field: str):
+    """`enc`'s value for `field`, or the shared fallback when it is absent or null.
+
+    Treats an explicit None like an absent key: a checkpoint written before a field
+    existed and one that stores it as null must render identically."""
+    value = enc.get(field)
+    return DISPLAY_ENCODING_DEFAULTS[field] if value is None else value
+
 
 def ensure(attrs: dict) -> dict:
     st = attrs.get("app_state")

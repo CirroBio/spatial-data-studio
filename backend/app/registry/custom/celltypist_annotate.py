@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from ..base import CallResult, Function, ParamSpec, missing_obs_column, run_compute
+from ..base import CallResult, Function, ParamSpec, missing_layer, missing_obs_column, run_compute
 from ._leiden import leiden_labels
 
 # The two general immune models lead the dropdown; the rest of CellTypist's
@@ -138,8 +138,9 @@ class CellTypistAnnotate(Function):
         majority_voting = bool(params.get("majority_voting", True))
 
         adata = session.active_table()
-        if layer and layer not in adata.layers:
-            return CallResult(status="failed", error=f"layer '{layer}' does not exist")
+        err = missing_layer(adata, layer)
+        if err:
+            return CallResult(status="failed", error=err)
         if over_clustering:
             error = missing_obs_column(adata, over_clustering)
             if error:

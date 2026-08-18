@@ -6,6 +6,7 @@ import io
 import json
 import os
 import pathlib
+import re
 import shutil
 import sys
 import tempfile
@@ -227,7 +228,6 @@ def run_zarr_import_flow(client):
     """SpatialData-zarr importer (io.read_zarr): exercises the underlying archive
     reader on a .zarr dir, a .zarr.zip, and a .zarr.tar.gz, then an API import
     round-trip for each archive (placed under the data dir) into a ready session."""
-    import shutil
     import tarfile
     import zipfile
 
@@ -1232,6 +1232,30 @@ def run_encoding_persistence_flow(client):
     print("[ok] canvas encoding (toggles, isolated category, camera) survives save + reload")
 
 
+def run_encoding_defaults_parity():
+    """The encoding fallbacks the figure renderer applies equal the ones the canvas
+    applies. Three readers share this table — `appstate.POINT_ENCODING_DEFAULTS`,
+    `manager.auto_displays`, and `POINT_DEFAULTS` in packages/viewer/src/defaults.ts —
+    and they had drifted (the renderer used point_size 6 / opacity 1.0 against the
+    canvas's 4 / 0.85), so an exported figure of a checkpoint predating those fields did
+    not match the canvas. Parse the TS constant rather than restating it here: a fourth
+    copy in the assertion would defeat the point."""
+    from app.sessions.appstate import POINT_ENCODING_DEFAULTS
+
+    ts_path = os.path.join(_REPO_ROOT, "packages", "viewer", "src", "defaults.ts")
+    with open(ts_path) as fh:
+        ts = fh.read()
+    block = re.search(r"const POINT_DEFAULTS = \{(.*?)\}", ts, re.S)
+    assert block, "POINT_DEFAULTS not found in packages/viewer/src/defaults.ts"
+    in_ts = {}
+    for key, raw in re.findall(r"(\w+):\s*'?([\w.]+)'?\s*,", block.group(1)):
+        in_ts[key] = float(raw) if re.fullmatch(r"[\d.]+", raw) else raw
+    expected = {k: (float(v) if isinstance(v, (int, float)) else v)
+                for k, v in POINT_ENCODING_DEFAULTS.items()}
+    assert in_ts == expected, f"canvas defaults {in_ts} != backend {expected}"
+    print(f"[ok] encoding defaults agree across backend and canvas ({expected})")
+
+
 def run_cirro_auth_flow(client):
     """Cirro's per-browser credential scoping and upload bundle (DESIGN §15), without
     talking to Cirro: the device-code flow itself needs a real domain and a human, so
@@ -1931,7 +1955,6 @@ def mcp_png(content):
 
 
 def _strict_inside(xy, x0, x1, y0, y1):
-    import numpy as np
     return int(((xy[:, 0] > x0) & (xy[:, 0] < x1) & (xy[:, 1] > y0) & (xy[:, 1] < y1)).sum())
 
 
@@ -2458,6 +2481,7 @@ def main():
         run_save_destination_flow(client)
         run_invalidation_flow(client)
         run_encoding_persistence_flow(client)
+        run_encoding_defaults_parity()
         run_inspector_flow(client)
         run_session_lock_flow(client)
         run_cirro_auth_flow(client)

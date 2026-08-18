@@ -98,6 +98,10 @@ def browse(roots: list[Path], path: str | None = None, include_files: bool = Fal
     reader's input may be any file type), regular files are listed too. Raises
     ValueError (unresolvable path), PermissionError (outside the data dir), or
     NotADirectoryError; the route boundary in main.py maps these to 400/403/404."""
+    # Local import for the same reason as _scan's: keep this module free of the heavy
+    # spatialdata import that persistence.store pulls in at module scope.
+    from .persistence.store import READ_EXTS
+
     if not path:
         return {"path": "", "parent": None,
                 "entries": [{"name": str(r), "path": str(r), "kind": "dir"} for r in roots]}
@@ -113,7 +117,9 @@ def browse(roots: list[Path], path: str | None = None, include_files: bool = Fal
     for child in sorted(target.iterdir(), key=lambda c: c.name.lower()):
         if child.name.startswith("."):
             continue
-        if child.name.endswith((".zarr", ".zarr.zip", ".zarr.tar.gz", ".zarr.tgz")):
+        # store.READ_EXTS, not a local copy: a hand-kept tuple here meant the loader
+        # could accept an extension the picker refused to list (or vice versa).
+        if child.name.endswith(READ_EXTS):
             entries.append({"name": child.name, "path": str(child), "kind": "dataset"})
         elif child.is_dir():
             entries.append({"name": child.name, "path": str(child), "kind": "dir"})

@@ -6,53 +6,22 @@ import copy
 import os
 import time
 import uuid
-from pathlib import Path
 
 import psutil
 
 from . import appstate
 from .presence import PRESENCE
 from .session import Session
-from ..config import cgroup_mem_usage, config, within_data_dir
-from ..persistence.store import estimate_resident_mb, save_spatialdata
-from ..registry.reader_paths import ABSOLUTE_PATH_PARAMS, RELATIVE_FILE_PARAMS
+from ..config import cgroup_mem_usage, config, resolve_within_data_dir
+from ..persistence.store import carries_content_hash, estimate_resident_mb, save_spatialdata
+from ..registry.reader_paths import validate_reader_params
 from ..transport.sse import BUS
-
-# Reader params that are absolute filesystem paths (the primary acquisition path
-# plus image_path/alignment_file). Any of these passed to a read-effect function
-# is validated against the allowed data roots before the reader ever runs. Source
-# of truth (shared with the form's per-param path pickers): registry/reader_paths.py.
-_READ_PATH_PARAMS = ABSOLUTE_PATH_PARAMS
-
-# Secondary filename params that readers resolve relative to their own primary path
-# param (squidpy.read.vizgen/nanostring/visium, spatialdata_io.visium/visium_hd/
-# merscope all do `Path(path) / counts_file` or similar internally). `Path(base) /
-# value` silently DISCARDS `base` when `value` is itself absolute — so without this,
-# an absolute counts_file/meta_file/etc. reads an arbitrary host path regardless of
-# how well `path` itself is sandboxed. Validated below by reproducing the same join
-# against the descriptor's own primary path and running it through the same
-# _resolve_or_raise check, which catches both that discard and a "../.." traversal.
-_READ_AUX_PATH_PARAMS = RELATIVE_FILE_PARAMS
-
 
 # Backstop cadence for re-scanning compute-worker child processes; see
 # `SessionManager._refresh_cpu_procs` for why this is much slower than the sample rate.
 # A job starting forces a scan of its own (`admit_job`), so this only has to reap
 # workers loky retired while nothing was running.
 _CPU_PROC_SCAN_S = 10.0
-
-
-def _resolve_or_raise(path: str) -> Path:
-    """Resolve `path` and ensure it falls within DATA_DIR — the single on-disk root
-    for reader inputs, loads, and saves; raises RuntimeError otherwise (both callers
-    below surface it as-is)."""
-    try:
-        target = Path(path).resolve()
-    except OSError:
-        raise RuntimeError(f"bad path: {path}")
-    if not within_data_dir(target):
-        raise RuntimeError(f"path is outside the data directory: {path}")
-    return target
 
 
 class SessionManager:
@@ -80,7 +49,7 @@ class SessionManager:
         session that never becomes ready. `read_only` opens the session frozen — it rejects
         every mutating route once adopted."""
         self._check_capacity()
-        resolved = str(_resolve_or_raise(path))  # validated, resolved path for every fs op below
+        resolved = str(resolve_within_data_dir(path))  # validated path for every fs op below
         self._check_admission(estimate_resident_mb(resolved))
         sid = str(uuid.uuid4())
         sess = Session(sid, name or _basename(resolved), None, appstate.fresh(), self,
@@ -101,17 +70,7 @@ class SessionManager:
             pct = self._mem_fraction()
             raise RuntimeError(
                 f"read blocked: memory at {pct*100:.0f}% (>= {config.ADMISSION_PCT*100:.0f}%)")
-        params = descriptor.get("params", {})
-        for k, v in params.items():
-            if k not in _READ_PATH_PARAMS or not isinstance(v, str):
-                continue
-            _resolve_or_raise(v)
-        base_path = params.get("path")
-        if isinstance(base_path, str):
-            for k, v in params.items():
-                if k not in _READ_AUX_PATH_PARAMS or not isinstance(v, str) or not v:
-                    continue
-                _resolve_or_raise(str(Path(base_path) / v))
+        validate_reader_params(descriptor.get("params", {}))
         sid = str(uuid.uuid4())
         sess = Session(sid, name or descriptor.get("function", "session"), None, appstate.fresh(), self)
         self.sessions[sid] = sess
@@ -142,7 +101,7 @@ class SessionManager:
             "encoding": {"coords": coords, "color_by": color,
                          "image_layer": images[0] if images else None, "shapes_layer": None,
                          "render_mode": "points", "point_marker": "circle",
-                         "point_size": 4, "opacity": 0.85, "colormap": "viridis",
+                         **appstate.POINT_ENCODING_DEFAULTS,
                          "legend_visible": True, "legend_title": ""},
             "viewport": None,
         })
@@ -153,7 +112,7 @@ class SessionManager:
                 "id": str(uuid.uuid4()), "type": "embedding_canvas",
                 "encoding": {"obsm_key": emb_key, "x_component": 0, "y_component": 1,
                              "z_component": 2, "is_3d": False, "color_by": color,
-                             "point_size": 4, "opacity": 0.85, "colormap": "viridis",
+                             **appstate.POINT_ENCODING_DEFAULTS,
                              "legend_visible": True, "legend_title": ""},
                 "viewport": None,
             })
@@ -364,8 +323,15 @@ class SessionManager:
             # state, so skip the save — the temp-dir/presence/session.removed
             # cleanup below must still run.
             if save and sess.store_path and sess.sdata is not None:
-                save_spatialdata(sess.sdata, sess.store_path, sess.app_state,
-                                 figures=sess.figures_to_persist())
+                # Re-derive the content hash when the file's own name carries one:
+                # rewriting those bytes under the old digest makes the next load report
+                # "may have been modified" for a file this app itself wrote. The rename
+                # gives back a new path, which becomes this session's store_path for the
+                # cleanup and events below.
+                hash_name = carries_content_hash(sess.store_path)
+                sess.store_path = save_spatialdata(
+                    sess.sdata, sess.store_path, sess.app_state, hash_name=hash_name,
+                    figures=sess.figures_to_persist())
             # Evict this object's image caches before releasing it — they key on
             # id(sdata), which a later session's object could reuse (imaging.py).
             if sess.sdata is not None:
