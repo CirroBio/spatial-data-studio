@@ -19,14 +19,18 @@ Run from the `backend/` directory (like `test_e2e.py`):
 `spatialdata` to load an existing SpatialData `.zarr`/`.zarr.zip` (the app's
 New Session "load" path). `--recipe` may be repeated to run several recipes back
 to back in the same session, so a longer analysis composes the bundled recipes
-instead of restating their steps. The output folder receives `<name>.zarr.zip`
-(the full object + app_state) and, per plot step,
-`plots/<NN>_<namespace>.<function>/figure.{svg,pdf}`. `--lowres-max-image-mb`
-adds `<name>.lowres.zarr.zip`: the same session with enough of each image's
-finest pyramid levels dropped to fit that budget, so it holds the whole analysis
-in a much smaller file. `--display-color-by` and `--display-render-mode` set how
-the saved checkpoint opens in the viewer, which otherwise shows the display built
-from the raw object before any recipe ran.
+instead of restating their steps. The output folder receives
+`<name>-<content hash>.sdata.zarr.zip` (the full object + app_state) and, per plot
+step, `plots/<NN>_<namespace>.<function>/figure.{svg,pdf}`; the hash is the one the
+app embeds in its own saves, so a load reports whether the bytes still match the
+name. `--lowres-max-image-mb` adds a second checkpoint, named `<name>.lowres` unless
+`--lowres-name` says otherwise: the same session with enough of each image's finest
+pyramid levels dropped to fit that budget, so it holds the whole analysis in a much
+smaller file. `--session-name` is what the checkpoint records as its own name, which
+is what reopening it shows however the file is named; without it a loaded store keeps
+the name it came with and a fresh read records none. `--display-color-by` and
+`--display-render-mode` set how the saved checkpoint opens in the viewer, which
+otherwise shows the display built from the raw object before any recipe ran.
 
 A step that cannot complete does not stop the run: it is marked `failed`, its log is
 printed and saved with the checkpoint, and the next step is run — the same
@@ -67,7 +71,11 @@ def _parse_args(argv):
     p.add_argument("--reader-params", default=None,
                    help="JSON object of extra kwargs merged into the reader call (reader mode only)")
     p.add_argument("--name", default=None,
-                   help="base name for the output .zarr.zip (default: derived from --input)")
+                   help="base name for the output checkpoint, written as "
+                        "<name>-<content hash>.sdata.zarr.zip (default: derived from --input)")
+    p.add_argument("--session-name", default=None, metavar="NAME",
+                   help="the name the checkpoint records as its own, which is what reopening "
+                        "it shows however the file is named (default: --name)")
     p.add_argument("--display-color-by", default=None, metavar="FIELD",
                    help="color every saved display by this field path (obs:cellular_neighborhood, "
                         "X:GENE, ...) once the recipes have run, in place of the categorical "
@@ -77,10 +85,12 @@ def _parse_args(argv):
                    help="how the saved spatial canvas draws cells: markers only, or "
                         "cell-boundary polygons over them once zoomed in")
     p.add_argument("--lowres-max-image-mb", type=float, default=None, metavar="MB",
-                   help="also write <name>.lowres.zarr.zip: the same session with as many of "
-                        "each image's finest pyramid levels dropped as it takes to bring the "
-                        "images under this many MB — a much smaller file that still carries "
-                        "the full analysis, minus the deepest zoom")
+                   help="also write a second checkpoint with as many of each image's finest "
+                        "pyramid levels dropped as it takes to bring the images under this "
+                        "many MB — a much smaller file that still carries the full analysis, "
+                        "minus the deepest zoom")
+    p.add_argument("--lowres-name", default=None, metavar="NAME",
+                   help="base name for that copy (default: <name>.lowres)")
     p.add_argument("--list-parsers", action="store_true",
                    help="print the available parser names and exit")
     return p.parse_args(argv)
@@ -288,6 +298,11 @@ def main(argv=None) -> int:
     sess = _open_session(manager, args, reader)
     print(f"[ok] loaded via {args.parser}: {args.input}")
     name = _output_name(args)
+    # Recorded inside the object, so a checkpoint named for its place in an output tree
+    # still reopens as the dataset it holds (Session._run_load adopts it back). Left alone
+    # when unset, so loading a store and re-saving it keeps the name it came with.
+    if args.session_name:
+        sess.rename(args.session_name)
     try:
         plots_written, failed_steps = _run_steps(sess, steps, out_dir)
         # The embedding a recipe computes does not exist when the read bootstrap builds
@@ -302,12 +317,17 @@ def main(argv=None) -> int:
         # wherever the caller asked.
         with sess.lock.reading():
             figures = sess.figures_to_persist()
+            # hash_name: these are auto-named checkpoints, so each carries a hash of its
+            # own contents the way the app's saves do — a load then verifies the file was
+            # not altered or truncated in transit. The written path comes back from the
+            # save, since the hash is only known once the bytes are.
             written = [save_spatialdata(sess.sdata, str(out_dir / f"{name}.zarr.zip"),
-                                        sess.app_state, hash_name=False, figures=figures)]
+                                        sess.app_state, hash_name=True, figures=figures)]
             if args.lowres_max_image_mb is not None:
+                lowres_name = args.lowres_name or f"{name}.lowres"
                 written.append(save_spatialdata(
-                    sess.sdata, str(out_dir / f"{name}.lowres.zarr.zip"), sess.app_state,
-                    hash_name=False, max_image_mb=args.lowres_max_image_mb, figures=figures))
+                    sess.sdata, str(out_dir / f"{lowres_name}.zarr.zip"), sess.app_state,
+                    hash_name=True, max_image_mb=args.lowres_max_image_mb, figures=figures))
     finally:
         sess.shutdown()
 

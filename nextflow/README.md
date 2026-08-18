@@ -83,7 +83,7 @@ nextflow run nextflow/main.nf -profile docker --input /data/experiments
 
 ```
 /data/experiments/folderA/folderB/{experiment.xenium, …}
-  -> results/results/folderA/folderB.sdata.zarr.zip
+  -> results/results/folderA/folderB/results-<hash>.sdata.zarr.zip
 ```
 
 **A map of roots**, as `.json` or `.yaml`, when the data lives in several unrelated
@@ -98,8 +98,8 @@ replaces the root's own path; anything found by recursion nests beneath it:
 ```
 
 ```
--> results/results/folderA.sdata.zarr.zip
-   results/results/folderB/folderC.sdata.zarr.zip
+-> results/results/folderA/results-<hash>.sdata.zarr.zip
+   results/results/folderB/folderC/results-<hash>.sdata.zarr.zip
 ```
 
 Roots may be local paths or `s3://`, `gs://`, `az://` — discovery goes through Nextflow's
@@ -114,14 +114,21 @@ results/
   index.json                       # lists every checkpoint below
   results/                         # mirrors where each dataset was found
     folderA/
-      folderB.sdata.zarr.zip           # the full checkpoint
-      folderB.sdata.lowres.zarr.zip    # image pyramid capped (see below)
-      folderB.log                      # always written
-      folderB.plots/<NN>_<ns>.<fn>/figure.{svg,pdf}
+      folderB/                         # one folder per dataset, same names inside
+        results-<hash>.sdata.zarr.zip    # the full checkpoint
+        lowres-<hash>.sdata.zarr.zip     # image pyramid capped (see below)
+        plots/<NN>_<ns>.<fn>/figure.{svg,pdf}
+        results.log                      # always written
   multiqc/
     multiqc_report.html
     multiqc_report_data/
 ```
+
+The `-<hash>` in each filename is a hash of that checkpoint's own contents, the same
+suffix the app puts on its saves: opening the file reports whether its bytes still match
+the name it was published under. The dataset's path in this tree (`folderA/folderB`) is
+also recorded *inside* each checkpoint as its own name, so the two fixed filenames stay
+unambiguous — reopening either one shows the dataset it holds, not the word "results".
 
 Serving the `results/` directory over HTTP — any static host — renders every dataset in
 the browser with no backend (DESIGN §14.3). The same `.zarr.zip` files also open in the

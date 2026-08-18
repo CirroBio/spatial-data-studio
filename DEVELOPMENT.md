@@ -169,7 +169,7 @@ Component-level notes: [`backend/README.md`](backend/README.md),
 | Change the MCP assistant surface (tools, vision render, agent guidance) | `backend/app/mcp/server.py` (tools) + `vision.py` (render/coords/membership) + `agent.py` (presence/lock) + `guides/*.md` (guidance text); mounted in `main.py` | [DESIGN.md](DESIGN.md) §29 |
 | Change the checkpoint/persistence format | `backend/app/persistence/store.py` | [DESIGN.md](DESIGN.md) §3, §14.1, [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) |
 | Change which elements a save can leave out, at what resolution images are written, or how their sizes are estimated | `backend/app/persistence/store.py` (`select_elements`, `trim_pyramid`, `element_size_mb`, `image_levels`) + `sessions/appstate.py` (`prune_to_elements`) + `frontend/src/components/SaveCheckpointDialog.tsx` | below |
-| Change where a save writes, what the file is named, or what the session is called | `backend/app/main.py` (`_validated_destination`, `_validated_name`) + `deps.py` (`default_save_path`) + `sessions/session.py` (`_rename`, `_run_load`) + `frontend/src/components/SaveCheckpointDialog.tsx` | below |
+| Change where a save writes, what the file is named, or what the session is called | `backend/app/main.py` (`_validated_destination`, `_validated_name`) + `deps.py` (`default_save_path`) + `sessions/session.py` (`rename`, `_run_load`) + `frontend/src/components/SaveCheckpointDialog.tsx` | below |
 | Change how rendered plot figures are stored, served or shown | `backend/app/persistence/store.py` (`_write_figures`, `read_figure`, `figure_index`) + `sessions/session.py` (`figure`, `figure_index`, `figures_to_persist`) + `frontend/src/lib/figures.ts` + `components/PlotGallery.tsx` / `FigureLightbox.tsx` / `PlotDetail.tsx` | below |
 | Change what the serverless viewer can read from a checkpoint | `backend/app/persistence/store.py` (`_write_viewer_sidecar`, the writer half) + `packages/viewer/src/data/checkpointSource.ts` (the reader half) — the two must move together | [DESIGN.md](DESIGN.md) §14.1–14.2, [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) §4 |
 | Change how cell boundaries are indexed or range-queried | `backend/app/persistence/store.py` (`_index_shapes`, `_row_group_rows`, `_selectivity` — the writer half) + `packages/viewer/src/data/parquetShapes.ts` and `wkbGeoArrow.ts` (the reader half). A change to the on-disk index must keep `test_e2e.run_shape_index_check` passing: it re-derives the pruning from the file and compares it against a brute-force row scan | [DESIGN.md](DESIGN.md) §14.1–14.2, [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) §4.4 |
@@ -266,7 +266,7 @@ rather than a job that fails minutes into a multi-GB write:
   session's current name. `deps.default_save_path(sess, folder, prefix)` is the single
   seam that composes both; the points-transform route and the MCP `save_checkpoint` tool
   call it with neither and so keep the flat-in-`DATA_DIR` default.
-- `name` — the session name. `Session._rename` (run on the worker as the save job's
+- `name` — the session name. `Session.rename` (run on the worker as the save job's
   first step) sets it and records it in `app_state["name"]`, so it survives into the file
   and `Session._run_load` adopts it back in place of the filename-derived one. That is
   what lets the file's name and the session's name diverge at all;
@@ -791,14 +791,19 @@ cd backend
 | `--recipe-params` | JSON object of recipe-parameter overrides (fills the recipe's `$param` refs) |
 | `--output` | output directory (created if absent) |
 | `--reader-params` | JSON object of extra kwargs for the reader (reader mode) |
-| `--name` | base name for the output `.zarr.zip` (default: from `--input`) |
-| `--lowres-max-image-mb` | also write `<name>.lowres.zarr.zip` — the same session with as many of each image's finest pyramid levels dropped as it takes to fit that image budget (`store.cap_image_levels`) |
+| `--name` | base name for the output checkpoint, written as `<name>-<content hash>.sdata.zarr.zip` (default: from `--input`) |
+| `--session-name` | what the checkpoint records as its own name (`app_state["name"]`), shown when it is reopened however the file is named; unset leaves a loaded store's name alone |
+| `--lowres-max-image-mb` | also write a second checkpoint with as many of each image's finest pyramid levels dropped as it takes to fit that image budget (`store.cap_image_levels`) |
+| `--lowres-name` | base name for that copy (default: `<name>.lowres`) |
 | `--display-color-by` | field path (`obs:cellular_neighborhood`, `X:GENE`) every saved display is coloured by, applied after the recipes run |
 | `--display-render-mode` | `points` or `points+shapes` for the saved spatial canvas |
 
-The output folder holds `<name>.zarr.zip` (the full SpatialData + app state, reloadable
-in the app, with each drawn plot's figure inside it) and
-`plots/<NN>_<namespace>.<function>/figure.{svg,pdf}` per plot step as loose files.
+The output folder holds `<name>-<content hash>.sdata.zarr.zip` (the full SpatialData +
+app state, reloadable in the app, with each drawn plot's figure inside it) and
+`plots/<NN>_<namespace>.<function>/figure.{svg,pdf}` per plot step as loose files. These
+are auto-named checkpoints, so the filename carries a hash of its own contents the way
+the app's saves do (`docs/CHECKPOINT_FORMAT.md` §7) — the exact name is only known once
+the bytes are, and the CLI prints each path it wrote.
 Repeating `--recipe` runs the recipes in order in the same session — one load, one
 save — so a longer analysis composes the bundled recipes instead of restating their
 steps in a new file. `--recipe-params` is shared by all of them: each recipe fills only

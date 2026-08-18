@@ -94,11 +94,11 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
     .filter((d) => d.name.toLowerCase().includes(q) || d.path.toLowerCase().includes(q))
     .sort((a, b) => b.mtime - a.mtime);
 
-  // Fill the (empty, untouched) name field from a chosen checkpoint so the user rarely
-  // has to type one; a name they typed themselves is never overwritten.
+  // No autofill here: a checkpoint carries its own name (app_state["name"]), and sending
+  // one derived from the filename would override it on every load. Left blank, the
+  // backend adopts the file's name and falls back to the filename only if it has none.
   function selectPath(p: string) {
     setSelectedPath(p);
-    if (!nameEdited) setName(deriveSessionName(p));
     setError(null);
   }
 
@@ -143,7 +143,9 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
     setError(null);
     resetLoadLog();
     try {
-      const finalName = name.trim() || deriveSessionName(chosen);
+      // A read has no name to inherit, so it gets one derived from the path; a load
+      // sends only a name the user typed, leaving the checkpoint's own name to stand.
+      const finalName = name.trim() || (mode === 'import' ? deriveSessionName(chosen) : '');
       const session = await createSession({ name: finalName || undefined, source, load_id: id });
       if (mode === 'import') {
         // Read bootstrap: the session is created and its data loads in the background;
@@ -257,12 +259,17 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
 
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-mono text-muted">Session name (optional)</label>
+                  {mode === 'load' && (
+                    <span className="text-[11px] text-muted/60">
+                      Left blank, the checkpoint keeps the name it was saved under.
+                    </span>
+                  )}
                   {/* role=presentation makes Chrome skip address/profile autofill (it ignores
                       autocomplete=off); ARIA ignores the role on focusable elements, so a11y is
                       unaffected. Applied to every text input in this dialog for the same reason. */}
                   <input
                     type="text"
-                    placeholder="e.g. visium_hne"
+                    placeholder={mode === 'load' ? 'the name saved in the file' : 'e.g. visium_hne'}
                     value={name}
                     onChange={(e) => { setName(e.target.value); setNameEdited(e.target.value.trim() !== ''); }}
                     autoComplete="off"

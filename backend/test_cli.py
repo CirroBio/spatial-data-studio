@@ -10,6 +10,7 @@ Run from backend/:  python test_cli.py
 Needs test-data/visium_hne.zarr (scripts/prepare_test_data.py writes it, ~375 MB).
 """
 import contextlib
+import glob
 import io
 import json
 import os
@@ -30,6 +31,9 @@ DATA = os.path.join(_REPO_ROOT, "test-data", "visium_hne.zarr")
 # each failure is kept with its log, rather than aborting the recipe.
 BAD_OBS_STEP, BAD_COMPUTE_STEP = 3, 4
 PLOT_STEP = 5
+# What --session-name records inside the file. Deliberately unlike the output stem: the
+# name a reload shows has to travel in the object, not in the filename.
+SESSION_NAME = "CLI smoke run"
 RECIPE = {
     "schema_version": 1,
     "meta": {"name": "cli-smoke", "description": "spatial neighbors -> nhood enrichment (+plot), "
@@ -81,7 +85,7 @@ def check_embedding_display(cli) -> int:
 
         from app.persistence.store import load_spatialdata
         _sdata, app_state, _newer, _extract, _hash = load_spatialdata(
-            os.path.join(out_dir, "xen_result.zarr.zip"))
+            written_checkpoint(out_dir, "xen_result"))
         types = [d["type"] for d in app_state["displays"]]
         assert types.count("spatial_canvas") == 1, types   # not duplicated by the second pass
         assert types.count("embedding_canvas") == 1, types
@@ -89,6 +93,15 @@ def check_embedding_display(cli) -> int:
         assert emb["encoding"]["obsm_key"] == "X_umap", emb["encoding"]
         print("[ok] embedding canvas added after the recipe computed it (obsm_key=X_umap)")
     return 0
+
+
+def written_checkpoint(out_dir: str, base: str) -> str:
+    """The checkpoint cli.py wrote under `base`. Its name embeds a hash of its own
+    contents, so the exact filename is only known once the bytes are."""
+    from app.persistence.store import CHECKPOINT_EXT
+    matches = glob.glob(os.path.join(out_dir, f"{base}-*{CHECKPOINT_EXT}"))
+    assert len(matches) == 1, f"expected one {base} checkpoint in {out_dir}, found {matches}"
+    return matches[0]
 
 
 def main() -> int:
@@ -114,13 +127,14 @@ def main() -> int:
 
         # A failing step must not abort the run: rc is 0 and the output is written.
         rc = cli.main(["--parser", "zarr", "--input", DATA, "--name", "cli_result",
+                       "--session-name", SESSION_NAME,
                        "--recipe", recipe_path, "--output", out_dir,
                        "--display-color-by", "obs:leiden",
                        "--display-render-mode", "points+shapes"])
         assert rc == 0, f"cli returned {rc}"
 
-        out_zip = os.path.join(out_dir, "cli_result.zarr.zip")
-        assert os.path.exists(out_zip) and os.path.getsize(out_zip) > 10_000, \
+        out_zip = written_checkpoint(out_dir, "cli_result")
+        assert os.path.getsize(out_zip) > 10_000, \
             f"output zip missing/too small: {out_zip}"
         print(f"[ok] wrote {out_zip} ({os.path.getsize(out_zip)/1e6:.1f} MB)")
 
@@ -135,7 +149,10 @@ def main() -> int:
 
         # the saved store reloads with the recipe's compute history + plot record
         from app.persistence.store import load_spatialdata, read_log
-        sdata, app_state, _newer, extract, _hash = load_spatialdata(out_zip)
+        sdata, app_state, _newer, extract, hash_result = load_spatialdata(out_zip)
+        assert hash_result["ok"], hash_result["message"]
+        assert app_state["name"] == SESSION_NAME, app_state.get("name")
+        print(f"[ok] content hash verified and name recorded: {app_state['name']!r}")
         history = app_state["compute_history"]
         fns = [c["function"] for c in history]
         assert fns == ["spatial_neighbors", "nhood_enrichment", "nhood_enrichment", "pca"], fns

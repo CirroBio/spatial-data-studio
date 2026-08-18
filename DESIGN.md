@@ -2282,13 +2282,20 @@ python cli.py --parser <reader|zarr> --input <path> --recipe <file|name> --outpu
   rather than restating their steps in a new bundle. `--recipe-params` is shared by all
   of them — each recipe substitutes only the `$param` names it declares.
 - **Output** — the resulting `SpatialData` + app state is written with
-  `persistence.store.save_spatialdata` to `<output>/<name>.zarr.zip` (reloadable in the
-  app), and every plot step's captured `figure_svg`/`figure_pdf` (§4.6, held in
+  `persistence.store.save_spatialdata` to
+  `<output>/<name>-<content hash>.sdata.zarr.zip` (reloadable in the app), and every
+  plot step's captured `figure_svg`/`figure_pdf` (§4.6, held in
   `Session.plot_figures`) is written to `<output>/plots/<NN>_<namespace>.<function>/
-  figure.{svg,pdf}`. `--lowres-copy` writes a second checkpoint,
-  `<output>/<name>.lowres.zarr.zip`, through the same call with
-  `drop_image_levels=1`: `store.drop_finest_levels` builds a view whose multiscale
-  images have lost their finest pyramid level and renumbered the rest from `scale0`.
+  figure.{svg,pdf}`. These are auto-named checkpoints (`hash_name=True`), so each
+  filename embeds the hash of its own contents and a later load reports whether the
+  bytes still match it — the same guarantee the app's own saves carry. `--session-name`
+  records what the checkpoint calls *itself* (`app_state["name"]`, §7 of
+  `docs/CHECKPOINT_FORMAT.md`), which is what reopening it shows however the file is
+  named — the seam that lets a batch tree use one fixed filename per dataset folder.
+  `--lowres-max-image-mb` writes a second checkpoint, `<name>.lowres` unless
+  `--lowres-name` overrides the base, through the same call with an image budget:
+  `store.cap_image_levels` builds a view whose multiscale images have lost as many of
+  their finest pyramid levels as the budget takes, renumbering the rest from `scale0`.
   Nothing is resampled — each kept level already carries its own transform to the
   coordinate system, so the trimmed pyramid occupies the identical world extent and
   `pixel_to_world` reads the new `scale0` exactly as it read the old one. Since the
@@ -2345,9 +2352,13 @@ per-format branch; adding a format is an edit to the catalog.
   unrelated locations are processed into one organised tree. The key fully replaces the
   root's own path.
 - **Output** mirrors discovery: a dataset found at `<root>/folderA/folderB` publishes
-  `<outdir>/results/folderA/folderB.sdata.zarr.zip`, its low-res copy, its log, and its
-  plots. The SPA sits at `<outdir>/` so `results/…` paths resolve from it, making the
-  whole publish directory a servable deployment.
+  the folder `<outdir>/results/folderA/folderB/`, holding
+  `results-<hash>.sdata.zarr.zip`, its low-res copy `lowres-<hash>.sdata.zarr.zip`,
+  `plots/` and `results.log` — the same names for every dataset, with each checkpoint's
+  content hash where §28.1's saves put it. The dataset's path is what each checkpoint
+  records as its own name (`--session-name`), so a file named for its slot in the tree
+  still reopens as the dataset it holds. The SPA sits at `<outdir>/` so `results/…`
+  paths resolve from it, making the whole publish directory a servable deployment.
 - **Failure is per dataset.** Reading and analysing runs with the shell's error exit
   disarmed: a folder that looks like a type but is truncated or mis-exported publishes
   its log, is listed as `failed` in the report, and the sweep continues. The dependency

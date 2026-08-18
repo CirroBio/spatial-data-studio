@@ -394,7 +394,7 @@ class Session:
         the object under the write lock, exactly like a read bootstrap.
 
         `adopt_name` lets the checkpoint's own recorded name (`app_state["name"]`, see
-        `_rename`) replace the filename-derived one the shell was created with; the caller
+        `rename`) replace the filename-derived one the shell was created with; the caller
         clears it when the user named this session explicitly."""
         return self.enqueue_special("load", {"path": path, "load_id": load_id,
                                              "adopt_name": adopt_name})
@@ -833,10 +833,10 @@ class Session:
         # been renamed still needs it recorded, or a file saved under a different prefix
         # would reopen named after that prefix.
         if name and (name != self.name or name != self.app_state.get("name")):
-            self._rename(name)
+            self.rename(name)
         self._save_and_finish(job_id, payload, "save")
 
-    def _rename(self, name: str) -> None:
+    def rename(self, name: str) -> None:
         """Adopt a new display name for the session, recording it in `app_state` so the
         checkpoint carries it (`_run_load` reads it back). The filename is only a storage
         name — a save can write the same session under any prefix, or into a folder of

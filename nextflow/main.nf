@@ -36,7 +36,7 @@ process ANALYSE {
     // The log is always written, so this never comes back empty — a candidate that
     // failed to load publishes its log and nothing else.
     path 'out/**', emit: published
-    tuple val(prefix), path("out/${spec.base}.sdata.zarr.zip"), optional: true, emit: checkpoint
+    tuple val(prefix), path("${spec.out_dir}/results-*.sdata.zarr.zip"), optional: true, emit: checkpoint
     path '*_mqc.json', emit: metrics
 
     script:
@@ -91,31 +91,29 @@ process ANALYSE {
         --recipe-params '${spec.recipe_params_json}' \\
         --lowres-max-image-mb ${params.lowres_max_image_mb} \\
         --output '${spec.out_dir}' \\
-        --name '${spec.base}.sdata' \\
+        --name results \\
+        --lowres-name lowres \\
+        --session-name '${prefix}' \\
         ${reader_params_arg} \\
         ${color_by_arg} \\
-        ${render_mode_arg} 2>&1 | tee '${spec.out_dir}/${spec.base}.log'
+        ${render_mode_arg} 2>&1 | tee '${spec.out_dir}/results.log'
     rc=\${PIPESTATUS[0]}
     set -e
 
-    # cli.py writes plots to <output>/plots; name them after the candidate so two
-    # candidates published into the same folder cannot collide.
-    if [ -d '${spec.out_dir}/plots' ]; then
-        mv '${spec.out_dir}/plots' '${spec.out_dir}/${spec.base}.plots'
-    fi
-
+    # cli.py names each checkpoint `<base>-<content hash>.sdata.zarr.zip`, so the hash
+    # asserts the bytes on the next load; only the base is ours to choose.
     if [ "\$rc" -eq 0 ]; then
         .venv/bin/python ${metrics_script} \\
             --sample '${prefix}' \\
             --data-type '${spec.id}' \\
             --status ok \\
-            --checkpoint '${spec.out_dir}/${spec.base}.sdata.zarr.zip' \\
+            --checkpoint ${spec.out_dir}/results-*.sdata.zarr.zip \\
             --source-dir ${data_dir} \\
             --run-metrics '${spec.run_metrics_json}' \\
             --cluster-key '${params.cluster_key}' \\
             --neighborhood-key '${params.neighborhood_key}'
     else
-        echo "WARN: ${prefix} (${spec.id}) failed; see ${spec.base}.log" >&2
+        echo "WARN: ${prefix} (${spec.id}) failed; see ${prefix}/results.log" >&2
         .venv/bin/python ${metrics_script} \\
             --sample '${prefix}' \\
             --data-type '${spec.id}' \\
@@ -171,7 +169,7 @@ process PUBLISH_VIEWER {
     // Sorted so the listing order does not depend on which task finished first.
     def entries = manifest
         .collect { prefix, path -> [prefix: prefix, path: "results/${path}".toString(),
-                                    lowres: path.endsWith('.lowres.zarr.zip')] }
+                                    lowres: path.tokenize('/').last().startsWith('lowres-')] }
         .sort { a, b -> (a.prefix <=> b.prefix) ?: ((a.lowres ? 1 : 0) <=> (b.lowres ? 1 : 0)) }
         .collect { e -> e.lowres
             ? [path: e.path, label: "${e.prefix} (low-res image)".toString(),
@@ -267,13 +265,13 @@ workflow {
     def work = candidates.collect { prefix, typeId, dir ->
         def type = catalog.data_types.find { t -> t.id == typeId }
         def at = prefix ?: dir.name       // a bare root that is itself the dataset
-        def cut = at.lastIndexOf('/')
         tuple(at, [
             id              : typeId,
             label           : type.label,
             reader          : type.reader,
-            base            : cut < 0 ? at : at.substring(cut + 1),
-            out_dir         : cut < 0 ? 'out' : "out/${at.substring(0, cut)}".toString(),
+            // Each dataset owns a folder named for where it was found, holding
+            // results-<hash>.sdata.zarr.zip, its lowres-<hash> copy, plots/ and results.log.
+            out_dir         : "out/${at}".toString(),
             recipes         : params.preprocess ? type.recipes : [],
             // The colour column is one the recipes write, so it only exists when they ran.
             display_color_by   : params.preprocess && type.display?.color_by_param
@@ -320,9 +318,9 @@ workflow {
             .filter { f -> f.endsWith('.zarr.zip') }
             .map { f ->
                 def rel = f.substring(f.indexOf('/out/') + '/out/'.length())
-                // cli.py appends `.lowres` to the --name it was given, so the pair is
-                // `<prefix>.sdata.zarr.zip` and `<prefix>.sdata.lowres.zarr.zip`.
-                [rel.replaceAll('\\.sdata(\\.lowres)?\\.zarr\\.zip$', ''), rel]
+                // Both checkpoints of a dataset sit in its own folder, so the folder
+                // path is the label and the file name says which of the two it is.
+                [rel.substring(0, rel.lastIndexOf('/')), rel]
             }
             .toList(),
     )

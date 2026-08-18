@@ -1,6 +1,6 @@
 {
   "name": "@cirrobio/spatial-viewer",
-  "version": "0.1.3",
+  "version": "0.1.5",
   "description": "Host-agnostic WebGL spatial/embedding canvases and the .zarr.zip checkpoint reader from Spatial Data Studio.",
   "license": "SEE LICENSE IN LICENSE.md",
   "sideEffects": false,
