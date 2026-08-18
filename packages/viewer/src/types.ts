@@ -84,7 +84,8 @@ export interface DisplayEncoding {
   // How the Cells layer renders. Points always draw (styled by `point_size` +
   // `point_marker`, overlaps merged not blended), visible at every zoom. 'points'
   // (default) is points only; 'points+shapes' additionally overlays cell-boundary
-  // fills from `shapes_layer` once zoomed in far enough that the viewport-culled set
+  // fills from `shapes_layer` — immediately when the whole set fits in one query, else
+  // once zoomed in far enough that the viewport-culled set
   // fits. The legacy value 'shapes' is read as 'points+shapes'.
   render_mode?: 'points' | 'points+shapes' | 'shapes';
   // Cell-boundary overlay style (render_mode 'points+shapes'). 'filled' (default)
