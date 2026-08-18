@@ -24,7 +24,9 @@ instead of restating their steps. The output folder receives `<name>.zarr.zip`
 `plots/<NN>_<namespace>.<function>/figure.{svg,pdf}`. `--lowres-max-image-mb`
 adds `<name>.lowres.zarr.zip`: the same session with enough of each image's
 finest pyramid levels dropped to fit that budget, so it holds the whole analysis
-in a much smaller file.
+in a much smaller file. `--display-color-by` and `--display-render-mode` set how
+the saved checkpoint opens in the viewer, which otherwise shows the display built
+from the raw object before any recipe ran.
 """
 from __future__ import annotations
 
@@ -58,6 +60,14 @@ def _parse_args(argv):
                    help="JSON object of extra kwargs merged into the reader call (reader mode only)")
     p.add_argument("--name", default=None,
                    help="base name for the output .zarr.zip (default: derived from --input)")
+    p.add_argument("--display-color-by", default=None, metavar="FIELD",
+                   help="color every saved display by this field path (obs:cellular_neighborhood, "
+                        "X:GENE, ...) once the recipes have run, in place of the categorical "
+                        "column picked when the object was first read")
+    p.add_argument("--display-render-mode", default=None,
+                   choices=("points", "points+shapes"),
+                   help="how the saved spatial canvas draws cells: markers only, or "
+                        "cell-boundary polygons over them once zoomed in")
     p.add_argument("--lowres-max-image-mb", type=float, default=None, metavar="MB",
                    help="also write <name>.lowres.zarr.zip: the same session with as many of "
                         "each image's finest pyramid levels dropped as it takes to bring the "
@@ -169,6 +179,33 @@ def _write_plot(out_dir: Path, index: int, step: dict, figures: dict):
     return folder
 
 
+def _apply_display_settings(sess, color_by: str | None, render_mode: str | None) -> None:
+    """Point the session's displays at what the analysis produced. `auto_displays`
+    builds them when the object is first read, so their `color_by` is whichever
+    categorical column the raw data shipped with — a recipe's cluster or neighborhood
+    column does not exist yet at that point. Render mode applies to the spatial canvas
+    only; an embedding has no cell boundaries to draw."""
+    if color_by is None and render_mode is None:
+        return
+    if color_by is not None:
+        from app.transport.arrow import resolve_field
+        with sess.lock.reading():
+            ad = sess.active_table()
+            try:
+                resolve_field(ad, color_by)
+            except (KeyError, ValueError) as exc:
+                raise SystemExit(f"--display-color-by {color_by!r} does not name a field of "
+                                 f"the analysed data ({exc}); obs holds: "
+                                 f"{', '.join(ad.obs.columns)}")
+    for display in list(sess.app_state["displays"]):
+        encoding = dict(display["encoding"])
+        if color_by is not None:
+            encoding["color_by"] = color_by
+        if render_mode is not None and display["type"] == "spatial_canvas":
+            encoding["render_mode"] = render_mode
+        sess.update_display(display["id"], {**display, "encoding": encoding})
+
+
 def _run_steps(sess, steps: list, out_dir: Path) -> int:
     plots_written = 0
     for i, step in enumerate(steps, start=1):
@@ -222,6 +259,13 @@ def main(argv=None) -> int:
     name = _output_name(args)
     try:
         plots_written = _run_steps(sess, steps, out_dir)
+        # The embedding a recipe computes does not exist when the read bootstrap builds
+        # the session's displays, so the checkpoint would carry no embedding canvas —
+        # and nobody can add one in the serverless viewer, which is read-only. Fill in
+        # whatever is still missing now that the analysis has run.
+        with sess.lock.writing():
+            manager.auto_displays(sess)
+        _apply_display_settings(sess, args.display_color_by, args.display_render_mode)
         # Save directly rather than through the queued save job, whose write-path guard
         # (within_data_dir) is a multi-tenant server concern; offline output goes
         # wherever the caller asked.

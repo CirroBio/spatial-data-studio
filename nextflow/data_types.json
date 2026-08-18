@@ -202,6 +202,10 @@
         "02_leiden_cluster_markers.json",
         "04_neighborhood_analysis.json"
       ],
+      "display": {
+        "color_by_param": "neighborhood_key",
+        "render_mode": "points+shapes"
+      },
       "validated": true,
       "notes": "Targeted panel of a few hundred genes at cell resolution, so no highly-variable-gene selection. Run end to end against the 10x 'Human Lung (2 FOV)' bundle."
     },
@@ -236,6 +240,10 @@
         "22_visium_analysis_scanpy.json",
         "04_neighborhood_analysis.json"
       ],
+      "display": {
+        "color_by_param": "cluster_key",
+        "render_mode": "points+shapes"
+      },
       "validated": false,
       "notes": "Whole-transcriptome bins. Checked before visium via visium's none_of, because an HD run also carries a Visium-shaped count matrix inside binned_outputs/square_XXXum/."
     },
@@ -280,6 +288,10 @@
         "22_visium_analysis_scanpy.json",
         "04_neighborhood_analysis.json"
       ],
+      "display": {
+        "color_by_param": "cluster_key",
+        "render_mode": "points+shapes"
+      },
       "validated": false,
       "notes": "Whole-transcriptome spots, so the scanpy tutorial path with HVG selection. Count thresholds are Visium-scale and would over-filter a targeted panel."
     },
@@ -305,6 +317,10 @@
         "02_leiden_cluster_markers.json",
         "04_neighborhood_analysis.json"
       ],
+      "display": {
+        "color_by_param": "neighborhood_key",
+        "render_mode": "points+shapes"
+      },
       "validated": false,
       "notes": "Same modality as Xenium \u2014 targeted panel, raw counts, cell resolution \u2014 so it takes the same recipe chain despite the name on the first recipe."
     },
@@ -330,6 +346,10 @@
         "02_leiden_cluster_markers.json",
         "04_neighborhood_analysis.json"
       ],
+      "display": {
+        "color_by_param": "neighborhood_key",
+        "render_mode": "points+shapes"
+      },
       "validated": false,
       "notes": "Targeted panel at cell resolution, as Xenium. The reader also accepts CellComposite/ and CellLabels/ when present, but the three per-FOV CSVs are what identifies the export."
     },
@@ -353,6 +373,10 @@
         "22_visium_analysis_scanpy.json",
         "04_neighborhood_analysis.json"
       ],
+      "display": {
+        "color_by_param": "cluster_key",
+        "render_mode": "points+shapes"
+      },
       "validated": false,
       "notes": "Slide-seq-style whole-transcriptome beads, so the whole-transcriptome path rather than the targeted-panel one. Beads are far shallower than Visium spots \u2014 min/max_reads_per_cell almost certainly need lowering."
     },
@@ -378,6 +402,10 @@
         "25_cluster_protein_intensities.json",
         "04_neighborhood_analysis.json"
       ],
+      "display": {
+        "color_by_param": "neighborhood_key",
+        "render_mode": "points+shapes"
+      },
       "validated": false,
       "notes": "Per-cell protein intensities, not transcript counts: normalize_total/log1p and HVG selection do not apply, so this takes the z-score path instead."
     },
@@ -401,6 +429,10 @@
         "25_cluster_protein_intensities.json",
         "04_neighborhood_analysis.json"
       ],
+      "display": {
+        "color_by_param": "neighborhood_key",
+        "render_mode": "points+shapes"
+      },
       "validated": false,
       "notes": "Protein intensities per cell, as Steinbock. markers.csv plus quantification/ is what distinguishes an MCMICRO output directory."
     }

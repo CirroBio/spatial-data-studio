@@ -23,6 +23,11 @@ from ..transport.sse import BUS
 # workers loky retired while nothing was running.
 _CPU_PROC_SCAN_S = 10.0
 
+# obsm keys the default embedding canvas prefers, best first: the non-linear map is
+# what a user expects to land on, not the PCA it was built from. Any other key is used
+# only when none of these is present.
+_PREFERRED_EMBEDDINGS = ("X_umap", "X_tsne", "X_diffmap")
+
 
 class SessionManager:
     def __init__(self, registry):
@@ -79,10 +84,13 @@ class SessionManager:
         return sess
 
     def auto_displays(self, sess: Session):
-        """Generate a default spatial canvas (DESIGN §9.1). Called on session
-        creation from a saved store (create_from_load) and again once a read
-        bootstrap job adopts its SpatialData (Session._run_call), since the
-        latter has no sdata/table to build a display from until that job runs."""
+        """Generate the session's default displays (DESIGN §9.1): a spatial canvas, and
+        an embedding canvas once the table has an embedding to show. Called on session
+        creation from a saved store (create_from_load) and again once a read bootstrap
+        job adopts its SpatialData (Session._run_call), since the latter has no
+        sdata/table to build a display from until that job runs — and by the offline CLI
+        once its recipes have computed the embedding no reader ships. Adds only the
+        displays that are missing, so a later call cannot duplicate one."""
         try:
             ad = sess.active_table()
         except RuntimeError:
@@ -93,21 +101,24 @@ class SessionManager:
             if isinstance(ad.obs[c].dtype, pd.CategoricalDtype):
                 color = f"obs:{c}"
                 break
-        coords = "obsm:spatial" if "spatial" in ad.obsm else (
-            f"obsm:{next(iter(ad.obsm))}" if len(ad.obsm) else None)
-        images = list(getattr(sess.sdata, "images", {}).keys())
-        sess.app_state["displays"].append({
-            "id": str(uuid.uuid4()), "type": "spatial_canvas",
-            "encoding": {"coords": coords, "color_by": color,
-                         "image_layer": images[0] if images else None, "shapes_layer": None,
-                         "render_mode": "points", "point_marker": "circle",
-                         **appstate.POINT_ENCODING_DEFAULTS,
-                         "legend_visible": True, "legend_title": ""},
-            "viewport": None,
-        })
+        present = {d["type"] for d in sess.app_state["displays"]}
+        if "spatial_canvas" not in present:
+            coords = "obsm:spatial" if "spatial" in ad.obsm else (
+                f"obsm:{next(iter(ad.obsm))}" if len(ad.obsm) else None)
+            images = list(getattr(sess.sdata, "images", {}).keys())
+            sess.app_state["displays"].append({
+                "id": str(uuid.uuid4()), "type": "spatial_canvas",
+                "encoding": {"coords": coords, "color_by": color,
+                             "image_layer": images[0] if images else None, "shapes_layer": None,
+                             "render_mode": "points", "point_marker": "circle",
+                             **appstate.POINT_ENCODING_DEFAULTS,
+                             "legend_visible": True, "legend_title": ""},
+                "viewport": None,
+            })
 
-        emb_key = next((k for k in ad.obsm if k != "spatial"), None)
-        if emb_key is not None:
+        emb_key = next((k for k in _PREFERRED_EMBEDDINGS if k in ad.obsm),
+                       next((k for k in ad.obsm if k != "spatial"), None))
+        if emb_key is not None and "embedding_canvas" not in present:
             sess.app_state["displays"].append({
                 "id": str(uuid.uuid4()), "type": "embedding_canvas",
                 "encoding": {"obsm_key": emb_key, "x_component": 0, "y_component": 1,

@@ -1,14 +1,14 @@
 import { useState } from 'react';
 import { useAppStore } from '../store/sessionStore';
 import { addDisplay as postDisplay } from '../api';
-import { useEditGate } from '../hooks/usePresence';
+import { useEditGate, useLocalEditsOnly } from '../hooks/usePresence';
 import { reportError } from '@cirrobio/spatial-viewer';
-import type { ObsField, ObsmField } from '@cirrobio/spatial-viewer';
+import type { EmbeddingDisplaySpec, ObsField, ObsmField } from '@cirrobio/spatial-viewer';
 import ColorBySelect from './canvas/ColorBySelect';
 
 // Authoring the session's embedding display, shown where the embedding canvas would be
 // when the session has none yet. App-level rather than part of the canvas: creating a
-// display POSTs it to the session, which is a write the canvas itself never makes.
+// display is a write to the session, which the canvas itself never makes.
 export default function EmbeddingEmptyState({
   sessionId,
   obsmFields,
@@ -25,9 +25,13 @@ export default function EmbeddingEmptyState({
   const [selectedKey, setSelectedKey] = useState(obsmFields[0]?.name ?? '');
   const [colorBy, setColorBy] = useState(firstCategorical ? `obs:${firstCategorical.name}` : '');
   const [creating, setCreating] = useState(false);
-  // Creating the view POSTs a display to the session, so it needs the edit lock even
-  // though everything else about this canvas is read-only.
-  const { canEdit, reason: editBlockedReason } = useEditGate();
+  // A live session POSTs the new display, so it needs the edit lock. A checkpoint has no
+  // session to POST to and its display set is browser-local anyway, so the read-only gate
+  // must not block it there — that would leave the embeddings unreachable in every
+  // checkpoint whose analysis did not write the view.
+  const localOnly = useLocalEditsOnly();
+  const { reason } = useEditGate();
+  const blockedReason = localOnly ? null : reason;
 
   if (obsmFields.length === 0) {
     return (
@@ -44,26 +48,32 @@ export default function EmbeddingEmptyState({
   async function handleCreate() {
     const field = obsmFields.find((f) => f.name === embeddingKey);
     const n = field?.n_components ?? 2;
+    const spec: Omit<EmbeddingDisplaySpec, 'id'> = {
+      type: 'embedding_canvas',
+      encoding: {
+        obsm_key: embeddingKey,
+        x_component: 0,
+        y_component: Math.min(1, n - 1),
+        z_component: Math.min(2, n - 1),
+        is_3d: false,
+        color_by: colorBy,
+        point_size: 4,
+        opacity: 0.85,
+        colormap: 'viridis',
+        legend_visible: true,
+        legend_title: '',
+      },
+      viewport: null,
+    };
+    // No backend to assign the id, so mint it here — the same thing shape annotations
+    // do on a local-only source.
+    if (localOnly) {
+      addDisplay({ ...spec, id: crypto.randomUUID() });
+      return;
+    }
     setCreating(true);
     try {
-      const spec = await postDisplay(sessionId, {
-        type: 'embedding_canvas',
-        encoding: {
-          obsm_key: embeddingKey,
-          x_component: 0,
-          y_component: Math.min(1, n - 1),
-          z_component: Math.min(2, n - 1),
-          is_3d: false,
-          color_by: colorBy,
-          point_size: 4,
-          opacity: 0.85,
-          colormap: 'viridis',
-          legend_visible: true,
-          legend_title: '',
-        },
-        viewport: null,
-      });
-      addDisplay(spec);
+      addDisplay(await postDisplay(sessionId, spec));
     } catch (e) {
       reportError('Could not create embedding view', e);
     } finally {
@@ -101,8 +111,8 @@ export default function EmbeddingEmptyState({
         <button
           type="button"
           onClick={handleCreate}
-          disabled={creating || !canEdit}
-          title={editBlockedReason ?? undefined}
+          disabled={creating || blockedReason !== null}
+          title={blockedReason ?? undefined}
           className="mt-1 w-full px-3 py-1 bg-accent hover:bg-accent/80 text-on-accent rounded text-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {creating ? 'Creating…' : 'Create embedding view'}

@@ -132,9 +132,10 @@ nextflow/   The workflow (one entrypoint), wrapping backend/cli.py; uv installs 
             runtime, so there is no image build
   main.nf           discover datasets under an input -> per-type recipes -> mirrored
                     checkpoints + MultiQC report + a serverless viewer
-  data_types.json   the catalog: recognition patterns, readers, recipes and which knob
-                    applies to which type (schema: data_types.schema.json). All
-                    data-type-specific knowledge lives here, none of it in the workflow
+  data_types.json   the catalog: recognition patterns, readers, recipes, which knob
+                    applies to which type, and how each type's checkpoint opens in the
+                    viewer (schema: data_types.schema.json). All data-type-specific
+                    knowledge lives here, none of it in the workflow
   modules/          discovery: generic, catalog-driven tree walk and classification
   tests/            check_catalog.py (catalog <-> schema <-> params <-> recipes) and the
                     discovery harness it drives
@@ -706,8 +707,11 @@ collection as well as embeddable per page. Pull requests build but do not publis
   `scripts/prepare_xenium_*.py` to exercise them.
 - `cd backend && python test_cli.py` — offline CLI round trip: loads
   `visium_hne.zarr`, runs a compute + plot recipe headlessly, and asserts the output
-  `.zarr.zip` and `plots/…/figure.{svg,pdf}` are written and reload with history
-  intact.
+  `.zarr.zip` and `plots/…/figure.{svg,pdf}` are written and reload with history and the
+  requested display settings intact. A second pass over `xenium.zarr` (whose `obsm` holds
+  only `spatial`) runs an embedding recipe and asserts the checkpoint comes back with the
+  embedding canvas the read could not have built, and no duplicate spatial one; it prints
+  a `[skip]` line when that fixture is absent.
 - `cd backend && PYTHONPATH=. python test_compression.py` — dataset-free unit test
   for `SelectiveGZipMiddleware`: which content types compress, round-trip/passthrough
   correctness, and the regression guard that gzip runs off the event loop (a
@@ -720,6 +724,7 @@ collection as well as embeddable per page. Pull requests build but do not publis
 - `python nextflow/tests/check_catalog.py` — the workflow's declarative half: validates
   `data_types.json` against its schema, checks every recipe it names exists, verifies each
   common parameter's `applies_to` really is the set of types whose recipes declare it,
+  checks each type's display default colours by a parameter that applies to it,
   checks the params agree across `nextflow.config` and `nextflow_schema.json`, and runs
   discovery over a synthetic tree of every catalogued type.
 - `python nextflow/tests/check_containers.py` — asserts every `*_container` image named
@@ -786,6 +791,8 @@ cd backend
 | `--reader-params` | JSON object of extra kwargs for the reader (reader mode) |
 | `--name` | base name for the output `.zarr.zip` (default: from `--input`) |
 | `--lowres-max-image-mb` | also write `<name>.lowres.zarr.zip` — the same session with as many of each image's finest pyramid levels dropped as it takes to fit that image budget (`store.cap_image_levels`) |
+| `--display-color-by` | field path (`obs:cellular_neighborhood`, `X:GENE`) every saved display is coloured by, applied after the recipes run |
+| `--display-render-mode` | `points` or `points+shapes` for the saved spatial canvas |
 
 The output folder holds `<name>.zarr.zip` (the full SpatialData + app state, reloadable
 in the app, with each drawn plot's figure inside it) and
@@ -794,6 +801,18 @@ Repeating `--recipe` runs the recipes in order in the same session — one load,
 save — so a longer analysis composes the bundled recipes instead of restating their
 steps in a new file. `--recipe-params` is shared by all of them: each recipe fills only
 the `$param` names it declares, and ignores the rest.
+
+The displays the checkpoint opens on are built when the object is first read, which is
+before any recipe has run: they colour by whatever categorical column the reader happened
+to write, and a reader-mode session has no embedding at all, so it gets no embedding
+canvas. Both are fixed after the steps finish — `manager.auto_displays` runs again to add
+whatever display is still missing (it only ever adds, so the spatial canvas is not
+duplicated), then `--display-color-by` repoints every display (failing with the obs
+columns listed if the field is not there) and `--display-render-mode` sets how the spatial
+canvas draws cells. This matters most for the serverless viewer: it has no session to
+POST a display to, so `EmbeddingEmptyState` authors one browser-locally there — a
+fallback for checkpoints written before the CLI filled the view in, not a substitute for
+writing it, since a local display is gone on reload.
 
 **Nextflow.** One workflow, `nextflow/main.nf`, wrapping the CLI in a container that
 installs the pinned Python deps at runtime with `uv`, so there is no image to build.

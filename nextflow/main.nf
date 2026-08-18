@@ -45,6 +45,13 @@ process ANALYSE {
         .join(' \\\n        ')
     def reader_params_arg = spec.reader_params_json
         ? "--reader-params '${spec.reader_params_json}'" : ''
+    // How the published checkpoint opens in the viewer. The display the app builds when
+    // the object is first read predates every recipe, so it cannot colour by a column
+    // the analysis is about to write.
+    def color_by_arg = spec.display_color_by
+        ? "--display-color-by '${spec.display_color_by}'" : ''
+    def render_mode_arg = spec.display_render_mode
+        ? "--display-render-mode '${spec.display_render_mode}'" : ''
     // Two statements rather than an `&&` chain: `set -e` does not abort on the left
     // operand of `&&`, so a chain would let a failed install fall through to a
     // confusing ImportError several minutes later instead of stopping here.
@@ -83,7 +90,9 @@ process ANALYSE {
         --lowres-max-image-mb ${params.lowres_max_image_mb} \\
         --output '${spec.out_dir}' \\
         --name '${spec.base}.sdata' \\
-        ${reader_params_arg} 2>&1 | tee '${spec.out_dir}/${spec.base}.log'
+        ${reader_params_arg} \\
+        ${color_by_arg} \\
+        ${render_mode_arg} 2>&1 | tee '${spec.out_dir}/${spec.base}.log'
     rc=\${PIPESTATUS[0]}
     set -e
 
@@ -264,6 +273,10 @@ workflow {
             base            : cut < 0 ? at : at.substring(cut + 1),
             out_dir         : cut < 0 ? 'out' : "out/${at.substring(0, cut)}".toString(),
             recipes         : params.preprocess ? type.recipes : [],
+            // The colour column is one the recipes write, so it only exists when they ran.
+            display_color_by   : params.preprocess && type.display?.color_by_param
+                ? "obs:${params[type.display.color_by_param]}".toString() : null,
+            display_render_mode: type.display?.render_mode,
             recipe_params_json : groovy.json.JsonOutput.toJson(recipeParamsFor(catalog, typeId)),
             reader_params_json : type.reader_params
                 ? groovy.json.JsonOutput.toJson(type.reader_params) : null,

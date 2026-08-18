@@ -632,9 +632,18 @@ library calls but with a signature **defined by the application**:
 | `background` | `light` \| `dark` | Spatial-only per-plot backdrop, independent of the app theme; defaults to `dark` |
 | `show_minimap` | bool | Spatial-only overview inset (§9.11); defaults on |
 
-On load, default specs are generated from the object's structure. **Color by** first
-picks a slot (`obs`, `X` gene expression, or a `layer`) then the column within it:
-obs columns from a dropdown, genes from a type-to-search box backed by `GET
+On load, default specs are generated from the object's structure: a spatial canvas, plus
+an embedding canvas as soon as the table carries an embedding — `X_umap`/`X_tsne`/
+`X_diffmap` in preference to the PCA they were built from. Only the missing specs are
+added, so a later pass tops the set up rather than duplicating it — the offline CLI makes
+one after its recipes, since a reader's table has no embedding when the session is built.
+A checkpoint that still arrives without an embedding canvas can only get one from the
+empty-state authoring form, where the host decides what persisting it means: a live
+session PUTs it, a serverless checkpoint keeps it in the browser for that visit alone.
+Writing the spec into the store is therefore what makes the view open by itself.
+
+**Color by** first picks a slot (`obs`, `X` gene expression, or a `layer`) then the
+column within it: obs columns from a dropdown, genes from a type-to-search box backed by `GET
 /api/sessions/{id}/var-names?q=&limit=` (matches found server-side, prefix hits first),
 so datasets with tens of thousands of genes stay responsive.
 

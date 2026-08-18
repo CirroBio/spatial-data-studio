@@ -30,6 +30,29 @@ edit to that one file.
 | Steinbock | `cells.h5ad` + `ome/` + a masks folder | z-score → PCA → neighbors → Leiden → UMAP, then neighborhoods |
 | MCMICRO | `quantification/` + `markers.csv` + `registration/`/`dearray/` | as Steinbock |
 
+### How each result opens in the viewer
+
+The published checkpoint carries the display it opens on, and the catalog sets it per
+type. Every type opens with cell boundaries on (`points+shapes`: the markers become the
+real cell outlines once you zoom in far enough, and stay markers for a type whose shapes
+are not polygons, such as Visium spots), coloured by the column that says the most about
+the tissue:
+
+| Coloured by | Types | Why |
+| ----------- | ----- | --- |
+| `--neighborhood_key` (`cellular_neighborhood`) | Xenium, MERSCOPE, CosMx, Steinbock, MCMICRO | Cell resolution: the recurring niches are what the spatial view is for, and the clusters are one click away. |
+| `--cluster_key` (`leiden`) | Visium, Visium HD, Curio | A spot or bead is already a mixture of cells, so its cluster *is* the tissue domain. |
+
+Rename either column and the display follows it — the catalog names the parameter, not
+the column. With `--preprocess false` the boundaries still come on but the colouring is
+left as read, since neither column exists without the recipes that write them.
+
+The **Embeddings** view is configured too, on the UMAP the recipes compute (the obsm
+picker in its controls switches to the 3D UMAP or the PCA, and the 3D toggle turns the
+view into an orbit). It has to be written into the checkpoint here: no embedding
+exists when the dataset is first read, and a viewer opening a checkpoint that lacks the
+view can only rebuild it by hand, for that browser session only.
+
 Steinbock and MCMICRO measure **protein intensity**, not transcript counts, so they take
 a path with no `normalize_total`/`log1p` and no highly-variable-gene selection — those
 assume counts. See `backend/app/recipes/25_cluster_protein_intensities.json`.

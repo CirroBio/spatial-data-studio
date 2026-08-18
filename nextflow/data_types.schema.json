@@ -78,11 +78,28 @@
           "items": { "type": "string", "pattern": "^[0-9]{2}_[a-z0-9_]+\\.json$" },
           "description": "Bundled recipe file names under backend/app/recipes/, run back to back in one session. Empty means this type loads but has no default preprocessing."
         },
+        "display": { "$ref": "#/definitions/display" },
         "validated": {
           "type": "boolean",
           "description": "Whether these recipes have actually been executed against real data of this type. False is honest, not a defect — it tells a reader the defaults are reasoned rather than proven."
         },
         "notes": { "type": "string", "description": "Why the recipe is what it is, for a reader deciding whether to trust it." }
+      }
+    },
+    "display": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "How the published checkpoint should open in the viewer. Omit it and the checkpoint opens on the display the app builds from the raw object, whose colouring predates every recipe — the first categorical column the reader happened to write. Only applied when the recipes ran (--preprocess).",
+      "properties": {
+        "color_by_param": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of the common parameter holding the obs column to colour by, not the column itself, so the display follows the column the user asked the recipes to write. `neighborhood_key` for the cell-resolution types, whose niches are what the spatial view is for; `cluster_key` for the spot/bead types, where a spot is already a mixture and the cluster is the tissue domain."
+        },
+        "render_mode": {
+          "enum": ["points", "points+shapes"],
+          "description": "points+shapes replaces the markers with cell-boundary polygons once zoomed in far enough, falling back to markers for a type whose shapes are not polygonal (Visium spots) or that carries none."
+        }
       }
     },
     "runMetrics": {

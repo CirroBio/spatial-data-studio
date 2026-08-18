@@ -1,7 +1,8 @@
 """End-to-end test for the offline CLI (backend/cli.py). Drives cli.main in-process
 (the registry build + squidpy compute is the same work test_e2e.py does) against the
-real visium_hne dataset in zarr-load mode, then asserts the output SpatialData and
-plot files are produced and reload cleanly.
+real visium_hne dataset in zarr-load mode, then asserts the output SpatialData, its
+display settings and the plot files are produced and reload cleanly. A second pass over
+the Xenium fixture covers the display an embedding-producing recipe leaves behind.
 
 Run from backend/:  python test_cli.py
 Needs test-data/visium_hne.zarr (scripts/prepare_test_data.py writes it, ~375 MB).
@@ -33,6 +34,50 @@ RECIPE = {
     ],
 }
 
+# The Xenium fixture's obsm holds only `spatial`, so its session is built with no
+# embedding to display — the state every reader-mode run starts in. The embedding
+# canvas can therefore only come from the pass the CLI makes once the recipe below has
+# computed one, and a serverless viewer (read-only) cannot add it afterwards.
+XENIUM = os.path.join(_REPO_ROOT, "test-data", "xenium.zarr")
+EMBEDDING_RECIPE = {
+    "schema_version": 1,
+    "meta": {"name": "cli-embedding", "description": "normalize -> PCA -> neighbors -> UMAP"},
+    "steps": [
+        {"namespace": "sc.pp", "function": "normalize_total", "params": {}},
+        {"namespace": "sc.pp", "function": "log1p", "params": {}},
+        {"namespace": "sc.pp", "function": "pca", "params": {}},
+        {"namespace": "sc.pp", "function": "neighbors", "params": {}},
+        {"namespace": "sc.tl", "function": "umap", "params": {}},
+    ],
+}
+
+
+def check_embedding_display(cli) -> int:
+    """Skips with a [skip] line when the Xenium fixture is absent (as test_e2e.py's
+    Xenium-backed flows do), so CI runs the visium_hne half alone."""
+    if not os.path.isdir(XENIUM):
+        print(f"[skip] {XENIUM} absent; post-recipe embedding display not checked")
+        return 0
+    with tempfile.TemporaryDirectory() as tmp:
+        recipe_path = os.path.join(tmp, "embedding.json")
+        with open(recipe_path, "w") as f:
+            json.dump(EMBEDDING_RECIPE, f)
+        out_dir = os.path.join(tmp, "out")
+        rc = cli.main(["--parser", "zarr", "--input", XENIUM, "--name", "xen_result",
+                       "--recipe", recipe_path, "--output", out_dir])
+        assert rc == 0, f"cli returned {rc}"
+
+        from app.persistence.store import load_spatialdata
+        _sdata, app_state, _newer, _extract, _hash = load_spatialdata(
+            os.path.join(out_dir, "xen_result.zarr.zip"))
+        types = [d["type"] for d in app_state["displays"]]
+        assert types.count("spatial_canvas") == 1, types   # not duplicated by the second pass
+        assert types.count("embedding_canvas") == 1, types
+        emb = next(d for d in app_state["displays"] if d["type"] == "embedding_canvas")
+        assert emb["encoding"]["obsm_key"] == "X_umap", emb["encoding"]
+        print("[ok] embedding canvas added after the recipe computed it (obsm_key=X_umap)")
+    return 0
+
 
 def main() -> int:
     assert os.path.isdir(DATA), f"missing {DATA}; run scripts/prepare_test_data.py first"
@@ -56,7 +101,9 @@ def main() -> int:
         out_dir = os.path.join(tmp, "out")
 
         rc = cli.main(["--parser", "zarr", "--input", DATA, "--name", "cli_result",
-                       "--recipe", recipe_path, "--output", out_dir])
+                       "--recipe", recipe_path, "--output", out_dir,
+                       "--display-color-by", "obs:leiden",
+                       "--display-render-mode", "points+shapes"])
         assert rc == 0, f"cli returned {rc}"
 
         out_zip = os.path.join(out_dir, "cli_result.zarr.zip")
@@ -82,6 +129,21 @@ def main() -> int:
         # the computed graph survived the round trip
         assert "spatial_distances" in sdata.tables[next(iter(sdata.tables))].obsp, "obsp not persisted"
         print(f"[ok] reloaded: compute_history={fns}, plot record + obsp survived")
+
+        # the display flags reached every saved display; render mode is spatial-only
+        displays = app_state["displays"]
+        assert displays and all(d["encoding"]["color_by"] == "obs:leiden" for d in displays), \
+            [d["encoding"]["color_by"] for d in displays]
+        modes = {d["type"]: d["encoding"].get("render_mode") for d in displays}
+        assert modes["spatial_canvas"] == "points+shapes", modes
+        assert modes.get("embedding_canvas") is None, modes
+        # the embedding canvas opens on the UMAP, not the X_pca it was built from
+        emb = next(d for d in displays if d["type"] == "embedding_canvas")
+        assert emb["encoding"]["obsm_key"] == "X_umap", emb["encoding"]["obsm_key"]
+        print(f"[ok] display settings persisted: color_by=obs:leiden, {modes}, "
+              f"embedding on {emb['encoding']['obsm_key']}")
+
+    check_embedding_display(cli)
 
     print("\nCLI E2E CHECKS PASSED")
     return 0

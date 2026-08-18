@@ -13,6 +13,7 @@ So this asserts, without running any analysis:
   * every recipe a data type names exists in backend/app/recipes/;
   * every `applies_to` is the truth — the type's recipes really do declare one of the
     parameter's `recipe_params`, and every type whose recipes declare one is listed;
+  * every data type's display default colours by a common parameter that applies to it;
   * every common parameter is a param in nextflow.config with the same default, and is
     described in nextflow_schema.json with its applicable types spelled out;
   * discovery classifies a synthetic tree of every catalogued type correctly, including
@@ -90,6 +91,25 @@ def check_applies_to(catalog: dict) -> None:
               f"common_params.{name}.applies_to omits {sorted(actual - listed)}, whose "
               f"recipes do declare one of {sorted(targets)}")
     print(f"[ok] all {len(catalog['common_params'])} common params match their recipes")
+
+
+def check_display(catalog: dict) -> None:
+    """A type's display must colour by a column the user can actually get: the common
+    parameter it names has to exist and to apply to that type, or the checkpoint would
+    open on a column none of its recipes wrote."""
+    params = catalog["common_params"]
+    with_display = 0
+    for data_type in catalog["data_types"]:
+        name = data_type.get("display", {}).get("color_by_param")
+        if name is None:
+            continue
+        with_display += 1
+        check(name in params,
+              f"{data_type['id']}: display.color_by_param {name!r} is not a common param")
+        if name in params:
+            check(data_type["id"] in params[name]["applies_to"],
+                  f"{data_type['id']}: display colours by {name!r}, which does not apply to it")
+    print(f"[ok] {with_display} display default(s) name a param their own recipes fill")
 
 
 def config_defaults() -> dict[str, str]:
@@ -202,6 +222,7 @@ def main() -> int:
     check_schema(catalog)
     check_recipes(catalog)
     check_applies_to(catalog)
+    check_display(catalog)
     check_params_exposed(catalog)
     check_discovery(catalog)
 
