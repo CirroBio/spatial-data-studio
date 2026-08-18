@@ -814,6 +814,17 @@ Everything data-type-specific is in `nextflow/data_types.json`; the workflow its
 no per-format branch. See [`nextflow/README.md`](nextflow/README.md) for the parameters
 and [`nextflow/nextflow_schema.json`](nextflow/nextflow_schema.json) for their schema.
 
+**Release assets.** Each `v*` tag carries two build outputs, neither of which is in the
+repository: `viewer-dist.tar.gz` (the SPA, above) and
+`cirrobio-spatial-viewer-<version>.tgz` — `packages/viewer` packed by `npm pack`, which
+is how Cirro-components depends on the canvas library. That consumer used to link a
+path into a checkout beside this one, so it only installed on a machine laid out that
+way; a tagged tarball pins it by version instead. The library's version is stamped from
+the tag at pack time, so `v0.1.1` attaches `cirrobio-spatial-viewer-0.1.1.tgz` — the
+in-repo `version` field is a placeholder, not the thing consumers resolve. Neither asset
+exists on a tag released before its step did; `workflow_dispatch` re-runs the job against
+an existing tag to attach them.
+
 ## Snapshots
 
 A snapshot is a **rendered figure**, not a re-openable view. `backend/app/snapshots.py`

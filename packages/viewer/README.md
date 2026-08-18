@@ -75,10 +75,19 @@ resolve: {
 }
 ```
 
-`apache-arrow` is `>=13` on purpose. The package is **not** `"type": "module"`:
-apache-arrow 13 has no `types` export condition, so a CJS-typed package resolves its
-`Arrow.dom.d.ts` while an ESM one does not. That is what lets one arrow version serve
-both this repo (18) and `@cirrobio/dashboard` (13). Do not add `"type": "module"`.
+`apache-arrow` is a peer, and `>=17` rather than the `>=13` it used to be, because
+`usePolygonBbox` builds Arrow objects and hands them to the host's
+`GeoArrowPolygonLayer`: the two must be the *same* copy, and `@geoarrow/deck.gl-layers`
+imports `Duration`, which arrow added after 13. A host on 13 therefore cannot serve this
+package — it fails at bundle time on that export, or silently hands geoarrow objects from
+a copy it does not share. Do not "fix" that by moving `apache-arrow` to `dependencies`:
+a nested copy puts a different Arrow on each side of exactly the call this range exists
+to protect. The host has to supply one copy `>=17`, deduped with `@geoarrow/*`.
+
+The package is **not** `"type": "module"`: apache-arrow 13 has no `types` export
+condition, so a CJS-typed package resolves its `Arrow.dom.d.ts` while an ESM one does
+not — which is what lets a consumer still type-checking against an older arrow resolve
+these declarations at all. Do not add `"type": "module"`.
 
 ## Releasing
 

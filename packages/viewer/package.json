@@ -35,7 +35,7 @@
     "@vivjs/layers": "0.22.0",
     "@vivjs/loaders": "0.22.0",
     "@zarrita/storage": "^0.2",
-    "apache-arrow": ">=13",
+    "apache-arrow": ">=17",
     "react": "^19",
     "react-dom": "^19",
     "zarrita": "^0.7",
