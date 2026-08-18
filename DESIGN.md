@@ -565,14 +565,16 @@ as the child's immutable base — **not** as a compute-history step.
 
 1. With the **Subsetting** tab active, the canvas selection mode arms a fork.
 2. User draws box / lasso / circle via editable-layers, producing polygon vertices in
-   the display's coordinate system. Multiple regions allowed (union).
+   the canvas' world space (§9.3). Multiple regions allowed (union).
 3. Once the region is **finished** (committed, no partially-drawn ring open), the user
    clicks either **"Only keep cells in region"** or **"Remove cells in region."**
-4. Frontend POSTs polygon vertices + target coordinate system to the backend, with
-   `invert:true` for the remove-in-region variant.
-5. Backend builds a `shapely` polygon and calls `spatialdata.polygon_query(sdata,
-   polygon, target_coordinate_system=...)`. For `invert`, it queries the complement
-   (the object's padded extent box with the selection cut out), keeping cells outside.
+4. Frontend POSTs the polygon vertices, in canvas world coordinates, to the backend,
+   with `invert:true` for the remove-in-region variant.
+5. Backend maps the vertices into a coordinate system (`imaging.world_to_system`, §9.3),
+   builds a `shapely` polygon and calls `spatialdata.polygon_query(sdata, polygon,
+   target_coordinate_system=...)`. For `invert`, it queries the complement (the object's
+   padded extent box, in that same system, with the selection cut out), keeping cells
+   outside.
 6. A **new child session** is created from the query result.
 
 ### 8.2 Backend notes
@@ -586,8 +588,20 @@ as the child's immutable base — **not** as a compute-history step.
   of `polygons`. Labeling then masks obs directly; subset filters the table by the mask
   and matches the linked elements with `spatialdata.match_sdata_to_table` (a table with no
   linked elements becomes a table-only child). `invert` keeps the complement of the mask.
+- **World space is not a coordinate system.** The rings arrive in the space the canvas
+  plots — `obsm["spatial"]` — while `polygon_query` resolves them against a coordinate
+  system the store's elements declare, and the two need not coincide: Xenium spots are
+  microns while its 'global' is image pixels. `imaging.world_to_system` returns both the
+  system to query in and the world→system affine to push the rings through, from the
+  same reconciliation that places the image (§9.3). Neither may be assumed: there is no
+  system named 'global' on a Visium store (spatialdata-io names them after the dataset),
+  and `SpatialData.coordinate_systems` comes off a `set`, so its order is hash-random and
+  must never be indexed into — systems are tried most-populated first (the fullest one
+  crops without dropping elements), best overlay wins.
 - `polygon_query` selects elements that **intersect** the polygon; `bounding_box_query`
-  selects by **center containment**. Use `polygon_query` for lasso/freeform.
+  selects by **center containment**. Use `polygon_query` for lasso/freeform. So a crop
+  keeps a cell whose *footprint* meets the ring, i.e. slightly more than the centroid
+  count the panel's `n=` shows.
 - Performance caveat: if the object has a large `points` element, `polygon_query` can be
   slow. Where applicable, narrow with `subset()` first.
 - The child's base is the **query result**, not a re-readable source; the child retains
@@ -681,7 +695,10 @@ Because a table's `obsm["spatial"]` and its image can live in different coordina
 spaces (Xenium spots are in microns; the image is in pixels), the server reconciles
 them — picking the element transform that best overlays spots onto the image — so
 points and image line up, and rotated/aligned images (e.g. an H&E) are placed as
-quadrilaterals.
+quadrilaterals. The same reconciliation answers the inverse question for spatial
+queries: `world_to_system` returns the coordinate system to run a `polygon_query` in
+and the affine that maps world coordinates into it (§8.2), so a lasso crops the region
+the user drew rather than one scaled by whatever the store's transforms say.
 
 **Ingest-time raster normalization (`backend/app/rasters.py`).** The tile server
 assumes each raster is a multiscale pyramid with tile-sized *store* chunks, but a
@@ -2232,8 +2249,10 @@ A structured adversarial pass over the design. Each item is tagged **Resolved**
 - **Sparse `obsp` transport** must not densify. CSR triplets in Arrow. **Resolved** (§26).
 
 ### Lasso subset & regions
-- **Polygon coordinate-system mismatch.** Vertices taken in the display's declared
-  coordinate system and passed as `target_coordinate_system`. **Resolved** (§8).
+- **Polygon coordinate-system mismatch.** Vertices arrive in canvas world space and are
+  mapped into a coordinate system (`imaging.world_to_system`) before the query; the
+  system is derived, never indexed out of the hash-ordered `coordinate_systems`.
+  **Resolved** (§8.2, §9.3).
 - **Empty selection** → zero-observation child. Refused with a warning. **Resolved** (§8).
 - **Multiple disjoint regions.** Union as a shapely `MultiPolygon`; per-polygon fallback.
   **Resolved** (§8, §10.2).

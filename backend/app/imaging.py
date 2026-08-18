@@ -277,11 +277,13 @@ def _composite(data_cyx: np.ndarray, norm: np.ndarray,
 
 
 # ---- coordinate reconciliation (spots space vs image space) ----------------
-def _affine_xy(elem, sdata):
-    """Element -> 'global' transform as a 3x3 affine over (x, y), or None."""
+def _affine_xy(elem, cs="global"):
+    """Element -> coordinate system `cs` transform as a 3x3 affine over (x, y), or None
+    when the element does not map into `cs` (or maps by something no 2-D affine can
+    express)."""
     try:
         from spatialdata.transformations import get_transformation
-        t = get_transformation(elem, "global")
+        t = get_transformation(elem, cs)
         return np.asarray(t.to_affine_matrix(("x", "y"), ("x", "y")))
     except Exception:
         return None
@@ -320,7 +322,7 @@ def _global_extent(sdata, element) -> list[float]:
         # 'global' transform so the fallback stays in global (spot) coordinates.
         # Returning coarse-level pixels here scores IOU ~0 against micron spots.
         w, h = image_dims(sdata, element)
-        a = _affine_xy(sdata.images[element], sdata)
+        a = _affine_xy(sdata.images[element])
         if a is None:
             a = np.eye(3)
         return bbox_aabb(a, [0.0, 0.0, float(w), float(h)])
@@ -339,16 +341,27 @@ def pixel_to_world(sdata, element, table=None) -> np.ndarray:
     result may include rotation/axis-swap (e.g. an aligned H&E), so tiles are
     placed as quadrilaterals rather than axis-aligned rectangles.
     """
-    a_image = _affine_xy(sdata.images[element], sdata)
+    a_image = _affine_xy(sdata.images[element])
     if a_image is None:
         a_image = np.eye(3)
-    if table is None or "spatial" not in getattr(table, "obsm", {}):
-        return a_image  # no spots to reconcile against; stay in 'global'
+    best_a, best_iou = _spots_to_system(sdata, table, "global", _global_extent(sdata, element))
+    if best_iou <= 0:
+        return a_image  # no spots to reconcile against, or none overlaying the image
+    return np.linalg.inv(best_a) @ a_image
 
+
+def _spots_to_system(sdata, table, cs: str, reference_bbox) -> tuple[np.ndarray, float]:
+    """The spots->`cs` affine that best overlays `obsm["spatial"]` onto `reference_bbox`
+    (a bbox already expressed in `cs`), with its IOU score — the shared half of the
+    reconciliation `pixel_to_world` and `world_to_system` both do. Candidates are the
+    shape/label elements' own transforms into `cs`, plus identity for the common case
+    where the spots are already in `cs` coordinates. Returns (identity, -1.0) when there
+    is nothing to reconcile."""
+    if table is None or "spatial" not in getattr(table, "obsm", {}):
+        return np.eye(3), -1.0
     xy = np.asarray(table.obsm["spatial"])[:, :2]
     spot_bbox = [float(xy[:, 0].min()), float(xy[:, 1].min()),
                  float(xy[:, 0].max()), float(xy[:, 1].max())]
-    global_ext = _global_extent(sdata, element)
 
     # The table's own region element carries the user-editable points->global
     # transform (see sessions/transform.py); exclude it so nudging the points
@@ -360,18 +373,66 @@ def pixel_to_world(sdata, element, table=None) -> np.ndarray:
         for name, elem in group.items():
             if name == region:
                 continue
-            a = _affine_xy(elem, sdata)
+            a = _affine_xy(elem, cs)
             if a is not None:
                 candidates.append(a)
 
     best_a, best_iou = np.eye(3), -1.0
     for a in candidates:
-        score = _iou(bbox_aabb(a, spot_bbox), global_ext)
+        score = _iou(bbox_aabb(a, spot_bbox), reference_bbox)
         if score > best_iou:
             best_iou, best_a = score, a
-    if best_iou <= 0:
-        return a_image
-    return np.linalg.inv(best_a) @ a_image
+    return best_a, best_iou
+
+
+def system_extent(sdata, cs: str) -> list[float]:
+    """The whole object's extent in coordinate system `cs`, as [x0, y0, x1, y1]."""
+    from spatialdata import get_extent
+    ext = get_extent(sdata, coordinate_system=cs)
+    return [float(ext["x"][0]), float(ext["y"][0]), float(ext["x"][1]), float(ext["y"][1])]
+
+
+def world_to_system(sdata, table, coordinate_system: str | None = None) -> tuple[str, np.ndarray]:
+    """The coordinate system to run a spatial query in, and the 3x3 affine mapping canvas
+    world coordinates into it.
+
+    World space is whatever `obsm["spatial"]` is in (that is what the canvas plots and
+    what a lasso's vertices come back in); a coordinate system is whatever the store's
+    elements declare. The two are not the same space — on Xenium the spots are microns
+    while 'global' is image pixels — so a query geometry has to be pushed through this
+    affine before `polygon_query` sees it. The affine is the same spots->system transform
+    `pixel_to_world` reconciles the image against, so the crop keeps exactly the cells
+    the user lassoed on the canvas.
+
+    With no `coordinate_system` named, systems are tried most-populated first (ties broken
+    by name) and the best-overlaying one wins: `SpatialData.coordinate_systems` is built
+    from a set, so its order is hash-randomized and cannot be indexed into, and the
+    fullest system is the one whose crop keeps every element. A store whose systems are
+    equally good (Visium's full-resolution system and its `_downscaled_*` siblings) then
+    resolves to the full-resolution one."""
+    systems = [coordinate_system] if coordinate_system else _system_order(sdata)
+    if not systems:
+        raise ValueError("object has no coordinate system to query in")
+    best_cs, best_a, best_iou = systems[0], np.eye(3), -1.0
+    for cs in systems:
+        a, iou = _spots_to_system(sdata, table, cs, system_extent(sdata, cs))
+        if iou > best_iou:
+            best_cs, best_a, best_iou = cs, a, iou
+    return best_cs, best_a
+
+
+def _system_order(sdata) -> list[str]:
+    """The object's coordinate systems, most-populated first then by name. An element
+    maps into as many systems as it declares and 'global' need not be one of them —
+    spatialdata-io's Visium readers name them after the dataset (`<id>`,
+    `<id>_downscaled_hires`, `<id>_downscaled_lowres`)."""
+    from spatialdata.transformations import get_transformation
+    counts: dict[str, int] = {}
+    for kind in ("images", "labels", "shapes", "points"):
+        for elem in getattr(sdata, kind, {}).values():
+            for cs in get_transformation(elem, get_all=True):
+                counts[cs] = counts.get(cs, 0) + 1
+    return sorted(sdata.coordinate_systems, key=lambda cs: (-counts.get(cs, 0), cs))
 
 
 def _world_bounds(m: np.ndarray, width: int, height: int) -> list[float]:

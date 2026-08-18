@@ -222,12 +222,15 @@ class SessionManager:
             return sd.SpatialData(tables={tkey: sub})
 
     def _select_by_polygon(self, parent: Session, payload: dict):
-        """Spatial-view subset: parse the lasso rings and resolve them against a
-        coordinate system with polygon_query. `invert` (remove) queries the data extent
-        with the selection cut out (box-minus-selection). Runs under the caller's read
-        lock."""
+        """Spatial-view subset: parse the lasso rings, map them out of canvas world space
+        into a coordinate system, and resolve them there with polygon_query. `invert`
+        (remove) queries the data extent with the selection cut out (box-minus-selection).
+        Runs under the caller's read lock."""
+        import numpy as np
         import spatialdata as sd
+        from shapely.affinity import affine_transform
         from shapely.geometry import Polygon, MultiPolygon
+        from .. import imaging
         polys = []
         for r in payload["polygons"]:
             if len(r) < 3:
@@ -239,18 +242,21 @@ class SessionManager:
                 polys.append(p)
         if not polys:
             raise ValueError("no valid polygon in selection")
+        # The rings arrive in canvas world space (whatever obsm['spatial'] is in), which
+        # is not the space the store's elements are declared in — on Xenium the spots are
+        # microns and 'global' is image pixels, so an untransformed ring crops a patch
+        # ~4.7x too small in the wrong corner. Push them into the query system first.
+        cs, m = imaging.world_to_system(parent.sdata, parent.active_table(),
+                                        payload.get("coordinate_system"))
+        if not np.allclose(m, np.eye(3)):
+            aff = [m[0, 0], m[0, 1], m[1, 0], m[1, 1], m[0, 2], m[1, 2]]  # shapely: a,b,d,e,xoff,yoff
+            polys = [affine_transform(p, aff) for p in polys]
         geom = polys[0] if len(polys) == 1 else MultiPolygon(polys)
-        systems = parent.sdata.coordinate_systems
-        if not (payload.get("coordinate_system") or systems):
-            raise ValueError("object has no coordinate system to subset in")
-        cs = payload.get("coordinate_system") or systems[0]
         # "remove" mode (invert): the box must contain every cell, so use the whole
         # object's extent, padded slightly so cells on the edge aren't dropped.
         if payload.get("invert"):
-            from spatialdata import get_extent
             from shapely.geometry import box
-            ext = get_extent(parent.sdata, coordinate_system=cs)
-            x0, y0, x1, y1 = float(ext["x"][0]), float(ext["y"][0]), float(ext["x"][1]), float(ext["y"][1])
+            x0, y0, x1, y1 = imaging.system_extent(parent.sdata, cs)
             padx = (x1 - x0) * 0.01 or 1.0
             pady = (y1 - y0) * 0.01 or 1.0
             comp = box(x0 - padx, y0 - pady, x1 + padx, y1 + pady).difference(geom)

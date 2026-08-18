@@ -694,14 +694,18 @@ collection as well as embeddable per page. Pull requests build but do not publis
   `view_display` pixel→world affine is proven by mapping a pixel rectangle to world
   polygons whose `inspect_region`/`annotate_region` membership equals an independent
   numpy count, plus embedding-space selection, shape annotations, save, figure
-  export, and a subset that evicts the parent), the
+  export, and a subset that evicts the parent), a lasso subset cropping the drawn
+  region on stores whose world space is not one of their coordinate systems
+  (`run_subset_coordinate_space_flow` synthesizes a Space Ranger `outs` tree and reads
+  it with the real `spatialdata_io.visium` reader for the multi-system case;
+  `run_xenium_subset_space_flow` covers micron spots against a pixel 'global'), the
   client-compositing raster route + `/info` manifest (raw zarr served with Range
   206) on `xenium.zarr`, an image tile keeping its signal after a reshaping compute
   (filter_cells) — i.e. the per-session raster store isn't deleted while the
   adopted object still references it — and rendering a snapshot figure end to end
   (preview, PDF+PNG render with the minimap inset, gallery list, download, embedded
-  metadata, delete — `run_snapshot_flow`). The five Xenium-backed
-  flows (zarr-import, custom methods, segmentation, raster, raster-survives-reshape)
+  metadata, delete — `run_snapshot_flow`). The six Xenium-backed flows (zarr-import,
+  custom methods, segmentation, raster, raster-survives-reshape, xenium subset-space)
   skip with a `[skip]` line when their fixture is absent, so CI runs only the
   Visium-backed subset; regenerate the Xenium fixtures locally via
   `scripts/prepare_xenium_*.py` to exercise them.

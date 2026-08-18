@@ -1970,6 +1970,171 @@ def _untied_bounds(vals, lo_q, hi_q):
     return (float((uniq[lo_i - 1] + uniq[lo_i]) / 2), float((uniq[hi_i - 1] + uniq[hi_i]) / 2))
 
 
+# Xenium cell radius (microns): how far a cell's segmentation footprint can reach past
+# its centroid, and so how much wider than the drawn ring a polygon_query crop may run.
+CELL_RADIUS_UM = 10.0
+
+
+def _subset_child(client, sid, payload, timeout=180):
+    """POST a lasso subset and return the child Session once it lands. A completed subset
+    closes the parent, taking `/jobs/{job_id}` with it, so the child (published as
+    `session.created`) is the completion signal rather than the job status."""
+    from app.deps import MANAGER
+    r = client.post(f"/api/sessions/{sid}/subset", json=payload)
+    assert r.status_code == 200, r.text
+    job_id = r.json()["job_id"]
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        for sess in list(MANAGER.sessions.values()):
+            if sess.parent_id == sid:
+                return sess
+        parent = MANAGER.get(sid)
+        if parent is None:
+            raise RuntimeError("subset closed the parent without producing a child")
+        js = client.get(f"/api/sessions/{sid}/jobs/{job_id}").json()
+        if js.get("status") in ("failed", "cancelled"):
+            raise RuntimeError(f"subset {js['status']}: {parent.get_log(job_id)[0]}")
+        time.sleep(0.5)
+    raise TimeoutError("subset produced no child session")
+
+
+def _write_visium_outs(path, dataset_id, origin, spacing, grid, fullres):
+    """A minimal Space Ranger `outs` tree: a spot grid at `origin + k*spacing`
+    full-resolution pixels, a counts .h5, and hires/lowres tissue images. Read back with
+    the real `spatialdata_io.visium` reader it yields the multi-coordinate-system store
+    every Visium dataset has — `<dataset_id>` plus `<dataset_id>_downscaled_hires` /
+    `_downscaled_lowres`, and no 'global' — which none of the test-data stores carry."""
+    import h5py
+    import numpy as np
+    from PIL import Image
+    from scipy.sparse import csc_matrix
+
+    hires_scalef, lowres_scalef = 0.2, 0.05
+    os.makedirs(os.path.join(path, "spatial"), exist_ok=True)
+    rows, cols = np.meshgrid(np.arange(grid), np.arange(grid), indexing="ij")
+    rows, cols = rows.ravel(), cols.ravel()
+    py, px = origin + rows * spacing, origin + cols * spacing
+    barcodes = [f"BC{i:05d}-1" for i in range(px.size)]
+    genes = [f"GENE{i:03d}" for i in range(24)]
+
+    counts = csc_matrix(np.random.default_rng(0).poisson(2.0, (px.size, len(genes))).T.astype(np.int32))
+    with h5py.File(os.path.join(path, f"{dataset_id}_filtered_feature_bc_matrix.h5"), "w") as f:
+        f.attrs["library_ids"] = np.array([dataset_id.encode()])
+        g = f.create_group("matrix")
+        g.create_dataset("data", data=counts.data)
+        g.create_dataset("indices", data=counts.indices.astype(np.int64))
+        g.create_dataset("indptr", data=counts.indptr.astype(np.int64))
+        g.create_dataset("shape", data=np.array(counts.shape, dtype=np.int32))
+        g.create_dataset("barcodes", data=np.array([b.encode() for b in barcodes]))
+        fg = g.create_group("features")
+        for key, vals in (("id", genes), ("name", genes),
+                          ("feature_type", ["Gene Expression"] * len(genes)),
+                          ("genome", ["test"] * len(genes))):
+            fg.create_dataset(key, data=np.array([v.encode() for v in vals]))
+
+    with open(os.path.join(path, "spatial", "tissue_positions.csv"), "w") as f:
+        f.write("barcode,in_tissue,array_row,array_col,pxl_row_in_fullres,pxl_col_in_fullres\n")
+        for i, b in enumerate(barcodes):
+            f.write(f"{b},1,{rows[i]},{cols[i]},{py[i]},{px[i]}\n")
+
+    with open(os.path.join(path, "spatial", "scalefactors_json.json"), "w") as f:
+        json.dump({"spot_diameter_fullres": float(spacing) / 2, "fiducial_diameter_fullres": 90.0,
+                   "tissue_hires_scalef": hires_scalef, "tissue_lowres_scalef": lowres_scalef}, f)
+
+    for name, scalef in (("tissue_hires_image.png", hires_scalef), ("tissue_lowres_image.png", lowres_scalef)):
+        side = int(fullres * scalef)
+        pixels = np.random.default_rng(1).integers(0, 255, (side, side, 3), dtype=np.uint8)
+        Image.fromarray(pixels).save(os.path.join(path, "spatial", name))
+
+
+def run_subset_coordinate_space_flow(client):
+    """A lasso subset crops the region the user actually drew, on a multi-coordinate-system
+    store. The rings arrive in world space (`obsm['spatial']`, what the canvas plots) while
+    `polygon_query` resolves them against a coordinate system, and a Visium store has three
+    of them and no 'global'. `SpatialData.coordinate_systems` comes off a `set`, so indexing
+    it picks a hash-random one, and a `_downscaled_*` pick resolves a full-resolution ring in
+    a 5x/20x-downscaled space — keeping the wrong spots, or none. See
+    `run_xenium_subset_space_flow` for the case where the two spaces differ in scale."""
+    import numpy as np
+    import spatialdata_io
+
+    from app.deps import MANAGER
+    from app import imaging
+
+    dataset_id, origin, spacing, grid, fullres = "sdstest", 200, 130, 12, 2000
+    staging = tempfile.mkdtemp(dir=str(config.DATA_DIR))  # sessions only read under DATA_DIR
+    try:
+        outs = os.path.join(staging, "outs")
+        _write_visium_outs(outs, dataset_id, origin, spacing, grid, fullres)
+        store = os.path.join(staging, f"{dataset_id}.zarr")
+        spatialdata_io.visium(outs).write(store)
+
+        sid = new_session(client, store)
+        sess = MANAGER.get(sid)
+        systems = sess.sdata.coordinate_systems
+        assert dataset_id in systems and any(s.endswith("_downscaled_hires") for s in systems), systems
+
+        cs, m = imaging.world_to_system(sess.sdata, sess.active_table())
+        assert cs == dataset_id, f"query system {cs!r} is not the full-resolution one ({systems})"
+        assert np.allclose(m, np.eye(3)), m
+
+        # A ring on the spot grid, edges halfway between rows/columns so no spot sits on
+        # the boundary: the interior 5x5 spots, and nothing else. Read in the hires system
+        # instead it would cover full-resolution 1325.. and keep 9 spots from the far corner.
+        lo, hi = origin + spacing // 2, origin + 5 * spacing + spacing // 2
+        ring = [[lo, lo], [hi, lo], [hi, hi], [lo, hi]]
+        xy = np.asarray(sess.active_table().obsm["spatial"])[:, :2]
+        expected = _strict_inside(xy, lo, hi, lo, hi)
+        assert expected == 25, expected
+
+        child = _subset_child(client, sid, {"polygons": [ring]})
+        child_n = child.active_table().n_obs
+        assert child_n == expected, f"kept {child_n} spots, drew {expected}"
+        cxy = np.asarray(child.active_table().obsm["spatial"])[:, :2]
+        assert cxy.min() >= lo and cxy.max() <= hi, (cxy.min(0), cxy.max(0))
+        assert client.delete(f"/api/sessions/{child.id}").status_code == 200
+        print(f"[ok] multi-system Visium ({len(systems)} systems, no 'global'): "
+              f"subset resolved in {cs!r} kept the {child_n} drawn spots")
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
+def run_xenium_subset_space_flow(client):
+    """The other half of the subset coordinate space (see `run_subset_coordinate_space_flow`):
+    one system, but not the space the rings are in. Xenium spots are microns while 'global'
+    is image pixels, so the ring has to be scaled by the store's own micron->pixel transform
+    before `polygon_query` sees it — untransformed it crops a patch 4.7x too small in the
+    wrong corner, which on this fixture holds no cells at all and fails the job outright."""
+    import numpy as np
+
+    from app.deps import MANAGER
+    from app import imaging
+
+    sid = new_session(client, XENIUM)
+    sess = MANAGER.get(sid)
+    cs, m = imaging.world_to_system(sess.sdata, sess.active_table())
+    assert not np.allclose(m, np.eye(3)), f"xenium world space should not be {cs!r} as-is"
+
+    xy = np.asarray(sess.active_table().obsm["spatial"])[:, :2]
+    (x0, x1), (y0, y1) = (np.quantile(xy[:, i], [0.25, 0.75]) for i in (0, 1))
+    ring = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+    expected = _strict_inside(xy, x0, x1, y0, y1)
+    # polygon_query keeps a cell whose *segmentation footprint* meets the ring, not just
+    # its centroid, so the child runs a cell-radius wider than the centroid count.
+    upper = _strict_inside(xy, x0 - CELL_RADIUS_UM, x1 + CELL_RADIUS_UM,
+                           y0 - CELL_RADIUS_UM, y1 + CELL_RADIUS_UM)
+
+    child = _subset_child(client, sid, {"polygons": [ring]})
+    child_n = child.active_table().n_obs
+    assert expected <= child_n <= upper, (expected, child_n, upper)
+    cxy = np.asarray(child.active_table().obsm["spatial"])[:, :2]
+    assert (cxy.min(0) >= [x0 - CELL_RADIUS_UM, y0 - CELL_RADIUS_UM]).all() and \
+           (cxy.max(0) <= [x1 + CELL_RADIUS_UM, y1 + CELL_RADIUS_UM]).all(), (cxy.min(0), cxy.max(0))
+    assert client.delete(f"/api/sessions/{child.id}").status_code == 200
+    print(f"[ok] xenium (micron spots, pixel 'global'): subset kept {child_n} cells "
+          f"of the {expected} drawn (footprint halo <= {upper})")
+
+
 def run_mcp_flow(client):
     """The MCP assistant surface end to end over the real transport: initialize +
     tools/list, session creation via a reader, lock etiquette (take_control steals a
@@ -2492,6 +2657,9 @@ def main():
         run_mcp_flow(client)
         if have_fixture(XENIUM_TMA, "zarr-import flow"):
             run_zarr_import_flow(client)
+        run_subset_coordinate_space_flow(client)
+        if have_fixture(XENIUM, "subset coordinate-space flow"):
+            run_xenium_subset_space_flow(client)
         if have_fixture(XENIUM, "segmentation flow"):
             run_segmentation_flow(client)
         if have_fixture(XENIUM, "raster flow"):
