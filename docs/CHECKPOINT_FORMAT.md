@@ -201,11 +201,14 @@ always enough to redraw it from scratch.
 
 On **load**, this app keeps a `drawn` plot `drawn` when the file carries its
 figure (`viewer/figures` lists its id, §4.3) and remaps it to `invalidated`
-otherwise; `failed`/`running`/`queued` always become `invalidated`, since those
-outcomes cannot be resumed. The file itself can and does contain all six values,
-since that remap happens after load, not before save. A reader reproducing "what
-plots exist" should read `drawn` on disk as "was drawn as of the last save" and
-pair it with `viewer/figures` to know whether a rendered copy came along.
+otherwise; `running`/`queued` always become `invalidated`, since those outcomes
+cannot be resumed. `failed` survives the round trip unchanged — a failure stays in
+history for the user to inspect (its log is in `logs/<id>.log.gz`, §6) or delete,
+and calling it `invalidated` would claim the plot once worked. The file itself can
+and does contain all six values, since that remap happens after load, not before
+save. A reader reproducing "what plots exist" should read `drawn` on disk as "was
+drawn as of the last save" and pair it with `viewer/figures` to know whether a
+rendered copy came along.
 
 ### 3.3 `displays[]`
 
@@ -393,10 +396,12 @@ duplicates the sparse matrix in gene-major (CSC) order so that fetching one
 gene's expression column is two contiguous byte-range reads instead of
 downloading the entire CSR `data`+`indices` arrays.
 
-The group is rewritten from scratch every time its table is written, and removed
-when that write leaves the table with a dense or absent `X` — so a mirror present
-in a checkpoint always mirrors that checkpoint's own `X`, and a reader may prefer
-it over `tables/<key>/X` without checking the two agree.
+The group is rewritten from scratch every time its table is written, removed when
+that write leaves the table with a dense or absent `X`, and removed along with its
+whole `viewer/tables/<table_key>/` group when the store no longer holds that table
+key at all — so a mirror present in a checkpoint always mirrors that checkpoint's
+own `X`, and a reader may prefer it over `tables/<key>/X` without checking the two
+agree.
 
 Group attrs — schema file
 [`csc_table.schema.json`](../backend/app/schemas/checkpoint/csc_table.schema.json):
@@ -529,6 +534,11 @@ name, an instance-keyed set like `nucleus_boundaries` by the table's
 element's whole label column and the table's whole `obs` index just to align two
 orderings. Chunked at the file's row-group length, so reading one surviving row
 group's slice is one chunk.
+
+The whole `viewer/shapes/` group is rebuilt on every save, so what it holds is
+exactly the elements listed in the `shapes` index report crossed with the store's
+current table keys: an element that was removed, or that stopped being polygonal,
+leaves no `cell_index` behind for a reader to mistake for a live one.
 
 ## 5. Raster sharding
 

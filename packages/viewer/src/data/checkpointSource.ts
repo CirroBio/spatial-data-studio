@@ -529,11 +529,16 @@ async function deriveFields(
   };
 }
 
+// 0 only when the array is genuinely not in the store (a table saved without `var`, an
+// index the writer omitted). Anything else propagates, for the same reason readGroupAttrs
+// re-throws: a 403 or a dropped connection reported as `n_obs: 0` is a confident wrong
+// answer about a healthy checkpoint.
 async function arrayLength(root: Root, path: string): Promise<number> {
   try {
     return (await zarr.open.v3(root.resolve(path), { kind: 'array' })).shape[0];
-  } catch {
-    return 0;
+  } catch (err) {
+    if (zarr.isZarritaError(err, 'NotFoundError')) return 0;
+    throw err;
   }
 }
 

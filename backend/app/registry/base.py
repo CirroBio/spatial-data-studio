@@ -7,8 +7,11 @@ operation. `LibraryFunction` (library_fn.py) and the `custom/` functions both
 subclass it, so they flow through the same picker -> form -> queue -> history
 machinery.
 
-This module imports nothing from the registry or sessions packages so the
-concrete function classes can depend on it without an import cycle.
+At module scope this file imports nothing from the rest of the registry or from
+sessions, so the concrete function classes can import it freely. `run_compute` /
+`run_plot` do need kernel.py (which imports both this module and
+sessions/compute_pool at module scope); that import is deferred into the two
+function bodies, which keeps the back edge out of import time.
 """
 from __future__ import annotations
 
@@ -18,6 +21,7 @@ import logging
 import threading
 import traceback
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 # pyplot state is process-global; sessions plot concurrently (DESIGN §4.6 step 6).
@@ -166,7 +170,11 @@ class Function(ABC):
     source: str = ""                  # squidpy | scanpy | spatialdata_io | custom (subclass sets it)
     params: list                      # list[ParamSpec], in display order
     partially_supported: bool = False
-    unsupported_params: list = []
+    # Empty tuple, not `[]`: a mutable class-level default would be ONE list shared by
+    # every function that doesn't set its own (all the custom ones), so a single append
+    # would show up on the whole registry. Library functions assign their own list per
+    # instance (library_fn.py), hence the Sequence annotation.
+    unsupported_params: Sequence[str] = ()
     # For `read` functions only: whether the New Session import picker should accept
     # a "folder", a "file", or "either" as the input path. None for non-readers.
     input_kind: str | None = None

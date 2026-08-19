@@ -114,7 +114,9 @@ def bump_versions(st: dict, field_paths) -> dict:
 
 # Display-encoding keys that name an sdata element, and the facet each is drawn from.
 # `coords` is an obsm path and `color_by` is table-scoped, so neither is an element
-# reference and neither appears here.
+# reference and neither appears here. A dropped *table* is therefore not this function's
+# job either: it is `prune_to_table_slots` that clears the colorings, called with an
+# empty `kept` when the whole table goes (`store.save_spatialdata`).
 _ELEMENT_REFS = {"image_layer": "images", "shapes_layer": "shapes"}
 
 
@@ -138,9 +140,11 @@ def prune_to_table_slots(st: dict, kept: set[str]) -> dict:
     The table half of `prune_to_elements`: a save can leave out the expression matrix
     or a layer (`store.trim_table`), and a display still coloring by `X:<gene>` would
     then look up a matrix the file doesn't hold. `color_by` is nullable in
-    `app_state.schema.json`, so clearing it leaves the display rendering in its flat
-    default color. `kept` is the surviving slot paths of the table displays resolve
-    against. Returns `st` unchanged (same object) when nothing needs clearing.
+    `app_state.schema.json`, so clearing it leaves the display rendering its cells in
+    flat grey (`useSpotColors`). `kept` is the surviving slot paths of the table
+    displays resolve against — empty when that table is not in the file at all, which
+    reads correctly here: no slot of it survives, so every coloring is cleared. Returns
+    `st` unchanged (same object) when nothing needs clearing.
     """
     stale = [
         i for i, d in enumerate(st.get("displays", []))

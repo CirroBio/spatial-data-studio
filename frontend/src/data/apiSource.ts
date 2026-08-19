@@ -7,6 +7,7 @@ import {
   getElements, getFieldData, getFigureUrl, getImageInfo, getImageThumbnailUrl,
   getShapesGeoArrow, searchVarNames,
 } from '../api';
+import { CLIENT_ID } from '../lib/presence';
 
 export function createApiSource(sessionId: string): DataSource {
   return {
@@ -23,8 +24,13 @@ export function createApiSource(sessionId: string): DataSource {
 
     async getPlotFigure(plotId, format): Promise<Blob | null> {
       // 404 is the ordinary answer for a plot with no figure (never drawn, or reloaded
-      // from a checkpoint saved without them), so it isn't an error to report.
-      const res = await fetch(getFigureUrl(sessionId, plotId, format));
+      // from a checkpoint saved without them), so it isn't an error to report — hence a
+      // bare fetch rather than `apiFetch`, which throws on any non-ok status. The client
+      // id it would have attached still has to be here: every request carries it so the
+      // backend can tell this browser from the session's other viewers (deps.bind_client_id).
+      const res = await fetch(getFigureUrl(sessionId, plotId, format), {
+        headers: { 'X-SDS-Client-Id': CLIENT_ID },
+      });
       if (res.status === 404) return null;
       if (!res.ok) throw new Error(`figure fetch failed: ${res.status} ${res.statusText}`);
       return res.blob();

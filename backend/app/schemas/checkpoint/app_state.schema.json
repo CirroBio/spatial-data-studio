@@ -54,7 +54,7 @@
     },
     "plot_entry": {
       "type": "object",
-      "description": "One plot step. On load, a persisted drawn/failed/running/queued status is remapped to invalidated - all five plus pending/completed's plot analogue can appear on disk.",
+      "description": "One plot step. On load, a persisted drawn (without its figure), running or queued status is remapped to invalidated; failed survives the round trip. Every value of the enum can appear on disk.",
       "required": ["id", "namespace", "function", "params", "status", "library_versions", "references"],
       "additionalProperties": false,
       "properties": {

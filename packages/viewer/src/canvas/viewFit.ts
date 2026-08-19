@@ -19,8 +19,13 @@ export function effectiveZoom(
   vs: { zoom?: number | number[]; zoomX?: number; zoomY?: number } | null | undefined,
 ): number {
   if (!vs) return 0;
-  const base = (Array.isArray(vs.zoom) ? vs.zoom[0] : vs.zoom) ?? 0;
-  return Math.min(vs.zoomX ?? base, vs.zoomY ?? base);
+  // Resolve each axis the way FlipOrthographicViewport does: its explicit zoomX/zoomY,
+  // else its own component of an array `zoom`, else the scalar. Taking zoom[0] for both
+  // axes would report the X zoom of a per-axis view state as the rendered one.
+  const { zoom } = vs;
+  const zoomX = vs.zoomX ?? (Array.isArray(zoom) ? zoom[0] : zoom) ?? 0;
+  const zoomY = vs.zoomY ?? (Array.isArray(zoom) ? zoom[1] : zoom) ?? 0;
+  return Math.min(zoomX, zoomY);
 }
 
 // Zoom that frames a world extent (extentX x extentY) inside a pixel viewport

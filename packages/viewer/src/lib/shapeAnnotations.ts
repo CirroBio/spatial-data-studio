@@ -26,6 +26,11 @@ const ROTATE_HANDLE_GAP = 0.3;
 // fontSize is in world units, so this offset is world-space too and tracks the
 // glyph at any zoom.
 const TEXT_ROTATE_HANDLE_GAP = 1.2;
+// Mean glyph advance as a fraction of the font height, for sizing a text label's
+// outline box. deck's TextLayer measures the real font atlas; nothing here can, so
+// this is the usual sans-serif approximation — the box is an interaction affordance,
+// never the rendered glyphs.
+const GLYPH_ADVANCE_RATIO = 0.6;
 
 // ---- creation --------------------------------------------------------------
 
@@ -37,11 +42,18 @@ export function geometryFromDrag(tool: Exclude<ShapeKind, 'polygon' | 'text'>, p
     return { kind: 'line', vertices: [p0, p1] };
   }
   if (tool === 'ellipse') {
+    // Corner-to-corner, the same reading of the drag as the box below: p0/p1 are
+    // opposite corners of the bounding box and the ellipse is inscribed in it, so one
+    // gesture yields an ellipse and a box of identical extent. Anchoring the centre at
+    // the down-point instead grew the ellipse behind the cursor to twice the box's
+    // size — and since the live preview renders whatever this returns
+    // (buildDragPreviewLayers -> shapeOutline), that oversized shape is what the user
+    // was already watching, so the committed shape was consistent but the gesture wasn't.
     return {
       kind: 'ellipse',
-      center: p0,
-      radiusX: Math.abs(p1[0] - p0[0]),
-      radiusY: Math.abs(p1[1] - p0[1]),
+      center: [(p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2],
+      radiusX: Math.abs(p1[0] - p0[0]) / 2,
+      radiusY: Math.abs(p1[1] - p0[1]) / 2,
       rotation: 0,
     };
   }
@@ -73,13 +85,23 @@ function ellipseToPolygon(
 }
 
 /** Flat point list for rendering: 2 points (open path) for a line, a closed ring
- * for box/polygon, or a polygon approximation for an ellipse. */
+ * for box/polygon, a polygon approximation for an ellipse, or the glyph box for text. */
 export function shapeOutline(geometry: ShapeGeometry): Point[] {
   if (geometry.kind === 'ellipse') {
     return ellipseToPolygon(geometry.center, geometry.radiusX, geometry.radiusY, geometry.rotation);
   }
   if (geometry.kind === 'text') {
-    return [geometry.position]; // no outline — text renders via its own TextLayer
+    // Text draws through its own TextLayer, but every consumer of an outline treats it
+    // as a ring and closes it — a single point closed into [p, p] is a zero-length path
+    // that renders nothing while a label's handle is being dragged. The glyph box is the
+    // well-formed answer: fontSize is the world-space glyph height and the label is
+    // anchored at its middle/center, so the box is centred on the anchor and rotates
+    // with it.
+    const { position, fontSize, rotation, text } = geometry;
+    const halfH = fontSize / 2;
+    const halfW = (Math.max(text.length, 1) * fontSize * GLYPH_ADVANCE_RATIO) / 2;
+    const corners: Point[] = [[-halfW, -halfH], [halfW, -halfH], [halfW, halfH], [-halfW, halfH]];
+    return corners.map(([dx, dy]) => rotatePoint([position[0] + dx, position[1] + dy], position, rotation));
   }
   return geometry.vertices as Point[];
 }
@@ -175,6 +197,9 @@ export function shapeHandles(geometry: ShapeGeometry): ShapeHandle[] {
         { id: 'radiusX', position: rotatePoint([geometry.center[0] + geometry.radiusX, geometry.center[1]], geometry.center, geometry.rotation) },
         { id: 'radiusY', position: rotatePoint([geometry.center[0], geometry.center[1] + geometry.radiusY], geometry.center, geometry.rotation) },
       ]
+    // A vertex handle's position is the stored vertex itself, not a copy: every consumer
+    // (the handle overlay's layers, the drag hit test) only reads it, and every edit path
+    // here rebuilds the vertex array through `map`, so no handle can write into geometry.
     : geometry.vertices.map((v, i) => ({ id: String(i), position: v as Point }));
   return [...base, { id: ROTATE_HANDLE_ID, position: rotateHandlePosition(geometry) }];
 }
@@ -190,7 +215,8 @@ export function applyHandleDrag(geometry: ShapeGeometry, handleId: string, newPo
         - Math.atan2(handle[1] - pivot[1], handle[0] - pivot[0]);
       return { ...geometry, rotation: geometry.rotation + delta };
     }
-    return { ...geometry, position: newPos }; // 'center' move handle
+    if (handleId !== 'center') throw new Error(`unknown text handle '${handleId}'`);
+    return { ...geometry, position: newPos };
   }
   if (handleId === ROTATE_HANDLE_ID) {
     const pivot = shapeCentroid(geometry);
@@ -207,6 +233,9 @@ export function applyHandleDrag(geometry: ShapeGeometry, handleId: string, newPo
   }
   if (geometry.kind === 'ellipse') {
     if (handleId === 'center') return { ...geometry, center: newPos };
+    if (handleId !== 'radiusX' && handleId !== 'radiusY') {
+      throw new Error(`unknown ellipse handle '${handleId}'`);
+    }
     // Project the drag into the ellipse's own (unrotated) frame so a radius
     // handle tracks along its rotated axis rather than the world X/Y axis.
     const local = rotatePoint(newPos, geometry.center, -geometry.rotation);
@@ -215,8 +244,15 @@ export function applyHandleDrag(geometry: ShapeGeometry, handleId: string, newPo
     }
     return { ...geometry, radiusY: Math.abs(local[1] - geometry.center[1]) };
   }
+  // Vertex handles are keyed by vertex index. Every id reaching here comes from
+  // `shapeHandles`, so anything else is a wiring bug — and it used to fall through as a
+  // drag that changed nothing at all, which the user can only read as a dead handle.
+  const vertices = geometry.vertices as Point[];
   const i = Number(handleId);
-  const moved = (geometry.vertices as Point[]).map((v, idx) => (idx === i ? newPos : v));
+  if (!Number.isInteger(i) || i < 0 || i >= vertices.length) {
+    throw new Error(`unknown ${geometry.kind} handle '${handleId}'`);
+  }
+  const moved = vertices.map((v, idx) => (idx === i ? newPos : v));
   if (geometry.kind === 'line') return { ...geometry, vertices: moved as [Point, Point] };
   if (geometry.kind === 'box') return { ...geometry, vertices: moved as [Point, Point, Point, Point] };
   return { ...geometry, vertices: moved }; // polygon
@@ -224,7 +260,10 @@ export function applyHandleDrag(geometry: ShapeGeometry, handleId: string, newPo
 
 // ---- arrowheads --------------------------------------------------------------
 
-/** Triangle polygon for an arrowhead at `tip`, pointing away from `from`. */
+/** Triangle polygon for an arrowhead at `tip`, pointing away from `from`. The tip
+ * vertex is the caller's own point (a line's stored endpoint), not a copy — the
+ * triangle only ever feeds a PolygonLayer accessor, which reads it into an attribute
+ * buffer. */
 export function arrowheadTriangle(from: Point, tip: Point, size: number): Point[] {
   const dx = tip[0] - from[0], dy = tip[1] - from[1];
   const len = Math.hypot(dx, dy) || 1;

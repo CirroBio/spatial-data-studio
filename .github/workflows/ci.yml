@@ -1,8 +1,9 @@
 # Build + test gate for PRs and pushes to main.
 #
 # Backend job runs the full in-process round trip (backend/test_e2e.py), including
-# the snapshot save/open flow. Frontend job typechecks and builds the canvas library
-# and the app. Nextflow job lints the workflows (CLAUDE.md requires a clean report).
+# the snapshot save/open flow. Frontend job lints the React hooks rules, then
+# typechecks and builds the canvas library and the app. Nextflow job lints the
+# workflows (CLAUDE.md requires a clean report).
 name: ci
 
 on:
@@ -116,10 +117,18 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
-      - name: Install, typecheck, build
+      - name: Install, lint, typecheck, build
         # One npm workspace: packages/viewer (@cirrobio/spatial-viewer) then frontend.
+        #
+        # `npm run lint` is the React hooks rules only (eslint.config.mjs).
+        # rules-of-hooks is an error and the tree is clean of it, so a new violation
+        # fails the job. exhaustive-deps is a warning: eight pre-existing ones remain,
+        # and eslint exits 0 on warnings, so this does not fail CI today. Once those
+        # are cleared, raise the rule to 'error' — or add `-- --max-warnings 0` here —
+        # to make the dependency-array check enforcing.
         run: |
           npm ci
+          npm run lint
           npm run typecheck -w @cirrobio/spatial-viewer
           npx tsc --noEmit -p frontend/tsconfig.app.json
           npm run test -w spatial-data-studio-frontend

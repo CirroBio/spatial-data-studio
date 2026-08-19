@@ -2,6 +2,7 @@
 Exercises: load -> compute -> compute -> Arrow fetch -> plot -> save -> reload.
 """
 import datetime
+import importlib.util
 import io
 import json
 import os
@@ -41,6 +42,19 @@ def have_fixture(path, flow):
         return True
     print(f"[skip] {flow}: missing fixture {os.path.basename(path)} "
           f"(regenerate via scripts/prepare_xenium_*.py)")
+    return False
+
+
+def have_modules(modules, flow, hint):
+    """Whether every import in `modules` resolves — the same visible-skip contract as
+    `have_fixture`, for a flow whose subject is an optional analysis dependency rather
+    than a dataset. `pydeseq2` is the DE engine `custom.pseudobulk_deseq2` raises
+    ImportError without, so a slim install skips the flow with a reason printed instead
+    of failing on an import the app itself treats as optional."""
+    missing = [m for m in modules if importlib.util.find_spec(m) is None]
+    if not missing:
+        return True
+    print(f"[skip] {flow}: missing module(s) {', '.join(missing)} ({hint})")
     return False
 
 
@@ -222,6 +236,253 @@ def run_custom_methods_flow(client):
     print(f"[ok] {len(drawn2)} drawn plots reloaded with their figures ({kept_mb:.1f} MB)")
 
     print("\nCUSTOM METHODS E2E CHECKS PASSED")
+
+
+def make_synthetic_pseudobulk(n_genes=2000, n_de=200, n_samples_per_cond=4, cells_per_sample=300,
+                              lfc=1.5, dispersion=0.3, seed=0):
+    """Planted-DE per-cell counts for two conditions, one cell type — the ground truth
+    `run_pseudobulk_acceptance_flow` scores the method against.
+
+    `n_de` genes carry a real log2 fold-change `lfc` between "control" and "treated"; a
+    disjoint tenth of the genes carries a fixed batch effect, so a method that ignores
+    the `~batch + condition` design pays for it in false positives. Counts are drawn at
+    single-cell resolution (not pre-aggregated), so summing them within a sample is the
+    ground-truth pseudobulk profile and `aggregate_pseudobulk` is exactly checkable
+    against a direct groupby-sum.
+
+    Per gene, a lognormal baseline per-cell mean; per sample, a lognormal size factor
+    standing in for replicate-to-replicate depth variation. Each cell's count is drawn
+    negative-binomial with that mean and a fixed `dispersion` — sums of iid NB(r, p)
+    draws are themselves NB(n*r, p), so the aggregated profiles stay inside the count
+    model DESeq2 assumes rather than only approximating it.
+
+    Returns (counts DataFrame (n_cells x n_genes), obs DataFrame with
+    sample_id/condition/batch, is_de bool mask, true_lfc planted fold-changes).
+    """
+    import numpy as np
+    import pandas as pd
+
+    rng = np.random.default_rng(seed)
+    baseline = rng.lognormal(mean=1.0, sigma=1.2, size=n_genes)  # baseline = per-cell mean count, one per gene
+
+    de_idx = rng.choice(n_genes, size=n_de, replace=False)       # de_idx = genes carrying the planted fold-change
+    sign = rng.choice([-1.0, 1.0], size=n_de)
+    true_lfc = np.zeros(n_genes)
+    true_lfc[de_idx] = sign * lfc
+
+    n_batch_genes = max(1, n_genes // 10)                        # n_batch_genes = genes carrying a batch effect
+    batch_idx = rng.choice(np.setdiff1d(np.arange(n_genes), de_idx), size=n_batch_genes, replace=False)
+    batch_lfc = np.zeros(n_genes)
+    batch_lfc[batch_idx] = 1.0
+
+    n_samples = 2 * n_samples_per_cond
+    counts_chunks, sample_ids, conditions, batches = [], [], [], []
+    for s in range(n_samples):
+        condition = "control" if s < n_samples_per_cond else "treated"
+        batch = "b0" if s % 2 == 0 else "b1"
+        size_factor = rng.lognormal(0.0, 0.15)                   # size_factor = per-sample depth multiplier
+        mean = baseline.copy()
+        if condition == "treated":
+            mean = mean * (2.0 ** true_lfc)
+        if batch == "b1":
+            mean = mean * (2.0 ** batch_lfc)
+        mean = mean * size_factor                                # mean = per-cell NB mean for this sample
+        r = 1.0 / dispersion                                     # r = NB "number of successes" (fixed dispersion)
+        p = r / (r + mean)                                       # p = per-gene NB success probability
+        cells = rng.negative_binomial(r, p, size=(cells_per_sample, n_genes))
+        counts_chunks.append(cells)
+        sample_id = f"sample{s}"
+        sample_ids.extend([sample_id] * cells_per_sample)
+        conditions.extend([condition] * cells_per_sample)
+        batches.extend([batch] * cells_per_sample)
+
+    counts = pd.DataFrame(np.vstack(counts_chunks), columns=[f"gene{i}" for i in range(n_genes)])
+    obs = pd.DataFrame({"sample_id": sample_ids, "condition": conditions, "batch": batches})
+    is_de = np.zeros(n_genes, dtype=bool)
+    is_de[de_idx] = True
+    return counts, obs, is_de, true_lfc
+
+
+def _write_pseudobulk_store(store, counts, obs):
+    """Write per-cell synthetic counts as the smallest SpatialData store a session will
+    open: one circles element the table annotates, and raw integer counts in `.X` (no
+    layer), which is the state `custom.pseudobulk_deseq2` is meant to be run in — the
+    step has to precede normalization, and its raw-counts gate reads `.X` by default."""
+    import anndata as ad
+    import geopandas as gpd
+    import numpy as np
+    import pandas as pd
+    import shapely
+    from spatialdata import SpatialData
+    from spatialdata.models import ShapesModel, TableModel
+
+    n_cells = counts.shape[0]
+    cell_ids = [f"cell{i}" for i in range(n_cells)]
+    table_obs = pd.DataFrame({
+        "sample_id": pd.Categorical(obs["sample_id"].values),
+        "condition": pd.Categorical(obs["condition"].values),
+        "batch": pd.Categorical(obs["batch"].values),
+        # one cell type: the acceptance criteria are about the DE fit, so the per-cell-type
+        # loop must run but must not split the 8 pseudobulk samples into underpowered halves.
+        "cell_type": pd.Categorical(["T"] * n_cells),
+        "region": pd.Categorical(["cells"] * n_cells),
+        "instance_id": np.arange(n_cells),
+    }, index=cell_ids)
+    adata = ad.AnnData(X=counts.values.astype(np.int32), obs=table_obs,
+                       var=pd.DataFrame(index=list(counts.columns)))
+    # Coordinates are irrelevant to pseudobulk DE but a session needs a spatial key to
+    # build its canvas; a deterministic lattice keeps the store reproducible.
+    side = int(np.ceil(np.sqrt(n_cells)))
+    xy = np.column_stack(np.divmod(np.arange(n_cells), side)).astype(float)
+    adata.obsm["spatial"] = xy
+    table = TableModel.parse(adata, region="cells", region_key="region", instance_key="instance_id")
+    shapes = ShapesModel.parse(
+        gpd.GeoDataFrame({"radius": np.full(n_cells, 0.4)},
+                         geometry=[shapely.Point(x, y) for x, y in xy], index=cell_ids))
+    SpatialData(shapes={"cells": shapes}, tables={"table": table}).write(store)
+
+
+def run_pseudobulk_acceptance_flow(client):
+    """Score `custom.pseudobulk_deseq2` against planted ground truth: does the shipped
+    step actually recover known differential expression, at the effect size and the error
+    rate the method claims?
+
+    Every other flow asserts that the step ran and wrote its uns payload; this one asserts
+    the numbers in that payload are right. The criteria and their thresholds are the
+    method's stated acceptance bar (recall >= 0.80 of planted DE genes with the correct
+    sign, estimated-vs-true log-fold-change correlation > 0.80, empirical false-positive
+    rate among null genes <= 0.10 against a nominal alpha of 0.05, PCA/condition adjusted
+    Rand index > 0.5) — they were only ever checked by a `__main__` block in the vendored
+    module, so nothing ran them against the code as shipped.
+
+    Criteria 1 and 2 are scored on the table the *registry entry* wrote through the job
+    API, so a regression in the app's wiring (wrong contrast direction, a dropped batch
+    covariate, the raw-counts gate) fails the flow, not just a regression in the vendored
+    math. Criteria 3, 4 and 5 have no app surface — aggregation exactness, the
+    min_cells/min_count filters and the pseudobulk PCA are internal to the step — so those
+    call the vendored functions with the parameters the registry entry passes, and the
+    resulting fold-changes are compared against the app's to prove the two agree."""
+    import numpy as np
+    import pandas as pd
+    from sklearn.cluster import KMeans
+    from sklearn.decomposition import PCA
+    from sklearn.metrics import adjusted_rand_score
+
+    from app.deps import MANAGER
+    from app.registry.custom._vendor import pb_compute
+
+    t_flow = time.time()
+    counts, obs, is_de, true_lfc = make_synthetic_pseudobulk()
+    gene_to_idx = {g: i for i, g in enumerate(counts.columns)}
+    print(f"[ok] synthetic fixture: {counts.shape[0]} cells x {counts.shape[1]} genes, "
+          f"{int(is_de.sum())} planted DE genes, {obs['sample_id'].nunique()} samples")
+
+    # [3] aggregation correctness: G @ counts must equal a direct groupby sum, or every
+    # downstream statistic is testing the wrong numbers.
+    pb = pb_compute.aggregate_pseudobulk(counts.values, obs, sample_key="sample_id",
+                                         condition_key="condition", batch_key="batch",
+                                         genes=list(counts.columns))
+    direct = counts.groupby(obs["sample_id"].values).sum().loc[pb.counts.index]
+    max_dev = float(np.max(np.abs(pb.counts.values - direct.values)))
+    assert np.allclose(pb.counts.values, direct.values), "aggregation mismatch vs. direct groupby sum"
+    direct_n = obs.groupby("sample_id").size().loc[pb.counts.index]
+    assert (pb.metadata["n_cells"].values == direct_n.values).all(), "n_cells mismatch"
+    print(f"[3] aggregate_pseudobulk == direct groupby sum (max deviation {max_dev:g}), "
+          f"n_cells matches for all {pb.counts.shape[0]} pseudobulk samples")
+
+    # [5] the QC filters drop what they claim to: min_cells above the cell count leaves no
+    # pseudobulk group at all, and an unsatisfiable gene filter cannot keep every gene.
+    dropped = pb_compute.aggregate_pseudobulk(counts.values, obs, sample_key="sample_id",
+                                              condition_key="condition", batch_key="batch",
+                                              genes=list(counts.columns), min_cells=counts.shape[0] + 1)
+    assert dropped.counts.shape[0] == 0, "min_cells should have dropped every pseudobulk group"
+    over_filtered = pb_compute.filter_genes(pb, min_count=10**9, min_samples=10**9)
+    assert over_filtered.counts.shape[1] < pb.counts.shape[1], "filter_genes kept every gene"
+    print(f"[5] min_cells={counts.shape[0] + 1} dropped all {pb.counts.shape[0]} groups; "
+          f"unsatisfiable filter_genes kept {over_filtered.counts.shape[1]} of {pb.counts.shape[1]} genes")
+
+    staging = tempfile.mkdtemp(dir=str(config.DATA_DIR))  # sessions only read under DATA_DIR
+    try:
+        store = os.path.join(staging, "pseudobulk_synthetic.zarr")
+        _write_pseudobulk_store(store, counts, obs)
+        sid = new_session(client, store)
+        print(f"[ok] pseudobulk acceptance session created {sid[:8]}")
+
+        # Left to auto-infer: two condition levels sort to ref="control", tested="treated",
+        # so a positive log2FoldChange means higher in treated — the sign convention the
+        # planted `true_lfc` is written in.
+        client.post(f"/api/sessions/{sid}/jobs", json={
+            "namespace": "custom", "function": "pseudobulk_deseq2",
+            "params": {"sample_key": "sample_id", "condition_key": "condition",
+                       "celltype_key": "cell_type", "batch_key": "batch",
+                       "min_cells": 10, "min_count": 10, "shrink": True, "alpha": 0.05}})
+        st = poll(client, sid, lambda s: hist_status(s, "pseudobulk_deseq2")[0] in ("completed", "failed"),
+                  timeout=300)
+        status, _ = hist_status(st, "pseudobulk_deseq2")
+        assert status == "completed", f"custom.pseudobulk_deseq2 {status}"
+
+        stored = MANAGER.get(sid).active_table().uns["pseudobulk_de"]
+        assert list(stored["contrast"]) == ["condition", "treated", "control"], stored["contrast"]
+        assert list(stored["per_celltype"]) == ["T"], list(stored["per_celltype"])
+        ct_table = stored["per_celltype"]["T"]
+        results = pd.DataFrame(ct_table["values"], index=ct_table["gene"])
+        print(f"[ok] registry entry wrote {results.shape[0]} genes x {list(results.columns)} "
+              f"for contrast {list(stored['contrast'])}")
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+    kept_idx = np.array([gene_to_idx[g] for g in results.index])
+    kept_is_de = is_de[kept_idx]
+    kept_true_lfc = true_lfc[kept_idx]
+
+    # [1] recovery of the planted signal. `recall` counts a DE gene as recovered only if it
+    # is significant AND moved in the planted direction, so a sign flip anywhere in the
+    # contrast plumbing reads as zero recall rather than as a pass.
+    sig = results["padj"].values < 0.05
+    correct_sign = np.sign(results["log2FoldChange"].values) == np.sign(kept_true_lfc)
+    recall = np.mean(sig[kept_is_de] & correct_sign[kept_is_de])
+    corr = np.corrcoef(results["log2FoldChange"].values[kept_is_de], kept_true_lfc[kept_is_de])[0, 1]
+    print(f"[1] recall={recall:.4f} (expect >=0.80), LFC correlation={corr:.4f} (expect >0.80)")
+    assert recall >= 0.8, f"recovered only {recall:.2%} of planted DE genes"
+    assert corr > 0.8, f"estimated vs. true LFC correlation {corr:.4f} too low"
+
+    # [2] FDR control. The null genes include the batch-effect genes, so a design that
+    # dropped the batch covariate inflates this well past the nominal 0.05; the 0.10 bar is
+    # the sampling slack around 0.05 at this fixture size, not a licence to be
+    # anti-conservative.
+    non_de = ~kept_is_de
+    fpr = np.mean(results["pvalue"].values[non_de] < 0.05)
+    print(f"[2] false-positive rate among {int(non_de.sum())} non-DE genes = {fpr:.4f} "
+          f"(nominal 0.05, expect <=0.10)")
+    assert fpr <= 0.10, f"false-positive rate {fpr:.4f} not controlled near nominal alpha"
+
+    # [4] the pseudobulk profiles themselves separate the conditions. Scored on the same
+    # aggregation the app ran, refit here because the live DeseqDataSet (which carries the
+    # variance-stabilizing transform) is deliberately not persisted into uns.
+    pb_filtered = pb_compute.filter_genes(pb, min_count=10)
+    assert list(pb_filtered.genes) == list(results.index), \
+        "direct filter_genes kept a different gene set than the registry entry did"
+    # n_cpus=1: the app runs its fit inside the compute pool, where PyDESeq2 may spin up its
+    # own joblib workers; asking for them here instead — in the API process, which already
+    # holds a reusable joblib executor — trips joblib's pool reuse. The fit is per-gene
+    # independent, so the worker count changes only the wall clock, as the LFC check below
+    # asserts against the app's own result.
+    de = pb_compute.run_deseq2(pb_filtered, condition_key="condition",
+                               contrast=["condition", "treated", "control"], batch_key="batch",
+                               shrink=True, alpha=0.05, n_cpus=1)
+    lfc_gap = float(np.max(np.abs(de.results.loc[results.index, "log2FoldChange"].values
+                                  - results["log2FoldChange"].values)))
+    assert lfc_gap < 1e-6, f"registry entry and direct vendored call disagree by {lfc_gap:g} in LFC"
+    de.dds.vst()
+    vst = de.dds.layers["vst_counts"]
+    pcs = PCA(n_components=2, random_state=0).fit_transform(vst - vst.mean(axis=0))
+    km = KMeans(n_clusters=2, n_init=10, random_state=0).fit_predict(pcs)
+    ari = adjusted_rand_score(de.dds.obs["condition"].values, km)
+    print(f"[4] PCA/condition adjusted Rand index = {ari:.4f} (expect >0.5); registry vs. direct "
+          f"LFC agree to {lfc_gap:g}")
+    assert ari > 0.5, f"pseudobulk PCA does not separate conditions (ARI {ari:.4f})"
+
+    print(f"[ok] pseudobulk acceptance criteria all met in {time.time() - t_flow:.1f}s")
 
 
 def run_zarr_import_flow(client):
@@ -3043,6 +3304,9 @@ def main():
         run_filter_rank_genes_save_flow(client)
         run_raster_locality_flow(client)
         run_mcp_flow(client)
+        if have_modules(("pydeseq2", "sklearn"), "pseudobulk acceptance flow",
+                        "install them to score custom.pseudobulk_deseq2 against planted DE"):
+            run_pseudobulk_acceptance_flow(client)
         if have_fixture(XENIUM_TMA, "zarr-import flow"):
             run_zarr_import_flow(client)
         run_subset_coordinate_space_flow(client)

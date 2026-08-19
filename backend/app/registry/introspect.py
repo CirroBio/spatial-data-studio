@@ -68,10 +68,15 @@ class Registry:
     coverage: dict = field(default_factory=dict)
 
     def build(self):
+        """Rebuild every entry, then publish the result in one step. The build stays in
+        locals until the custom-function self-check has passed, so a failure raises with
+        this Registry still holding whatever it held before — never a half-populated
+        `entries` that `get`/`public` would serve as if it were the whole registry
+        (invariant §16.1: the registry is the only path to a runnable function)."""
         import squidpy as sq
         DICTIONARY.load()
         DICTIONARY.coverage = []
-        self.entries = {}
+        entries = {}
         with _reflecting():
             for ns in NAMESPACES:
                 mod = getattr(sq, ns, None)
@@ -87,27 +92,31 @@ class Registry:
                         continue
                     entry = build_library_function("squidpy", ns, name, obj)
                     if entry is not None:
-                        self.entries[entry.key] = entry
-            self._load_catalog()
+                        entries[entry.key] = entry
+            self._load_catalog(entries)
             # Reading `__version__` off a library is the same introspection: scanpy
             # deprecates the attribute it is asked for and warns about it.
-            self.library_versions = {
+            library_versions = {
                 lib: _module_version(lib)
-                for lib in sorted({e.library for e in self.entries.values()
+                for lib in sorted({e.library for e in entries.values()
                                    if getattr(e, "library", None)})
             }
-        self.coverage = DICTIONARY.coverage_report()
+        coverage = DICTIONARY.coverage_report()
         for fn in CUSTOM_FUNCTIONS:
-            self.entries[fn.key] = fn
+            entries[fn.key] = fn
         problems = check_custom_functions()
         if problems:
             raise RuntimeError("custom function registry self-check failed:\n  " + "\n  ".join(problems))
+        self.entries = entries
+        self.library_versions = library_versions
+        self.coverage = coverage
         return self
 
-    def _load_catalog(self):
+    def _load_catalog(self, entries: dict):
         """Build the opt-in library functions (scanpy, spatialdata-io) declared in
-        library_catalog.yaml (v3 Part 4). Entries whose import fails (a reader absent
-        in the installed version) are skipped, never hardcoded."""
+        library_catalog.yaml (v3 Part 4) into `entries`, the in-progress map `build`
+        publishes once. Entries whose import fails (a reader absent in the installed
+        version) are skipped, never hardcoded."""
         for e in yaml.safe_load(_CATALOG_PATH.read_text()) or []:
             try:
                 obj = importlib.import_module(e["library"])
@@ -123,7 +132,7 @@ class Registry:
                 overrides=e.get("overrides"),
             )
             if entry is not None:
-                self.entries[entry.key] = entry
+                entries[entry.key] = entry
 
     def get(self, key: str) -> Function | None:
         return self.entries.get(key)

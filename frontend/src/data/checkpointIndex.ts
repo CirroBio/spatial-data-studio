@@ -112,9 +112,15 @@ export async function fetchCheckpointIndex(): Promise<CheckpointIndex> {
  * Dropping the rest of the query string is part of that guarantee, `view` included: a
  * shared view's delta is written against one checkpoint's encodings, and carrying it to
  * a different file would apply another dataset's colour-by columns, channel indices and
- * world coordinates. */
+ * world coordinates.
+ *
+ * `embed` is the exception, because it describes the host page rather than the
+ * checkpoint: the frame this viewer is running in stays the same frame across the
+ * navigation, so dropping the flag would bring the header, sidebar and picker back
+ * inside a host that has no room for them and owns the display settings itself. */
 export function openCheckpointPath(path: string): void {
   const url = new URL(window.location.href);
-  url.search = `?${CHECKPOINT_PARAM}=${encodeURIComponent(path)}`;
+  const query = `${CHECKPOINT_PARAM}=${encodeURIComponent(path)}`;
+  url.search = isEmbedMode() ? `?${query}&${EMBED_PARAM}=1` : `?${query}`;
   window.location.assign(url.href);
 }

@@ -38,10 +38,14 @@ export function plotsWithFigures(state: SessionState | null): PlotEntry[] {
   return state.app_state.plots.filter((p) => displayFormat(state.figures, p.id) !== null);
 }
 
-/** Total bytes of every format kept for one plot — what the save dialog sizes its
- * figures rows with. */
+/** Total bytes of the formats kept for one plot — what the save dialog sizes its
+ * figures rows with. Summed over ALL_FORMATS rather than over whatever keys the index
+ * happens to carry, so the size and the format list the dialog shows describe the same
+ * set: a checkpoint written by a build that knows a format this one doesn't must not
+ * bill megabytes against an export nothing here offers. */
 export function figureBytes(figures: FigureIndex, plotId: string): number {
-  return Object.values(figures[plotId] ?? {}).reduce((sum, n) => sum + (n ?? 0), 0);
+  const available = figures[plotId] ?? {};
+  return ALL_FORMATS.reduce((sum, fmt) => sum + (available[fmt] ?? 0), 0);
 }
 
 export async function downloadFigure(
@@ -49,5 +53,9 @@ export async function downloadFigure(
 ): Promise<void> {
   const blob = await source.getPlotFigure(plot.id, format);
   if (!blob) throw new Error(`no ${format.toUpperCase()} figure for this plot`);
-  downloadBlob(blob, `${plot.function}.${format}`);
+  // Namespaced and id-suffixed: a session normally holds several plots of the same
+  // function (the same call re-run over different parameters), and on the bare function
+  // name they all land in the download folder as one file plus browser-numbered copies,
+  // with nothing to say which is which. The id is the same one the app and the API use.
+  downloadBlob(blob, `${plot.namespace}.${plot.function}-${plot.id}.${format}`);
 }

@@ -85,7 +85,11 @@ mcp_server = FastMCP(
     # The SDK would otherwise default to a localhost-only Host allowlist (DNS
     # rebinding protection), which breaks any deployment reached through a real
     # hostname. The app's trust model (like its REST API) is that anything able to
-    # reach the port is authorized, so the check is off.
+    # reach the port is authorized, so the check is off. Reviewed and accepted as a
+    # deliberate trade-off for the deployment model this app targets: a single
+    # scientist on a single machine, with no untrusted origin sharing the host.
+    # Revisit only if the app is ever served to multiple users or exposed beyond a
+    # trusted network.
     transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
 )
 

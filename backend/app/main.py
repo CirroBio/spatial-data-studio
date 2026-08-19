@@ -468,8 +468,15 @@ def _validated_include(sess, include) -> dict[str, list[str]] | None:
     kept = out.get("tables")
     # Dropping the table the displays and every field path are resolved against would
     # produce a checkpoint that reopens with nothing to show.
-    if kept is not None and sess.active_table_key is not None and sess.active_table_key not in kept:
-        raise HTTPException(400, "the active table must be included in the saved checkpoint")
+    if kept is not None and sess.active_table_key is not None:
+        if sess.active_table_key not in kept:
+            raise HTTPException(400, "the active table must be included in the saved checkpoint")
+        # `select_elements` keeps the listed order, and a display names no table — it
+        # resolves against the first one. So a list that includes the active table but
+        # does not lead with it would hand the reopened checkpoint a different default
+        # table than the app_state written beside it describes. Reordering keeps both
+        # tables and costs nothing; the order carries no other meaning.
+        out["tables"] = [sess.active_table_key] + [n for n in kept if n != sess.active_table_key]
     return out
 
 

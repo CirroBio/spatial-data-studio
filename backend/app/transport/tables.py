@@ -115,18 +115,34 @@ def _frame_for(adata, sdata, path: str) -> pd.DataFrame:
 
 def table_preview(adata, sdata, path: str, offset: int, limit: int) -> dict:
     df = _frame_for(adata, sdata, path)
-    is_dask = hasattr(df, "npartitions")
-    total = int(df.shape[0].compute()) if is_dask else int(len(df))
 
-    if is_dask:
-        # npartitions=-1: dask's head() reads only the FIRST partition by default, so a
-        # page starting past that partition's row count came back empty instead of the
-        # rows it asked for.
-        sl = df.head(offset + limit, npartitions=-1).iloc[offset : offset + limit]
+    if hasattr(df, "npartitions"):
+        # A dask frame has no positional row index, and df.head(offset + limit) — the
+        # obvious stand-in — materializes every row before the page, so walking the
+        # pages costs O(n^2) and the last page builds the whole frame in memory to
+        # return `limit` rows. The partition row counts locate the window instead: only
+        # the partitions it falls in are computed, and their sum is the row total that
+        # otherwise cost a second pass (df.shape[0].compute()).
+        lengths = df.map_partitions(len).compute().to_numpy()
+        ends = np.cumsum(lengths)
+        total = int(ends[-1])
+        # Clamped to the last partition so an offset past the end yields an empty page
+        # with the right columns rather than an empty partition selection dask rejects.
+        first = min(int(np.searchsorted(ends, offset, side="right")), len(lengths) - 1)
+        last = max(first, min(int(np.searchsorted(ends, offset + limit - 1, side="right")),
+                              len(lengths) - 1))
+        base = int(ends[first - 1]) if first else 0
+        page = df.partitions[first : last + 1].compute()
+        sl = page.iloc[offset - base : offset - base + limit]
     else:
+        total = int(len(df))
         sl = df.iloc[offset : offset + limit]
 
-    columns = [{"name": str(c), "dtype": str(df[c].dtype)} for c in df.columns]
+    # Paired positionally, not looked up by label: a duplicated column name (the same
+    # hazard arrow.py's _gene_batch handles for var_names) makes df[name] a DataFrame,
+    # whose .dtype is an AttributeError. Both duplicates are real columns of the page's
+    # rows, and each keeps its own dtype here.
+    columns = [{"name": str(c), "dtype": str(dt)} for c, dt in zip(df.columns, df.dtypes)]
     values = sl.to_numpy(dtype=object)
     rows = [[_cell(values[r][c]) for c in range(values.shape[1])]
             for r in range(values.shape[0])]

@@ -723,7 +723,11 @@ collection as well as embeddable per page. Pull requests build but do not publis
   a superset of a brute-force row scan over 200 random windows, selectivity within
   2.5x of ideal and better than an unsorted copy, the `cell_index` mirror aligned with
   the file's Hilbert-sorted row order and agreeing with `/geoarrow`, and re-indexing a
-  no-op), viewer
+  no-op), the pseudobulk acceptance criteria scored against synthetic planted-DE ground
+  truth (`run_pseudobulk_acceptance_flow`: DE recall and log-fold-change correlation,
+  FDR control among the non-DE genes, exact `aggregate_pseudobulk` counts, and
+  PCA/condition separation — skipped with a printed reason when `pydeseq2`/`sklearn`
+  are absent), viewer
   presence + the per-session edit lock (auto-lock on attach, 423 for everyone else,
   release → take, and the heartbeat timeout freeing a lock — `run_session_lock_flow`),
   the MCP assistant surface over the real `/api/mcp` transport (`run_mcp_flow`:
@@ -775,6 +779,20 @@ collection as well as embeddable per page. Pull requests build but do not publis
   without procps fails every task rather than just losing resource metrics. Not in CI —
   it has to pull the images (~2.4 GB) to inspect them; run it when changing an image.
   Skips cleanly when Docker is unavailable.
+- `npm run lint` (repo root) — ESLint over `frontend/src` and `packages/viewer/src`.
+  Deliberately narrow (`eslint.config.mjs`): the two React hooks rules and nothing
+  else — no `eslint:recommended`, no style or formatting rules, so a hook finding is
+  never buried under stylistic ones. `react-hooks/rules-of-hooks` is an **error** (a
+  conditionally called hook corrupts React's hook order at runtime); the tree is clean
+  of it, so a new one fails CI. `react-hooks/exhaustive-deps` is a **warning** for now:
+  eight pre-existing violations remain and ESLint exits 0 on warnings, so the check is
+  advisory until they are cleared — do that, then raise the rule to `error` (or run
+  `npm run lint -- --max-warnings 0`) to make it enforcing. The rule earns its place
+  because `tsc` cannot see a wrong `useEffect` dependency array at all, and a wrong one
+  shows up only as runtime behaviour — a stale closure, or an effect that re-runs when
+  it should not. It catches the missing-dependency half of that class; an effect that
+  over-reacts to a value it genuinely reads (read it from a ref instead) still gets
+  past it.
 - `cd frontend && npx tsc --noEmit -p tsconfig.app.json && npm run build` — typecheck
   + build.
 - `cd frontend && npm run check:tours` — static guard that every guided-tour anchor

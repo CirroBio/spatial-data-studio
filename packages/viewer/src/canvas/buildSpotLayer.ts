@@ -21,10 +21,16 @@ interface SpotStyle {
 // Mean inter-point spacing sqrt(area / n) — the characteristic cell diameter,
 // used both to scale the point radius and (in useCanvasViewState) to decide when a
 // cell is big enough on screen to fetch its polygon outline.
+//
+// 0 when there is no table to measure: a 0-row table leaves `useArrowPositions` bounds at
+// +/-Infinity, whose extents multiply to an infinite area and an infinite spacing — and
+// `shapesFetchZoomThreshold(Infinity)` is -Infinity, so the boundary fetch fired at every
+// zoom level for a table with nothing in it. Callers already read 0 as "no spacing known".
 export function estimateMeanSpacing(positions: ScatterPositions): number {
   const b = positions.bounds;
-  const area = Math.max(1, (b.d0max - b.d0min) * (b.d1max - b.d1min));
-  return Math.sqrt(area / Math.max(1, positions.numRows));
+  const area = (b.d0max - b.d0min) * (b.d1max - b.d1min);
+  if (!positions.numRows || !Number.isFinite(area)) return 0;
+  return Math.sqrt(Math.max(1, area) / positions.numRows);
 }
 
 // World-space radius for a given point_size, scaled to the mean inter-point

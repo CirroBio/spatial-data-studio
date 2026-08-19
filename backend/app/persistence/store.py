@@ -307,13 +307,17 @@ def load_spatialdata(path: str, progress=None):
     st = appstate.ensure(sdata.attrs)
     # A `drawn` status only means something if the figure came back with the file: one
     # saved with figures excluded, or written before they were persisted at all, has a
-    # record with no bytes behind it. Those (and any status a save caught mid-flight)
-    # load as `invalidated`, redrawable on demand.
+    # record with no bytes behind it. Those (and a status a save caught mid-flight) load
+    # as `invalidated`, redrawable on demand. `failed` is deliberately NOT among them: a
+    # failure stays in history for the user to inspect or delete (the audit-log model,
+    # DESIGN §6.1) with its log still readable out of logs/<id>.log.gz, and `redraw_plot`
+    # takes it as a starting point — calling it `invalidated` would claim the plot once
+    # worked.
     persisted = figure_index(extract_dir or path)
     for p in st.get("plots", []):
         if p.get("status") == "drawn" and p.get("id") in persisted:
             continue
-        if p.get("status") in ("drawn", "failed", "running", "queued"):
+        if p.get("status") in ("drawn", "running", "queued"):
             p["status"] = "invalidated"
     newer = st.get("schema_version", 1) > appstate.SCHEMA_VERSION
     return sdata, st, newer, extract_dir, hash_check
@@ -455,13 +459,24 @@ def select_elements(sdata, include: dict[str, list[str]] | None = None,
     The view has no backing path, so a filtered save structurally cannot take the
     incremental route (`can_update_incrementally`) and reuse on-disk rasters that the
     selection just dropped.
+
+    A name in `include` that the object does not have is a ValueError. The save route
+    has already rejected it with a 400 (`main._validated_include`), so reaching here
+    means a caller built the selection itself (the CLI, the MCP surface) — dropping the
+    name instead would hand that caller a checkpoint quietly missing an element it asked
+    for.
     """
     from ..registry.base import sdata_facets
     kept = {}
     for facet in sdata_facets():
         have = dict(getattr(sdata, facet, {}) or {})
         names = include.get(facet) if include is not None else None
-        kept[facet] = have if names is None else {n: have[n] for n in names if n in have}
+        if names is None:
+            kept[facet] = have
+            continue
+        if missing := sorted(set(names) - set(have)):
+            raise ValueError(f"unknown {facet} element(s): {', '.join(missing)}")
+        kept[facet] = {n: have[n] for n in names}
     for name, finest in (levels or {}).items():
         if name in kept["images"]:
             kept["images"][name] = trim_pyramid(kept["images"][name], finest)
@@ -556,8 +571,9 @@ def save_spatialdata(sdata, path: str, app_state: dict, hash_name: bool = False,
 
     `include` (facet -> element names) writes only those elements — see
     `select_elements` for the absent-vs-present rule. Displays naming a dropped
-    element are neutralised so the file still renders; the live object keeps
-    everything.
+    element are neutralised so the file still renders, as are their colorings when the
+    table those resolve against is not the one the file opens onto; the live object
+    keeps everything.
 
     `levels` (image name -> finest pyramid level) and `max_image_mb` both write images
     at reduced resolution — the first per image, the second to fit a byte budget (see
@@ -572,14 +588,21 @@ def save_spatialdata(sdata, path: str, app_state: dict, hash_name: bool = False,
     `_write_figures`."""
     if include is not None or levels or slots:
         from ..registry.base import sdata_facets
+        # Displays name no table of their own: they resolve `color_by` (and `coords`)
+        # against the first one (`Session._default_table_key`, and the checkpoint viewer's
+        # own table pick). Which table that is has to be read BEFORE the trim, because a
+        # selection can change it — by leaving it out, or merely by listing another table
+        # ahead of it, since the view's table order follows `include`.
+        displays_table = next(iter(getattr(sdata, "tables", {}) or {}), None)
         sdata = select_elements(sdata, include, levels, slots)
         app_state = appstate.prune_to_elements(
             app_state, {f: set(getattr(sdata, f, {}) or {}) for f in sdata_facets()})
-        # Displays resolve their color_by against the first table (`Session
-        # ._default_table_key`, and the checkpoint viewer's own table pick), so that is
-        # the one whose surviving slots decide which colorings still have data.
         active = next(iter(getattr(sdata, "tables", {}) or {}), None)
-        if active is not None and active in (slots or {}):
+        if active != displays_table:
+            # The file opens onto a different table (or none), so every coloring names a
+            # slot of a table that isn't there: no slot survives.
+            app_state = appstate.prune_to_table_slots(app_state, set())
+        elif active is not None and active in (slots or {}):
             app_state = appstate.prune_to_table_slots(app_state, set(slots[active]))
     if max_image_mb is not None:
         sdata = cap_image_levels(sdata, max_image_mb)
@@ -820,7 +843,8 @@ def _write_viewer_sidecar(zarr_dir: str, sdata, tables: set[str] | None = None,
     `tables` limits the CSC rebuild to those keys (the incremental save path knows
     which tables changed); None rebuilds all of them. `figures` is the complete set to
     end up in the file — whatever it omits is removed, so a caller passing None or `{}`
-    writes a checkpoint with no figures at all.
+    writes a checkpoint with no figures at all. Every subtree here ends up describing
+    only what the store still holds, whichever save path called (see the pruning below).
     """
     from .. import imaging
     from ..sessions import transform
@@ -853,6 +877,24 @@ def _write_viewer_sidecar(zarr_dir: str, sdata, tables: set[str] | None = None,
     checkpoint_schemas.validate_viewer_sidecar(sidecar)
     group.attrs.update(sidecar)
     _write_figures(zarr_dir, group, figures or {})
+    # `viewer/tables` and `viewer/shapes` mirror what the store holds, so anything the
+    # store no longer holds has to go — a reader takes a mirror's presence as proof it
+    # describes the data next to it, and neither loop below can delete what it is not
+    # asked to write. The two are pruned differently because the loops are: the shapes
+    # subtree is rebuilt outright (like `_write_figures`), since every element x table
+    # `cell_index` is rewritten below whatever `tables` says, which drops an element that
+    # was removed or stopped being polygonal along with a table key that is gone. The CSC
+    # rebuild is per-key and the incremental path restricts it, so there only the keys
+    # the store no longer has at all are removed — a clean table's mirror is still valid.
+    mirrors_dir = os.path.join(zarr_dir, VIEWER_GROUP, "tables")
+    if os.path.isdir(mirrors_dir):
+        for name in set(os.listdir(mirrors_dir)) - set(table_keys):
+            orphan = os.path.join(mirrors_dir, name)
+            if os.path.isdir(orphan):
+                shutil.rmtree(orphan)
+    shapes_dir = os.path.join(zarr_dir, VIEWER_GROUP, "shapes")
+    if os.path.isdir(shapes_dir):
+        shutil.rmtree(shapes_dir)
     for key in table_keys if tables is None else (tables & set(table_keys)):
         _write_csc_mirror(group, zarr_dir, key, sdata.tables[key])
     for element in sidecar["shapes"]:

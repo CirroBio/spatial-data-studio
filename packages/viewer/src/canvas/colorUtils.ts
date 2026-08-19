@@ -51,8 +51,11 @@ export const CATEGORY_SWATCHES: string[] = CATEGORY_COLORS.map(rgbToHex);
 // tints, shape-annotation strokes/fills).
 export function hexToRgb(hex: string): [number, number, number] {
   const h = hex.replace('#', '');
+  // Shape first, parse second: Number.parseInt stops at the first non-hex digit instead
+  // of failing, so '00zzzz' reads as 0 and a garbage value would render as black rather
+  // than as the fallback that says something is wrong with the stored color.
+  if (!/^[0-9a-fA-F]{6}$/.test(h)) return [255, 255, 255];
   const n = Number.parseInt(h, 16);
-  if (h.length !== 6 || Number.isNaN(n)) return [255, 255, 255];
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 

@@ -9,7 +9,7 @@ import uuid
 
 import psutil
 
-from . import appstate, transform
+from . import appstate, regions, transform
 from .presence import PRESENCE
 from .session import Session
 from ..config import cgroup_mem_usage, config, resolve_within_data_dir
@@ -303,6 +303,17 @@ class SessionManager:
             child_state["compute_history"] = []
             child_state["plots"] = []
             child_state["data_versions"] = {}
+            # The region registry and the saved cameras are the two parts of the copied
+            # state that describe the PARENT's cells rather than the child's: the counts
+            # (and category lists) are recomputed over the child's own table, and each
+            # display's viewport is dropped so the canvas fits to the crop instead of
+            # framing the extent it was cut out of. `viewport: None` is exactly what a
+            # fresh session's displays carry (`auto_displays`), so every reader of it —
+            # the canvas fit, the MCP `render_view` fit, the snapshot spec — already
+            # handles it.
+            regions.recount(child_state, result.tables[tkeys[0]])
+            for d in child_state.get("displays", []):
+                d["viewport"] = None
             result.attrs["app_state"] = child_state
 
         cid = str(uuid.uuid4())

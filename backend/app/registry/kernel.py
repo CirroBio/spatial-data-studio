@@ -134,17 +134,45 @@ def _failure_envelope(buf, e) -> dict:
             "error": short_error(e)}
 
 
-def _compute_result(log, before, shape_before, adata, sdata, ret=None) -> dict:
+def _is_data_object(ret) -> bool:
+    """True for the two whole-object types a compute can hand back instead of mutating
+    in place. Imported inside the function like the other heavy-library imports in this
+    module; `isinstance` rather than a class-name match, so a subclass counts and an
+    unrelated class that happens to be called `AnnData` does not."""
+    from anndata import AnnData
+    from spatialdata import SpatialData
+    return isinstance(ret, (AnnData, SpatialData))
+
+
+def _compute_result(log, before, shape_before, adata, sdata, ret=None, label="") -> dict:
     """Terminal result for an in-place compute child: adopt the whole object when the
     table was reshaped (or a library call returned a fresh AnnData/SpatialData with no
     facet diff), else return the facet diff for the parent to merge. Shared by
-    `_child_library_call` and `_child_mutate`; `ret` is None for the mutate shape."""
+    `_child_library_call` and `_child_mutate`; `ret` is None for the mutate shape, and
+    `label` names the library call for the both-mutated-and-returned failure below."""
     if _table_reshaped(shape_before, adata) and sdata is not None:
         return {"status": "completed", "log": log, "new_object": sdata,
                 "element_transforms": _capture_transforms(sdata)}
     after = keyset(adata, sdata)
     changed, fields = diff(before, after)
-    if ret is not None and not changed and ret.__class__.__name__ in ("AnnData", "SpatialData"):
+    # Only a DIFFERENT object counts as something to adopt (the "always-copies despite
+    # pinned copy=False" case, §4.6). A function that hands its input straight back
+    # (`return adata`) mutated in place, and the facet diff already describes it.
+    if ret is not None and ret is not adata and ret is not sdata and _is_data_object(ret):
+        # Whole-object adoption and facet merge are alternatives, not a sequence: the
+        # parent applies one or the other (session._run_call), and adopting `ret` would
+        # throw away whatever the call also wrote onto the live table — while merging
+        # the facets would throw away `ret`. Neither is safe to pick silently, and
+        # adoption is the more destructive guess (an adopted bare AnnData is rewrapped
+        # as a table-only SpatialData, dropping the dataset's images/labels/shapes), so
+        # refuse the call and say so instead of applying half its work. A failed
+        # envelope rather than a raise: this runs in the child, and only the envelope
+        # carries the captured log back across the process boundary.
+        if changed:
+            return {"status": "failed", "log": log,
+                    "error": (f"{label} both mutated the object in place and returned a new "
+                              f"{type(ret).__name__}; only one of the two can be applied, so the "
+                              f"call was rejected rather than applied in half")}
         return {"status": "completed", "log": log, "new_object": ret,
                 "element_transforms": _capture_transforms(ret)}
     return {"status": "completed", "log": log,
@@ -180,7 +208,8 @@ def _child_library_call(library, path, effect_class, injected_order, bound, adat
         # persisted — the value is not carried past the worker (DESIGN §4.6).
         return {"status": "completed", "log": log}
 
-    return _compute_result(log, before, shape_before, adata, sdata, ret=ret)
+    return _compute_result(log, before, shape_before, adata, sdata, ret=ret,
+                           label=f"{library}.{path}")
 
 
 def _child_mutate(mutate, adata, sdata):

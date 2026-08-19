@@ -123,18 +123,51 @@ def _update_registry(st: dict, adata, set_name: str, primary: str, color: str | 
     if entry is None:
         entry = {"id": str(uuid.uuid4()), "name": set_name, "obs_column": set_name, "categories": []}
         regions.append(entry)
+    entry["categories"] = _categories(adata, set_name, entry["categories"],
+                                      primary=primary, color=color)
 
+
+def recount(st: dict, adata) -> None:
+    """Rebuild every registry entry against `adata`'s cells, in place.
+
+    The registry describes the object its counts were taken over, so a child session
+    cropped out of a parent (`manager.perform_subset`) inherits it wrong on two counts:
+    every `n_cells` still counts the parent's cells, and a region the crop left empty is
+    already gone from the obs column (anndata drops unused categories on subset) while
+    its registry row survives. A region set whose obs column did not come through the
+    crop at all is dropped — there is no column left to color by."""
+    st["regions"] = [
+        r for r in st.get("regions") or []
+        if isinstance(getattr(adata.obs.get(r.get("obs_column")), "dtype", None),
+                      pd.CategoricalDtype)
+    ]
+    for entry in st["regions"]:
+        entry["categories"] = _categories(adata, entry["obs_column"], entry["categories"])
+
+
+def _categories(adata, set_name: str, previous: list, primary: str | None = None,
+                color: str | None = None) -> list:
+    """The registry rows for `set_name`'s categories as the column now stands — label,
+    color, cell count.
+
+    A category keeps whatever color it already had, `primary` takes the freshly picked
+    `color`, and the rest draw from PALETTE by position. That position counts only the
+    *real* regions: `unassigned` has its own fixed grey and must not consume a palette
+    slot, or the first region a user draws lands on PALETTE[1] and PALETTE[0] is never
+    reachable."""
+    labels = list(adata.obs[set_name].cat.categories)
     counts = adata.obs[set_name].value_counts()
-    prev_colors = {c["label"]: c.get("color") for c in entry.get("categories", [])}
+    prev_colors = {c["label"]: c.get("color") for c in previous}
+    slot = {label: i for i, label in enumerate(l for l in labels if l != UNASSIGNED)}
     cats = []
-    for i, label in enumerate(adata.obs[set_name].cat.categories):
+    for label in labels:
         if label == primary and color:
             hexc = color
-        elif label in prev_colors and prev_colors[label]:
+        elif prev_colors.get(label):
             hexc = prev_colors[label]
         elif label == UNASSIGNED:
             hexc = "#bbbbbb"
         else:
-            hexc = PALETTE[i % len(PALETTE)]
+            hexc = PALETTE[slot[label] % len(PALETTE)]
         cats.append({"label": str(label), "color": hexc, "n_cells": int(counts.get(label, 0))})
-    entry["categories"] = cats
+    return cats

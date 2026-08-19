@@ -103,7 +103,7 @@ ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_cate
 | GET  | `/api/sessions/{id}/data/{fieldPath}` | fieldPath e.g. `obs:leiden`, `obsm:spatial`, `X:Sox17`, `obsp:spatial_distances` | Arrow IPC stream (application/vnd.apache.arrow.stream) |
 | GET  | `/api/sessions/{id}/shapes/{element}/geoarrow?bbox=minx,miny,maxx,maxy[&limit=N]` | `bbox` in the canvas world space; optional `limit` caps the returned feature count | Arrow IPC stream (`application/vnd.apache.arrow.stream`) of viewport-clipped boundary polygons — `geometry` (GeoArrow) + `cell_index:int32`; 400 on a malformed bbox; 404 if the element is absent, non-polygonal, the shape-annotation element, or has no transform into the world coordinate system |
 | GET  | `/api/sessions/{id}/elements` | `?sizes` | `{tables:[{name,n_obs,n_vars,active}], shapes, points, images, labels}` (data inspector inventory; `?sizes=1` adds `size_mb: number\|null` to every entry, `levels:[{level,width,height,size_mb}]` — finest first, summing to `size_mb` — to every image, and `slots:[{path,size_mb,required}]` — also summing to `size_mb` — to every table) |
-| GET  | `/api/sessions/{id}/table?path=&offset=&limit=` | path = `obs`, `var` (the active table), `tables:<name>:obs`, `tables:<name>:var` (a named table, active or not), `shapes:<name>`, `points:<name>`; 404 for an unknown table/element | `{total_rows, offset, limit, index_name, index, columns:[{name,dtype}], rows}` (JSON page) |
+| GET  | `/api/sessions/{id}/table?path=&offset=&limit=` | path = `obs`, `var` (the active table), `tables:<name>:obs`, `tables:<name>:var` (a named table, active or not), `shapes:<name>`, `points:<name>`; 404 for an unknown table/element | `{total_rows, offset, limit, index_name, index, columns:[{name,dtype}], rows}` (JSON page; `columns` is positional — one entry per column of every `rows` entry, so a duplicated column label appears once per column) |
 | GET  | `/api/sessions/{id}/image/{element}/info` | — | `{levels:[{level,width,height}], channels, channel_names, bounds, pixel_to_world, tile_size, client_compositing, raster_base_url, zarr_group_path, contrast_limits, contrast_range, is_rgb}` (see below) |
 | GET  | `/api/sessions/{id}/image/{element}/thumbnail?max_px=&channels=` | — | composited WebP (`image/webp`, LRU-cached) |
 | GET  | `/api/sessions/{id}/image/{element}/tile/{level}/{col}/{row}?channels=` | — | composited WebP tile (`image/webp`, LRU-cached) |
@@ -116,13 +116,15 @@ ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_cate
 
 ### Response compression
 Responses whose content type is `application/vnd.apache.arrow.stream` or
-`application/json` are gzip-encoded when the client sends `Accept-Encoding: gzip`
-(`SelectiveGZipMiddleware`, `backend/app/transport/compression.py`) — a `Vary:
-Accept-Encoding` is set and browsers decode transparently. The gene/obs columns and
-rounded GeoArrow polygons compress heavily; the already-compressed WebP tiles, the
-Range-served raster chunks (`application/octet-stream`), and the `text/event-stream`
-SSE channel are deliberately left untouched so Range semantics and live streaming
-are preserved.
+`application/json` are gzip-encoded when the client's `Accept-Encoding` permits gzip
+(`SelectiveGZipMiddleware`, `backend/app/transport/compression.py`); a `q=0` on `gzip`
+or on the `*` that would otherwise cover it is a refusal and the body goes out as
+identity. Every response of those two content types carries `Vary: Accept-Encoding`,
+gzipped or not, so a shared cache keeps the two representations apart; browsers decode
+transparently. The gene/obs columns and rounded GeoArrow polygons compress heavily; the
+already-compressed WebP tiles, the Range-served raster chunks
+(`application/octet-stream`), and the `text/event-stream` SSE channel are deliberately
+left untouched so Range semantics and live streaming are preserved.
 
 ### Image info & client-side (Viv) compositing
 The browser composites the tissue image on the GPU (via Viv), reading the raw raster
@@ -181,7 +183,10 @@ for 20 s drops out and releases its lock. Full rules: DESIGN §16.5.
 the element names to write. A facet **absent** from the object keeps that facet whole; a
 facet **present** keeps exactly the names listed, so `{"images": []}` drops every image.
 Display encodings naming a dropped element are rewritten to `null` so the file still
-opens cleanly. 400 on an unknown facet, an unknown element name, or a `tables` list that
+opens cleanly. Displays name no table — they resolve against whichever table comes first
+— so if the `tables` list puts a different one first, every `color_by` is rewritten to
+`null` too rather than left pointing at slots of a table the file does not open onto.
+400 on an unknown facet, an unknown element name, or a `tables` list that
 omits the active table.
 
 ### Save `levels`

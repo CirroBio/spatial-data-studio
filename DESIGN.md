@@ -405,7 +405,9 @@ callable, and handles the effect by class:
   the facet-merge writeback can only carry same-length columns back, so a shortened
   column would index-align and silently NaN-fill the dropped rows (corrupting integer
   keys like a table's `instance_key`). Both are uniform fallbacks, not per-function
-  branches.
+  branches. Adoption and facet merge are alternatives, so a call that *both* mutated
+  the object in place and returned a data object fails with an error naming it, rather
+  than silently applying one half and dropping the other.
 - **plot / extract** → capture the matplotlib figure (returned Axes' figure, else
   `plt.gcf()`), render to SVG/PDF bytes in memory; no mutation, no diff, bytes not
   persisted. Held under a **process-global plotting lock** with the **Agg** backend
@@ -609,6 +611,11 @@ as the child's immutable base — **not** as a compute-history step.
 - Child `attrs` are **deep-copied** (not by-reference) so the child's history/displays
   diverge from the parent. Child `compute_history` starts **empty** (the lasso is not a
   recorded step).
+- Two parts of the copied state describe the *parent's* cells and are corrected on the
+  way in: the `regions` registry is recomputed against the child's table (`n_cells` per
+  category, categories the crop emptied dropped, a region set whose obs column did not
+  survive dropped entirely), and each display's `viewport` is set to `null` so the canvas
+  fits to the crop instead of framing the extent it was cut out of.
 - Subset is enqueued as a **special queue job** (§24.5) so it serializes against
   compute and takes the read lock.
 

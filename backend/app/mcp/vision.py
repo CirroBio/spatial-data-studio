@@ -348,7 +348,13 @@ def region_stats(session, mask: np.ndarray, by: str | None = None,
     for gene in genes or []:
         if gene not in adata.var_names:
             raise ValueError(f"no gene '{gene}' in var_names")
-        x = adata[:, gene].X
+        # By position, not by name: a symbol duplicated in var_names (10x symbols over
+        # several Ensembl ids) makes adata[:, gene].X k columns wide, and the ravel
+        # below then reports a mean taken across k different genes as that symbol's.
+        # First occurrence, matching arrow.py's _gene_batch, so the number this tool
+        # quotes is the column the canvas colors by.
+        idx = int(adata.var_names.get_indexer_for([gene])[0])
+        x = adata[:, idx].X
         vals = np.asarray(x.todense() if hasattr(x, "todense") else x, dtype=float).ravel()
         out.setdefault("gene_means", {})[gene] = {
             "selected": float(vals[mask].mean()) if mask.any() else None,
