@@ -9,7 +9,7 @@ import uuid
 
 import psutil
 
-from . import appstate
+from . import appstate, transform
 from .presence import PRESENCE
 from .session import Session
 from ..config import cgroup_mem_usage, config, resolve_within_data_dir
@@ -103,8 +103,11 @@ class SessionManager:
                 break
         present = {d["type"] for d in sess.app_state["displays"]}
         if "spatial_canvas" not in present:
-            coords = "obsm:spatial" if "spatial" in ad.obsm else (
-                f"obsm:{next(iter(ad.obsm))}" if len(ad.obsm) else None)
+            # world_key, not "spatial": a table annotating several region elements
+            # holds region-*local* coordinates there, and plotting them stacks every
+            # region on one origin (see sessions/transform.world_key).
+            coords = (f"obsm:{transform.world_key(sess.sdata, ad)}" if "spatial" in ad.obsm
+                      else (f"obsm:{next(iter(ad.obsm))}" if len(ad.obsm) else None))
             images = list(getattr(sess.sdata, "images", {}).keys())
             sess.app_state["displays"].append({
                 "id": str(uuid.uuid4()), "type": "spatial_canvas",

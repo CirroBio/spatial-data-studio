@@ -301,12 +301,11 @@ def cells_in_polygons(session, display: dict | None, polygons, space: str = "spa
     same math the annotate endpoint applies). space='embedding': rings are embedding
     coordinates of the display's obsm components — resolved here because the backend
     annotate/subset endpoints only take embedding selections as cell_indices."""
-    from ..sessions import regions, transform
+    from ..sessions import regions
 
     adata = session.active_table()
     if space == "spatial":
-        affine6 = transform.get_affine6(session.sdata, adata)
-        return regions._membership(adata, {"polygons": polygons}, affine6)
+        return regions._membership(session.sdata, adata, {"polygons": polygons})
 
     from matplotlib.path import Path as MplPath
     enc = (display or {}).get("encoding", {})

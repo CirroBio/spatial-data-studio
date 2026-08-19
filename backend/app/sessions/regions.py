@@ -36,13 +36,14 @@ def _membership_from_indices(adata, cell_indices: list[int]) -> np.ndarray:
     return inside
 
 
-def _membership(adata, payload: dict, affine6: list[float]) -> np.ndarray:
-    """Boolean mask of cells whose spatial coords fall inside any drawn ring. The
-    lasso rings arrive in *world* space (the canvas draws obsm['spatial'] after the
-    region element's points->global affine), so the coords must be pushed through the
-    same affine before the point-in-polygon test — otherwise a nudged alignment
-    (set_affine6) would label the wrong cells. Mirrors the transform geometry.py and
-    the subset polygon_query apply."""
+def _membership(sdata, adata, payload: dict) -> np.ndarray:
+    """Boolean mask of cells whose coordinates fall inside any drawn ring. The lasso
+    rings arrive in *world* space, so the cells are resolved into the same space by
+    `transform.world_xy` — which key holds the coordinates, then the region element's
+    points->world affine — before the point-in-polygon test. Going through that one
+    helper is what keeps a nudged alignment (set_affine6) and a multi-region table
+    (whose plotted key is not `obsm['spatial']`) from labelling the wrong cells.
+    Mirrors the transform geometry.py and the subset polygon_query apply."""
     from matplotlib.path import Path as MplPath
 
     rings = [r for r in payload["polygons"] if len(r) >= 3]
@@ -50,8 +51,7 @@ def _membership(adata, payload: dict, affine6: list[float]) -> np.ndarray:
         raise ValueError("no valid polygon in selection")
     if "spatial" not in adata.obsm:
         raise ValueError("table has no obsm['spatial']; cannot compute membership")
-    xy = np.asarray(adata.obsm["spatial"])[:, :2]
-    coords = transform.apply_affine6_xy(affine6, xy)
+    coords = transform.world_xy(sdata, adata)
     inside = np.zeros(len(coords), dtype=bool)
     for ring in rings:
         inside |= MplPath(np.asarray(ring)).contains_points(coords)
@@ -82,7 +82,7 @@ def assign(session, payload: dict) -> list:
 
     cell_indices = payload.get("cell_indices")
     inside = (_membership_from_indices(adata, cell_indices) if cell_indices is not None
-              else _membership(adata, payload, transform.get_affine6(session.sdata, adata)))
+              else _membership(session.sdata, adata, payload))
 
     # obs categorical column, "unassigned" by default (single-label partition, §2)
     col = adata.obs.get(set_name)

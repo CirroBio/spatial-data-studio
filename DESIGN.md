@@ -705,6 +705,24 @@ the spots. The same reconciliation answers the inverse question for spatial quer
 affine that maps world coordinates into it (§8.2), so a lasso crops the region the user
 drew rather than one scaled by whatever the store's transforms say.
 
+**Which coordinates are world (`backend/app/sessions/transform.py`).** All of the above
+assumes the canvas plots `obsm['spatial']` in the space of the table's one region
+element. A table may annotate *several* — CosMx one labels element per FOV, steinbock one
+per sample — and then `obsm['spatial']` is region-*local* and each region carries its own
+transform, so no single affine maps every row to world space. `world_space` resolves both
+halves for such a table: it derives the true per-row world coordinates (each row's own
+region transform) and returns whichever `obsm` key reproduces them — CosMx keeps the
+stitched slide coordinates in `obsm['global']` — plus the coordinate system those regions
+share. Everything that needs a cell's position goes through `world_key`/`world_xy`, so the
+canvas default, the image reconciliation, lasso membership and the figure renderer cannot
+disagree. Two consequences: `get_affine6` is identity for such a table (taking `region[0]`
+applied one FOV's transform to the whole section), and `pixel_to_world` uses the resolved
+system directly instead of searching — a per-FOV image covers a few percent of the
+section, so every overlay candidate scores near zero and the best of them is noise. When
+the regions share no system at all (steinbock's samples are separate acquisitions with no
+spatial relationship) there is nothing to resolve, and the plotted key stays
+`obsm['spatial']`.
+
 **Ingest-time raster normalization (`backend/app/rasters.py`).** The tile server
 assumes each raster is a multiscale pyramid with tile-sized *store* chunks, but a
 reader or an older checkpoint may hand us a single scale or huge chunks (Xenium

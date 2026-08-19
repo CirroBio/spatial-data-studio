@@ -2105,6 +2105,130 @@ def _write_visium_outs(path, dataset_id, origin, spacing, grid, fullres):
         Image.fromarray(pixels).save(os.path.join(path, "spatial", name))
 
 
+def _write_cosmx_outs(path, dataset_id, fov_origins, fov_px, per_fov):
+    """A minimal CosMx export: one composite image + one label image per FOV, and a
+    metadata file carrying each cell twice — `CenterX/Y_local_px` inside its own FOV and
+    `CenterX/Y_global_px` on the stitched slide. Read back with the real
+    `spatialdata_io.cosmx` reader it yields the multi-*region* store no test-data fixture
+    has: one labels element per FOV, each with its own transform, and a table whose
+    `obsm['spatial']` is FOV-local."""
+    import numpy as np
+    import pandas as pd
+    from PIL import Image
+
+    os.makedirs(os.path.join(path, "CellComposite"), exist_ok=True)
+    os.makedirs(os.path.join(path, "CellLabels"), exist_ok=True)
+    genes = [f"GENE{i}" for i in range(6)]
+    side = int(per_fov ** 0.5)
+    step = np.linspace(0.15 * fov_px, 0.85 * fov_px, side)
+    lx, ly = (a.ravel() for a in np.meshgrid(step, step))
+
+    meta, counts = [], []
+    for fov, (ox, oy) in fov_origins.items():
+        for i in range(per_fov):
+            meta.append({"fov": fov, "cell_ID": i + 1,
+                         "CenterX_local_px": float(lx[i]), "CenterY_local_px": float(ly[i]),
+                         "CenterX_global_px": float(lx[i] + ox),
+                         "CenterY_global_px": float(ly[i] + oy)})
+            counts.append({"fov": fov, "cell_ID": i + 1,
+                           **{g: (i + fov + j) % 7 for j, g in enumerate(genes)}})
+    pd.DataFrame(meta).to_csv(os.path.join(path, f"{dataset_id}_metadata_file.csv"), index=False)
+    pd.DataFrame(counts).to_csv(os.path.join(path, f"{dataset_id}_exprMat_file.csv"), index=False)
+    pd.DataFrame([{"fov": f, "x_global_px": ox, "y_global_px": oy}
+                  for f, (ox, oy) in fov_origins.items()]).to_csv(
+        os.path.join(path, f"{dataset_id}_fov_positions_file.csv"), index=False)
+
+    for fov in fov_origins:
+        Image.fromarray(np.full((fov_px, fov_px, 3), 40 * fov, np.uint8)).save(
+            os.path.join(path, "CellComposite", f"{dataset_id}_F{fov:03d}.png"))
+        lab = np.zeros((fov_px, fov_px), np.uint16)
+        for i in range(per_fov):
+            x, y = int(lx[i]), int(ly[i])
+            lab[max(0, y - 6):y + 6, max(0, x - 6):x + 6] = i + 1
+        Image.fromarray(lab).save(os.path.join(path, "CellLabels", f"{dataset_id}_F{fov:03d}.tif"))
+
+
+def run_cosmx_multiregion_flow(client):
+    """A table whose rows span several region elements plots, places and selects right.
+
+    Every other store annotates ONE region element, whose transform is the whole
+    points->world story (`transform.get_affine6`). CosMx annotates one labels element per
+    FOV: `obsm['spatial']` holds FOV-*local* pixels, and each FOV's element carries its own
+    transform onto the stitched slide. Plotting that key stacked all 4 FOVs on one origin,
+    and `region[0]`'s affine was then applied to every cell, shoving the whole section into
+    one FOV's corner. `transform.world_space` resolves the key that is in the shared system
+    (CosMx keeps the stitched coordinates in `obsm['global']`) and pins the world system, so
+    each FOV image lands where it belongs instead of being placed by an overlay score that
+    is noise at 1/N of the section."""
+    import numpy as np
+    import spatialdata_io
+
+    from app.deps import MANAGER
+    from app.sessions import transform
+
+    dataset_id, fov_px, per_fov = "sdscosmx", 512, 25
+    fov_origins = {1: (0, 0), 2: (4000, 0), 3: (0, 3000), 4: (4000, 3000)}
+    staging = tempfile.mkdtemp(dir=str(config.DATA_DIR))  # sessions only read under DATA_DIR
+    try:
+        outs = os.path.join(staging, "outs")
+        _write_cosmx_outs(outs, dataset_id, fov_origins, fov_px, per_fov)
+        store = os.path.join(staging, f"{dataset_id}.zarr")
+        spatialdata_io.cosmx(outs, dataset_id=dataset_id, transcripts=False).write(store)
+
+        sid = new_session(client, store)
+        sess = MANAGER.get(sid)
+        table = sess.active_table()
+        assert len(transform.region_names(table)) == len(fov_origins), \
+            "fixture no longer exercises the multi-region case"
+        assert transform.region_name(table) is None, "several regions must not collapse to one"
+        assert transform.is_identity(transform.get_affine6(sess.sdata, table)), \
+            "a multi-region table has no single points->world affine"
+
+        st = client.get(f"/api/sessions/{sid}").json()
+        enc = next(d for d in st["app_state"]["displays"] if d["type"] == "spatial_canvas")["encoding"]
+        assert enc["coords"] == "obsm:global", f"canvas must plot the stitched key, got {enc['coords']}"
+
+        batch = fetch_arrow(client, sid, enc["coords"])
+        xy = np.column_stack([np.asarray(batch.column("d0")), np.asarray(batch.column("d1"))])
+        stitched = np.asarray(table.obsm["global"])[:, :2]
+        assert np.allclose(xy, stitched), "served coordinates are not the stitched ones"
+        # The give-away for the old behavior: every FOV piled into one FOV's footprint.
+        span_x, span_y = float(np.ptp(xy[:, 0])), float(np.ptp(xy[:, 1]))
+        assert span_x > fov_px and span_y > fov_px, \
+            f"cells span only {span_x:.0f}x{span_y:.0f} px — the FOVs are stacked"
+
+        rows = np.asarray(table.obs["fov_labels"].astype(str))
+        for fov in fov_origins:
+            info = client.get(f"/api/sessions/{sid}/image/{fov}_image/info").json()
+            x0, y0, x1, y1 = info["bounds"]
+            in_box = ((xy[:, 0] >= x0) & (xy[:, 0] <= x1) & (xy[:, 1] >= y0) & (xy[:, 1] <= y1))
+            assert (in_box & (rows == f"{fov}_labels")).sum() == per_fov, \
+                f"FOV {fov}'s cells do not fall on its own image {info['bounds']}"
+            assert (in_box & (rows != f"{fov}_labels")).sum() == 0, \
+                f"another FOV's cells land on FOV {fov}'s image {info['bounds']}"
+        print(f"[ok] {len(fov_origins)} CosMx FOV images each carry exactly their own "
+              f"{per_fov} cells (world span {span_x:.0f}x{span_y:.0f} px)")
+
+        # A lasso over one FOV must select that FOV alone — with the FOVs stacked it
+        # would have taken every cell in the section.
+        info = client.get(f"/api/sessions/{sid}/image/2_image/info").json()
+        x0, y0, x1, y1 = info["bounds"]
+        ring = [[x0 - 5, y0 - 5], [x1 + 5, y0 - 5], [x1 + 5, y1 + 5], [x0 - 5, y1 + 5]]
+        job = client.post(f"/api/sessions/{sid}/annotate", json={
+            "polygons": [ring], "region_set": "fovs", "category": "fov2",
+            "color": "#ff00ff"}).json()
+        assert wait_job(client, sid, job["job_id"])["status"] == "completed"
+        regions = client.get(f"/api/sessions/{sid}").json()["app_state"]["regions"]
+        picked = next(r for r in regions if r["obs_column"] == "fovs")
+        n = next(c for c in picked["categories"] if c["label"] == "fov2")["n_cells"]
+        assert n == per_fov, f"lasso over one FOV selected {n} cells, expected {per_fov}"
+        print(f"[ok] lasso over one FOV selected its {n} cells, not the whole section")
+
+        assert client.delete(f"/api/sessions/{sid}").status_code == 200
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
 def run_subset_coordinate_space_flow(client):
     """Both halves of the coordinate reconciliation on a multi-coordinate-system store:
     where the image lands, and where a lasso crops.
@@ -2735,6 +2859,7 @@ def main():
         if have_fixture(XENIUM_TMA, "zarr-import flow"):
             run_zarr_import_flow(client)
         run_subset_coordinate_space_flow(client)
+        run_cosmx_multiregion_flow(client)
         if have_fixture(XENIUM, "subset coordinate-space flow"):
             run_xenium_subset_space_flow(client)
         if have_fixture(XENIUM, "segmentation flow"):

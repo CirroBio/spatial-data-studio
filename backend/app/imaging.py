@@ -346,9 +346,23 @@ def pixel_to_world(sdata, element, table=None) -> np.ndarray:
     default left a Visium H&E at identity — drawn at `tissue_hires_scalef` of its true
     size in the corner of the spot cloud.
 
+    None of that guessing is needed when the world system is already known: a table
+    annotating several region elements pins its coordinates to the one system those
+    regions share (`transform.world_space`), and the image's transform into that system
+    is the answer outright. Searching would in fact get it wrong — one CosMx FOV image
+    covers a few percent of the section, so every candidate scores near zero and the
+    winner among them is noise.
+
     The result may include rotation/axis-swap (e.g. an aligned H&E), so tiles are
     placed as quadrilaterals rather than axis-aligned rectangles.
     """
+    from .sessions import transform
+    world_system = transform.world_space(sdata, table)[1] if table is not None else None
+    if world_system is not None:
+        known = _affine_xy(sdata.images[element], world_system)
+        if known is not None:
+            return known
+
     placements = [(cs, a) for cs, a in
                   ((cs, _affine_xy(sdata.images[element], cs)) for cs in _system_order(sdata))
                   if a is not None]
@@ -372,9 +386,13 @@ def _spots_to_system(sdata, table, cs: str, reference_bbox) -> tuple[np.ndarray,
     shape/label elements' own transforms into `cs`, plus identity for the common case
     where the spots are already in `cs` coordinates. Returns (identity, -1.0) when there
     is nothing to reconcile."""
+    from .sessions import transform
     if table is None or "spatial" not in getattr(table, "obsm", {}):
         return np.eye(3), -1.0
-    xy = np.asarray(table.obsm["spatial"])[:, :2]
+    # `world_key`, not "spatial": a multi-region table plots a different key (its
+    # `obsm['spatial']` is region-local), and reconciling the image against points the
+    # canvas does not draw would place it against the wrong cloud.
+    xy = np.asarray(table.obsm[transform.world_key(sdata, table)])[:, :2]
     spot_bbox = [float(xy[:, 0].min()), float(xy[:, 1].min()),
                  float(xy[:, 0].max()), float(xy[:, 1].max())]
 
@@ -424,7 +442,14 @@ def world_to_system(sdata, table, coordinate_system: str | None = None) -> tuple
     from a set, so its order is hash-randomized and cannot be indexed into, and the
     fullest system is the one whose crop keeps every element. A store whose systems are
     equally good (Visium's full-resolution system and its `_downscaled_*` siblings) then
-    resolves to the full-resolution one."""
+    resolves to the full-resolution one. A multi-region table skips the search for the
+    same reason `pixel_to_world` does: its world coordinates are pinned to a known
+    system, so overlay scores have nothing to add."""
+    from .sessions import transform
+    if coordinate_system is None:
+        world_system = transform.world_space(sdata, table)[1] if table is not None else None
+        if world_system is not None:
+            return world_system, np.eye(3)
     systems = [coordinate_system] if coordinate_system else _system_order(sdata)
     if not systems:
         raise ValueError("object has no coordinate system to query in")

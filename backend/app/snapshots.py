@@ -168,10 +168,11 @@ def _point_coords(session, enc: dict, kind: str) -> np.ndarray:
         xi, yi = int(enc.get("x_component", 0)), int(enc.get("y_component", 1))
         arr = np.asarray(table.obsm[key])
         return np.column_stack([arr[:, xi], arr[:, yi]]).astype(np.float64)
-    coords = enc.get("coords") or "obsm:spatial"
+    world = f"obsm:{transform.world_key(session.sdata, table)}"
+    coords = enc.get("coords") or world
     batch = arrow.resolve_field(table, coords)
     xy = np.column_stack([np.asarray(batch.column("d0")), np.asarray(batch.column("d1"))]).astype(np.float64)
-    if coords == "obsm:spatial":
+    if coords == world:
         affine6 = transform.get_affine6(session.sdata, table)
         if not transform.is_identity(affine6):
             xy = transform.apply_affine6_xy(affine6, xy)

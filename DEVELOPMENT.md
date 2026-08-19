@@ -96,6 +96,9 @@ backend/    FastAPI app
   app/imaging.py  tiled image pyramid + channel compositing + coordinate reconciliation;
                   the /image/{element}/info manifest also advertises the client-compositing
                   path (raster_base_url, zarr_group_path, contrast_limits, is_rgb)
+  app/sessions/transform.py  which obsm key holds world coordinates and the points->world
+                  affine (world_space/world_key/world_xy) — change coordinate handling here,
+                  not at the call sites, so every consumer keeps agreeing
   app/rasters.py  ingest-time re-tiling into a tile-chunked pyramid; the resulting
                   per-session on-disk zarr store is also served raw (see the raster route)
                   for client-side (Viv) GPU compositing, with WebP tiles as the fallback
