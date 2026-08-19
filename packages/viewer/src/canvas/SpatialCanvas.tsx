@@ -12,7 +12,7 @@ import { isSpatialDisplay, type SpatialDisplaySpec, type ImageInfo, type ObsFiel
 import { useCanvasHost, useDisplayEditor } from './canvas-host';
 import type { ShapeAnnotation, ShapeGeometry, ShapeKind } from '../schemas/annotations';
 import { textGeometryAt } from '../schemas/annotations';
-import { geometryFromDrag, applyHandleDrag, translateGeometry } from '../lib/shapeAnnotations';
+import { SHAPE_ANNOTATIONS_ELEMENT, geometryFromDrag, applyHandleDrag, translateGeometry } from '../lib/shapeAnnotations';
 import { useArrowPositions } from './useArrowPositions';
 import { useVivImageLayer } from './useVivImageLayer';
 import { useCanvasViewState, shapesFetchZoomThreshold } from './useCanvasViewState';
@@ -567,6 +567,8 @@ export default function SpatialCanvas({
   // also what a source with no element inventory (a checkpoint) gets.
   // Name + row count: the count decides whether the whole element can be shipped in one
   // query, which is what the zoom gate below exists to avoid when it cannot.
+  // The shape-annotation element is polygonal too but is never a boundary set — it holds
+  // the user's own drawings, which the annotation overlay draws from `host.annotations`.
   const [polygonElements, setPolygonElements] = useState<{ name: string; count: number }[]>([]);
   useEffect(() => {
     setPolygonElements([]);
@@ -577,6 +579,7 @@ export default function SpatialCanvas({
         if (stale) return;
         setPolygonElements(
           inv.shapes
+            .filter((s) => s.name !== SHAPE_ANNOTATIONS_ELEMENT)
             .filter((s) => s.geometry.some((g) => g === 'Polygon' || g === 'MultiPolygon'))
             .map((s) => ({ name: s.name, count: s.count })),
         );

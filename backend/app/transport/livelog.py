@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import threading
 from contextvars import ContextVar
 
 from .sse import BUS
@@ -74,26 +75,61 @@ class _SinkHandler(logging.Handler):
             pass
 
 
+class _OwnThreadOnly(logging.Filter):
+    """Admit only records emitted by the thread that opened the load. The handler goes
+    on the ROOT logger, so with two loads in flight every record in the process would
+    otherwise be published to BOTH `load_id` channels — each client watching the other's
+    reader. Loads run one per session worker thread, so thread identity is the routing
+    key, matching how `_SINK` routes the job path per thread."""
+    def __init__(self, thread_id: int):
+        super().__init__()
+        self._thread_id = thread_id
+
+    def filter(self, record):
+        return record.thread == self._thread_id
+
+
+# Guards the root level below, which is process-global while `forward_load_logs` is
+# per-load. `_level_depth` counts the loads currently holding the INFO override and
+# `_level_prev` is the level the OUTERMOST one found: without the refcount, two
+# overlapping loads each capture-and-restore, so the first to finish drops the level
+# back and silences the second's live log — and if it captured after the second had
+# already raised it, the root logger is left at INFO for the life of the process.
+_LEVEL_LOCK = threading.Lock()
+_level_depth = 0
+_level_prev = logging.NOTSET
+
+
 @contextlib.contextmanager
 def forward_load_logs(load_id: str | None):
-    """Forward root-logger records to the checkpoint-load progress channel while the
-    load runs, without redirecting stdout/stderr — the load keeps logging to the
-    console (Docker) as before, and also streams to the client."""
+    """Forward this thread's root-logger records to the checkpoint-load progress channel
+    while the load runs, without redirecting stdout/stderr — the load keeps logging to the
+    console (Docker) as before, and also streams to the client. Safe to run concurrently
+    with other loads: each gets its own handler, records are routed by emitting thread,
+    and the root level is restored once the last load leaves."""
+    global _level_depth, _level_prev
     if not load_id:
         yield
         return
     handler = _SinkHandler(_load_sink(load_id))
     handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+    handler.addFilter(_OwnThreadOnly(threading.get_ident()))
     root = logging.getLogger()
-    prev = root.level
     root.addHandler(handler)
-    if root.level == logging.NOTSET or root.level > logging.INFO:
-        root.setLevel(logging.INFO)
+    with _LEVEL_LOCK:
+        if _level_depth == 0:
+            _level_prev = root.level
+            if root.level == logging.NOTSET or root.level > logging.INFO:
+                root.setLevel(logging.INFO)
+        _level_depth += 1
     try:
         yield
     finally:
         root.removeHandler(handler)
-        root.setLevel(prev)
+        with _LEVEL_LOCK:
+            _level_depth -= 1
+            if _level_depth == 0:
+                root.setLevel(_level_prev)
 
 
 @contextlib.contextmanager

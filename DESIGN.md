@@ -981,6 +981,12 @@ alone) vs `points+shapes` (scatter plus the cell-boundary overlay). The legacy v
   color is the same per-cell stack as the points, so the overlap is seamless and the points
   fill the gaps between cells. The composite layer's fill sublayer triangulates on the main
   thread (`_subLayerProps.fill.earcutWorkerUrl = null`) so nothing is fetched from a CDN.
+  The element is the display's `shapes_layer` when it still names an available boundary
+  set, else the first one — where "available" is every polygonal shapes element *except*
+  `sdata.shapes["annotations"]`. Shape annotations are stored as polygons too
+  (`ShapesModel` accepts no other geometry), so without that exclusion a session with no
+  segmentation would fall back onto the user's own arrows and boxes and draw them as cell
+  outlines, on the canvas and in an exported figure alike.
 - **The fetch gate.** The overlay fetch fires only once a cell is a few pixels across —
   `zoom ≥ shapesFetchZoomThreshold(meanSpacing) = log2(6 / meanSpacing)`
   (`useCanvasViewState.ts`; `meanSpacing = estimateMeanSpacing(positions) ≈ √(bbox_area/n)`).

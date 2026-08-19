@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useAppStore } from './store/sessionStore';
 import { getSessions, getFunctions, getCirroAuth, getReadyz } from './api';
 import { DataSourceProvider, isEmbeddingDisplay, isSpatialDisplay } from '@cirrobio/spatial-viewer';
@@ -85,6 +85,15 @@ export default function App() {
     jobLogs,
   } = useAppStore();
 
+  // The bootstrap's auto-open guard has to read the session that is active *now*, not
+  // the one captured when the bootstrap started, so a late `getSessions()` can't open
+  // the sole session over a choice the user has made since. Reading it through a ref
+  // keeps the bootstrap off `activeSessionId`'s dependency: as a dependency it re-ran
+  // the whole thing — including the retrying `getFunctions()` loop — on every session
+  // switch.
+  const activeSessionIdRef = useRef(activeSessionId);
+  activeSessionIdRef.current = activeSessionId;
+
   useSession(activeSessionId, !serverless);
   // Announce this viewer on the session it is looking at, which also takes that
   // session's edit lock when nobody holds it (hooks/usePresence.ts). Nobody to
@@ -147,7 +156,7 @@ export default function App() {
     getSessions()
       .then(({ sessions: s }) => {
         setSessions(s);
-        if (s.length === 1 && !activeSessionId) {
+        if (s.length === 1 && !activeSessionIdRef.current) {
           setActiveSessionId(s[0].id);
         }
       })
@@ -178,7 +187,7 @@ export default function App() {
     void refreshCirroUploads().catch(() => {});
 
     return () => { cancelled = true; };
-  }, [serverless, backendReady, setSessions, setFunctions, activeSessionId, setActiveSessionId, setCirroAuth, refreshCirroUploads]);
+  }, [serverless, backendReady, setSessions, setFunctions, setActiveSessionId, setCirroAuth, refreshCirroUploads]);
 
   const display = sessionState?.app_state.displays.find(isSpatialDisplay) ?? null;
   const embeddingDisplay = sessionState?.app_state.displays.find(isEmbeddingDisplay) ?? null;

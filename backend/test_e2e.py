@@ -1314,6 +1314,45 @@ def run_encoding_defaults_parity():
     print(f"[ok] encoding defaults agree across backend and canvas ({expected})")
 
 
+def run_viridis_lut_parity():
+    """The viridis table the canvas samples equals the one the figure renderer builds
+    from matplotlib. The TS copy had silently drifted to 260 non-matplotlib entries, so
+    a continuously colored export disagreed with the canvas it was exported from; the
+    only thing asserting the parity was a comment in each file. Parse the TS constant
+    rather than restating it, for the same reason run_encoding_defaults_parity does.
+
+    The length is checked against the sampler's own clamp, not a hardcoded 256: the
+    drift stayed invisible because `Math.min(255, ...)` makes a too-long table's tail
+    unreachable to points while VIRIDIS_CSS_GRADIENT still spans all of it, so only the
+    legend changed color. Deriving the bound from the source ties the two together."""
+    from app.snapshots import _viridis_lut
+
+    ts_path = os.path.join(_REPO_ROOT, "packages", "viewer", "src", "canvas", "colorUtils.ts")
+    with open(ts_path) as fh:
+        ts = fh.read()
+    block = re.search(r"const VIRIDIS: \[number, number, number\]\[\] = \[(.*?)^\];", ts, re.S | re.M)
+    assert block, "VIRIDIS not found in packages/viewer/src/canvas/colorUtils.ts"
+    in_ts = [tuple(int(c) for c in entry)
+             for entry in re.findall(r"\[(\d+),\s*(\d+),\s*(\d+)\]", block.group(1))]
+    clamp = re.search(r"Math\.min\((\d+), Math\.floor\(t \* 255\)\)", ts)
+    assert clamp, "buildNumericColormap's index clamp not found in colorUtils.ts"
+    reachable = int(clamp.group(1)) + 1
+    assert len(in_ts) == reachable, (
+        f"VIRIDIS has {len(in_ts)} entries but buildNumericColormap can only reach "
+        f"{reachable} of them (clamp Math.min({clamp.group(1)}, ...)); entries past the "
+        f"clamp color the legend gradient and nothing else")
+
+    expected = [tuple(int(c) for c in row) for row in _viridis_lut()]
+    assert len(in_ts) == len(expected), (
+        f"viridis length mismatch: canvas has {len(in_ts)} entries, "
+        f"snapshots._viridis_lut has {len(expected)}")
+    for i, (got, want) in enumerate(zip(in_ts, expected)):
+        assert got == want, (
+            f"viridis value mismatch at index {i}: canvas {got} != matplotlib {want} "
+            f"(first of {sum(a != b for a, b in zip(in_ts, expected))} differing entries)")
+    print(f"[ok] viridis LUT agrees across canvas and figure renderer ({len(expected)} entries)")
+
+
 def run_cirro_auth_flow(client):
     """Cirro's per-browser credential scoping and upload bundle (DESIGN §15), without
     talking to Cirro: the device-code flow itself needs a real domain and a human, so
@@ -2848,6 +2887,7 @@ def main():
         run_invalidation_flow(client)
         run_encoding_persistence_flow(client)
         run_encoding_defaults_parity()
+        run_viridis_lut_parity()
         run_inspector_flow(client)
         run_session_lock_flow(client)
         run_cirro_auth_flow(client)

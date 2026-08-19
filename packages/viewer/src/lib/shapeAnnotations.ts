@@ -7,6 +7,13 @@ import type { ShapeGeometry, ShapeKind } from '../schemas/annotations';
 
 type Point = [number, number];
 
+// The shapes element drawn annotations are persisted into. Mirrors
+// backend/app/sessions/shape_annotations.py ELEMENT. Every annotation is stored as a
+// Polygon (ShapesModel takes no other geometry), so it satisfies every "is this
+// polygonal?" test in the app; anything enumerating cell-boundary sets has to exclude
+// it by name or a user's own arrows and boxes get drawn as if they were cell outlines.
+export const SHAPE_ANNOTATIONS_ELEMENT = 'annotations';
+
 const ELLIPSE_SEGMENTS = 64;
 
 // Id of the synthetic rotate handle (distinct from the numeric vertex-handle ids

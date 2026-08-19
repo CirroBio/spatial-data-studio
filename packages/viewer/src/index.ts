@@ -34,8 +34,9 @@ export {
   defaultFill, defaultStroke, textGeometryAt, type ShapeKind,
 } from './schemas/annotations';
 export {
-  ROTATE_HANDLE_ID, applyHandleDrag, arrowheadTriangle, geometryFromDrag, polygonFromClicks,
-  shapeCentroid, shapeHandles, shapeOutline, translateGeometry,
+  ROTATE_HANDLE_ID, SHAPE_ANNOTATIONS_ELEMENT, applyHandleDrag, arrowheadTriangle,
+  geometryFromDrag, polygonFromClicks, shapeCentroid, shapeHandles, shapeOutline,
+  translateGeometry,
 } from './lib/shapeAnnotations';
 
 // ---- Palettes and per-display styling ---------------------------------------

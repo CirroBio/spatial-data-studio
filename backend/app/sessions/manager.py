@@ -464,16 +464,38 @@ class SessionManager:
         return total
 
     def _resident_mb(self, sess: Session) -> float:
+        """Rough resident cost of one session's active table, for the sessions list and
+        the resource strip. Display-only: admission gates on `_effective_mb` (psutil
+        anon + working set) and on `estimate_resident_mb` of the file being opened,
+        never on this — so 0.0 here can only understate a number on screen, it can
+        never grant a load headroom it doesn't have.
+
+        Sampling is therefore best-effort, and must degrade rather than raise: it is
+        reached from GET /api/sessions and the resource sampler, both of which run
+        ON THE EVENT LOOP, so a 500 here takes out the whole session list.
+
+        KeyError as well as RuntimeError: `Session._run_call` rebinds `self.sdata`
+        before it updates `active_table_key`, with a possibly minutes-long
+        `_adopt_rasters` between the two, so `active_table()` spends that window
+        looking a stale key up in the new object's `tables`.
+
+        The read lock closes that window (and the torn obsm iteration during a commit)
+        but is taken with a ZERO timeout: the write lock is held across exactly those
+        long adoptions, blocking on it would stall the event loop for minutes, and
+        `Session._publish_summary` reaches here from INSIDE the worker's own write lock
+        — RWLock is not reentrant, so a blocking acquire would self-deadlock. Writer
+        preference means a waiting writer also fails the acquire, which is the intent:
+        a sample is worth no contention at all."""
         if sess.sdata is None:
             return 0.0
         try:
-            ad = sess.active_table()
-        except RuntimeError:
+            with sess.lock.reading(timeout=0):
+                ad = sess.active_table()
+                X = ad.X
+                nbytes = getattr(X, "data", X).nbytes if hasattr(getattr(X, "data", X), "nbytes") else 0
+                nbytes += sum(v.values.nbytes for v in ad.obsm.values() if hasattr(v, "values"))
+        except (TimeoutError, RuntimeError, KeyError):
             return 0.0
-        nbytes = 0
-        X = ad.X
-        nbytes += getattr(X, "data", X).nbytes if hasattr(getattr(X, "data", X), "nbytes") else 0
-        nbytes += sum(v.values.nbytes for v in ad.obsm.values() if hasattr(v, "values"))
         return round(nbytes / 1e6, 1)
 
     def _check_capacity(self):

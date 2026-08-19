@@ -56,6 +56,11 @@ const channelSchema = z.object({
   contrast_limits: z.tuple([z.number(), z.number()]).optional(),
 });
 
+// `diffEncoding` emits by key, and `.partial()` *strips* a key the schema does not
+// name rather than rejecting it — so an encoding field missing from here decodes to
+// nothing and isn't even reported as malformed: a share link that silently does
+// nothing. The `satisfies Record<keyof …>` makes that a compile error instead, so a
+// field added to the encoding types cannot reach a link without a line here.
 const spatialEncodingSchema = z.object({
   coords: z.string(),
   color_by: z.string().nullable(),
@@ -67,6 +72,8 @@ const spatialEncodingSchema = z.object({
   channels: z.record(channelSchema),
   legend_visible: z.boolean(),
   legend_title: z.string(),
+  legend_scale: z.number(),
+  lock_view: z.boolean(),
   show_points: z.boolean(),
   show_image: z.boolean(),
   show_channel_legend: z.boolean(),
@@ -80,7 +87,7 @@ const spatialEncodingSchema = z.object({
   invert_x: z.boolean(),
   invert_y: z.boolean(),
   background: z.enum(['light', 'dark']),
-}).partial();
+} satisfies Record<keyof DisplayEncoding, z.ZodTypeAny>).partial();
 
 const embeddingEncodingSchema = z.object({
   obsm_key: z.string(),
@@ -94,8 +101,10 @@ const embeddingEncodingSchema = z.object({
   colormap: z.string(),
   legend_visible: z.boolean(),
   legend_title: z.string(),
+  legend_scale: z.number(),
+  lock_view: z.boolean(),
   category_colors: z.record(z.record(z.string())),
-}).partial();
+} satisfies Record<keyof EmbeddingEncoding, z.ZodTypeAny>).partial();
 
 const overlaySchema = z.object({
   v: z.literal(VIEW_SCHEMA_VERSION),
@@ -170,7 +179,14 @@ function diffEncoding(
 ): Record<string, unknown> | undefined {
   const out: Record<string, unknown> = {};
   for (const key of new Set([...Object.keys(current), ...Object.keys(baseline)])) {
-    if (stableJson(current[key]) !== stableJson(baseline[key])) out[key] = current[key];
+    if (stableJson(current[key]) === stableJson(baseline[key])) continue;
+    // A field the baseline set and the current encoding dropped has no representation
+    // in the payload: `stableJson` omits undefined values, so emitting the key would
+    // build an overlay that encodes to `{"sp":{"enc":{}}}` — a `view` parameter on the
+    // link that applies nothing. The delta has no tombstone for a removal, by the same
+    // choice that makes `channels`/`category_colors` replace wholesale.
+    if (current[key] === undefined) continue;
+    out[key] = current[key];
   }
   return Object.keys(out).length ? out : undefined;
 }

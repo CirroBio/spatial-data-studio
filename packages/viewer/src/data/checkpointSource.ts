@@ -16,6 +16,7 @@ import {
   type FigureFormat, type FigureIndex, type ImageInfo, type ObsField, type ObsmField,
   type SessionFields,
 } from '../types';
+import { SHAPE_ANNOTATIONS_ELEMENT } from '../lib/shapeAnnotations';
 import type { ShapeIndexEntry, ShapeReader } from './parquetShapes';
 import type { DataSource, ElementInventory, ImageLoader, LocalCategorical } from './types';
 
@@ -94,6 +95,16 @@ class RangeGetReader {
     if (!res.ok) {
       throw new Error(`range GET failed for ${this.url} at ${offset}+${size}: ${res.status} ${res.statusText}`);
     }
+    // 206 is the only status whose body IS the requested span. A 200 means the server
+    // (or a proxy in front of it) ignored the Range header and answered with the whole
+    // object, which ZipFileStore would then read as the entry at `offset` — every
+    // central-directory lookup and chunk decode silently off. getLength() tolerates a
+    // 200 because it only needs the total size; a data read cannot.
+    if (res.status !== 206) {
+      throw new Error(
+        `range GET for ${this.url} at ${offset}+${size} was answered ${res.status}, not 206: `
+        + 'the server or a proxy in front of it ignored the Range header.');
+    }
     return new Uint8Array(await res.arrayBuffer());
   }
 }
@@ -129,12 +140,17 @@ interface ViewerSidecar {
 
 type Root = zarr.Location<AsyncReadable>;
 
+// null means the group is genuinely not in the store — the callers read that as
+// "this checkpoint predates the feature". Anything else (a 403 on an expired URL, a
+// dropped connection, corrupt metadata) propagates: swallowing it would turn a
+// transient failure into a confident wrong diagnosis about a healthy file.
 async function readGroupAttrs(root: Root, path: string): Promise<Record<string, unknown> | null> {
   try {
     const group = await zarr.open.v3(root.resolve(path), { kind: 'group' });
     return (await group.attrs) as Record<string, unknown>;
-  } catch {
-    return null;
+  } catch (err) {
+    if (zarr.isZarritaError(err, 'NotFoundError')) return null;
+    throw err;
   }
 }
 
@@ -365,12 +381,17 @@ export async function openCheckpoint(
         // Only what the boundary overlay reads is populated: it picks the polygonal
         // shape sets out of `shapes` and ignores the rest. The data inspector, which
         // uses the other facets, is a live-session panel.
+        // The annotations element is withheld from this list only — `getShapesGeoArrow`
+        // still serves it, so annotations stay readable; it just never stands in for
+        // cell boundaries.
         return {
           tables: [], points: [], labels: [],
           images: Object.keys(sidecar.images).map((name) => ({ name })),
-          shapes: Object.entries(shapeIndex!).map(([name, entry]) => ({
-            name, count: entry.num_rows, geometry: entry.geometry_types, columns: [],
-          })),
+          shapes: Object.entries(shapeIndex!)
+            .filter(([name]) => name !== SHAPE_ANNOTATIONS_ELEMENT)
+            .map(([name, entry]) => ({
+              name, count: entry.num_rows, geometry: entry.geometry_types, columns: [],
+            })),
         };
       },
     } : {}),
@@ -495,7 +516,10 @@ async function readObsm(
     for (let i = 0; i < n; i++) column[i] = Number(flat[i * d + axis]);
     columns[`d${axis}`] = column;
   }
-  if (key === 'spatial' && affine && !isIdentityAffine(affine)) {
+  // A 6-element affine is a map of the xy plane, so it needs both columns; a 1-D
+  // `spatial` (the `d = 1` case above) has no d1 to pass and is left as stored rather
+  // than dereferencing undefined.
+  if (key === 'spatial' && d >= 2 && affine && !isIdentityAffine(affine)) {
     applyAffineXy(columns.d0, columns.d1, affine);
   }
   return makeTable(columns);
@@ -551,18 +575,23 @@ async function readGene(
   if (geneIndex < 0) throw new Error(`gene not found: ${gene}`);
 
   if (matrix === 'X') {
-    const mirror = await readGeneFromCsc(root, table, geneIndex);
-    if (mirror) return makeTable({ value: mirror });
+    const mirrorBase = `viewer/tables/${table}/X_csc`;
+    // Absent in a checkpoint saved before the mirror existed, and in one whose `X` is
+    // dense — `_write_csc_mirror` writes it only for a sparse `X`.
+    const mirrorAttrs = await readGroupAttrs(root, mirrorBase);
+    if (mirrorAttrs) {
+      return makeTable({ value: await readGeneFromCsc(root, mirrorBase, mirrorAttrs, geneIndex) });
+    }
   }
   return makeTable({ value: await readGeneFromMatrix(root, `tables/${table}/${matrix}`, geneIndex) });
 }
 
+// One gene's column out of a CSC group: `data`/`indices`/`indptr` plus a `shape` attr
+// of [n_obs, n_vars]. The sidecar's `X_csc` mirror and an AnnData `csc_matrix` group
+// are the same layout, so both read through here.
 async function readGeneFromCsc(
-  root: Root, table: string, geneIndex: number,
-): Promise<Float32Array | null> {
-  const base = `viewer/tables/${table}/X_csc`;
-  const attrs = await readGroupAttrs(root, base);
-  if (!attrs) return null;
+  root: Root, base: string, attrs: Record<string, unknown>, geneIndex: number,
+): Promise<Float32Array> {
   const [nCells] = attrs.shape as [number, number];
   // Two adjacent offsets bound the column; an empty column has start === stop.
   const bounds = await readSpan(root, `${base}/indptr`, geneIndex, geneIndex + 2);
@@ -586,8 +615,20 @@ async function readGeneFromMatrix(
     const column = await zarr.get(node, [null, geneIndex]);
     return Float32Array.from(column.data as ArrayLike<number>, Number);
   }
-  // AnnData CSR: scan every row's span for this gene. Reads the whole `data`/
-  // `indices` pair — tens of megabytes on a real table.
+  // AnnData tags every sparse group with the layout it wrote. The two encodings put
+  // the gene on opposite axes and index by opposite dimensions, so decoding one as the
+  // other yields a column of the wrong length filled with unrelated values and no
+  // error — refuse anything this reader cannot name instead.
+  const attrs = (await node.attrs) as Record<string, unknown>;
+  const encoding = attrs['encoding-type'];
+  if (encoding === 'csc_matrix') return readGeneFromCsc(root, path, attrs, geneIndex);
+  if (encoding !== 'csr_matrix') {
+    throw new Error(
+      `cannot read a gene from "${path}": expected a dense array or a csr_matrix/`
+      + `csc_matrix group, got encoding-type ${JSON.stringify(encoding ?? null)}.`);
+  }
+  // CSR: scan every row's span for this gene. Reads the whole `data`/`indices` pair —
+  // tens of megabytes on a real table.
   const [values, columns, offsets] = await Promise.all([
     readNumeric(root, `${path}/data`),
     readNumeric(root, `${path}/indices`),

@@ -37,6 +37,12 @@ def describe_elements(adata, sdata, active_table_key: str | None, *,
 
     shapes, points, images, labels = [], [], [], []
     if sdata is not None:
+        # Every shapes element is listed, `shape_annotations.ELEMENT` included: this is the
+        # whole inventory, which the inspector browses and the save dialog turns into the
+        # set of elements written to the checkpoint — dropping the annotations here would
+        # leave a user's drawings out of every saved file. Consumers that want *boundary*
+        # sets filter it out themselves (snapshots._shapes_element, SpatialCanvas'
+        # polygonElements), since it is polygonal and would otherwise pass for one.
         for name, gdf in sdata.shapes.items():
             geom = sorted({str(g) for g in gdf.geom_type.unique()}) if len(gdf) else []
             shapes.append({

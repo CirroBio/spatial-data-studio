@@ -189,10 +189,18 @@ def _image_element(session, enc: dict) -> str | None:
 def _shapes_element(session, enc: dict) -> str | None:
     """The polygonal shapes element the cell-boundary overlay would use: the
     encoding's `shapes_layer` if it still exists and is polygonal, else the first
-    available polygonal shapes element (mirrors SpatialCanvas' `shapesElement`)."""
+    available polygonal shapes element (mirrors SpatialCanvas' `shapesElement`).
+
+    The shape-annotation element is polygonal (every drawn arrow/box/label is stored as
+    a Polygon) but is not segmentation, so it is excluded: otherwise a session with no
+    real boundary element falls back onto it and the figure draws the user's own
+    drawings as cell outlines. The exclusion also neutralises a `shapes_layer` that a
+    session persisted while the pick was still offering it."""
+    from .sessions import shape_annotations
     from .transport import geometry
     shapes = getattr(session.sdata, "shapes", {})
-    polygonal = [name for name, gdf in shapes.items() if geometry.is_polygonal(gdf)]
+    polygonal = [name for name, gdf in shapes.items()
+                 if name != shape_annotations.ELEMENT and geometry.is_polygonal(gdf)]
     chosen = enc.get("shapes_layer")
     if chosen and chosen in polygonal:
         return chosen
