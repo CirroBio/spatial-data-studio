@@ -1,10 +1,10 @@
 // The share-link encoder is pure, so it is tested directly rather than through the
 // browser — the e2e spec covers the wiring (frontend/e2e/serverless-share.spec.ts).
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SpatialDisplaySpec, EmbeddingDisplaySpec } from '@cirrobio/spatial-viewer';
 import {
   applyOverlayToAppState, buildOverlay, encodeViewOverlay, setViewBaseline, viewHref,
-  type CurrentView,
+  type CurrentView, type ViewOverlay,
 } from './urlViewState';
 import type { AppState } from '../types';
 
@@ -38,6 +38,19 @@ const current = (over: Partial<CurrentView> = {}): CurrentView => ({
 beforeEach(() => {
   setViewBaseline({ spatial: spatial(), embedding: embedding() });
 });
+
+/** Put `overlay` on a link and read it back the way a recipient's browser does — over
+ * `location.search` and through the zod schema, which is where a field the schema does
+ * not name is dropped. `readUrl` memoizes for the life of the page, so each link needs
+ * its own module instance. */
+async function throughLink(overlay: ViewOverlay | null) {
+  window.history.replaceState(
+    null, '', `/?checkpoint=demo.zarr.zip&view=${encodeViewOverlay(overlay)}`,
+  );
+  vi.resetModules();
+  const reader = await import('./urlViewState');
+  return { overlay: reader.urlViewOverlay(), malformed: reader.urlViewMalformed() };
+}
 
 describe('buildOverlay', () => {
   it('is null when nothing differs from the checkpoint', () => {
@@ -90,6 +103,19 @@ describe('buildOverlay', () => {
     expect(overlay?.em?.vp).toEqual({ t: [1, 2, 3], z: 2, rx: 25, ro: 40 });
   });
 
+  it('emits nothing for a field the current encoding dropped', () => {
+    // `isolated_category` has no entry in SPATIAL_ENCODING_DEFAULTS, so dropping it
+    // leaves the normalized value `undefined` — and `stableJson` omits undefined, so
+    // emitting the key would build a `view` parameter that encodes to `{"sp":{"enc":{}}}`
+    // and applies nothing. The delta has no tombstone for a removal.
+    setViewBaseline({ spatial: spatial({ isolated_category: 'Tumor' }), embedding: embedding() });
+    expect(buildOverlay(current())).toBeNull();
+    // Alongside a real change the dropped key must be absent, not present-and-undefined:
+    // toStrictEqual, because toEqual would accept the undefined key that is the bug.
+    const overlay = buildOverlay(current({ spatial: spatial({ colormap: 'magma' }) }));
+    expect(overlay?.sp?.enc).toStrictEqual({ colormap: 'magma' });
+  });
+
   it('carries UI state only when it differs from a fresh viewer', () => {
     expect(buildOverlay(current({ mainView: 'embedding' }))?.ui).toEqual({ view: 'embedding' });
     // The plot gallery reads figures out of the checkpoint, so it is shareable — as is
@@ -124,6 +150,34 @@ describe('round trip', () => {
   it('leaves app_state alone for a null overlay', () => {
     const original = app();
     expect(applyOverlayToAppState(original, null)).toBe(original);
+  });
+
+  // `.partial()` strips a key the schema does not name rather than rejecting it, so a
+  // field the diff emits but the schema omits vanishes on decode and the link is not
+  // even reported malformed. These two were exactly that: settable in the UI, emitted
+  // into the payload, absent from both schemas.
+  it('carries legend_scale on both canvases', async () => {
+    const link = await throughLink(buildOverlay(current({
+      spatial: spatial({ legend_scale: 1.5 }), embedding: embedding({ legend_scale: 2 }),
+    })));
+    expect(link.malformed).toBe(false);
+    expect(link.overlay?.sp?.enc).toEqual({ legend_scale: 1.5 });
+    expect(link.overlay?.em?.enc).toEqual({ legend_scale: 2 });
+    const next = applyOverlayToAppState(app(), link.overlay);
+    expect((next.displays[0] as SpatialDisplaySpec).encoding.legend_scale).toBe(1.5);
+    expect((next.displays[1] as EmbeddingDisplaySpec).encoding.legend_scale).toBe(2);
+  });
+
+  it('carries lock_view on both canvases', async () => {
+    const link = await throughLink(buildOverlay(current({
+      spatial: spatial({ lock_view: true }), embedding: embedding({ lock_view: true }),
+    })));
+    expect(link.malformed).toBe(false);
+    expect(link.overlay?.sp?.enc).toEqual({ lock_view: true });
+    expect(link.overlay?.em?.enc).toEqual({ lock_view: true });
+    const next = applyOverlayToAppState(app(), link.overlay);
+    expect((next.displays[0] as SpatialDisplaySpec).encoding.lock_view).toBe(true);
+    expect((next.displays[1] as EmbeddingDisplaySpec).encoding.lock_view).toBe(true);
   });
 
   it('survives encode', () => {

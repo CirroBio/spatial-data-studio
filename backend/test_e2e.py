@@ -649,7 +649,119 @@ def run_shape_index_check(client, sid, checkpoint_path):
         print("[ok] unplaceable geometry sorts to the end (element still indexed), an "
               "all-empty element is omitted, and 3-D geometry reports as 'Polygon'")
 
+    run_shape_placement_check(client, sid, sidecar, gdf)
+
     print("\nSHAPE INDEX CHECKS PASSED")
+
+
+def run_multiregion_boundary_placement(client, sid, staging):
+    """The case the Xenium fixture cannot show: boundaries on a multi-region table, where
+    placing them by the table's region affine and by their own element's transform give
+    different answers. The sidecar must carry the element's own.
+
+    A table annotating several regions has no region affine (`coords_transform` is
+    identity), so a checkpoint that baked it — every sidecar up to v1 — would leave these
+    polygons at half their true coordinates, stacked on the first FOV rather than spread
+    over the section. The round trip against `/geoarrow` then pins that the browser's
+    numbers and the live route's agree."""
+    import zipfile as _zip
+
+    import geopandas as gpd
+    import zarr
+
+    from app.persistence.store import VIEWER_GROUP
+    from app.sessions import transform
+
+    out = os.path.join(staging, "cosmx_boundaries.zarr.zip")
+    sv = client.post(f"/api/sessions/{sid}/save", json={"path": out}).json()
+    assert wait_job(client, sid, sv["job_id"], timeout=300)["status"] == "completed", sv
+    with tempfile.TemporaryDirectory() as tmp:
+        with _zip.ZipFile(out) as zf:
+            zf.extractall(tmp)
+        sidecar = dict(zarr.open_group(tmp, mode="r")[VIEWER_GROUP].attrs)
+        gdf = gpd.read_parquet(os.path.join(tmp, "shapes", "cell_boundaries", "shapes.parquet"))
+
+    table_key = sidecar["table_keys"][0]
+    assert transform.is_identity(sidecar["coords_transform"][table_key]), \
+        "fixture no longer exercises the divergence: the table has a region affine"
+    scale = _COSMX_BOUNDARY_SCALE
+    assert sidecar["shapes_transform"]["cell_boundaries"][table_key] == \
+        [scale, 0.0, 0.0, 0.0, scale, 0.0], sidecar["shapes_transform"]
+    print(f"[ok] multi-region boundaries are baked with their own {scale:g}x transform, "
+          f"not the table's identity coords_transform")
+    run_shape_placement_check(client, sid, sidecar, gdf)
+
+
+def run_shape_placement_check(client, sid, sidecar, gdf):
+    """Where the serverless viewer draws a boundary element must be where `/geoarrow`
+    draws it. The two get there by different routes: the live route calls
+    `geometry.element_to_world` per request, while the browser reads the affine the
+    checkpoint writer baked into `viewer/shapes_transform[element][table]` and applies it
+    to the parquet's intrinsic vertices (`parquetShapes.ts`, `applyAffineXy`). This walks
+    the browser's route on the numbers actually in the file and compares the result,
+    polygon by polygon, against what the backend serves for the same cells.
+
+    That comparison is the whole point of baking a per-element affine. Until sidecar v2
+    the writer baked `coords_transform` — the table's *region* affine, which is the
+    boundary element's own transform only by coincidence — so the two placements
+    disagreed for any store where the boundaries carry a transform the region does not.
+
+    `gdf` is the checkpoint's `shapes.parquet` as written (Hilbert-sorted, intrinsic
+    coordinates); rows are matched to served polygons by `cell_index`, since neither
+    ordering survives the other."""
+    import geoarrow.pyarrow as ga
+    import numpy as np
+    from shapely.affinity import affine_transform
+
+    from app.deps import MANAGER
+    from app.transport import geometry
+
+    table_key = sidecar["table_keys"][0]
+    # Every indexed element must be placeable against every table, or the reader hides
+    # boundaries it cannot honestly draw (`checkpointSource.ts` drops such an element).
+    for element in sidecar["shapes"]:
+        assert set(sidecar["shapes_transform"].get(element, {})) == set(sidecar["table_keys"]), \
+            f"no baked placement for shapes '{element}': {sidecar['shapes_transform']}"
+    a, b, c, d, e, f = sidecar["shapes_transform"]["cell_boundaries"][table_key]
+    shapely_affine = (a, b, d, e, c, f)  # shapely wants a, b, d, e, xoff, yoff
+
+    # World bbox from the placement, not from the intrinsic bounds: the two are the same
+    # only when the affine is identity, which is exactly what must not be assumed.
+    corners = np.array([[x, y, 1.0] for x in gdf.total_bounds[::2] for y in gdf.total_bounds[1::2]])
+    world = corners @ np.array([[a, d], [b, e], [c, f]])
+    bbox = (f"{world[:, 0].min()},{world[:, 1].min()},"
+            f"{world[:, 0].max()},{world[:, 1].max()}")
+    served = client.get(f"/api/sessions/{sid}/shapes/cell_boundaries/geoarrow",
+                        params={"bbox": bbox})
+    assert served.status_code == 200, served.text
+    tbl = ipc.open_stream(io.BytesIO(served.content)).read_all()
+    assert tbl.num_rows > 0, f"the placed world bbox {bbox} served no polygons"
+    live_geoms = ga.to_geopandas(tbl.column("geometry"))
+    live_cells = np.asarray(tbl.column("cell_index"))
+    by_cell = {int(cell): live_geoms.iloc[i]
+               for i, cell in enumerate(live_cells) if cell >= 0}
+
+    cells = geometry.cell_index(MANAGER.get(sid).active_table(), list(gdf.index))
+    rows = np.flatnonzero(np.isin(cells, list(by_cell)))
+    assert len(rows) > 0, "no parquet row maps to a served polygon"
+    sample = np.random.default_rng(0).choice(rows, size=min(200, len(rows)), replace=False)
+    # /geoarrow rounds its coordinates to `geometry._COORD_DECIMALS` for the wire, which
+    # is the only difference the comparison may absorb.
+    tolerance = 10.0 ** -geometry._COORD_DECIMALS
+    worst = 0.0
+    for row in sample:
+        placed = affine_transform(gdf.geometry.iloc[row], shapely_affine)
+        worst = max(worst, float(np.abs(
+            np.asarray(placed.bounds) - np.asarray(by_cell[int(cells[row])].bounds)).max()))
+    assert worst <= tolerance, (
+        f"the baked placement puts boundaries {worst:.4f} from where /geoarrow serves "
+        f"them (tolerance {tolerance})")
+    same_as_points = np.allclose([a, b, c, d, e, f], sidecar["coords_transform"][table_key])
+    print(f"[ok] baked shapes_transform places {len(sample)} boundaries within "
+          f"{worst:.4f} of /geoarrow (element affine [{a:.4g},{b:.4g},{c:.4g},"
+          f"{d:.4g},{e:.4g},{f:.4g}]; "
+          f"{'coincides with' if same_as_points else 'differs from'} coords_transform, so "
+          f"this store {'does not' if same_as_points else 'does'} distinguish the two rules)")
 
 
 def run_snapshot_flow(client, sid):
@@ -2187,6 +2299,37 @@ def _write_cosmx_outs(path, dataset_id, fov_origins, fov_px, per_fov):
         Image.fromarray(lab).save(os.path.join(path, "CellLabels", f"{dataset_id}_F{fov:03d}.tif"))
 
 
+# How much larger the stitched slide is than the space the synthetic CosMx boundaries
+# are stored in. Any value but 1 works; it just has to make an element placed by its own
+# transform land somewhere an element placed by the table's (identity) region affine does
+# not.
+_COSMX_BOUNDARY_SCALE = 2.0
+
+
+def _add_cosmx_boundaries(sdata):
+    """Give the synthetic CosMx store a `cell_boundaries` element: one square per cell,
+    stored at 1/`_COSMX_BOUNDARY_SCALE` of the stitched coordinates and carrying the
+    matching scale transform onto the slide.
+
+    No fixture under test-data/ pairs boundary polygons with a multi-region table, and
+    that is the one shape of store where the two placement rules visibly disagree. Such a
+    table has no region affine at all (`transform.get_affine6` is identity), so a reader
+    that places boundaries with it leaves them at half their true coordinates, piled onto
+    the first FOV; only the element's own transform puts them on their cells."""
+    import geopandas as gpd
+    import numpy as np
+    import shapely
+    from spatialdata.models import ShapesModel
+    from spatialdata.transformations import Scale
+
+    table = next(iter(sdata.tables.values()))
+    xy = np.asarray(table.obsm["global"])[:, :2] / _COSMX_BOUNDARY_SCALE
+    sdata.shapes["cell_boundaries"] = ShapesModel.parse(
+        gpd.GeoDataFrame(geometry=[shapely.box(x - 4, y - 4, x + 4, y + 4) for x, y in xy],
+                         index=list(table.obs.index)),
+        transformations={"global": Scale([_COSMX_BOUNDARY_SCALE] * 2, axes=("x", "y"))})
+
+
 def run_cosmx_multiregion_flow(client):
     """A table whose rows span several region elements plots, places and selects right.
 
@@ -2212,7 +2355,9 @@ def run_cosmx_multiregion_flow(client):
         outs = os.path.join(staging, "outs")
         _write_cosmx_outs(outs, dataset_id, fov_origins, fov_px, per_fov)
         store = os.path.join(staging, f"{dataset_id}.zarr")
-        spatialdata_io.cosmx(outs, dataset_id=dataset_id, transcripts=False).write(store)
+        sdata = spatialdata_io.cosmx(outs, dataset_id=dataset_id, transcripts=False)
+        _add_cosmx_boundaries(sdata)
+        sdata.write(store)
 
         sid = new_session(client, store)
         sess = MANAGER.get(sid)
@@ -2262,6 +2407,8 @@ def run_cosmx_multiregion_flow(client):
         n = next(c for c in picked["categories"] if c["label"] == "fov2")["n_cells"]
         assert n == per_fov, f"lasso over one FOV selected {n} cells, expected {per_fov}"
         print(f"[ok] lasso over one FOV selected its {n} cells, not the whole section")
+
+        run_multiregion_boundary_placement(client, sid, staging)
 
         assert client.delete(f"/api/sessions/{sid}").status_code == 200
     finally:

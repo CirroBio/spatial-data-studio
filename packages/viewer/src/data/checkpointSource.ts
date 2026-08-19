@@ -22,7 +22,7 @@ import type { DataSource, ElementInventory, ImageLoader, LocalCategorical } from
 
 // Highest `viewer/` sidecar layout this build understands. Mirrors
 // `persistence.store.VIEWER_SIDECAR_VERSION`; bumped only by a breaking layout change.
-const VIEWER_SIDECAR_VERSION = 1;
+const VIEWER_SIDECAR_VERSION = 2;
 
 /**
  * Resolves a currently-valid URL for the checkpoint. A host that hands out
@@ -130,12 +130,19 @@ interface ViewerSidecar {
   table_keys: string[];
   images: Record<string, Record<string, ImageInfo>>;
   coords_transform: Record<string, number[]>;
+  // Which `obsm` key `coords_transform` belongs to (`transform.world_key`). Absent in a
+  // v1 sidecar, which always meant `spatial`.
+  world_key?: Record<string, string>;
   // Absent in a checkpoint saved without figures, and in every one written before
   // they were persisted at all.
   figures?: FigureIndex;
   // Polygonal shapes elements that carry a spatial index. Absent in a checkpoint
   // written before the index existed, whose boundaries stay unread (`parquetShapes`).
   shapes?: Record<string, ShapeIndexEntry>;
+  // element -> table key -> that element's intrinsic->world affine, which is what places
+  // its polygons (`transport.geometry.element_to_world`). Absent in a v1 sidecar; an
+  // element the backend could not place is absent from a v2 one.
+  shapes_transform?: Record<string, Record<string, number[]>>;
 }
 
 type Root = zarr.Location<AsyncReadable>;
@@ -276,6 +283,12 @@ export async function openCheckpoint(
   // Mirrors `Session._default_table_key`: the app has no table picker, it uses the
   // first one.
   const table = sidecar.table_keys[0] ?? '';
+  // The `obsm` key `coords_transform` was derived for. Resolved by the backend
+  // (`transform.world_key`) rather than assumed to be `spatial`: a table spanning several
+  // regions keeps region-local coordinates in `spatial` and the stitched ones under
+  // another key, and the affine belongs to the stitched one. `spatial` is the right
+  // reading of a v1 sidecar, which is what its writer always meant.
+  const worldKey = sidecar.world_key?.[table] ?? 'spatial';
 
   // var_names back a gene's column index and the gene picker; a few thousand short
   // strings, read once.
@@ -289,19 +302,43 @@ export async function openCheckpoint(
   // the store, so a local column can also shadow one of the same name.
   const localColumns = new Map<string, LocalCategorical>();
 
+  // Where each boundary element's polygons go, for the table this session reads.
+  // Sidecar v2 onwards: the backend bakes one affine per (element, table) because a
+  // shapes element is placed by its OWN transform, not by the table's `coords_transform`
+  // (see `transport/geometry.py:element_to_world`).
+  //
+  // A v1 sidecar carries only `coords_transform`, which places boundaries correctly when
+  // it happens to be the boundary element's own transform and puts them somewhere
+  // arbitrary when it does not — and nothing in the file says which case it is. The
+  // failure is silent and looks like corrupt geometry, so v1 boundaries are withheld
+  // instead of guessed at. Everything else in such a checkpoint still opens and renders;
+  // the overlay falls back to its points-only path, the same as for a checkpoint written
+  // before the shape index existed.
+  const shapeAffines: Record<string, number[]> = {};
+  for (const [element, byTable] of Object.entries(sidecar.shapes_transform ?? {})) {
+    if (byTable[table]) shapeAffines[element] = byTable[table];
+  }
+  const shapeIndex = sidecar.shapes
+    ? Object.fromEntries(Object.entries(sidecar.shapes).filter(([name]) => shapeAffines[name]))
+    : {};
+  const hasShapes = Object.keys(shapeIndex).length > 0;
+  if (!hasShapes && sidecar.shapes && Object.keys(sidecar.shapes).length > 0) {
+    console.warn(
+      '[shapes] this checkpoint (viewer sidecar v%d) carries no boundary placement for '
+      + 'table "%s", so its cell boundaries are not drawn. Open it in the app and save it '
+      + 'again to get them back.', sidecar.sidecar_version, table);
+  }
+
   // Boundary reader, code-split: a parquet reader plus a zstd decompressor is ~100 KB
   // gzipped, and most sessions (every live one, and any checkpoint without boundaries)
-  // never touch it. Absent for a v1 sidecar, whose shape parquets carry no spatial index
-  // — the overlay then stays on its points-only path, exactly as before this existed.
-  const shapeIndex = sidecar.shapes;
-  const hasShapes = !!shapeIndex && Object.keys(shapeIndex).length > 0;
+  // never touch it.
   let shapesOnce: Promise<ShapeReader> | null = null;
   const shapeReader = (): Promise<ShapeReader> => {
     if (!shapesOnce) {
       // Reads the parquet as a plain zip entry, so it takes `rawStore` rather than the
       // consolidated-metadata wrapper.
       shapesOnce = import('./parquetShapes').then(({ createShapeReader }) => createShapeReader(
-        rawStore, shapeIndex!, sidecar.coords_transform[table],
+        rawStore, shapeIndex, shapeAffines,
         async (element, start, stop) => Int32Array.from(
           await readSpan(root, `viewer/shapes/${element}/${table}/cell_index`, start, stop)),
       ));
@@ -330,7 +367,9 @@ export async function openCheckpoint(
       const element = fieldPath.slice(0, separator);
       const key = fieldPath.slice(separator + 1);
 
-      if (element === 'obsm') return readObsm(root, table, key, sidecar.coords_transform[table]);
+      if (element === 'obsm') {
+        return readObsm(root, table, key, worldKey, sidecar.coords_transform[table]);
+      }
       if (element === 'obs') return readObs(root, table, key);
       if (element === 'X') {
         return readGene(root, table, 'X', await varNamesOnce(), key);
@@ -387,7 +426,7 @@ export async function openCheckpoint(
         return {
           tables: [], points: [], labels: [],
           images: Object.keys(sidecar.images).map((name) => ({ name })),
-          shapes: Object.entries(shapeIndex!)
+          shapes: Object.entries(shapeIndex)
             .filter(([name]) => name !== SHAPE_ANNOTATIONS_ELEMENT)
             .map(([name, entry]) => ({
               name, count: entry.num_rows, geometry: entry.geometry_types, columns: [],
@@ -499,10 +538,10 @@ async function arrayLength(root: Root, path: string): Promise<number> {
 }
 
 // obsm -> d0/d1(/d2) float32, matching `resolve_field`'s obsm branch. The live route
-// additionally applies the points->global affine to obsm:spatial; the sidecar bakes
-// that affine so the same mapping happens here.
+// additionally applies the points->global affine to the world key's coordinates; the
+// sidecar bakes both the affine and which key that is, so the same mapping happens here.
 async function readObsm(
-  root: Root, table: string, key: string, affine: number[] | undefined,
+  root: Root, table: string, key: string, worldKey: string, affine: number[] | undefined,
 ): Promise<Table> {
   const arr = await zarr.open.v3(root.resolve(`tables/${table}/obsm/${key}`), { kind: 'array' });
   const chunk = await zarr.get(arr);
@@ -517,9 +556,9 @@ async function readObsm(
     columns[`d${axis}`] = column;
   }
   // A 6-element affine is a map of the xy plane, so it needs both columns; a 1-D
-  // `spatial` (the `d = 1` case above) has no d1 to pass and is left as stored rather
+  // world key (the `d = 1` case above) has no d1 to pass and is left as stored rather
   // than dereferencing undefined.
-  if (key === 'spatial' && d >= 2 && affine && !isIdentityAffine(affine)) {
+  if (key === worldKey && d >= 2 && affine && !isIdentityAffine(affine)) {
     applyAffineXy(columns.d0, columns.d1, affine);
   }
   return makeTable(columns);

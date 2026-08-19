@@ -31,10 +31,10 @@ a checkpoint written before them is rejected by the viewer with a re-save messag
   ones its viewport touches instead of downloading every boundary.
 - `_write_viewer_sidecar` writes a `viewer/` group holding what the browser cannot
   cheaply derive: the per-image manifest from `imaging.image_info`, the points->global
-  affine, the per-shapes-element index report, a gene-major (CSC) mirror of each
-  table's `X` so coloring by one gene is a couple of range reads instead of a download
-  of the whole CSR `data`+`indices` pair, and the drawn plot figures (`_write_figures`)
-  the Plots view renders.
+  affine and the boundary placement of each shapes element, the per-shapes-element
+  index report, a gene-major (CSC) mirror of each table's `X` so coloring by one gene
+  is a couple of range reads instead of a download of the whole CSR `data`+`indices`
+  pair, and the drawn plot figures (`_write_figures`) the Plots view renders.
 - `_consolidate` re-runs consolidated metadata last, so the tree the browser reads
   reports the sharded codec and includes `viewer/`.
 """
@@ -98,7 +98,15 @@ VIEWER_GROUP = "viewer"
 # Bumped when the sidecar layout changes so a viewer can refuse a shape it predates.
 # Additive keys (e.g. `figures`, `shapes`) don't bump it: an older reader ignores what
 # it doesn't know, and bumping would make it refuse files it can still render.
-VIEWER_SIDECAR_VERSION = 1
+#
+# v2 added `shapes_transform` and `world_key`. Both are corrections rather than
+# additions, which is why they bump: a v1 reader places boundaries with
+# `coords_transform` (the table's region affine, which is only the boundary element's
+# transform by coincidence — see `transport.geometry.element_to_world`) and applies that
+# affine to `obsm['spatial']` whether or not that is the key the canvas draws. Reading a
+# v2 file as if it were v1 gives no error, just polygons in the wrong place, so a v1
+# reader has to refuse it outright.
+VIEWER_SIDECAR_VERSION = 2
 # Subgroup of `viewer/` holding one group per plot id, one uint8 array per format.
 FIGURES_GROUP = "figures"
 # The formats a drawn plot carries (`session.plot_figures`): SVG is what the app and
@@ -787,9 +795,16 @@ def _write_viewer_sidecar(zarr_dir: str, sdata, tables: set[str] | None = None,
       `[element][table_key]` because `pixel_to_world` reconciles the image against a
       table's spots. Every table is baked (plus `""` for none) so the viewer looks up
       whichever it settles on instead of re-deriving the reconciliation in JS.
-    - `coords_transform` is the points->global affine `GET /data/obsm:spatial`
+    - `coords_transform` is the points->global affine `GET /data/obsm:<world_key>`
       applies, so the viewer places cells identically without re-deriving it from the
-      region element's `coordinateTransformations`.
+      region element's `coordinateTransformations`, and `world_key` is which `obsm` key
+      it belongs to (`transform.world_key`). The key is baked because it is not always
+      `spatial`: a table spanning several regions keeps region-*local* coordinates there
+      and the stitched ones elsewhere, and applying the affine to the local key would
+      transform coordinates it was never derived for.
+    - `shapes_transform` places each boundary element's polygons
+      (`_shape_element_transforms`). Separate from `coords_transform` because a shapes
+      element is placed by its OWN transform, not the table's region affine.
     - `viewer/tables/<key>/X_csc` is a gene-major mirror of a sparse `X`. This
       duplicates `X` on disk; the alternative is the browser downloading the whole
       CSR `data`+`indices` pair to read one gene column, which is worse exactly when
@@ -813,6 +828,7 @@ def _write_viewer_sidecar(zarr_dir: str, sdata, tables: set[str] | None = None,
     root = zarr.open_group(zarr_dir, mode="r+", use_consolidated=False)
     group = root.require_group(VIEWER_GROUP)
     table_keys = list(getattr(sdata, "tables", {}))
+    shape_report = shapes if shapes is not None else _index_shapes(zarr_dir, sdata)
     sidecar = {
         "sidecar_version": VIEWER_SIDECAR_VERSION,
         "table_keys": table_keys,
@@ -826,9 +842,13 @@ def _write_viewer_sidecar(zarr_dir: str, sdata, tables: set[str] | None = None,
         "coords_transform": {
             key: transform.get_affine6(sdata, sdata.tables[key]) for key in table_keys
         },
+        "world_key": {
+            key: transform.world_key(sdata, sdata.tables[key]) for key in table_keys
+        },
         "figures": {pid: {fmt: len(blob) for fmt, blob in blobs.items()}
                     for pid, blobs in (figures or {}).items() if blobs},
-        "shapes": shapes if shapes is not None else _index_shapes(zarr_dir, sdata),
+        "shapes": shape_report,
+        "shapes_transform": _shape_element_transforms(sdata, table_keys, list(shape_report)),
     }
     checkpoint_schemas.validate_viewer_sidecar(sidecar)
     group.attrs.update(sidecar)
@@ -837,6 +857,41 @@ def _write_viewer_sidecar(zarr_dir: str, sdata, tables: set[str] | None = None,
         _write_csc_mirror(group, zarr_dir, key, sdata.tables[key])
     for element in sidecar["shapes"]:
         _write_shape_cell_index(group, zarr_dir, element, sdata, table_keys)
+
+
+def _shape_element_transforms(sdata, table_keys: list[str],
+                              elements: list[str]) -> dict[str, dict[str, list[float]]]:
+    """`{shapes element: {table key: intrinsic->world affine6}}` — where the serverless
+    reader draws each boundary element's polygons.
+
+    The affine is `transport.geometry.element_to_world`, the same call the live
+    `/shapes/{element}/geoarrow` route places its polygons with. Baked per (element,
+    table) for the reason the image manifest is: the derivation reconciles THIS element
+    against THAT table's cells, and neither half is fixed. It cannot be the table's
+    `coords_transform`, which is the region element's affine and only the boundary
+    element's by coincidence — a table annotating several regions has no region affine at
+    all while its boundaries carry a real one.
+
+    An element the table cannot place (`element_to_world` raises: no transform into the
+    system the cells live in) is omitted rather than failing the save. The store is still
+    fully readable, and the reader withholds that element's boundaries instead of drawing
+    them somewhere it cannot justify."""
+    from ..transport import geometry
+
+    placed: dict[str, dict[str, list[float]]] = {}
+    for element in elements:
+        gdf = sdata.shapes[element]
+        for key in table_keys:
+            try:
+                m = geometry.element_to_world(sdata, sdata.tables[key], element, gdf)
+            except KeyError as exc:
+                _log.warning("no boundary placement for shapes '%s' against table '%s': %s",
+                             element, key, exc)
+                continue
+            placed.setdefault(element, {})[key] = [
+                float(m[0, 0]), float(m[0, 1]), float(m[0, 2]),
+                float(m[1, 0]), float(m[1, 1]), float(m[1, 2])]
+    return placed
 
 
 def _write_shape_cell_index(group, zarr_dir: str, element: str, sdata,

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, type RefObject } from 'react'
 import type { OrthographicViewState } from '@deck.gl/core';
 import type { SpatialDisplaySpec, ImageInfo } from '../types';
 import type { ScatterPositions } from './useArrowPositions';
-import { ZOOM_LIMITS, fitZoom, useCanvasSize } from './viewFit';
+import { ZOOM_LIMITS, fitBounds, measuredCanvasSize, useCanvasSize } from './viewFit';
 
 // Zoom at which a cell of characteristic world diameter d reaches SHAPES_MIN_CELL_PX
 // on screen (d * 2**zoom px = px ⇒ zoom = log2(px / d)). Below this the cells are too
@@ -37,23 +37,22 @@ export function useCanvasViewState(
   const { containerRef, canvasSize } = useCanvasSize();
 
   // Compute a view state that frames the data bounds within the current canvas size.
-  // Returns null until the canvas has a real measured size — fitting against a
-  // zero-width canvas yields zoom = log2(0) = -Infinity, which sticks (the effect
-  // below only fits once) and silently blanks every layer. The effect re-runs when
-  // `canvasSize` arrives, so the first real fit lands as soon as layout settles.
+  // The extent to frame is this canvas' own business; the guards on it (unmeasured
+  // canvas, empty bounds, non-finite zoom) all live in `fitBounds`, shared with the
+  // embedding canvas. Null from there means "no camera yet": the effect below only
+  // fits until one lands and re-runs when `canvasSize` arrives, so the first real fit
+  // lands as soon as layout settles.
   const fitToData = useCallback((): OrthographicViewState | null => {
     if (!positions) return null;
-    const w = canvasSize?.width ?? containerRef.current?.clientWidth ?? 0;
-    const h = canvasSize?.height ?? containerRef.current?.clientHeight ?? 0;
-    if (!(w > 0 && h > 0)) return null;
+    const { width, height } = measuredCanvasSize(canvasSize, containerRef);
     // When the display has an image, the canvas coordinate space IS the image's pixel
     // space (SpatialCanvas: image at [0,0,W,H], points carry a world->pixel modelMatrix),
     // so frame the image's level-0 pixel extent. The cells overlay it.
     if (display.encoding.image_layer && imageInfo?.pixel_to_world && imageInfo.levels.length) {
       const { width: W, height: H } = imageInfo.levels[0];
-      const zoom = fitZoom(W, H, w, h);
-      if (!Number.isFinite(zoom)) return null;
-      return { target: [W / 2, H / 2, 0], zoom, ...ZOOM_LIMITS };
+      const fit = fitBounds({ d0min: 0, d0max: W, d1min: 0, d1max: H }, width, height);
+      if (!fit) return null;
+      return { target: [fit.centerX, fit.centerY, 0], zoom: fit.zoom, ...ZOOM_LIMITS };
     }
     let { d0min, d0max, d1min, d1max } = positions.bounds;
     // Frame the whole section: union the spot extent with the image extent when the
@@ -65,15 +64,9 @@ export function useCanvasViewState(
       d1min = Math.min(d1min, iy0, iy1);
       d1max = Math.max(d1max, iy0, iy1);
     }
-    // An empty table (0 rows) leaves bounds at ±Infinity; guard the center so the
-    // viewport target never becomes NaN (which silently blanks the canvas).
-    const centerX = Number.isFinite(d0min + d0max) ? (d0min + d0max) / 2 : 0;
-    const centerY = Number.isFinite(d1min + d1max) ? (d1min + d1max) / 2 : 0;
-    const extentX = Math.max(1, d0max - d0min);
-    const extentY = Math.max(1, d1max - d1min);
-    const zoom = fitZoom(extentX, extentY, w, h);
-    if (!Number.isFinite(zoom)) return null;
-    return { target: [centerX, centerY, 0], zoom, ...ZOOM_LIMITS };
+    const fit = fitBounds({ d0min, d0max, d1min, d1max }, width, height);
+    if (!fit) return null;
+    return { target: [fit.centerX, fit.centerY, 0], zoom: fit.zoom, ...ZOOM_LIMITS };
   }, [positions, showImage, imageInfo, canvasSize, containerRef, display.encoding.image_layer]);
 
   // A freshly loaded session always frames its data (the persisted display viewport

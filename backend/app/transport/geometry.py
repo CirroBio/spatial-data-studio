@@ -6,7 +6,7 @@ SAME world space as the coords endpoint (`/data/obsm:<world_key>`, i.e.
 overlay: viewport-clipped boundary polygons as GeoArrow IPC, for the zoomed-in
 outline layer.
 
-Alignment note: the polygons are placed by `_element_to_world`, which reads the
+Alignment note: the polygons are placed by `element_to_world`, which reads the
 placement out of the shapes element the polygons came from rather than borrowing the
 active table's region affine. The two agree on Xenium, where the region maps identity
 while `cell_boundaries` maps a 4.7x micron->pixel scale — the element's own scale is
@@ -86,7 +86,7 @@ def _empty_geoarrow(gdf):
     return ga_type.wrap_array(pa.array([], type=ga_type.storage_type))
 
 
-def _element_to_world(sdata, table, element: str, gdf) -> np.ndarray:
+def element_to_world(sdata, table, element: str, gdf) -> np.ndarray:
     """3x3 affine taking `element`'s intrinsic coordinates into the canvas world space.
 
     Two legs. The outer one is the editable points->global affine, so that nudging the
@@ -118,7 +118,13 @@ def _element_to_world(sdata, table, element: str, gdf) -> np.ndarray:
 
     Raises KeyError when a multi-region table's element declares no transform into the
     system its cells live in: nothing then places the polygons, and applying some other
-    element's transform is how boundaries end up silently misplaced."""
+    element's transform is how boundaries end up silently misplaced.
+
+    Shared with the checkpoint writer, which bakes the result per (element, table) into
+    the viewer sidecar (`persistence.store._shape_element_transforms`) so the serverless
+    reader places the same polygons the same way. It is called there rather than mirrored
+    in JS: two derivations of a coordinate transform diverging is invisible on the store
+    that agrees and looks like corrupt data on the one that doesn't."""
     if element == transform.region_name(table):
         return transform.matrix3x3(transform.get_affine6(sdata, table))
 
@@ -179,7 +185,7 @@ def clipped_polygons(sdata, table, element: str, bbox, limit: int | None = None)
     if not is_polygonal(gdf):
         raise KeyError(f"shapes element '{element}' is not polygonal")
 
-    m = _element_to_world(sdata, table, element, gdf)
+    m = element_to_world(sdata, table, element, gdf)
     # world bbox -> intrinsic; M may rotate, so this is the transformed corners' AABB.
     intrinsic_bbox = tuple(imaging.bbox_aabb(np.linalg.inv(m), bbox))
 

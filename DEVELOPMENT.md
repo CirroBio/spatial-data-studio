@@ -507,6 +507,16 @@ the consolidated metadata written with it) the reader can't even name the table.
 older checkpoint is rejected on open with a message saying to re-save it, rather than
 opening to an empty session. Re-saving through the app is the fix.
 
+A checkpoint carrying a sidecar this build predates (`sidecar_version` 1, before
+`shapes_transform`) still opens; only its cell-boundary overlay degrades. Where those
+polygons belong is not recoverable from a v1 file — it bakes the table's region affine,
+which is the boundary element's own transform only by coincidence — so the boundaries
+are withheld (with a console message saying to re-save) rather than drawn in a place
+nothing in the file justifies. Both halves of the placement live in
+`backend/app/transport/geometry.py:element_to_world`, called by the live route per
+request and by `store._shape_element_transforms` at save time; the reader never derives
+it, so the live app and the serverless viewer cannot drift apart.
+
 Client-side (Viv) image compositing is the sole canvas image path, **on by default**
 (disable with the `sds:disableClientCompositing` localStorage key, which turns the canvas
 image off — there is no server-composited fallback); `SDS_CLIENT_IMAGE_MAX_CHANNELS`
@@ -949,10 +959,14 @@ which is not the same as everything being enforced: the checks run under `pytest
 so every skipped rule is listed with its reason, and a skipped rule is unenforced.
 R5's contract smoke test (running every registered function and asserting the
 `CallResult` envelope) skips by design until `config.SYNTH_FIXTURE` is wired to a
-synthetic-SpatialData builder. R6/R7 (append-only history) needs that same harness and
-has **no check at all** — it is not even a skip line, so read `RULES.md` alongside the
-gate output. Pass the backend interpreter to enforce the import-dependent rules rather
-than skipping them:
+synthetic-SpatialData builder. R6/R7 (append-only history) is enforced **in part**:
+`test_r6_r7_*` covers the two halves that are visible in the source — no record goes
+back to `queued` from a terminal status, and running a descriptor appends a record
+rather than updating one — but not whether a record is ever removed, since
+`delete_entry` and `_drop_history` remove records on purpose and telling a legitimate
+removal from an illegitimate one needs that same harness. Read `RULES.md` alongside the
+gate output for which half of a rule is actually covered. Pass the backend interpreter
+to enforce the import-dependent rules rather than skipping them:
 
 ```bash
 make -C sds-governance check PYTHON=../.venv-introspect/bin/python
@@ -960,6 +974,9 @@ make -C sds-governance check PYTHON=../.venv-introspect/bin/python
 
 The rules that do run assert behavior, not source text: R5's static half reads the
 envelope fields off `CallResult` itself, R13 exercises `snapshots._content_hash`, and
-R10 walks `Session._run_call`'s AST for a real `self.lock.writing()` block. Keep new
-checks in that shape — an `assert "<token>" in source` passes on any file that merely
-mentions the token, including in a comment.
+R10 walks `Session._run_call`'s AST for a real `self.lock.writing()` block. R6/R7's
+sweep goes one further and is deny-by-default: *every* `status = "queued"` write in
+the backend has to justify itself against the check, so a newly added one fails by
+existing rather than by matching a pattern someone predicted. Keep new checks in that
+shape — an `assert "<token>" in source` passes on any file that merely mentions the
+token, including in a comment.

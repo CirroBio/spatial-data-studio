@@ -1003,7 +1003,7 @@ Geometry is served in the same world space `/data/obsm:<world_key>` uses, so out
 points, and image overlay; the GeoArrow polygons carry a `cell_index` back to the active
 table for color gather. Each shapes element is placed by its OWN transform into the world
 coordinate system rather than by borrowing the active table's region affine
-(`transport/geometry.py:_element_to_world`): the two coincide on Xenium, where the
+(`transport/geometry.py:element_to_world`): the two coincide on Xenium, where the
 reconciliation divides out the 4.7x micron→pixel scale `cell_boundaries` declares, and
 diverge for a multi-region table, which has no region affine at all while its boundaries
 carry a real one. The shape-annotation element is refused here (404) — it is already in
@@ -1347,8 +1347,13 @@ even name the table.
   element — `sd.read_zarr` ignores unknown root groups) holding what the browser
   can't cheaply derive: the per-image manifest from `imaging.image_info`, keyed
   `[element][table_key]` because `pixel_to_world` reconciles the image against a
-  table's spots; `coords_transform`, the points->global affine `GET /data/obsm:spatial`
-  applies; `tables/<key>/X_csc`, a gene-major mirror of a sparse `X`; and the
+  table's spots; `coords_transform`, the points->global affine
+  `GET /data/obsm:<world_key>` applies, with `world_key` naming which `obsm` key that is
+  (`spatial` except for a multi-region table, whose stitched coordinates are elsewhere);
+  `shapes_transform`, per (shapes element, table), the `element_to_world` affine that
+  places that element's polygons — the boundary equivalent of `pixel_to_world`, and not
+  the same affine as `coords_transform`, which is the region element's;
+  `tables/<key>/X_csc`, a gene-major mirror of a sparse `X`; and the
   `shapes` report — per element, its geometry kinds, row/row-group counts, intrinsic
   bounds, `file_bytes`/`footer_bytes` and measured selectivity — plus a
   `shapes/<el>/<table>/cell_index` int32 array per element. The report lets the reader
@@ -1509,7 +1514,12 @@ is GeoParquet, so `parquetShapes.ts` range-reads it as a plain zip entry with `h
 (§14.1). `getShapesGeoArrow`/`getElements` stay *optional* on the interface, because a
 checkpoint saved before the write-side index exists carries no `covering` column to prune
 on — such a file leaves both methods undefined and the Cells layer on its points-only
-path, the same fallback as a display with no shapes element.
+path, the same fallback as a display with no shapes element. A `sidecar_version` 1
+checkpoint takes that same fallback even when it *is* indexed: it carries no
+`shapes_transform`, and where its boundaries belong cannot be recovered from the file
+(`coords_transform` is the region element's affine, which is the boundary element's only
+by coincidence), so they are withheld with a re-save message rather than drawn somewhere
+unverifiable.
 
 Not possible without the backend, by construction: compute (squidpy/scanpy/recipes),
 real subsetting (`sd.polygon_query`), saving, and the matplotlib vector-PDF snapshot

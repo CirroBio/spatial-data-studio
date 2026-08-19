@@ -57,7 +57,8 @@ i.e. unzip it anywhere and you have an ordinary Zarr v3 store on disk.
 ├── shapes/<element>/...          # SpatialData shapes (GeoParquet, spatially indexed — §4.4)
 ├── tables/<key>/...              # SpatialData tables (AnnData: X, obs, var, obsm, obsp, layers, uns)
 ├── viewer/                       # APP-DEFINED sidecar — not a SpatialData element (§4)
-│   ├── zarr.json                 #   sidecar_version, table_keys, images, coords_transform, figures, shapes
+│   ├── zarr.json                 #   sidecar_version, table_keys, images, coords_transform,
+│                                 #   world_key, figures, shapes, shapes_transform
 │   ├── tables/<key>/X_csc/       #   gene-major mirror of a sparse table's X
 │   ├── figures/<plot_id>/<fmt>   #   rendered plot figures, one uint8 array per format (§4.3)
 │   └── shapes/<el>/<key>/cell_index  #   each shape row's obs row position (§4.4)
@@ -303,7 +304,7 @@ Group attrs (`viewer/zarr.json`'s `attributes`):
 
 ```jsonc
 {
-  "sidecar_version": 1,
+  "sidecar_version": 2,
   "table_keys": ["adata"],
   "images": {
     "<image_element>": {
@@ -313,11 +314,17 @@ Group attrs (`viewer/zarr.json`'s `attributes`):
   "coords_transform": {
     "<table_key>": [a, b, c, d, e, f]   // see affine convention below
   },
+  "world_key": {                        // which obsm key coords_transform belongs to
+    "<table_key>": "spatial"
+  },
   "figures": {                          // rendered plot figures in this file, §4.3
     "<plots[].id>": { "svg": 53392, "pdf": 22054, "png": 40940 }   // byte length per format
   },
   "shapes": {                           // boundary spatial index, §4.4
     "<shapes_element>": { /* shape index report, §4.4 */ }
+  },
+  "shapes_transform": {                 // where each boundary element's polygons go, §4.4
+    "<shapes_element>": { "<table_key>": [a, b, c, d, e, f] }
   }
 }
 ```
@@ -336,9 +343,18 @@ x' = a*x + b*y + c
 y' = d*x + e*y + f
 ```
 i.e. a 2D affine in row-major `[a b c; d e f; 0 0 1]` form. `coords_transform[table]`
-is the affine `obsm:spatial` for that table must be multiplied through to land
+is the affine that table's cell coordinates must be multiplied through to land
 in the same global coordinate space the image is in — apply it to every `(x,
 y)` pair before plotting cells against the image. Identity is `[1,0,0,0,1,0]`.
+
+Which coordinates those are is `world_key[table]`, and a reader must apply
+`coords_transform` to **that** `obsm` key and no other. It is `spatial` for a
+single-region table, which is nearly all of them. A table annotating several region
+elements is the exception: its `obsm['spatial']` holds region-*local* coordinates (one
+origin per region, so plotting them stacks every region on top of each other) while the
+stitched coordinates live under a different key — `world_key` names whichever key that
+is. Applying the affine to `spatial` there would transform coordinates it was never
+derived for.
 
 ### 4.1 `ImageInfo` (baked per image × table)
 
@@ -481,11 +497,28 @@ Per-element report in the sidecar attrs — schema
 | `bounds` | `[x0, y0, x1, y1]` in the element's **intrinsic** space (the space the covering statistics are in) — a viewport that misses this costs zero requests |
 | `selectivity` | median fraction of the extent one row group covers. Ideal is `1/row_groups`; near 1.0 means the rows are not sorted and pruning will not pay. This is the regression signal if a writer upgrade ever drops the sort |
 
-The intrinsic → global affine is **not** repeated here: a reader uses
-`coords_transform[table]`, the same affine it applies to `obsm:spatial`. A boundary
-element carries its own element→global transform, but on Xenium that transform
-disagrees with the region element's, and matching the points is what makes the
-overlay line up (see `backend/app/transport/geometry.py`).
+**`shapes_transform[element][table_key]`** — the affine taking that element's
+**intrinsic** vertices (the space `bounds` and the `covering` statistics are in) into
+the world space the cells are drawn in, same 6-float convention as above. Apply it to
+every decoded vertex, and invert it to map a world-space viewport into the space the
+covering statistics can be compared against.
+
+This is **not** `coords_transform[table]`, and substituting one for the other is a
+silent misplacement. `coords_transform` is the *region* element's affine — the boundary
+element's own transform only when the table annotates exactly that one element. A table
+annotating several regions has no single region affine at all (`coords_transform` is
+then identity) while its boundaries carry a real transform, so borrowing it drops the
+boundaries' placement entirely. `shapes_transform` is derived per element from that
+element's own `coordinateTransformations`, reconciled against the table's cells the way
+an image is (`backend/app/transport/geometry.py:element_to_world`) — which on Xenium
+divides out the 4.7x micron→pixel scale `cell_boundaries` declares, so it agrees with
+`coords_transform` there and disagrees exactly where the two elements differ.
+
+An element the writer could not place against a table is **absent** from
+`shapes_transform` (its `shapes` index report is still written, since the file is still
+a valid indexed GeoParquet). A reader must then withhold that element's boundaries
+rather than substitute another affine: nothing in the file says where those polygons
+belong. Checkpoints at `sidecar_version` 1 carry no `shapes_transform` at all — see §9.
 
 **`viewer/shapes/<element>/<table_key>/cell_index`** — an int32 array, one entry per
 parquet row **in file order**, giving that shape's row position in `table_key`'s
@@ -597,7 +630,7 @@ granularities:
   the check and opens read-only with a warning rather than being rejected
   outright, since the underlying SpatialData is still perfectly readable even
   if some app-state fields are unrecognized.
-- **`viewer.sidecar_version`** (currently `1`) — the shape of the `viewer/`
+- **`viewer.sidecar_version`** (currently `2`) — the shape of the `viewer/`
   group (§4). Bumped only on a breaking layout change; **additive** keys (`figures`,
   `shapes`) do not bump it, since an older reader ignores what it doesn't know and
   bumping would make it refuse a file it can still render. Unlike `schema_version`,
@@ -612,6 +645,19 @@ granularities:
   (§4.3) was added without one, because an older reader ignoring a key it does
   not know still renders the file correctly, while a bump would make it refuse
   a file it could have read.
+
+  Version `2` added `world_key` and `shapes_transform`. Both **corrected** a rule
+  rather than adding a capability, which is why they bumped it: a v1 reader applies
+  `coords_transform` to `obsm['spatial']` whether or not that is the key the affine was
+  derived for, and places boundary polygons with it instead of with the boundary
+  element's own transform. Reading a v2 file under the v1 rules raises no error — it
+  just draws things in the wrong place — so a v1 reader has to refuse it, which the
+  bump makes it do. In the other direction, a v2 reader opening a v1 checkpoint gets
+  everything except the boundary overlay: the points, images, plots and app state all
+  read normally, and boundaries are withheld (with a message saying to re-save) because
+  a v1 file cannot say whether its `coords_transform` is the boundary element's own
+  transform or another element's. Re-saving the checkpoint from the app writes a v2
+  sidecar and restores them.
 
 A checkpoint that only needs to be read by *this app's own backend* (i.e.
 `spatialdata.read_zarr()` plus `attrs["app_state"]` migration) never needs the
@@ -636,8 +682,8 @@ capability:
    knowledge at all, and is what `spatialdata.read_zarr()` does.
 5. To render **without a backend** (a pure client-side viewer): additionally
    read `viewer/zarr.json`'s attrs (§4) — check `sidecar_version` first (§9).
-   Use `coords_transform[table]` to map that table's `obsm:spatial` into the
-   same coordinate space as any image (§4, affine convention). Use
+   Use `coords_transform[table]` to map that table's `obsm:<world_key[table]>`
+   into the same coordinate space as any image (§4, affine convention). Use
    `images[element][table_key].pixel_to_world`/`levels`/`contrast_*`/`is_rgb`
    to place and composite the image (§4.1, §5 for the sharding codec a
    pyramid level's arrays are stored under). Prefer
@@ -652,10 +698,12 @@ capability:
    `shapes` report (§4.4). Fetch the footer of
    `shapes/<element>/shapes.parquet` at the size `footer_bytes` gives, prune row
    groups by intersecting your viewport (mapped into intrinsic space through the
-   inverse of `coords_transform[table]`) against the `covering` column's
+   inverse of `shapes_transform[element][table]`) against the `covering` column's
    per-row-group statistics, then range-read only the surviving row groups'
    `bbox` column to find the exact hits and only then their `geometry`. Gather
-   per-cell values through `viewer/shapes/<element>/<table>/cell_index`. Reading
+   per-cell values through `viewer/shapes/<element>/<table>/cell_index`, and place
+   the decoded vertices with `shapes_transform[element][table]` — never with
+   `coords_transform`, which is a different affine (§4.4). Reading
    the `bbox` column before the geometry is what keeps a zoomed-out viewport
    cheap; note the statistics asymmetry — a row group's box needs the **min** of
    `bbox.xmin` and the **max** of `bbox.xmax`, and reversing that drops features

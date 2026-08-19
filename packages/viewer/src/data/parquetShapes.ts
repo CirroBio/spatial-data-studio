@@ -162,21 +162,36 @@ export interface ShapeReader {
 
 /**
  * `store` must be the raw `ZipFileStore`, not the consolidated-metadata wrapper: the
- * parquet is a plain zip entry, not a zarr node. `worldAffine` is the table's
- * points->global affine (the sidecar's `coords_transform`), the same transform the live
- * route applies — a boundary element carries its own element->global transform, but on
- * Xenium that one disagrees with the region element's, and matching the points is what
- * makes the overlay line up (see `transport/geometry.py`).
+ * parquet is a plain zip entry, not a zarr node.
+ *
+ * `affines` is per element — the sidecar's `shapes_transform[element][table]`, which the
+ * backend derived with `transport/geometry.py:element_to_world` for the same table this
+ * reader gathers colors for. Each boundary element is placed by its OWN transform: on
+ * Xenium `cell_boundaries` declares a 4.7x micron->pixel scale the derivation divides
+ * back out, and where a table annotates several regions there is no table-wide points
+ * affine to borrow in the first place. `index` and `affines` must agree on their keys;
+ * the caller drops any element it has no placement for rather than drawing it somewhere
+ * unverifiable.
  */
 export function createShapeReader(
   store: Required<AsyncReadable>,
   index: Record<string, ShapeIndexEntry>,
-  worldAffine: number[] | undefined,
+  affines: Record<string, number[]>,
   readCellIndex: (element: string, start: number, stop: number) => Promise<Int32Array>,
 ): ShapeReader {
   const footers = new Map<string, Promise<FileMetaData>>();
-  const affine = worldAffine ?? [1, 0, 0, 0, 1, 0];
-  const inverse = invertAffine6(affine);
+  const inverses = new Map<string, number[]>();
+
+  // The world->intrinsic direction, cached: it is inverted once per element, not once
+  // per viewport.
+  function inverseOf(element: string): number[] {
+    let inverse = inverses.get(element);
+    if (!inverse) {
+      inverse = invertAffine6(affines[element]);
+      inverses.set(element, inverse);
+    }
+    return inverse;
+  }
 
   function buffer(element: string): EntryBuffer {
     return new EntryBuffer(
@@ -206,6 +221,11 @@ export function createShapeReader(
     ): Promise<{ table: Table; report: ShapeQueryReport }> {
       const entry = index[element];
       if (!entry) throw new Error(`checkpoint has no spatial index for shapes "${element}"`);
+      if (!affines[element]) {
+        throw new Error(
+          `checkpoint carries no placement for shapes "${element}", so its boundaries `
+          + 'cannot be drawn in the coordinate space the cells are in.');
+      }
       const multi = entry.geometry_types.includes('MultiPolygon');
       const empty = (outcome: ShapeQueryOutcome, rest: Partial<ShapeQueryReport> = {}) => ({
         table: polygonTable(decodeWkbPolygons([], multi), new Int32Array(0), multi),
@@ -218,7 +238,7 @@ export function createShapeReader(
       // The covering statistics are in the element's intrinsic space, so the query
       // window goes the other way: all four corners through the inverse affine, then
       // their AABB, because the affine may rotate.
-      const window = transformBboxAabb(bbox, inverse);
+      const window = transformBboxAabb(bbox, inverseOf(element));
       if (!intersects(window, entry.bounds)) return empty('outside-bounds');
 
       const file = buffer(element);
@@ -262,7 +282,7 @@ export function createShapeReader(
 
       const blobs = await readColumn<Uint8Array>(file, metadata, kept, 'geometry');
       const buffers = decodeWkbPolygons(hits.map((i) => blobs.values[i]), multi);
-      applyAffineXy(buffers.xy, affine);
+      applyAffineXy(buffers.xy, affines[element]);
       const cellIndex = await gatherCellIndex(readCellIndex, element, kept, hits);
       return {
         table: polygonTable(buffers, cellIndex, multi),

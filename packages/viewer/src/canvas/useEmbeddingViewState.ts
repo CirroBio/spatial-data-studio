@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, type RefObject } from 'react';
 import type { OrthographicViewState, OrbitViewState } from '@deck.gl/core';
 import type { ScatterPositions } from './useArrowPositions';
-import { ZOOM_LIMITS, fitZoom, useCanvasSize } from './viewFit';
+import { ZOOM_LIMITS, fitBounds, finiteMidpoint, measuredCanvasSize, useCanvasSize } from './viewFit';
 
 const DEFAULT_ROTATION_X = 25;
 // Let the orbit camera tilt through the full pitch circle (deck defaults to +/-90,
@@ -32,33 +32,23 @@ export function useEmbeddingViewState(
   const [viewState, setViewState] = useState<EmbeddingViewState | null>(null);
   const { containerRef, canvasSize } = useCanvasSize();
 
-  // Same fit-to-data math as useCanvasViewState (see viewFit.fitZoom); adds a
-  // centered Z target in 3D so the orbit camera starts looking at the point cloud.
-  // Fits against the *observed* canvas size for the same reason its sibling does: the
-  // element's own clientWidth is 0 while the container is hidden or pre-layout, and the
-  // window is the wrong box to frame in any case, so a fit taken then points the camera
-  // somewhere arbitrary. Null until a real size exists; the callers all re-fit.
+  // The X/Y fit and every guard on it are `viewFit.fitBounds`, shared with
+  // useCanvasViewState so the two cameras can't frame the same extent differently.
+  // Only the Z centre is this view's own — a 3D scatter carries bounds a spatial
+  // display has no axis for — and the orbit camera needs it to start looking at the
+  // point cloud rather than through its edge. Null while the canvas is unmeasured;
+  // the callers all re-fit.
   const fitToData = useCallback((): EmbeddingViewState | null => {
     if (!positions) return null;
-    const w = canvasSize?.width ?? containerRef.current?.clientWidth ?? 0;
-    const h = canvasSize?.height ?? containerRef.current?.clientHeight ?? 0;
-    if (!(w > 0 && h > 0)) return null;
-    const { d0min, d0max, d1min, d1max, d2min, d2max } = positions.bounds;
-    // An empty table (0 rows) leaves bounds at ±Infinity; guard the center so the
-    // viewport target never becomes NaN (which silently blanks the canvas).
-    const centerX = Number.isFinite(d0min + d0max) ? (d0min + d0max) / 2 : 0;
-    const centerY = Number.isFinite(d1min + d1max) ? (d1min + d1max) / 2 : 0;
-    const extentX = Math.max(1, d0max - d0min);
-    const extentY = Math.max(1, d1max - d1min);
-    const zoom = fitZoom(extentX, extentY, w, h);
-    if (!Number.isFinite(zoom)) return null;
+    const { width, height } = measuredCanvasSize(canvasSize, containerRef);
+    const fit = fitBounds(positions.bounds, width, height);
+    if (!fit) return null;
     if (is3d) {
-      const centerZ = d2min !== undefined && d2max !== undefined && Number.isFinite(d2min + d2max)
-        ? (d2min + d2max) / 2
-        : 0;
-      return { target: [centerX, centerY, centerZ], zoom, rotationX: DEFAULT_ROTATION_X, rotationOrbit: 0, ...ROTATION_LIMITS, ...ZOOM_LIMITS };
+      const { d2min, d2max } = positions.bounds;
+      const centerZ = d2min !== undefined && d2max !== undefined ? finiteMidpoint(d2min, d2max) : 0;
+      return { target: [fit.centerX, fit.centerY, centerZ], zoom: fit.zoom, rotationX: DEFAULT_ROTATION_X, rotationOrbit: 0, ...ROTATION_LIMITS, ...ZOOM_LIMITS };
     }
-    return { target: [centerX, centerY, 0], zoom, ...ZOOM_LIMITS };
+    return { target: [fit.centerX, fit.centerY, 0], zoom: fit.zoom, ...ZOOM_LIMITS };
   }, [positions, is3d, canvasSize, containerRef]);
 
   // Frames the data on first load, and re-frames whenever the data occupies a different

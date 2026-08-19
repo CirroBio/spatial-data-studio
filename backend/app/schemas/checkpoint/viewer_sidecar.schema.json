@@ -2,12 +2,12 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://spatial-data-studio/schemas/checkpoint/viewer_sidecar.schema.json",
   "title": "ViewerSidecar",
-  "description": "Attributes on the top-level `viewer` zarr group (backend/app/persistence/store.py:_write_viewer_sidecar). Mirrored on read by frontend/src/data/checkpointSource.ts's ViewerSidecar interface. Documented in docs/CHECKPOINT_FORMAT.md.",
+  "description": "Attributes on the top-level `viewer` zarr group (backend/app/persistence/store.py:_write_viewer_sidecar). Mirrored on read by packages/viewer/src/data/checkpointSource.ts's ViewerSidecar interface. Documented in docs/CHECKPOINT_FORMAT.md.",
   "type": "object",
-  "required": ["sidecar_version", "table_keys", "images", "coords_transform"],
+  "required": ["sidecar_version", "table_keys", "images", "coords_transform", "world_key"],
   "additionalProperties": false,
   "properties": {
-    "sidecar_version": { "const": 1 },
+    "sidecar_version": { "const": 2 },
     "table_keys": { "type": "array", "items": { "type": "string" } },
     "images": {
       "type": "object",
@@ -19,8 +19,13 @@
     },
     "coords_transform": {
       "type": "object",
-      "description": "table key -> 6-float affine applied to that table's obsm:spatial to reach the global coordinate system.",
+      "description": "table key -> 6-float affine applied to that table's obsm:<world_key> to reach the global coordinate system.",
       "additionalProperties": { "$ref": "#/$defs/affine6" }
+    },
+    "world_key": {
+      "type": "object",
+      "description": "table key -> the obsm key holding the coordinates the canvas draws, and so the one coords_transform belongs to (backend/app/sessions/transform.py:world_key). `spatial` for a single-region table; a table spanning several regions keeps region-local coordinates in `spatial` and the stitched ones under another key, which is the one named here.",
+      "additionalProperties": { "type": "string" }
     },
     "figures": {
       "type": "object",
@@ -40,6 +45,14 @@
       "type": "object",
       "description": "Polygonal shapes element name -> the spatial-index report for its shapes.parquet (backend/app/persistence/store.py:_index_shapes). Absent in a checkpoint written before the index existed, whose boundaries a range-reading client leaves unread. Only indexed elements appear: point/circle shapes and `annotations` are absent, as are empty elements. A companion `viewer/shapes/<element>/<table>/cell_index` int32 array gives each parquet row its obs row position.",
       "additionalProperties": { "$ref": "#/$defs/shape_index" }
+    },
+    "shapes_transform": {
+      "type": "object",
+      "description": "Polygonal shapes element name -> table key -> the affine taking that element's intrinsic vertices into world space (backend/app/transport/geometry.py:element_to_world, baked by store._shape_element_transforms). This, NOT coords_transform, places boundary polygons: a shapes element is placed by its own transform, which is the table's region affine only by coincidence. An element a table cannot place at all is absent, and a reader must withhold its boundaries rather than substitute another affine. Keys are a subset of `shapes`.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": { "$ref": "#/$defs/affine6" }
+      }
     }
   },
   "$defs": {
@@ -59,7 +72,7 @@
         "footer_bytes": { "type": "integer", "minimum": 0 },
         "bounds": {
           "type": "array",
-          "description": "[x0, y0, x1, y1] in the element's intrinsic space — the space the covering bbox statistics are in, which the viewer reaches by inverting coords_transform.",
+          "description": "[x0, y0, x1, y1] in the element's intrinsic space — the space the covering bbox statistics are in, which the viewer reaches by inverting this element's shapes_transform entry.",
           "items": { "type": "number" }, "minItems": 4, "maxItems": 4
         },
         "selectivity": {
