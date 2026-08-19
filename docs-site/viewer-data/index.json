@@ -2,14 +2,19 @@
   "title": "Spatial Data Studio demos",
   "checkpoints": [
     {
-      "path": "fluorescence-section.sdata.zarr.zip",
-      "label": "Fluorescence section (synthetic)",
-      "description": "1,800 cells over a three-channel image. Colour by cell type or a marker gene, and toggle the channels."
+      "path": "xenium-human-pancreas.sdata.zarr.zip",
+      "label": "Xenium human pancreas",
+      "description": "122,678 cells with their segmentation boundaries, over an H&E image. Color by Leiden cluster or cellular neighborhood."
     },
     {
-      "path": "tma-cores.sdata.zarr.zip",
-      "label": "Tissue microarray cores",
-      "description": "A 3x4 grid of cores laid out from real Xenium lung cells."
+      "path": "visium-human-colon.sdata.zarr.zip",
+      "label": "Visium CytAssist human colon",
+      "description": "6,356 spots over the CytAssist image, with Leiden clusters, cellular neighborhoods and a UMAP."
+    },
+    {
+      "path": "visium-mouse-brain.sdata.zarr.zip",
+      "label": "Visium CytAssist mouse brain",
+      "description": "4,881 spots over the CytAssist image, with Leiden clusters, cellular neighborhoods and a UMAP."
     }
   ]
 }

@@ -1506,7 +1506,9 @@ deployment from a backend that is merely still booting, so it is probed **once**
 the first failed poll — a live app never pays for it, and a slow backend boot doesn't
 retry it every tick. A collection with no checkpoint chosen renders
 `CheckpointIndexPage` alone (no sidebar, settings panel or resource strip — there is
-no session yet). Inside a checkpoint, `CheckpointPicker` replaces `SessionPicker` in
+no session yet) — unless it lists exactly one entry, which is opened directly
+(`openCheckpointPath(..., replace)`), mirroring the backed app's auto-select of a lone
+session; the replace keeps Back off a page that would only bounce forward again. Inside a checkpoint, `CheckpointPicker` replaces `SessionPicker` in
 the header. Selecting an entry **navigates** rather than swapping state in place: a
 checkpoint carries its own displays, fields and locally-made labels, and a reload is
 the one way to guarantee none of the previous one's state leaks into the next — the
@@ -1545,6 +1547,16 @@ fullscreen, so "look at this figure" is a link. Nothing else local survives: sel
 hidden cells and locally-drawn labels are gone on reload. The parameter is deliberately absent in embed mode, where the host owns display
 state over postMessage (docs/EMBED_PROTOCOL.md), and in the backed app, where the
 encoding is server-persisted and shared by session id.
+
+`theme` and `background` (`data/checkpointIndex.ts`) are the other half of that: not
+what a reader changed, but how the *page doing the embedding* wants the viewer to open —
+`?theme=light|dark` for the app's own theme and `?background=light|dark` for the spatial
+canvas behind the image. The docs site's `<ViewerEmbed>` sets both, so a demo sits inside
+a light page instead of punching a dark hole in it. They are applied before the share-link
+baseline is captured (`applyBackgroundFromUrl`), which is what makes `view` win where the
+two disagree and keeps a link copied inside the frame down to the reader's own delta.
+`theme` is never written to `localStorage` — an embedded frame must not overwrite the
+reader's choice for the app itself.
 
 ---
 

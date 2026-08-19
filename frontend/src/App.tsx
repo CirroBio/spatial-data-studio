@@ -5,7 +5,9 @@ import { DataSourceProvider, isEmbeddingDisplay, isSpatialDisplay } from '@cirro
 import { resolveRegionSetColumn } from './lib/regions';
 import { useApiSource } from './data/apiSource';
 import { useCheckpointSession } from './data/useCheckpointSession';
-import { checkpointUrlFromLocation, fetchCheckpointIndex, isEmbedMode } from './data/checkpointIndex';
+import {
+  checkpointUrlFromLocation, fetchCheckpointIndex, isEmbedMode, openCheckpointPath,
+} from './data/checkpointIndex';
 import { requestFreshCheckpointUrl, useEmbedBridge } from './data/embedBridge';
 import CheckpointIndexPage from './components/CheckpointIndexPage';
 import { useSSE } from './hooks/useSSE';
@@ -136,6 +138,13 @@ export default function App() {
             const index = await fetchCheckpointIndex();
             if (cancelled) return;
             if (index.entries.length) {
+              // A collection of one has nothing to choose from, so open it rather than
+              // showing a gallery with a single row — the same courtesy the backed app
+              // does above for a lone session.
+              if (index.entries.length === 1) {
+                openCheckpointPath(index.entries[0].path, true);
+                return;
+              }
               setCheckpointIndex(index);
               setBackendReady(true);
               return;

@@ -30,7 +30,9 @@ import {
   type Viewport,
 } from '@cirrobio/spatial-viewer';
 import type { AppState, MainView } from '../types';
-import { VIEW_PARAM, checkpointUrlFromLocation, isEmbedMode } from '../data/checkpointIndex';
+import {
+  VIEW_PARAM, backgroundFromLocation, checkpointUrlFromLocation, isEmbedMode,
+} from '../data/checkpointIndex';
 
 const VIEW_SCHEMA_VERSION = 1;
 
@@ -323,6 +325,16 @@ export function initialUiOverlay(): {
 export function urlHasViewport(): boolean {
   const o = urlViewOverlay();
   return !!(o?.sp?.vp || o?.em?.vp);
+}
+
+/** `?background=` folded into the checkpoint's own displays. Applied *before* the
+ * baseline is captured, so an embedding page's choice is the view a reader starts from
+ * and a link they copy carries only what they changed on top of it — and so `view=`,
+ * applied after, still wins where the two disagree. */
+export function applyBackgroundFromUrl(app: AppState): AppState {
+  const background = backgroundFromLocation();
+  if (!background) return app;
+  return applyOverlayToAppState(app, { v: VIEW_SCHEMA_VERSION, sp: { enc: { background } } });
 }
 
 /** Merge the overlay onto the checkpoint's `app_state`, before it reaches the store, so

@@ -2,8 +2,9 @@ name: docs
 
 # Builds the documentation site (docs-site/, VitePress over the repo's own markdown) and
 # the serverless viewer, and publishes both to GitHub Pages. The demo checkpoints are
-# committed under docs-site/viewer-data/, so this job never downloads or rebuilds data —
-# regenerate them with scripts/prepare_demo_checkpoints.py and commit the result.
+# committed under docs-site/viewer-data/, so this job never downloads data and never
+# needs Cirro credentials — refresh them with scripts/fetch_example_checkpoints.py and
+# commit the result.
 #
 # Pages must be enabled once by hand: Settings -> Pages -> Source = GitHub Actions.
 on:

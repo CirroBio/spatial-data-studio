@@ -148,8 +148,8 @@ docs-site/  VitePress documentation site published to GitHub Pages. Renders the 
             markdown in place (srcDir is the repo root); demo/ holds the only new pages, and
             viewer-data/ the committed demo checkpoints they embed
 scripts/    test-data prep: prepare_test_data.py (Visium H&E), prepare_xenium_data.py (Xenium),
-            prepare_xenium_tma.py (Xenium TMA grid for the Identify TMAs detector),
-            prepare_demo_checkpoints.py (small checkpoints for the docs site's live demos)
+            prepare_xenium_tma.py (Xenium TMA grid for the Identify TMAs detector);
+            fetch_example_checkpoints.py (the docs site's demo checkpoints, from Cirro)
 sds-governance/  governance bundle: RULES.md + AGENTS.md + skills/ + checks/ executable gate
                  (`make check`) + license allowlist
 ```
@@ -184,7 +184,7 @@ Component-level notes: [`backend/README.md`](backend/README.md),
 | Change what a shared view link carries | `frontend/src/lib/urlViewState.ts` (schema + diff) + `hooks/useUrlViewSync.ts` (writer); add the field's default to `packages/viewer/src/defaults.ts` if it has a constant one | below |
 | Change the deck.gl canvas / rendering | `packages/viewer/src/canvas/` | [packages/viewer/README.md](packages/viewer/README.md) |
 | Change the docs site's navigation, or publish a doc that isn't on it yet | `docs-site/.vitepress/config.mts` (sidebar + `srcExclude`) | below |
-| Change the docs site's live demos | `docs-site/demo/*.md` + `.vitepress/theme/components/ViewerEmbed.vue`; regenerate data with `scripts/prepare_demo_checkpoints.py` | below |
+| Change the docs site's live demos | `docs-site/demo/*.md` + `.vitepress/theme/components/ViewerEmbed.vue`; the catalog, `index.json` and the data itself in `scripts/fetch_example_checkpoints.py` | below |
 | Give the canvas something new from the app (store state, an action, a way to persist) | `packages/viewer/src/canvas/canvas-host.tsx` (the `CanvasHost` contract), then `frontend/src/components/StudioCanvasHost.tsx` (the app's implementation of it) — the canvas never reaches for the store or `api.ts` itself | below |
 | Change an in-canvas settings panel, or what the canvas hands one | `frontend/src/components/canvas/CanvasControls.tsx` / `EmbeddingControls.tsx` (Tailwind app UI), and `SpatialCanvasControls` / `EmbeddingCanvasControls` in `packages/viewer/src/canvas/` for the slot payload | below |
 | Publish or version the canvas library | `packages/viewer/package.json` + [packages/viewer/README.md](packages/viewer/README.md) ("Releasing") | — |
@@ -677,18 +677,24 @@ clicks: the SPA bundle is ~4 MB, so three demos on a page would otherwise cost 1
 front. Pass `chrome="minimal"` to add `embed=1` (no header, sidebar or in-canvas
 controls) when a page wants the canvas alone.
 
-**The demo checkpoints are committed** under `docs-site/viewer-data/` (~5 MB), so the
-Pages job never downloads or rebuilds data. Regenerate them with
+**The demo checkpoints are committed** under `docs-site/viewer-data/` (~62 MB), so the
+Pages job never downloads data and never needs Cirro credentials. One script fills that
+directory:
 
 ```bash
-python scripts/prepare_demo_checkpoints.py
+python scripts/fetch_example_checkpoints.py
 ```
 
-which builds a fully synthetic multichannel section (no downloads, no fixtures) plus the
-Xenium TMA grid when `test-data/xenium_tma.zarr` exists, writes each through the app's
-own session machinery so it carries default displays and a current `viewer/` sidecar,
-and rewrites `index.json`. Re-run and commit whenever the checkpoint format moves — the
-reader rejects a stale `VIEWER_SIDECAR_VERSION`.
+It downloads three examples — two Visium CytAssist sections and a Xenium run — from a
+Cirro dataset with the `cirro` SDK, renaming the workflow's content-hashed filenames onto
+the stable names the docs pages link to, and rewrites `index.json` from the catalog in the
+same file. They were produced by [the Nextflow workflow](nextflow/README.md) and
+deliberately downsampled for the web: a two-level image pyramid at reduced resolution, and
+no expression matrix, which is what gets a whole section into tens of megabytes. The
+viewer reports the missing matrix as `has_x: false` and hides the gene tier of *Color by* —
+the demo pages say so. Because these are already-written checkpoints rather than something
+this repo builds, a checkpoint-format change means re-exporting them upstream, not
+re-running the script — the reader rejects a stale `VIEWER_SIDECAR_VERSION`.
 
 **Deploying** needs one manual step, once: **Settings → Pages → Source = GitHub
 Actions**. The workflow builds the SPA and the site, then assembles them so

@@ -26,11 +26,18 @@ const props = withDefaults(defineProps<{
   chrome?: 'full' | 'minimal';
   /** 'index' omits `?checkpoint=` so the frame shows the collection landing page. */
   mode?: 'checkpoint' | 'index';
+  /** The viewer's own UI theme. Light by default, to sit inside the page rather than
+   * punch a dark hole in it; the reader can still switch it inside the frame. */
+  theme?: 'light' | 'dark';
+  /** The spatial canvas' background behind the image. */
+  background?: 'light' | 'dark';
 }>(), {
   height: '640px',
   chrome: 'full',
   mode: 'checkpoint',
   eager: false,
+  theme: 'light',
+  background: 'light',
 });
 
 const active = ref(false);
@@ -41,6 +48,8 @@ const src = computed(() => {
   const params = new URLSearchParams();
   if (props.mode === 'checkpoint' && props.checkpoint) params.set('checkpoint', props.checkpoint);
   if (props.chrome === 'minimal') params.set('embed', '1');
+  params.set('theme', props.theme);
+  params.set('background', props.background);
   const query = params.toString();
   return withBase('/viewer/index.html') + (query ? `?${query}` : '');
 });

@@ -25,9 +25,8 @@ packages/*/*.tsbuildinfo
 checkpoints/
 *.zarr/
 *.zarr.zip
-.demo-build-*/
-# ...except the docs site's demo checkpoints, which are small on purpose and committed
-# so the Pages build never rebuilds or downloads them (scripts/prepare_demo_checkpoints.py).
+# ...except the docs site's demo checkpoints, which are downsampled on purpose and
+# committed so the Pages build never downloads them (scripts/fetch_example_checkpoints.py).
 !docs-site/viewer-data/*.zarr.zip
 
 # Local

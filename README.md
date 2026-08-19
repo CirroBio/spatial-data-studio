@@ -136,7 +136,8 @@ the analysis history that produced this view.*
   rather than the saved one. Only your changes travel, so the link stays short.
   You can try this without installing anything — the
   [live demos](https://cirrobio.github.io/spatial-data-studio/demo/) are the real viewer
-  running in your browser against a hosted checkpoint.
+  running in your browser against a hosted checkpoint, over public Visium and Xenium
+  sections as well as synthetic ones.
 
 <table>
 <tr>

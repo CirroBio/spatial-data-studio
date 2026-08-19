@@ -45,8 +45,9 @@ export default defineConfig({
   rewrites: {
     'README.md': 'index.md',
     'docs-site/demo/index.md': 'demo/index.md',
-    'docs-site/demo/tma.md': 'demo/tma.md',
-    'docs-site/demo/synthetic.md': 'demo/synthetic.md',
+    'docs-site/demo/xenium-pancreas.md': 'demo/xenium-pancreas.md',
+    'docs-site/demo/visium-colon.md': 'demo/visium-colon.md',
+    'docs-site/demo/visium-mouse-brain.md': 'demo/visium-mouse-brain.md',
   },
 
   themeConfig: {
@@ -64,7 +65,15 @@ export default defineConfig({
         text: 'Use',
         items: [
           { text: 'Overview', link: '/' },
-          { text: 'Live demos', link: '/demo/' },
+          {
+            text: 'Live demos',
+            link: '/demo/',
+            items: [
+              { text: 'Xenium human pancreas', link: '/demo/xenium-pancreas' },
+              { text: 'Visium human colon', link: '/demo/visium-colon' },
+              { text: 'Visium mouse brain', link: '/demo/visium-mouse-brain' },
+            ],
+          },
           { text: 'Run with Docker', link: '/docker/README' },
           { text: 'Analysis methods', link: '/backend/app/registry/custom/README' },
         ],

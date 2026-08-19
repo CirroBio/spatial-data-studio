@@ -193,6 +193,37 @@ describe('round trip', () => {
   });
 });
 
+// `?background=` states what an embedding page wants the canvas to open on. It is
+// folded in before the baseline is captured, so `view=` — the reader's own delta — has
+// to win over it, and a link copied inside the frame carries only the difference.
+describe('applyBackgroundFromUrl', () => {
+  const app = (): AppState => ({
+    schema_version: 3, compute_history: [], plots: [], data_versions: {}, regions: [],
+    displays: [spatial(), embedding()],
+  } as unknown as AppState);
+
+  /** Re-import against a given URL — the param is read once, off `location.search`. */
+  async function at(search: string) {
+    window.history.replaceState(null, '', search);
+    vi.resetModules();
+    return import('./urlViewState');
+  }
+
+  it('sets the spatial background from the parameter', async () => {
+    const { applyBackgroundFromUrl } = await at('/?checkpoint=demo.zarr.zip&background=light');
+    const next = applyBackgroundFromUrl(app());
+    expect((next.displays[0] as SpatialDisplaySpec).encoding.background).toBe('light');
+  });
+
+  it('leaves app_state alone when absent or not light/dark', async () => {
+    const original = app();
+    const none = await at('/?checkpoint=demo.zarr.zip');
+    expect(none.applyBackgroundFromUrl(original)).toBe(original);
+    const junk = await at('/?checkpoint=demo.zarr.zip&background=chartreuse');
+    expect(junk.applyBackgroundFromUrl(original)).toBe(original);
+  });
+});
+
 describe('viewHref', () => {
   it('preserves the other parameters and removes view when empty', () => {
     window.history.replaceState(null, '', '/?checkpoint=demo.zarr.zip&embed=1');

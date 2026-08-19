@@ -39,6 +39,29 @@ export function isEmbedMode(): boolean {
   return new URLSearchParams(window.location.search).get(EMBED_PARAM) === '1';
 }
 
+// How a page embedding the viewer wants it to *open* looking, as opposed to `view=`
+// below, which carries what a reader changed. Both are read straight off the URL at
+// startup, and `view=` wins where they overlap: an embed states the default, a shared
+// link states a deviation from it. `theme` is deliberately not persisted — an embedded
+// frame must not overwrite the reader's own choice for the app.
+export const THEME_PARAM = 'theme';
+export const BACKGROUND_PARAM = 'background';
+
+function lightOrDark(param: string): 'light' | 'dark' | null {
+  const raw = new URLSearchParams(window.location.search).get(param);
+  return raw === 'light' || raw === 'dark' ? raw : null;
+}
+
+/** `?theme=light|dark` — the app's own light/dark theme, overriding what is persisted. */
+export function themeFromLocation(): 'light' | 'dark' | null {
+  return lightOrDark(THEME_PARAM);
+}
+
+/** `?background=light|dark` — the spatial canvas' background behind the image. */
+export function backgroundFromLocation(): 'light' | 'dark' | null {
+  return lightOrDark(BACKGROUND_PARAM);
+}
+
 // Display settings that differ from the checkpoint's own saved view, so a tuned view
 // can be shared as a link. One opaque base64url payload rather than a field per
 // setting: `category_colors` and `channels` are nested maps that don't survive being
@@ -118,9 +141,12 @@ export async function fetchCheckpointIndex(): Promise<CheckpointIndex> {
  * checkpoint: the frame this viewer is running in stays the same frame across the
  * navigation, so dropping the flag would bring the header, sidebar and picker back
  * inside a host that has no room for them and owns the display settings itself. */
-export function openCheckpointPath(path: string): void {
+export function openCheckpointPath(path: string, replace = false): void {
   const url = new URL(window.location.href);
   const query = `${CHECKPOINT_PARAM}=${encodeURIComponent(path)}`;
   url.search = isEmbedMode() ? `?${query}&${EMBED_PARAM}=1` : `?${query}`;
-  window.location.assign(url.href);
+  // `replace` is for the navigation the app makes on the reader's behalf (a collection
+  // of one): leaving that page in history would make Back bounce straight forward again.
+  if (replace) window.location.replace(url.href);
+  else window.location.assign(url.href);
 }

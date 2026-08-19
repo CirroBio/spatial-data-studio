@@ -43,7 +43,16 @@ export default function Header() {
         </button>
         <span className="flex items-center gap-2">
           <CirroMark className="h-5 w-auto shrink-0" />
-          <span className="text-accent tracking-wide text-sm">Spatial Data Studio</span>
+          {/* The header is a fixed 48px, so the wordmark must never wrap into it. Below
+              `lg` the rest of the left group (picker, cell count, badges) leaves too
+              little room for the full name, so it drops to "Spatial" rather than
+              stacking — which is also what keeps a narrow embedded iframe readable. */}
+          <span
+            className="text-accent tracking-wide text-sm whitespace-nowrap shrink-0"
+            title="Spatial Data Studio"
+          >
+            Spatial<span className="hidden lg:inline"> Data Studio</span>
+          </span>
         </span>
         <span data-tour={TourAnchors.SessionPicker}>
           {isCheckpoint
@@ -66,7 +75,7 @@ export default function Header() {
             className="text-[11px] px-1.5 py-0.5 rounded bg-warn/15 text-warn font-medium"
             title="Opened from a snapshot — pinned view, no compute or edits"
           >
-            Read-only snapshot
+            Read-only
           </span>
         )}
       </div>

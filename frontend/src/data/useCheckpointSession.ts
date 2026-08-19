@@ -12,7 +12,9 @@ import {
   type CheckpointUrlRefresher, type DataSource,
 } from '@cirrobio/spatial-viewer';
 import type { AppState, SessionState } from '../types';
-import { applyOverlayToAppState, setViewBaseline, urlViewOverlay } from '../lib/urlViewState';
+import {
+  applyBackgroundFromUrl, applyOverlayToAppState, setViewBaseline, urlViewOverlay,
+} from '../lib/urlViewState';
 
 function displayName(url: string): string {
   const last = url.split('/').pop() ?? url;
@@ -49,7 +51,7 @@ export function useCheckpointSession(
     openCheckpoint(target, refreshUrl)
       .then(({ source: opened, appState, fields, figures }) => {
         if (stale) return;
-        const saved = appState as unknown as AppState;
+        const saved = applyBackgroundFromUrl(appState as unknown as AppState);
         const summary = {
           id: opened.id,
           // The name the session was saved under, which a save can write to any

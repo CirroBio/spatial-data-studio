@@ -30,7 +30,7 @@ import type {
 import { clientName, setClientName, editBlockReason } from '../lib/presence';
 import { putDisplay, getSession, listShapeAnnotations, createShapeAnnotation, updateShapeAnnotation, deleteShapeAnnotation, postPresence, getCirroUploads } from '../api';
 import type { CirroAuth, CirroUpload } from '../api';
-import { checkpointUrlFromLocation, type CheckpointIndex } from '../data/checkpointIndex';
+import { checkpointUrlFromLocation, themeFromLocation, type CheckpointIndex } from '../data/checkpointIndex';
 import { initialUiOverlay } from '../lib/urlViewState';
 
 // Level 0 of a locally-labelled column: every cell starts here and stays here
@@ -405,6 +405,10 @@ let _notificationSeq = 0;
 const THEME_KEY = 'sds-theme';
 
 function readTheme(): 'dark' | 'light' {
+  // `?theme=` wins over what is stored: it is how an embedding page states the theme
+  // its own design needs, and it must not leave that behind in the reader's storage.
+  const fromUrl = themeFromLocation();
+  if (fromUrl) return fromUrl;
   const t = localStorage.getItem(THEME_KEY);
   return t === 'light' ? 'light' : 'dark';
 }
@@ -413,7 +417,7 @@ export function applyTheme(theme: 'dark' | 'light') {
   document.documentElement.dataset.theme = theme;
 }
 
-// Apply the persisted theme before first paint to avoid a flash.
+// Apply the theme before first paint to avoid a flash.
 applyTheme(readTheme());
 
 export const useAppStore = create<AppStore>((set, get) => ({
