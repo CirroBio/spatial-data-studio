@@ -62,8 +62,15 @@ export interface CheckpointIndex {
 const EMPTY: CheckpointIndex = { entries: [] };
 
 function fileName(path: string): string {
-  const last = path.split('/').pop() ?? path;
-  return decodeURIComponent(last.split('?')[0]) || path;
+  const last = (path.split('/').pop() ?? path).split('?')[0];
+  // A manifest is hand-written, so a path can carry a bare '%' that decodeURIComponent
+  // throws on. The decode only prettifies the fallback label, so a bad escape falls back
+  // to the raw segment — one malformed entry must not abort the whole listing.
+  try {
+    return decodeURIComponent(last) || path;
+  } catch {
+    return last || path;
+  }
 }
 
 /** Read `index.json` from alongside the page. Returns an empty index when there is

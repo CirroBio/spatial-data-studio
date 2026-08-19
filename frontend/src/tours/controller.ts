@@ -66,6 +66,11 @@ export function createTourController(
   let steps = tour.steps;
   let driverObj: Driver | null = null;
   let clickTarget: { el: Element; handler: EventListener } | null = null;
+  // `start` resolves targets asynchronously, so the reader (or an unmounting host) can
+  // destroy the tour while it is still waiting. Driver.js has no notion of a start that
+  // was called and then called off, and its `drive` happily re-opens a destroyed tour, so
+  // the cancellation is tracked here and checked after every await in `start`.
+  let cancelled = false;
 
   const clearClickAdvance = () => {
     if (clickTarget) {
@@ -147,11 +152,13 @@ export function createTourController(
       // we never open on a missing target and so "3 of 7" counts the steps this reader
       // will actually be shown. A step with `waitForMs` is waited on here, delaying the
       // tour's opening by that much, which is the price of an honest count.
+      cancelled = false;
       void (async () => {
         const showable: TourStep[] = [];
         for (const step of tour.steps) {
           const selector = toSelector(step);
           if (!selector || (await waitForElement(selector, step.waitForMs))) showable.push(step);
+          if (cancelled) return;
         }
         if (showable.length === 0) {
           console.warn('[tour] no step target resolved, not starting');
@@ -162,6 +169,9 @@ export function createTourController(
         driverObj?.drive(0);
       })();
     },
-    destroy: () => driverObj?.destroy(),
+    destroy: () => {
+      cancelled = true;
+      driverObj?.destroy();
+    },
   };
 }

@@ -4,7 +4,7 @@ import PanelTabs, { type PanelTab } from './PanelTabs';
 import { useAppStore } from '../store/sessionStore';
 import { checkpointUrlFromLocation } from '../data/checkpointIndex';
 import { deleteHistoryEntry, getRecipe, importRecipe, runAllPending } from '../api';
-import { reportError } from '@cirrobio/spatial-viewer';
+import { downloadBlob, reportError } from '@cirrobio/spatial-viewer';
 import { useEditGate } from '../hooks/usePresence';
 import StatusBadge, { type Status } from './StatusBadge';
 import FunctionPicker from './FunctionPicker';
@@ -167,12 +167,7 @@ export default function Sidebar() {
     getRecipe(activeSessionId)
       .then((recipe) => {
         const blob = new Blob([JSON.stringify(recipe, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'recipe.json';
-        a.click();
-        URL.revokeObjectURL(url);
+        downloadBlob(blob, 'recipe.json');
       })
       .catch((err) => reportError('Export recipe failed', err));
   }

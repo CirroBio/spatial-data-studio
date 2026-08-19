@@ -73,6 +73,30 @@ function bumpShapePending(shapeId: string, delta: number) {
   else pendingShapeJobs.set(shapeId, n);
 }
 
+// A job's id exists only once its POST resolves, so a `job.completed` frame can beat the
+// response that would have mapped it — resolveShapeJob then finds no shape and the count
+// never comes back down, marking that shape locally owned forever (refreshShapeAnnotations
+// would never adopt the server's copy of it again). Such a job id parks here until
+// persistShapeJob claims it. Only a frame arriving while some request is still awaiting its
+// id can possibly be ours, hence the counter: other viewers' shape jobs reach the same
+// handler, and dropping the set when nothing is outstanding keeps them from accumulating.
+const completedBeforeMapped = new Set<string>();
+let unmappedShapeRequests = 0;
+
+// Refetches for one session overlap freely — useSession fires one on mount, every shape
+// job's completion fires another, and each may sit in fetchWhenIdle's retry loop behind a
+// write lock for seconds — and nothing makes them resolve in submission order, so an older
+// response can land last and put pre-job state on screen. Each call takes the next ticket
+// for its session and applies its result only while it still holds the newest one. Kept
+// outside reactive state for the same reason as the maps above: nothing renders off it.
+const sessionRefreshSeq = new Map<string, number>();
+const shapeRefreshSeq = new Map<string, number>();
+function nextRefreshTicket(seq: Map<string, number>, sessionId: string): number {
+  const ticket = (seq.get(sessionId) ?? 0) + 1;
+  seq.set(sessionId, ticket);
+  return ticket;
+}
+
 // A read-only session cannot be written to, so any shape edit that happens against
 // one stays in this tab: keep the optimistic update and skip the job. That is the
 // serverless viewer's whole annotation story (the sidebar only offers the tools
@@ -93,8 +117,15 @@ function persistShapeJob(
   call: () => Promise<{ job_id: string }>,
 ): Promise<boolean> {
   bumpShapePending(shapeId, 1);
+  unmappedShapeRequests += 1;
   return call()
-    .then(({ job_id }) => { shapeJobShape.set(job_id, shapeId); return true; })
+    .then(({ job_id }) => {
+      // Already completed while this request was in flight: clear the mark now, since no
+      // further frame is coming for this job and a mapping would never be consumed.
+      if (completedBeforeMapped.delete(job_id)) bumpShapePending(shapeId, -1);
+      else shapeJobShape.set(job_id, shapeId);
+      return true;
+    })
     .catch((err: unknown) => {
       bumpShapePending(shapeId, -1);
       useAppStore.getState().pushNotification({
@@ -102,6 +133,10 @@ function persistShapeJob(
         message: `${label}: ${formatError(err)}`,
       });
       return false;
+    })
+    .finally(() => {
+      unmappedShapeRequests -= 1;
+      if (unmappedShapeRequests === 0) completedBeforeMapped.clear();
     });
 }
 
@@ -426,6 +461,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       localRegionColumns.clear();
       shapeJobShape.clear();
       pendingShapeJobs.clear();
+      completedBeforeMapped.clear();
       // sessionState belongs to the session being left: useSession only clears it when the
       // id goes null, so without this the tree renders the previous session's displays and
       // fields for a frame while dataSource already points at the new id.
@@ -442,12 +478,15 @@ export const useAppStore = create<AppStore>((set, get) => ({
     return () => { displayFlushers.delete(flush); };
   },
   refreshSessionState: async (sessionId) => {
+    const ticket = nextRefreshTicket(sessionRefreshSeq, sessionId);
     // Send any pending display PUT before reading, so the GET reflects the latest
     // encoding edit instead of clobbering the optimistic value with the pre-edit copy.
     await Promise.all([...displayFlushers].map((flush) => flush().catch(() => {})));
+    const superseded = () => sessionRefreshSeq.get(sessionId) !== ticket;
     try {
       const state = await fetchWhenIdle(() => getSession(sessionId));
       if (get().activeSessionId !== sessionId) return; // switched away mid-fetch
+      if (superseded()) return; // a later refetch is authoritative; this read is pre-job
       const applied = withLocalDisplays(get(), state);
       set({ sessionState: applied });
       // Restore the persisted isolated category (setActiveSessionId cleared it) — from
@@ -457,6 +496,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     } catch (err) {
       // Still busy after retries: the next job.completed re-triggers this, so stay quiet.
       if (err instanceof ApiError && err.status === 503) return;
+      if (superseded()) return; // a newer refetch owns the outcome, including its errors
       get().pushNotification({
         kind: 'error',
         message: `Failed to refresh session: ${formatError(err)}`,
@@ -670,9 +710,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
   shapeAnnotations: [],
   setShapeAnnotations: (shapes) => set({ shapeAnnotations: shapes }),
   refreshShapeAnnotations: async (sessionId) => {
+    const ticket = nextRefreshTicket(shapeRefreshSeq, sessionId);
+    const superseded = () => shapeRefreshSeq.get(sessionId) !== ticket;
     try {
       const { shapes } = await fetchWhenIdle(() => listShapeAnnotations(sessionId));
       if (get().activeSessionId !== sessionId) return; // switched away mid-fetch
+      if (superseded()) return; // a later list is authoritative; this one predates it
       if (pendingShapeJobs.size === 0) { set({ shapeAnnotations: shapes }); return; }
       // Keep locally-owned shapes (an edit/create/delete whose job hasn't landed) as they
       // are locally: the server copy is still pre-edit. Preserve server order — substitute
@@ -690,6 +733,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     } catch (err) {
       // Still busy after retries: the next job.completed re-triggers this, so stay quiet.
       if (err instanceof ApiError && err.status === 503) return;
+      if (superseded()) return; // a newer list owns the outcome, including its errors
       get().pushNotification({
         kind: 'error',
         message: `Failed to refresh annotations: ${formatError(err)}`,
@@ -740,7 +784,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
   resolveShapeJob: (jobId) => {
     const shapeId = shapeJobShape.get(jobId);
-    if (shapeId === undefined) return;
+    if (shapeId === undefined) {
+      // Either this frame beat its own POST's response (park the id — the response will
+      // clear the mark) or the job belongs to another viewer, in which case there is
+      // nothing of ours to clear and no request outstanding to claim it.
+      if (unmappedShapeRequests > 0) completedBeforeMapped.add(jobId);
+      return;
+    }
     shapeJobShape.delete(jobId);
     bumpShapePending(shapeId, -1);
   },

@@ -113,7 +113,16 @@ def _multiregion_system(sdata, table) -> str | None:
 def _multiregion_world_xy(sdata, table, system: str) -> np.ndarray | None:
     """Exact world coordinates, in `system`, for a table whose rows span several region
     elements: each row's own region transform, applied to that row's own region-local
-    `obsm['spatial']`."""
+    `obsm['spatial']`.
+
+    Raises ValueError when a row's `region_key` value names none of the declared
+    regions. Nothing places such a row — its local coordinates belong to an origin the
+    object does not describe — and the alternative is worse than the error: the returned
+    array is compared against every `obsm` key to find the one holding the stitched
+    coordinates, so leaving those rows undefined (this used to hand back whatever
+    `np.empty_like` picked up) makes every candidate key miss and `world_space` fall
+    back to the region-*local* `obsm['spatial']`, stacking the whole section onto one
+    FOV's origin with nothing said."""
     from .. import imaging
 
     elements = _multiregion_regions(sdata, table)
@@ -123,6 +132,7 @@ def _multiregion_world_xy(sdata, table, system: str) -> np.ndarray | None:
     xy = np.asarray(table.obsm["spatial"])[:, :2].astype(float)
     rows = np.asarray(table.obs[region_key].astype(str))
     out = np.empty_like(xy)
+    placed = np.zeros(len(xy), dtype=bool)
     for name, elem in elements.items():
         a = imaging._affine_xy(elem, system)
         if a is None:
@@ -131,6 +141,13 @@ def _multiregion_world_xy(sdata, table, system: str) -> np.ndarray | None:
         if mask.any():
             out[mask] = apply_affine6_xy(
                 [a[0, 0], a[0, 1], a[0, 2], a[1, 0], a[1, 1], a[1, 2]], xy[mask])
+            placed |= mask
+    if not placed.all():
+        stray = sorted(set(rows[~placed]))
+        raise ValueError(
+            f"table column '{region_key}' names {len(stray)} region element(s) the table "
+            f"does not annotate ({', '.join(stray[:5])}), leaving "
+            f"{int((~placed).sum())} of {len(rows)} rows with no transform into world space")
     return out
 
 
@@ -157,7 +174,9 @@ def world_space(sdata, table) -> tuple[str, str | None]:
 
     Falls back to `("spatial", None)` when nothing matches — the behavior that was there
     before, wrong for such a table but no worse, and the alternative would be inventing
-    an `obsm` key the object never had."""
+    an `obsm` key the object never had. That fallback covers "no key reproduces the world
+    coordinates"; a table whose rows cannot be placed at all raises out of
+    `_multiregion_world_xy` instead of falling through to it."""
     system = _multiregion_system(sdata, table)
     world = _multiregion_world_xy(sdata, table, system) if system is not None else None
     if world is None:

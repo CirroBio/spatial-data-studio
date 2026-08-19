@@ -60,7 +60,28 @@ def fresh() -> dict:
 
 
 def migrate(st: dict) -> dict:
-    """Upgrade older blobs; a newer-than-app blob is left intact (caller may warn)."""
+    """Upgrade older blobs to `SCHEMA_VERSION`; a newer-than-app blob is left intact
+    (caller may warn). Raises ValueError when the result does not actually conform.
+
+    The steps below only establish the top-level collections. `app_state.schema.json` is
+    far stricter than that — `additionalProperties: false` at every level, and each
+    compute_history/plot entry requires `library_versions` plus its own per-kind fields —
+    and no step here can retro-fit a key from a blob that never carried one, or name the
+    unknown keys a foreign blob might carry. So the version stamp is verified rather than
+    asserted: without the check a non-conforming blob loads fine and first fails inside
+    the save job's `validate_app_state`, an error the user meets long after the load that
+    should have caught it, with the session's work already on top of it.
+
+    What is validated is the blob's *persisted projection*, not the blob: the schema
+    describes what reaches disk, and a live record's `_log` is stripped into
+    logs/<id>.log.gz on the way there (`store._split_logs`), so a session in memory — and
+    a checkpoint old enough to still carry its logs inline — legitimately fails the schema
+    as-is. Reusing the save path's own splitter keeps the two from drifting into a state
+    where a load rejects a blob a save would happily have written.
+
+    A blob NEWER than this app is deliberately not checked — it opens read-only against a
+    schema it postdates, and rejecting it would contradict that (DESIGN §5,
+    docs/CHECKPOINT_FORMAT.md §9)."""
     v = st.get("schema_version", 0)
     if v < 1:
         st.setdefault("compute_history", [])
@@ -70,7 +91,17 @@ def migrate(st: dict) -> dict:
     if v < 2:
         st.setdefault("regions", [])
     if v <= SCHEMA_VERSION:
+        import jsonschema
+        from ..persistence.store import _split_logs
+        from ..schemas import checkpoint as checkpoint_schemas
         st["schema_version"] = SCHEMA_VERSION
+        try:
+            checkpoint_schemas.validate_app_state(_split_logs(st)[0])
+        except jsonschema.ValidationError as e:
+            where = "/".join(str(p) for p in e.absolute_path) or "(root)"
+            raise ValueError(
+                f"this checkpoint's app_state (schema_version {v}) cannot be migrated to "
+                f"version {SCHEMA_VERSION}: {e.message} — at app_state/{where}") from e
     return st
 
 

@@ -34,21 +34,32 @@ export function useEmbeddingViewState(
 
   // Same fit-to-data math as useCanvasViewState (see viewFit.fitZoom); adds a
   // centered Z target in 3D so the orbit camera starts looking at the point cloud.
+  // Fits against the *observed* canvas size for the same reason its sibling does: the
+  // element's own clientWidth is 0 while the container is hidden or pre-layout, and the
+  // window is the wrong box to frame in any case, so a fit taken then points the camera
+  // somewhere arbitrary. Null until a real size exists; the callers all re-fit.
   const fitToData = useCallback((): EmbeddingViewState | null => {
     if (!positions) return null;
+    const w = canvasSize?.width ?? containerRef.current?.clientWidth ?? 0;
+    const h = canvasSize?.height ?? containerRef.current?.clientHeight ?? 0;
+    if (!(w > 0 && h > 0)) return null;
     const { d0min, d0max, d1min, d1max, d2min, d2max } = positions.bounds;
-    const centerX = (d0min + d0max) / 2;
-    const centerY = (d1min + d1max) / 2;
+    // An empty table (0 rows) leaves bounds at ±Infinity; guard the center so the
+    // viewport target never becomes NaN (which silently blanks the canvas).
+    const centerX = Number.isFinite(d0min + d0max) ? (d0min + d0max) / 2 : 0;
+    const centerY = Number.isFinite(d1min + d1max) ? (d1min + d1max) / 2 : 0;
     const extentX = Math.max(1, d0max - d0min);
     const extentY = Math.max(1, d1max - d1min);
-    const el = containerRef.current;
-    const zoom = fitZoom(extentX, extentY, el?.clientWidth || window.innerWidth, el?.clientHeight || window.innerHeight);
+    const zoom = fitZoom(extentX, extentY, w, h);
+    if (!Number.isFinite(zoom)) return null;
     if (is3d) {
-      const centerZ = d2min !== undefined && d2max !== undefined ? (d2min + d2max) / 2 : 0;
+      const centerZ = d2min !== undefined && d2max !== undefined && Number.isFinite(d2min + d2max)
+        ? (d2min + d2max) / 2
+        : 0;
       return { target: [centerX, centerY, centerZ], zoom, rotationX: DEFAULT_ROTATION_X, rotationOrbit: 0, ...ROTATION_LIMITS, ...ZOOM_LIMITS };
     }
     return { target: [centerX, centerY, 0], zoom, ...ZOOM_LIMITS };
-  }, [positions, is3d, containerRef]);
+  }, [positions, is3d, canvasSize, containerRef]);
 
   // Frames the data on first load, and re-frames whenever the data occupies a different
   // extent — the camera IS in the plotted coordinate space, so one framed for a UMAP's
@@ -70,15 +81,13 @@ export function useEmbeddingViewState(
     const { d0min, d0max, d1min, d1max, d2min, d2max } = positions.bounds;
     const extent = `${d0min},${d0max},${d1min},${d1max},${d2min},${d2max},${is3d}`;
     if (viewState && framedExtent.current === extent) return;
-    // Not against an unmeasured canvas: `fitToData` falls back to the window, which is
-    // itself zero for a hidden one, and the resulting camera frames nothing. Leaving the
+    // Not against an unmeasured canvas — `fitToData` returns null there. Leaving the
     // marker alone means the real size arriving retries, as `useCanvasViewState` does.
-    if (!canvasSize) return;
     const fit = fitToData();
     if (!fit) return;
     framedExtent.current = extent;
     setViewState(fit);
-  }, [fitToData, positions, viewState, canvasSize, is3d]);
+  }, [fitToData, positions, viewState, is3d]);
 
   // The 2D and 3D view-state shapes aren't interchangeable — re-fit on toggle
   // rather than trying to carry an orthographic pan/zoom into an orbit camera.

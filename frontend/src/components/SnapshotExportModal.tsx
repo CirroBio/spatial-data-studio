@@ -49,6 +49,9 @@ export default function SnapshotExportModal({ params, onClose }: { params: Snaps
           { ...spec, width_px: previewW, height_px: previewH, dpi: 96, formats: ['png'] }, ctrl.signal);
         const url = URL.createObjectURL(blob);
         setPreviewUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return url; });
+        // A rendered preview supersedes an earlier transient failure; without this the
+        // stale error line stays on screen next to a correct preview.
+        setError(null);
       } catch (e) {
         if (!ctrl.signal.aborted) setError(formatError(e));
       } finally {

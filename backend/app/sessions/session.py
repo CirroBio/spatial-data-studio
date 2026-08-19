@@ -1048,7 +1048,10 @@ class Session:
         # lock (_run_call's plot tail), so a caller's read lock does NOT exclude it and
         # iterating the live dict raises "dictionary changed size during iteration" when a
         # plot lands mid-poll — the same hazard manager.state snapshots its lists against.
-        index = {pid: {fmt: len(blob) for fmt, blob in blobs.items() if blob}
+        # The per-plot dict needs the same snapshot: a save running concurrently is inside
+        # _hold_dropped_figures, which fills format keys into the very entry its own
+        # setdefault just created, so an entry can grow between two of this walk's steps.
+        index = {pid: {fmt: len(blob) for fmt, blob in dict(blobs).items() if blob}
                  for pid, blobs in dict(self.plot_figures).items() if pid in drawn}
         for pid, sizes in figure_index(self.extract_dir or self.store_path).items():
             if pid in drawn:

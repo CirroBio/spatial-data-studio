@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import * as arrow from 'apache-arrow';
 import { fetchWhenIdle } from '../lib/fetchWhenIdle';
 import { useDataSource } from './context';
@@ -36,12 +36,18 @@ export function useArrowField(
   const [table, setTable] = useState<arrow.Table | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
   const sourceId = source?.id ?? null;
 
   useEffect(() => {
     if (!source || !sourceId || !fieldPath) {
+      // "Nothing to load" is a resolved state, not a pending one: clearing Color By sets
+      // fieldPath null, and leaving `loading` set would keep colorLoading/coordsLoading
+      // true forever, with the canvas stuck behind a spinner for a fetch that will never
+      // run. The error belongs to the field that just went away, so it goes too. The
+      // previous request is already aborted — React ran this effect's cleanup first.
       setTable(null);
+      setLoading(false);
+      setError(null);
       return;
     }
 
@@ -54,9 +60,7 @@ export function useArrowField(
       return;
     }
 
-    abortRef.current?.abort();
     const controller = new AbortController();
-    abortRef.current = controller;
     setLoading(true);
     setError(null);
 
@@ -64,6 +68,10 @@ export function useArrowField(
     // holding the write lock on first open) so coords/colors converge once the lock
     // frees, instead of leaving the canvas stuck on "Loading…" until an unrelated
     // data_versions bump happens to re-trigger this effect.
+    //
+    // The signal only cancels the retry loop and the state updates: `DataSource.getFieldData`
+    // takes no signal, so a request already issued still runs to completion — a cancelled
+    // checkpoint read keeps its range GETs in flight until they land.
     fetchWhenIdle(() => source.getFieldData(fieldPath), { signal: controller.signal })
       .then((t) => {
         if (controller.signal.aborted) return;

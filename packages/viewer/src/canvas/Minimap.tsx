@@ -107,6 +107,11 @@ export default function Minimap({
     const py = Math.min(Math.max(clientY - rect.top, 0), height);
     onNavigate(fromCss(px, py));
   }, [fromCss, width, height, onNavigate]);
+  const endDrag = useCallback(() => {
+    if (!dragging.current) return;
+    dragging.current = false;
+    onNavigateEnd();
+  }, [onNavigateEnd]);
 
   // Positioned below the Spatial/Embeddings/Tables switch, which owns the same corner.
   return (
@@ -129,8 +134,11 @@ export default function Minimap({
         navigateFrom(e.clientX, e.clientY);
       }}
       onPointerMove={(e) => { if (dragging.current) navigateFrom(e.clientX, e.clientY); }}
-      onPointerUp={() => { if (dragging.current) { dragging.current = false; onNavigateEnd(); } }}
-      onPointerCancel={() => { dragging.current = false; }}
+      onPointerUp={endDrag}
+      // A cancelled drag (capture lost, gesture interrupted) has already moved the camera,
+      // so it has to persist the viewport exactly as pointerup does or the move is lost
+      // on reload.
+      onPointerCancel={endDrag}
     >
       {/* The thumbnail's first row is the image's y=0, which the y-up view puts at the
           bottom — so it is flipped vertically to match the canvas, and mirrored again

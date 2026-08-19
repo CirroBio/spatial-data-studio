@@ -82,11 +82,25 @@ export function useSpotColors(
     const alpha = Math.round(opacity * 255);
     const alphaAt = (i: number) => (hiddenCells?.has(i) ? 0 : alpha);
 
-    if (!colorSource) {
+    // Rows the coloring actually covers. Positions and color arrive as two independent
+    // fetches (see SpatialCanvas/EmbeddingCanvas), so between the commit that lands one
+    // and the commit that lands the other the color table can be shorter or longer than
+    // the position table — a recompute or a subset changes the row count under both.
+    const sourceRows = colorSource
+      ? (colorSource.kind === 'categorical' ? colorSource.codes.length : colorSource.values.length)
+      : n;
+
+    if (!colorSource || sourceRows !== n) {
       // `color_by: null` is a reachable display state — no categorical obs column to
       // pick at session start, or a save that dropped X — and the figure renderer draws
       // those cells grey. Both canvases gate the whole points layer on this buffer, so
       // returning null for a missing coloring would blank a checkpoint that exports fine.
+      //
+      // A row-count disagreement takes the same path rather than coloring past the end of
+      // the shorter array: the numeric loop would read `undefined`, which Uint8Array stores
+      // as 0 and which fails the `=== 0` hidden test, painting those rows opaque black over
+      // the plot. Grey for the frame or two until the trailing fetch lands is the honest
+      // rendering of "positions known, coloring not yet".
       for (let i = 0; i < n; i++) {
         result[i * 4] = 128;
         result[i * 4 + 1] = 128;

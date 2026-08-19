@@ -500,6 +500,15 @@ def _render_figure(session, spec: dict):
     target = vp.get("target", [0, 0]); zoom = float(vp.get("zoom", 0))
 
     xy = _point_coords(session, enc, kind)
+    # A table subset can select nothing, and every downstream step assumes at least one
+    # cell: the spacing reduction below takes `.max()` of an empty axis, and `_cell_rgba`
+    # would build its `dim` mask from an empty list comprehension, which numpy types
+    # float64 and then refuses as an index. The `len(pts)` guard further down is too late
+    # for both. ValueError so `routers/snapshots._snapshot_errors` answers 400 — an empty
+    # selection is a bad request, not a server fault.
+    if not len(xy):
+        raise ValueError("nothing to render: this table has no cells "
+                         "(a filter or subset selected none)")
     element = _image_element(session, enc) if kind == "spatial" else None
 
     # Coordinate regime: with an image the canvas works in level-0 pixel space (points

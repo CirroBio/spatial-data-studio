@@ -128,26 +128,40 @@ export function useImageTilePrefetch(
           }
         }
 
+        const markWarmed = (key: string) => {
+          seen.add(key);
+          // Bound the memo: drop the oldest keys once it overflows (Set preserves insert order).
+          if (seen.size > SEEN_LIMIT) {
+            const excess = seen.size - SEEN_LIMIT;
+            const it = seen.values();
+            for (let i = 0; i < excess; i++) seen.delete(it.next().value as string);
+          }
+        };
+
         let budget = MAX_PREFETCH_TILES;
         const jobs: Array<() => Promise<void>> = [];
         for (const { level, x, y } of tiles) {
           if (budget <= 0) break;
           const key = `${level}:${x}:${y}`;
           if (seen.has(key)) continue;
-          seen.add(key);
           budget -= 1;
+          // A tile counts as warmed only once every channel's chunk has actually landed
+          // in the browser cache. Marking it up front would exclude a tile whose fetch
+          // aborted (camera moved) or failed from every later pass for the life of
+          // `resetKey`, leaving it permanently cold. Only one pass is ever live — the
+          // effect cleanup aborts the previous controller before the next pass is
+          // scheduled — so a re-queued tile cannot duplicate a fetch still in flight.
+          let remaining = selections.length;
+          let warmed = true;
           for (const selection of selections) {
             jobs.push(() =>
               loader[level].getTile({ x, y, selection, signal: controller.signal })
-                .then(() => { /* discard the decoded tile; the point is the browser cache entry */ })
-                .catch(() => { /* aborted, 404 fill chunk, or transient — deck will refetch */ }));
+                .then(
+                  () => { /* discard the decoded tile; the point is the browser cache entry */ },
+                  () => { warmed = false; /* aborted, 404 fill chunk, or transient — deck will refetch */ },
+                )
+                .then(() => { if (--remaining === 0 && warmed) markWarmed(key); }));
           }
-        }
-        // Bound the memo: drop the oldest keys once it overflows (Set preserves insert order).
-        if (seen.size > SEEN_LIMIT) {
-          const excess = seen.size - SEEN_LIMIT;
-          const it = seen.values();
-          for (let i = 0; i < excess; i++) seen.delete(it.next().value as string);
         }
         void drainWithLimit(jobs, PREFETCH_CONCURRENCY, controller.signal);
       });

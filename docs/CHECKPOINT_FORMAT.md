@@ -587,10 +587,16 @@ granularities:
 - **`app_state.schema_version`** (currently `3`) — the shape of `attrs["app_state"]`.
   This app **migrates forward** on load: a file with an older schema version is
   upgraded in memory to the current shape (missing collections default to
-  empty); a file with a *newer* schema version than the app understands opens
-  read-only with a warning rather than being rejected outright, since the
-  underlying SpatialData is still perfectly readable even if some app-state
-  fields are unrecognized.
+  empty). Stamping the current version is a claim of conformance, so it is
+  checked rather than asserted — `appstate.migrate` validates the migrated blob
+  against `app_state.schema.json` (minus the per-record `_log`, which never
+  reaches disk) and **fails the load** with a message naming the offending
+  field when the file cannot be brought to the current shape. Without that
+  check such a file opens normally and first fails much later, inside a save.
+  A file with a *newer* schema version than the app understands is exempt from
+  the check and opens read-only with a warning rather than being rejected
+  outright, since the underlying SpatialData is still perfectly readable even
+  if some app-state fields are unrecognized.
 - **`viewer.sidecar_version`** (currently `1`) — the shape of the `viewer/`
   group (§4). Bumped only on a breaking layout change; **additive** keys (`figures`,
   `shapes`) do not bump it, since an older reader ignores what it doesn't know and

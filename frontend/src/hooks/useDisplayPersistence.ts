@@ -56,7 +56,21 @@ export function useDisplayPersistence(sessionId: string, canEdit: boolean): {
     await send();
   }, [send]);
 
-  useEffect(() => registerDisplayFlush(flush), [registerDisplayFlush, flush]);
+  useEffect(() => {
+    const unregister = registerDisplayFlush(flush);
+    return () => {
+      // Cancel the *unattended* half only. A timer that survives the unmount (or a
+      // session switch, which is the other thing that re-runs this effect) fires with no
+      // component behind it and re-resolves `currentSpec` against whatever session the
+      // store holds by then — writing one session's display onto another. The pending
+      // edit itself is deliberately left set: `flush` stays callable, so a
+      // refreshSessionState that already took it out of the registry still sends it, and
+      // "flush before save" doesn't become a dropped edit. Once unregistered, no later
+      // refresh can reach this hook, so nothing else can resurrect the edit either.
+      unregister();
+      if (persistTimer.current) { clearTimeout(persistTimer.current); persistTimer.current = null; }
+    };
+  }, [registerDisplayFlush, flush]);
 
   const onDisplayChange = useCallback((updated: DisplaySpec) => {
     updateDisplay(updated);

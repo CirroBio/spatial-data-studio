@@ -185,7 +185,10 @@ export function useVivImageLayer(
   const tileProgress = useTileLoadProgress(loader);
 
   const layers = useMemo(() => {
-    if (!enabled || failed || !loader || !viewReady) return [] as Layer[];
+    // `!loader.length` as well as `!loader`, matching useImageTilePrefetch: a resolved
+    // loader is an array of pyramid levels and an empty one is a store that opened but
+    // exposes no level, which the `loader[0]` read below would throw on.
+    if (!enabled || failed || !loader || !loader.length || !viewReady) return [] as Layer[];
 
     // Color/visibility come from the (editable) channel state for every image, RGB
     // included: an H&E's channels default to red/green/blue (useImageChannels), so the

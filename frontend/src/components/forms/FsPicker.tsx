@@ -41,7 +41,14 @@ export default function FsPicker({ mode, value, onSelect, rootDir }: Props) {
   }, [rootDir]);
 
   useEffect(() => {
-    browsePath(dir || rootDir || undefined, includeFiles).then(setListing).catch(() => setListing(null));
+    // A rootDir change fires this twice — once with the stale `dir` still in state, once
+    // after the reset effect above clears it — so the older listing must not be allowed
+    // to land on top of the newer one.
+    let stale = false;
+    browsePath(dir || rootDir || undefined, includeFiles)
+      .then((next) => { if (!stale) setListing(next); })
+      .catch(() => { if (!stale) setListing(null); });
+    return () => { stale = true; };
   }, [dir, rootDir, includeFiles]);
 
   const atRoot = rootDir ? trim(listing?.path ?? '') === trim(rootDir) : !listing?.path;

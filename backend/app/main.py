@@ -659,13 +659,20 @@ async def data(sid: str, field_path: str):
     sess = _session(sid)
 
     def _resolve():
-        batch = arrow.resolve_field(sess.active_table(), field_path)
-        # Canvas cell positions honor the editable points->global transform.
-        if field_path == "obsm:spatial":
-            from .sessions import transform
-            affine6 = transform.get_affine6(sess.sdata, sess.active_table())
-            if not transform.is_identity(affine6):
-                batch = arrow.apply_affine_xy(batch, affine6)
+        from .sessions import transform
+        table = sess.active_table()
+        batch = arrow.resolve_field(table, field_path)
+        # Canvas cell positions honor the editable points->global transform. Which obsm
+        # key that affine belongs to is `world_key`'s to say, not the literal 'spatial':
+        # a multi-region table draws its stitched key instead, and its 'spatial' is then
+        # region-local coordinates the affine has no business touching (the same
+        # resolution snapshots._point_coords does). The identity test goes first because
+        # it settles the outcome on its own, and `world_key` costs a per-region pass over
+        # the table that no obs/X/var request should be paying.
+        affine6 = transform.get_affine6(sess.sdata, table)
+        if not transform.is_identity(affine6) \
+                and field_path == f"obsm:{transform.world_key(sess.sdata, table)}":
+            batch = arrow.apply_affine_xy(batch, affine6)
         return arrow.to_ipc_bytes(batch)
 
     try:

@@ -33,7 +33,10 @@ type Bbox = [number, number, number, number];
 // render time, so a recolor never refetches). Keyed by session:element:version:bbox.
 const CACHE_MAX = 48;
 const cache = new Map<string, arrow.Table>();
-const pending = new Set<string>();
+// In-flight fetches, each holding every caller waiting on that key: a second canvas
+// mounting mid-fetch joins the existing request, and must still be bumped when it
+// settles or its memo never leaves loading:true.
+const pending = new Map<string, Set<() => void>>();
 const failed = new Set<string>();
 
 function getTable(key: string, fetchShapes: FetchShapes, element: string, bbox: Bbox, onLoad: () => void): { table: arrow.Table | null; failed: boolean } {
@@ -51,17 +54,25 @@ function getTable(key: string, fetchShapes: FetchShapes, element: string, bbox: 
     failed.delete(key);
     return { table: null, failed: true };
   }
-  if (!pending.has(key)) {
-    pending.add(key);
+  const waiting = pending.get(key);
+  if (waiting) {
+    waiting.add(onLoad);
+  } else {
+    const waiters = new Set([onLoad]);
+    pending.set(key, waiters);
     fetchShapes(element, bbox, POLYGON_LIMIT)
       .then((t) => {
         pending.delete(key);
         cache.set(key, t);
         if (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value as string);
-        onLoad();
+        for (const notify of waiters) notify();
       })
       // Bump on failure too, so the memo re-runs and drops its loading:true value.
-      .catch(() => { pending.delete(key); failed.add(key); onLoad(); });
+      .catch(() => {
+        pending.delete(key);
+        failed.add(key);
+        for (const notify of waiters) notify();
+      });
   }
   return { table: null, failed: false };
 }

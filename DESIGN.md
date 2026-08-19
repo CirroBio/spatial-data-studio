@@ -714,8 +714,12 @@ halves for such a table: it derives the true per-row world coordinates (each row
 region transform) and returns whichever `obsm` key reproduces them — CosMx keeps the
 stitched slide coordinates in `obsm['global']` — plus the coordinate system those regions
 share. Everything that needs a cell's position goes through `world_key`/`world_xy`, so the
-canvas default, the image reconciliation, lasso membership and the figure renderer cannot
-disagree. Two consequences: `get_affine6` is identity for such a table (taking `region[0]`
+canvas default, the coords endpoint (`/data/{field}` applies the points→global affine to
+`obsm:<world_key>`, not to a hardcoded `obsm:spatial`), the image reconciliation, lasso
+membership and the figure renderer cannot disagree. A row whose `region_key` value names
+no declared region raises rather than silently going unplaced: nothing can position it,
+and leaving it undefined made the key match miss and fell the whole section back onto one
+FOV's origin. Two consequences: `get_affine6` is identity for such a table (taking `region[0]`
 applied one FOV's transform to the whole section), and `pixel_to_world` uses the resolved
 system directly instead of searching — a per-FOV image covers a few percent of the
 section, so every overlay candidate scores near zero and the best of them is noise. When
@@ -995,9 +999,15 @@ alone) vs `points+shapes` (scatter plus the cell-boundary overlay). The legacy v
   backend returns a 0-row table, which `usePolygonBbox` reports as *no layer* — the points
   simply keep covering the view (no dead "blank band").
 
-Geometry is served in the same world space `/data/obsm:spatial` uses (the region element's
-points→global affine), so outlines, points, and image overlay; the GeoArrow polygons carry
-a `cell_index` back to the active table for color gather. See
+Geometry is served in the same world space `/data/obsm:<world_key>` uses, so outlines,
+points, and image overlay; the GeoArrow polygons carry a `cell_index` back to the active
+table for color gather. Each shapes element is placed by its OWN transform into the world
+coordinate system rather than by borrowing the active table's region affine
+(`transport/geometry.py:_element_to_world`): the two coincide on Xenium, where the
+reconciliation divides out the 4.7x micron→pixel scale `cell_boundaries` declares, and
+diverge for a multi-region table, which has no region affine at all while its boundaries
+carry a real one. The shape-annotation element is refused here (404) — it is already in
+world space and is drawn by the annotation overlay, not as segmentation. See
 `docs/CONTRACT.md` for the payload schemas.
 
 **Known follow-up:** `@geoarrow/deck.gl-layers` (0.3.2) logs a console deprecation — it
@@ -1773,7 +1783,10 @@ session picker's delete) keys off that row's own lock instead.
   accumulated during the zip write rather than by re-reading the finished archive.
 - **Load:** open a `.zarr.zip` (or `.zarr`); hydrate the object and restore UI from
   `attrs` (§5). `attrs["app_state"]` runs through a **schema migration** keyed on
-  `schema_version`; a blob newer than the app opens read-only with a warning.
+  `schema_version`, which validates its own result against `app_state.schema.json` and
+  fails the load (naming the offending field) rather than stamping the current version
+  onto a blob it could not bring to that shape; a blob newer than the app is exempt
+  from the check and opens read-only with a warning.
 - **Round-trip guarantee:** reloading reproduces the exact display configuration, the
   compute audit log, the plot list (undrawn until opened), and registered regions. The
   in-process `test_e2e.py` asserts this.
@@ -2271,8 +2284,9 @@ A structured adversarial pass over the design. Each item is tagged **Resolved**
   **Resolved** (§9.6).
 - **`.zarr.zip` write-once / slow** for huge data. Incremental `.zarr` directory store for
   checkpoints. **Resolved** (§18).
-- **App-state schema drift.** Versioned migration on load; newer-than-app read-only.
-  **Resolved** (§3.2, §18).
+- **App-state schema drift.** Versioned migration on load, validated against the schema
+  so an unmigratable blob fails the load rather than a later save; newer-than-app
+  read-only. **Resolved** (§3.2, §18).
 - **Continuous colormap over millions of points** must be GPU-side. Shader/extension.
   **Resolved** (§9.2, §26).
 - **Sparse `obsp` transport** must not densify. CSR triplets in Arrow. **Resolved** (§26).

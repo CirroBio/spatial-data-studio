@@ -77,12 +77,19 @@ export function buildSpotLayer(
   { pointSize, opacity, is3d, marker = 'circle', modelMatrix, radiusScale = 1 }: SpotStyle,
 ): Layer[] {
   if (is3d) {
+    // The z column is optional at the source: useArrowPositions produces a stride-2 buffer
+    // whenever `d${zIndex}` doesn't resolve, so `is3d` alone does not promise three
+    // components — a stale `?view=` link can ask for 3D against a 2-component obsm array,
+    // and nothing between the URL and here clamps it. Declaring size 3 over that buffer
+    // reads past its end. Take the stride from the buffer instead; at stride 2 the GPU
+    // supplies z = 0 and the cloud renders flat, which is what the data says.
+    const stride = positions.numRows ? positions.positions.length / positions.numRows : 3;
     return [new PointCloudLayer({
       id: 'points-3d',
       data: {
         length: positions.numRows,
         attributes: {
-          getPosition: { value: positions.positions, size: 3 },
+          getPosition: { value: positions.positions, size: stride },
           getColor: { value: colors, size: 4, normalized: true },
         },
       },

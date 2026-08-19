@@ -84,7 +84,14 @@ def _obs_batch(adata, key: str) -> pa.RecordBatch:
 def _gene_batch(adata, gene: str, layer: str | None = None) -> pa.RecordBatch:
     if gene not in adata.var_names:
         raise KeyError(f"gene not found: {gene}")
-    idx = adata.var_names.get_loc(gene)
+    # get_indexer_for, not get_loc: on a var_names with duplicates (10x gene symbols
+    # mapping to several Ensembl ids) get_loc answers with a slice or a boolean mask, and
+    # `mat[:, <that>]` then ravels k columns into a batch k times as long as the point
+    # cloud it colors — silently, since nothing downstream checks the length. Taking the
+    # first occurrence keeps this reader agreeing with the backend-less one, which resolves
+    # the same gene with `varNames.indexOf` (packages/viewer/src/data/checkpointSource.ts):
+    # the two readers of one checkpoint must return the same column.
+    idx = int(adata.var_names.get_indexer_for([gene])[0])
     mat = adata.layers[layer] if layer else adata.X
     if mat is None:  # a checkpoint saved without X (store.trim_table)
         raise KeyError("this checkpoint was saved without X, so it holds no expression values")

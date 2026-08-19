@@ -101,7 +101,7 @@ ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_cate
 | DELETE | `/api/cirro/uploads/{id}` | — | `{uploads:[...]}` — drops a settled row once seen; an in-flight upload is left alone |
 | POST | `/api/cirro/upload` | `{project_id, dataset_name, description?, session_paths:[str], folder?}` | `{status:"started", id}` (background; announces `cirro.upload.completed`/`failed` over SSE; always uses the generic "Files" ingest process; `folder` → `folder://<path>` dataset tag; the bundle also carries `index.json` and, where `SDS_STATIC_DIR` is set, the built SPA, so the dataset is a serverless deployment (DESIGN §14.3); needs at least one session; 401 if not connected) |
 | GET  | `/api/sessions/{id}/data/{fieldPath}` | fieldPath e.g. `obs:leiden`, `obsm:spatial`, `X:Sox17`, `obsp:spatial_distances` | Arrow IPC stream (application/vnd.apache.arrow.stream) |
-| GET  | `/api/sessions/{id}/shapes/{element}/geoarrow?bbox=minx,miny,maxx,maxy[&limit=N]` | `bbox` in the `obsm:spatial` world space; optional `limit` caps the returned feature count | Arrow IPC stream (`application/vnd.apache.arrow.stream`) of viewport-clipped boundary polygons — `geometry` (GeoArrow) + `cell_index:int32`; 400 on a malformed bbox; 404 if the element is absent or non-polygonal |
+| GET  | `/api/sessions/{id}/shapes/{element}/geoarrow?bbox=minx,miny,maxx,maxy[&limit=N]` | `bbox` in the canvas world space; optional `limit` caps the returned feature count | Arrow IPC stream (`application/vnd.apache.arrow.stream`) of viewport-clipped boundary polygons — `geometry` (GeoArrow) + `cell_index:int32`; 400 on a malformed bbox; 404 if the element is absent, non-polygonal, the shape-annotation element, or has no transform into the world coordinate system |
 | GET  | `/api/sessions/{id}/elements` | `?sizes` | `{tables:[{name,n_obs,n_vars,active}], shapes, points, images, labels}` (data inspector inventory; `?sizes=1` adds `size_mb: number\|null` to every entry, `levels:[{level,width,height,size_mb}]` — finest first, summing to `size_mb` — to every image, and `slots:[{path,size_mb,required}]` — also summing to `size_mb` — to every table) |
 | GET  | `/api/sessions/{id}/table?path=&offset=&limit=` | path = `obs`, `var` (the active table), `tables:<name>:obs`, `tables:<name>:var` (a named table, active or not), `shapes:<name>`, `points:<name>`; 404 for an unknown table/element | `{total_rows, offset, limit, index_name, index, columns:[{name,dtype}], rows}` (JSON page) |
 | GET  | `/api/sessions/{id}/image/{element}/info` | — | `{levels:[{level,width,height}], channels, channel_names, bounds, pixel_to_world, tile_size, client_compositing, raster_base_url, zarr_group_path, contrast_limits, contrast_range, is_rgb}` (see below) |
@@ -311,19 +311,24 @@ Single RecordBatch streamed as Arrow IPC.
 ## Cell-segmentation geometry (segmentation display)
 
 The point scatter and the cell-boundary fills are expressed in the same world space
-`/data/obsm:spatial` serves (the region element's points→global affine applied), so the
+`/data/obsm:<world_key>` serves (the points→global affine applied to whichever `obsm` key
+holds the cells' world coordinates — `spatial` for nearly every dataset; a table
+annotating several region elements draws a stitched key instead, see
+`backend/app/sessions/transform.py`), so the
 points, the polygon outlines, and the image all overlay. Only the polygon outlines need a
 dedicated geometry endpoint (backed by `backend/app/transport/geometry.py`); the point
-scatter is drawn entirely client-side from the already-loaded `obsm:spatial` positions and
-the per-cell colors.
+scatter is drawn entirely client-side from the already-loaded positions and the per-cell
+colors.
 
 - **`/shapes/{element}/geoarrow`** streams a single Arrow IPC table of the boundary
   polygons that intersect `bbox` (subset via the GeoDataFrame's spatial index):
   - `geometry` — a GeoArrow extension column, `geoarrow.polygon` or
     `geoarrow.multipolygon`, with **separated** `struct<x: float64, y: float64>`
     coordinates. The polygons are transformed from their intrinsic element coordinates
-    into the `obsm:spatial` world space (the region element's affine — a boundary
-    element's own transform is not used, since on Xenium it disagrees with the region's).
+    into the canvas world space by that element's own placement — its transform into the
+    world coordinate system, reconciled against the cells the same way an image is, then
+    the editable points→global affine — so a boundary set whose transform differs from
+    the region's still lands on its cells.
     Coordinates are rounded to sub-pixel precision (2 decimals) so the near-incompressible
     float64 mantissa bits collapse and the gzip transport (below) can shrink the stream.
   - `cell_index` — `int32`, the row of each polygon's cell in the **active table**
