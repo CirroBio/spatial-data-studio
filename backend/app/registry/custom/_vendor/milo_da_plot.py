@@ -139,7 +139,7 @@ def plot_da_volcano(
 
 
 # --------------------------------------------------------------------------- #
-# Summary + demo
+# Summary
 # --------------------------------------------------------------------------- #
 def plot_summary(result, *, alpha: float = 0.1, figsize: tuple = (12, 5)) -> Figure:
     """Beeswarm + volcano side by side from a MiloResult."""
@@ -148,22 +148,3 @@ def plot_summary(result, *, alpha: float = 0.1, figsize: tuple = (12, 5)) -> Fig
     plot_da_volcano(result, alpha=alpha, ax=axes[1])      # right: volcano
     fig.tight_layout()
     return fig
-
-
-def _demo(outfile: str = "milo_da_demo.png"):
-    """Compute DA on synthetic data with cell-type labels and render both views."""
-    from milo_da_compute import milo, make_synthetic_da   # compute-side imports
-
-    emb, sample, condition, pos = make_synthetic_da()      # synthetic trajectory + DA gradient
-    # derive coarse cell-type labels from trajectory position, so the beeswarm has rows
-    ct = np.where(pos < 0.33, "Progenitor",                # label by trajectory third
-                  np.where(pos < 0.66, "Intermediate", "Mature"))
-    res = milo(emb, sample, condition, cell_type=ct, k=30, prop=0.15, random_state=0)
-    fig = plot_summary(res, alpha=0.1)                     # fig = combined figure
-    fig.suptitle("Milo differential abundance — synthetic trajectory", y=1.02)
-    fig.savefig(outfile, dpi=130, bbox_inches="tight")     # write to disk
-    print(f"wrote {outfile}")
-
-
-if __name__ == "__main__":
-    _demo()

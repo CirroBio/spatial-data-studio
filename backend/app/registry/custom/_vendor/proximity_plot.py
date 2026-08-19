@@ -133,7 +133,7 @@ def plot_pair_distance(
 
 
 # --------------------------------------------------------------------------- #
-# Summary + demo
+# Summary
 # --------------------------------------------------------------------------- #
 def plot_summary(result, pair: Optional[Tuple[str, str]] = None,
                  *, figsize: tuple = (12, 5)) -> Figure:
@@ -145,19 +145,3 @@ def plot_summary(result, pair: Optional[Tuple[str, str]] = None,
     plot_pair_distance(result, pair, ax=axes[1])          # right: distance distribution
     fig.tight_layout()
     return fig
-
-
-def _demo(outfile: str = "proximity_demo.png"):
-    """Compute proximity on synthetic tissue and render both views."""
-    from proximity_compute import proximity_test, make_synthetic_spatial  # compute-side imports
-
-    coords, labels = make_synthetic_spatial()             # synthetic tissue (A-B close, C far)
-    res = proximity_test(coords, labels, n_perm=200, random_state=0)  # run the test
-    fig = plot_summary(res, pair=("A", "B"))              # fig = combined figure
-    fig.suptitle("Nearest-neighbor proximity — synthetic tissue", y=1.02)
-    fig.savefig(outfile, dpi=130, bbox_inches="tight")    # write to disk
-    print(f"wrote {outfile}")
-
-
-if __name__ == "__main__":
-    _demo()

@@ -947,10 +947,12 @@ pre-commit install` once per clone (`.pre-commit-config.yaml`).
 **Read the skips, not just the banner.** The gate prints `PASS` when nothing FAILED,
 which is not the same as everything being enforced: the checks run under `pytest -rs`
 so every skipped rule is listed with its reason, and a skipped rule is unenforced.
-Two skip by design until `config.SYNTH_FIXTURE` is wired to a synthetic-SpatialData
-builder — R5's contract smoke test (running every registered function and asserting the
-`CallResult` envelope) and R6/R7 (append-only history). Pass the backend interpreter to
-enforce the import-dependent rules rather than skipping them:
+R5's contract smoke test (running every registered function and asserting the
+`CallResult` envelope) skips by design until `config.SYNTH_FIXTURE` is wired to a
+synthetic-SpatialData builder. R6/R7 (append-only history) needs that same harness and
+has **no check at all** — it is not even a skip line, so read `RULES.md` alongside the
+gate output. Pass the backend interpreter to enforce the import-dependent rules rather
+than skipping them:
 
 ```bash
 make -C sds-governance check PYTHON=../.venv-introspect/bin/python

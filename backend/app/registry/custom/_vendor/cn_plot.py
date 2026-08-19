@@ -42,13 +42,6 @@ from matplotlib.axes import Axes
 from matplotlib.colors import to_hex
 from matplotlib.figure import Figure
 
-# CNResult is imported for type hints / the summary helper; plotting itself is
-# duck-typed and works on plain arrays and DataFrames too.
-try:
-    from cn_compute import CNResult
-except Exception:  # pragma: no cover - keep module importable in isolation
-    CNResult = object  # type: ignore
-
 
 # --------------------------------------------------------------------------- #
 # Palette helpers — one color per category, stable across all panels
@@ -503,35 +496,3 @@ def plot_summary(
     )
     fig.tight_layout()
     return fig
-
-
-# --------------------------------------------------------------------------- #
-# Demo: compute on synthetic tissue, render every view to a PNG
-# --------------------------------------------------------------------------- #
-def _demo(outfile: str = "cn_plots_demo.png"):
-    """Generate synthetic data, compute CNs, and save all four views."""
-    from cn_compute import cellular_neighborhoods, make_synthetic_tissue  # compute-side imports
-
-    coords, cell_types, _ = make_synthetic_tissue()                 # coords/cell_types = toy tissue
-    result = cellular_neighborhoods(                                # result = CNResult
-        coords, cell_types, n_neighs=20, resolution=0.02, random_state=0
-    )
-    batch = np.repeat(["sampleA", "sampleB"], len(coords) // 2)     # batch = fake 2-sample split for demos
-
-    cn_pal = make_palette(_cn_key_order(result.labels))            # cn_pal = shared CN palette
-    ct_pal = make_palette(list(result.celltype_order))            # ct_pal = shared cell-type palette
-
-    fig, axes = plt.subplots(2, 2, figsize=(14, 11))              # fig/axes = 2x2 panel grid
-    plot_neighborhood_map(coords, result.labels, palette=cn_pal, ax=axes[0][0])
-    plot_enrichment_heatmap(result.enrichment, ax=axes[0][1])
-    plot_composition_bars(result.mean_composition, palette=ct_pal, ax=axes[1][0])
-    plot_neighborhood_abundance(result.labels, batch=batch, normalize=True,
-                                palette=cn_pal, ax=axes[1][1])
-    fig.suptitle("Cellular neighborhood analysis — synthetic tissue", fontsize=13)
-    fig.tight_layout(rect=(0, 0, 1, 0.98))
-    fig.savefig(outfile, dpi=130)                                  # write figure to disk
-    print(f"wrote {outfile}")
-
-
-if __name__ == "__main__":
-    _demo()

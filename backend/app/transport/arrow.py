@@ -46,6 +46,11 @@ def resolve_field(adata, field_path: str) -> pa.RecordBatch:
         return pa.record_batch({"value": pa.array(np.asarray(col))})
     if element == "obsm":
         arr = np.round(np.asarray(adata.obsm[key]).astype("float32"), _COORD_DECIMALS)
+        # A 1-D obsm entry is the single-component case `describe_fields` advertises as
+        # n_components 1, so the picker can ask for it; make it n rows of one column
+        # (np.atleast_2d would give the transposed 1 row of n columns).
+        if arr.ndim == 1:
+            arr = arr[:, np.newaxis]
         cols = {f"d{i}": pa.array(arr[:, i]) for i in range(arr.shape[1])}
         return pa.record_batch(cols)
     if element == "X":

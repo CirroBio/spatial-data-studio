@@ -211,12 +211,13 @@ export function useSSE(enabled = true): void {
         if (useAppStore.getState().blockingJob?.id === d.job_id) {
           useAppStore.getState().setBlockingJob(null);
         }
-        // Failed compute jobs vanish from history (DESIGN §6.1); surface the error so
-        // the user isn't left with a silently-closed form and no feedback — but only to
-        // the viewer of that session, so another user's failure doesn't toast here.
+        // Surface the error so the user isn't left with a silently-closed form and no
+        // feedback — but only to the viewer of that session, so another user's failure
+        // doesn't toast here.
         if (d.session_id !== activeSession()) return;
-        // Failed jobs stay in history (audit-log model); flip the row from the event
-        // so it doesn't linger as "running" behind a blocked refetch.
+        // Failed jobs stay in history as deletable rows (audit-log model, DESIGN §6.1),
+        // so flip the row from the event rather than waiting on a refetch that may be
+        // blocked behind the next job's write lock.
         setEntryStatus(d.job_id, 'failed');
         const prefix = d.source ? `[${d.source} @ ${d.timestamp}] ` : '';
         pushNotification({ kind: 'error', message: `${prefix}${d.error ?? 'unknown error'}` });

@@ -38,8 +38,7 @@ Four steps, each a function below:
 
 The core operates on plain arrays, depending on numpy / scipy / scikit-learn plus
 the app's shared Leiden partitioner (``custom/_leiden.py``, graspologic-native).
-``cellular_neighborhoods_adata`` is a thin AnnData wrapper. Run the demo below as
-``python -m app.registry.custom._vendor.cn_compute`` from ``backend/``.
+``cellular_neighborhoods_adata`` is a thin AnnData wrapper.
 
 NOTE: this is distinct from ``squidpy.gr.nhood_enrichment``, which is a
 permutation test for *pairwise* cell-type co-localization. CN analysis instead
@@ -533,62 +532,3 @@ def cellular_neighborhoods_adata(
         },
     }
     return adata if copy else res                        # copy -> return AnnData; else return CNResult
-
-
-# --------------------------------------------------------------------------- #
-# Synthetic dataset generator (shared by the demo and by cn_plot's demo)
-# --------------------------------------------------------------------------- #
-def make_synthetic_tissue(seed: int = 0, n_per_domain: int = 500):
-    """Generate a toy 3-domain tissue for testing/demos (no external deps).
-
-    BIOLOGICAL CONTEXT
-        Mimics a tissue with three spatial compartments — a tumor core, an immune
-        infiltrate, and a stromal region — each with a distinct but overlapping
-        cell-type mixture, so the recovered CNs have a known ground truth.
-
-    COMPUTATIONAL APPROACH
-        Sample three Gaussian blobs of (x, y) positions, drawing each cell's type
-        from a domain-specific multinomial. Returns coordinates, cell types, and
-        the true domain id per cell.
-
-    Returns
-    -------
-    coords       (n, 2) coordinates.
-    cell_types   (n,) cell-type calls.
-    true_domain  (n,) ground-truth domain id (0/1/2) for validation.
-    """
-    rng = np.random.default_rng(seed)                    # rng = seeded random generator
-    types = np.array(["Tumor", "CD8T", "Macrophage", "Bcell", "Stroma"])  # cell-type vocabulary
-
-    def blob(cx, cy, probs):                             # helper: one Gaussian domain
-        xy = rng.normal([cx, cy], 6.0, size=(n_per_domain, 2))  # xy = (n_per, 2) positions around (cx, cy)
-        ct = types[rng.choice(len(probs), size=n_per_domain, p=probs)]  # ct = cell types from multinomial
-        return xy, ct
-
-    xy1, c1 = blob(0, 0,   [0.70, 0.10, 0.10, 0.05, 0.05])  # domain 0: tumor core
-    xy2, c2 = blob(40, 0,  [0.10, 0.35, 0.30, 0.20, 0.05])  # domain 1: immune infiltrate
-    xy3, c3 = blob(20, 35, [0.05, 0.05, 0.10, 0.10, 0.70])  # domain 2: stroma
-    coords = np.vstack([xy1, xy2, xy3])                  # coords = stacked positions of all domains
-    cell_types = np.concatenate([c1, c2, c3])           # cell_types = stacked type calls
-    true_domain = np.repeat([0, 1, 2], n_per_domain)    # true_domain = ground-truth domain id per cell
-    return coords, cell_types, true_domain
-
-
-def _demo():
-    """Run the pipeline on synthetic tissue and print the summary tables."""
-    coords, cell_types, true_domain = make_synthetic_tissue()  # generate toy tissue with known truth
-    res = cellular_neighborhoods(                              # res = CNResult from the pipeline
-        coords, cell_types, n_neighs=20, resolution=0.02, random_state=0
-    )
-    print("Mean cell-type composition per neighborhood (proportions):")
-    print(res.mean_composition.round(2).to_string())
-    print("\nLog2 enrichment over tissue baseline (CN x cell type):")
-    print(res.enrichment.round(2).to_string())
-
-    from sklearn.metrics import adjusted_rand_score              # imported lazily; validation only
-    ari = adjusted_rand_score(true_domain, res.labels)          # ari = agreement of CNs with planted domains
-    print("\nARI of recovered CNs vs. planted spatial domains:", round(ari, 3))
-
-
-if __name__ == "__main__":
-    _demo()

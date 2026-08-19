@@ -308,7 +308,7 @@ def plot_gene_counts(
 
 
 # --------------------------------------------------------------------------- #
-# Summary + demo
+# Summary
 # --------------------------------------------------------------------------- #
 def plot_summary(result, *, alpha: float = 0.05, figsize: tuple = (15, 4)) -> Figure:
     """PCA + MA + volcano side by side for one cell type's DE result."""
@@ -319,34 +319,3 @@ def plot_summary(result, *, alpha: float = 0.05, figsize: tuple = (15, 4)) -> Fi
     fig.suptitle(f"Pseudobulk DE -- {result.cell_type}", y=1.03)
     fig.tight_layout()
     return fig
-
-
-def _demo(outfile: str = "pseudobulk_deseq2_demo.png"):
-    """Run the pipeline on synthetic data and render every view."""
-    from pb_compute import aggregate_pseudobulk, filter_genes, make_synthetic_pseudobulk, run_deseq2
-
-    counts, obs, _is_de, _true_lfc = make_synthetic_pseudobulk()
-    pb = aggregate_pseudobulk(counts.values, obs, sample_key="sample_id", condition_key="condition",
-                               batch_key="batch", genes=list(counts.columns))
-    pb = filter_genes(pb, min_count=10)
-    de = run_deseq2(pb, condition_key="condition", contrast=["condition", "treated", "control"],
-                    batch_key="batch", shrink=True, n_cpus=1)
-
-    fig = plot_summary(de)
-    fig.savefig(outfile, dpi=130, bbox_inches="tight")
-    print(f"wrote {outfile}")
-
-    fig2, ax = plt.subplots(figsize=(5.5, 4.5))
-    plot_dispersion(de, ax=ax)
-    fig2.savefig("pseudobulk_deseq2_dispersion_demo.png", dpi=130, bbox_inches="tight")
-    print("wrote pseudobulk_deseq2_dispersion_demo.png")
-
-    top_gene = de.results.sort_values("padj").index[0]
-    fig3, ax = plt.subplots(figsize=(4, 4.5))
-    plot_gene_counts(de, top_gene, ax=ax)
-    fig3.savefig("pseudobulk_deseq2_gene_demo.png", dpi=130, bbox_inches="tight")
-    print("wrote pseudobulk_deseq2_gene_demo.png")
-
-
-if __name__ == "__main__":
-    _demo()

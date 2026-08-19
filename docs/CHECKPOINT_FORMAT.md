@@ -377,6 +377,11 @@ duplicates the sparse matrix in gene-major (CSC) order so that fetching one
 gene's expression column is two contiguous byte-range reads instead of
 downloading the entire CSR `data`+`indices` arrays.
 
+The group is rewritten from scratch every time its table is written, and removed
+when that write leaves the table with a dense or absent `X` — so a mirror present
+in a checkpoint always mirrors that checkpoint's own `X`, and a reader may prefer
+it over `tables/<key>/X` without checking the two agree.
+
 Group attrs — schema file
 [`csc_table.schema.json`](../backend/app/schemas/checkpoint/csc_table.schema.json):
 ```jsonc

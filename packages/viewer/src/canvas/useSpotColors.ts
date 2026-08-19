@@ -76,11 +76,25 @@ export function useSpotColors(
 ): { colors: Uint8Array | null; colorLegend: ColorLegend | null } {
   // Build color array — respects isolated category by dimming non-matching points
   const colors = useMemo((): Uint8Array | null => {
-    if (!colorSource || !positions) return null;
+    if (!positions) return null;
     const n = positions.numRows;
     const result = new Uint8Array(n * 4);
     const alpha = Math.round(opacity * 255);
     const alphaAt = (i: number) => (hiddenCells?.has(i) ? 0 : alpha);
+
+    if (!colorSource) {
+      // `color_by: null` is a reachable display state — no categorical obs column to
+      // pick at session start, or a save that dropped X — and the figure renderer draws
+      // those cells grey. Both canvases gate the whole points layer on this buffer, so
+      // returning null for a missing coloring would blank a checkpoint that exports fine.
+      for (let i = 0; i < n; i++) {
+        result[i * 4] = 128;
+        result[i * 4 + 1] = 128;
+        result[i * 4 + 2] = 128;
+        result[i * 4 + 3] = alphaAt(i);
+      }
+      return result;
+    }
 
     if (colorSource.kind === 'categorical') {
       const { codes, categories } = colorSource;

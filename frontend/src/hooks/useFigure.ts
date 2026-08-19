@@ -30,7 +30,10 @@ export function useFigure(plotId: string | null, format: FigureFormat | null): F
     setState({ url: null, loading: true, error: null });
     source.getPlotFigure(plotId, format)
       .then((blob) => {
-        if (stale || !blob) {
+        // A superseded response must touch nothing: a slow figure resolving after the
+        // carousel has already stepped on would otherwise blank the newer plot's url.
+        if (stale) return;
+        if (!blob) {
           setState({ url: null, loading: false, error: null });
           return;
         }

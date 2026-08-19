@@ -49,6 +49,30 @@ def reader_namespace(source: dict) -> str:
     return ns
 
 
+def _path_strings(value, seen: set | None = None):
+    """Every non-empty string leaf reachable from `value`, walking dicts and lists.
+
+    A path param is not always a plain string: merscope's `vpt_outputs` is documented as
+    `Path | str | dict`, and spatialdata-io's `_get_file_paths` hands that dict's values
+    to the filesystem verbatim. Only the values are paths — the dict's keys are the
+    reader's own fixed field names. `seen` breaks a self-referential structure; params
+    that arrive as JSON cannot contain a cycle, but a descriptor built in-process (MCP,
+    a bundled recipe) is an ordinary Python object and could."""
+    if isinstance(value, str):
+        if value:
+            yield value
+        return
+    if not isinstance(value, (dict, list, tuple)):
+        return  # a number/bool/None can never reach the filesystem as a path
+    if seen is None:
+        seen = set()
+    if id(value) in seen:
+        return
+    seen.add(id(value))
+    for item in (value.values() if isinstance(value, dict) else value):
+        yield from _path_strings(item, seen)
+
+
 def validate_reader_params(params: dict) -> None:
     """Containment-check every path-valued reader param in `params`; raise RuntimeError
     on the first that escapes DATA_DIR.
@@ -60,16 +84,27 @@ def validate_reader_params(params: dict) -> None:
     creation would leave every job/recipe/MCP route able to read an arbitrary store.
 
     `Path(base) / value` silently DISCARDS `base` when `value` is itself absolute — so a
-    relative filename param is re-joined against the descriptor's own primary path and
-    the join is what gets checked, catching both that discard and a `../..` traversal."""
-    for name, value in params.items():
-        if name in ABSOLUTE_PATH_PARAMS and isinstance(value, str) and value:
-            resolve_within_data_dir(value)
+    relative filename param given as a string is re-joined against the descriptor's own
+    primary path and the join is what gets checked, catching both that discard and a
+    `../..` traversal.
+
+    A param supplied as a dict or list is checked leaf by leaf against the data root
+    directly, with no join: the only reader that takes one (merscope's `vpt_outputs`)
+    uses those values as complete paths rather than resolving them against `path`, so
+    joining would check a location the reader never opens."""
     base_path = params.get("path")
-    if isinstance(base_path, str) and base_path:
-        for name, value in params.items():
-            if name in RELATIVE_FILE_PARAMS and isinstance(value, str) and value:
-                resolve_within_data_dir(str(Path(base_path) / value))
+    joinable = isinstance(base_path, str) and base_path
+    for name, value in params.items():
+        if name in ABSOLUTE_PATH_PARAMS:
+            for leaf in _path_strings(value):
+                resolve_within_data_dir(leaf)
+        elif name in RELATIVE_FILE_PARAMS:
+            if isinstance(value, str):
+                if value and joinable:
+                    resolve_within_data_dir(str(Path(base_path) / value))
+            else:
+                for leaf in _path_strings(value):
+                    resolve_within_data_dir(leaf)
 
 
 def primary_path_param(names) -> str | None:

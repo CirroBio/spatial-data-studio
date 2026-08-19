@@ -113,7 +113,7 @@ def plot_lisi_embedding(
 
 
 # --------------------------------------------------------------------------- #
-# Summary + demo
+# Summary
 # --------------------------------------------------------------------------- #
 def plot_summary(result, embedding: Optional[np.ndarray] = None,
                  *, figsize: tuple = (12, 5)) -> Figure:
@@ -127,19 +127,3 @@ def plot_summary(result, embedding: Optional[np.ndarray] = None,
         plot_lisi_embedding(result, embedding, metric=first_metric, ax=axes[1])
     fig.tight_layout()
     return fig
-
-
-def _demo(outfile: str = "lisi_demo.png"):
-    """Compute LISI on the well-mixed synthetic embedding and render both views."""
-    from lisi_compute import lisi_scores, make_synthetic_integration  # compute-side imports
-
-    emb_mixed, _, batch, cell_type = make_synthetic_integration()      # well-mixed embedding
-    res = lisi_scores(emb_mixed, batch=batch, label=cell_type, perplexity=30)
-    fig = plot_summary(res, embedding=emb_mixed)          # fig = combined figure
-    fig.suptitle("LISI — well-mixed synthetic integration", y=1.02)
-    fig.savefig(outfile, dpi=130, bbox_inches="tight")    # write to disk
-    print(f"wrote {outfile}")
-
-
-if __name__ == "__main__":
-    _demo()

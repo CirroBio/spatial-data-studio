@@ -407,8 +407,9 @@ def trim_table(adata, keep: set[str]):
     a valid SpatialData table; the difference is that a reader can see the matrix is
     absent (`arrow.describe_fields`'s `has_x`, and the checkpoint viewer's equivalent
     test for a `tables/<key>/X` node) and stop offering gene expression, where zeros
-    would have read as real measurements. `_write_csc_mirror` skips a `None` X for the
-    same reason, so the gene-major mirror doesn't smuggle the matrix back in.
+    would have read as real measurements. `_write_csc_mirror` writes no mirror for a
+    `None` X, and drops any mirror an earlier save left, so the gene-major copy doesn't
+    smuggle the matrix back in.
     """
     import anndata as ad
     entries = {m: {k: v for k, v in (getattr(adata, m, None) or {}).items()
@@ -833,7 +834,7 @@ def _write_viewer_sidecar(zarr_dir: str, sdata, tables: set[str] | None = None,
     group.attrs.update(sidecar)
     _write_figures(zarr_dir, group, figures or {})
     for key in table_keys if tables is None else (tables & set(table_keys)):
-        _write_csc_mirror(group, key, sdata.tables[key])
+        _write_csc_mirror(group, zarr_dir, key, sdata.tables[key])
     for element in sidecar["shapes"]:
         _write_shape_cell_index(group, zarr_dir, element, sdata, table_keys)
 
@@ -905,14 +906,25 @@ def _write_figures(zarr_dir: str, viewer_group, figures: dict[str, dict[str, byt
             arr[:] = data
 
 
-def _write_csc_mirror(group, key: str, adata) -> None:
+def _write_csc_mirror(group, zarr_dir: str, key: str, adata) -> None:
     """Column-major (CSC) copy of `adata.X` under `viewer/tables/<key>/X_csc`, so one
     gene's column is a contiguous `data[indptr[g]:indptr[g+1]]` slice covered by one
     or two `_CSC_CHUNK` chunks. Written only for a sparse `X`: a dense one is already
     column-sliceable by the chunk grid AnnData wrote. Cell order matches `obs`, gene
-    order matches `var/_index`, so neither is duplicated here."""
+    order matches `var/_index`, so neither is duplicated here.
+
+    Any mirror already in the store is removed first, like `_write_figures` rebuilds
+    its subtree: the mirror's presence is the reader's signal that it holds this
+    table's current `X`, and nothing else deletes it. `update_checkpoint` clears
+    `tables/<key>`, a different path, so a compute that densified `X` (`sc.pp.scale`,
+    `sc.pp.regress_out`) or a save that dropped it (`trim_table`) would otherwise
+    leave the pre-compute values behind — and the serverless viewer prefers the
+    mirror whenever it exists, so it would color by them with nothing to show for it."""
     import scipy.sparse as sp
 
+    mirror_dir = os.path.join(zarr_dir, VIEWER_GROUP, "tables", key, "X_csc")
+    if os.path.isdir(mirror_dir):
+        shutil.rmtree(mirror_dir)
     x = getattr(adata, "X", None)
     if x is None or not sp.issparse(x):
         return

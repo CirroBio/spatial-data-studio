@@ -194,11 +194,11 @@ def plot_distance_distributions(
 
 
 # --------------------------------------------------------------------------- #
-# Summary + demo
+# Summary
 # --------------------------------------------------------------------------- #
 def plot_summary(result, coords, labels, target_labels, *, figsize=(16, 4.5)) -> Figure:
     """Region QC + infiltration profile + distance distributions in one figure."""
-    from boundary_compute import infiltration_profile     # compute the profile for the middle panel
+    from .boundary_compute import infiltration_profile    # compute the profile for the middle panel
     fig, axes = plt.subplots(1, 3, figsize=figsize)       # fig/axes = three-panel row
     plot_region_mask(result, coords, labels, ax=axes[0])  # left: derived region
     prof = infiltration_profile(result.signed_distance, labels, target_labels, bins=16)
@@ -206,21 +206,3 @@ def plot_summary(result, coords, labels, target_labels, *, figsize=(16, 4.5)) ->
     plot_distance_distributions(result, labels, target_labels, ax=axes[2])  # right: distributions
     fig.tight_layout()
     return fig
-
-
-def _demo(outfile: str = "boundary_demo.png"):
-    """Derive the region on synthetic tissue and render all three views."""
-    from boundary_compute import region_boundary, make_synthetic_infiltration
-
-    coords, labels = make_synthetic_infiltration()        # synthetic tissue (infiltrated + excluded)
-    res = region_boundary(coords, labels, ["Tumor"], method="mask",
-                          min_area=20.0, threshold=0.25)
-    fig = plot_summary(res, coords, labels, ["T_infil", "T_excl"])  # combined figure
-    fig.suptitle("Infiltration analysis — synthetic tumor (T_infil infiltrates, T_excl excluded)",
-                 y=1.03)
-    fig.savefig(outfile, dpi=130, bbox_inches="tight")    # write to disk
-    print(f"wrote {outfile}")
-
-
-if __name__ == "__main__":
-    _demo()

@@ -1,5 +1,10 @@
-"""Invariant checks (R3, R6/R7, R8-R10, R13). pytest; checks whose seam can't be
+"""Invariant checks (R3, R8-R10, R13). pytest; checks whose seam can't be
 satisfied in the current environment skip visibly rather than passing falsely.
+
+R6/R7 (append-only compute history) has no check here: its seam is a live run
+harness (`config.SYNTH_FIXTURE`, still None), and the placeholder that used to
+stand in for it was permanently skipped with an empty body, so wiring the seam
+would not have turned it on. RULES.md records it as unenforced instead.
 """
 import ast
 import importlib
@@ -86,8 +91,3 @@ def test_r10_state_changing_ops_are_queued_under_write_lock():
     # The mutation queue is what serializes those commits.
     assert any(isinstance(n, ast.Attribute) and n.attr == "_queue"
                for n in ast.walk(session_cls)), "Session no longer owns a mutation queue"
-
-
-@pytest.mark.skipif(True, reason="R6/R7 (append-only history; no COMPLETED->QUEUED) needs a live run harness — wire SYNTH_FIXTURE")
-def test_r6_r7_compute_append_only():
-    pass
