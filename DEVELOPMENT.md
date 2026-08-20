@@ -1,7 +1,8 @@
 # Developing Spatial Data Studio
 
-The developer's entry point. [`README.md`](README.md) introduces the app for
-users; this file is the source of truth for **how the code is organized, how to
+The developer's entry point. [`README.md`](README.md) orients newcomers and
+[`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) documents the app for users; this file is
+the source of truth for **how the code is organized, how to
 run it locally, how to test it, and where to make a change**. For the deep design
 rationale see [`DESIGN.md`](DESIGN.md); for the wire protocol see
 [`docs/CONTRACT.md`](docs/CONTRACT.md); to add an analysis without touching the
@@ -145,7 +146,8 @@ nextflow/   The workflow (one entrypoint), wrapping backend/cli.py; uv installs 
   tests/            check_catalog.py (catalog <-> schema <-> params <-> recipes) and the
                     discovery harness it drives
 docker/     single-image build (multi-stage), nginx edge, supervisor
-docs/       CONTRACT.md (REST/SSE/Arrow API), images/ (README screenshots)
+docs/       USER_GUIDE.md (the user-facing docs), CONTRACT.md (REST/SSE/Arrow API),
+            images/ (doc screenshots)
 docs-site/  VitePress documentation site published to GitHub Pages. Renders the repo's own
             markdown in place (srcDir is the repo root); demo/ holds the only new pages, and
             viewer-data/ the committed demo checkpoints they embed

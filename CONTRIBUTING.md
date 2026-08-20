@@ -494,9 +494,10 @@ Then confirm:
       `registry/library_meta.yaml`.)
 - [ ] **Docs stay accurate.** Per the project rules (`CLAUDE.md`), if your change
       alters a user-facing feature, endpoint, run command, env var, or the
-      directory layout, update `README.md` **in the same commit**. Adding a recipe
-      or a custom function that shows up in the picker/gallery generally means a
-      mention in `README.md`. Keep this `CONTRIBUTING.md` accurate too if you
+      directory layout, update `docs/USER_GUIDE.md` (or `README.md`, if it is the run
+      command that moved) **in the same commit**. Adding a recipe or a custom function
+      that shows up in the picker/gallery generally means a mention in
+      `docs/USER_GUIDE.md`. Keep this `CONTRIBUTING.md` accurate too if you
       change the contribution flow.
 - [ ] **You reused, not duplicated.** Before adding a new helper, param widget, or
       obs-column picker, check whether one already exists and adapt it (e.g. the

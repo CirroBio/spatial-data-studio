@@ -6,25 +6,29 @@ Documentation is split by audience, and **every change keeps the relevant file
 accurate in the same commit** — a PR/commit that changes behavior but leaves a doc
 stale is incomplete.
 
-- `README.md` is the source of truth for the **user-facing** app: what it does and
-  how a user runs it (the Docker quickstart). A change that adds, removes, or alters
-  a user-facing capability, a user-facing panel/flow, or the run command updates
-  `README.md`. If a UI change materially alters a panel shown in a README screenshot
-  (`docs/images/*`), refresh that screenshot too.
+- `README.md` is a **short orientation only**: the pitch, how a user runs the app (the
+  Docker quickstart), and links into the rest of the documentation. A change to the run
+  command updates it; a feature change does not belong here. Keep it brief — do not grow
+  it back into a feature manual.
+- `docs/USER_GUIDE.md` is the source of truth for the **user-facing** app: what it does,
+  panel by panel and flow by flow. A change that adds, removes, or alters a user-facing
+  capability or a user-facing panel/flow updates the user guide. If a UI change
+  materially alters a panel shown in one of its screenshots (`docs/images/*`), refresh
+  that screenshot too.
 - `DEVELOPMENT.md` is the source of truth for the **developer-facing** detail:
   architecture, repo layout / where-to-change-what, the local dev environment, and the
   test suite / offline CLI. A change to any of those updates `DEVELOPMENT.md` (and
   `DESIGN.md` / `docs/CONTRACT.md` where the design or API contract also moves) in
   the same commit.
 
-When in doubt, skim both before committing and fix anything they now misstate. Do
-not fold developer detail back into `README.md`, and do not leave user-facing feature
+When in doubt, skim all three before committing and fix anything they now misstate. Do
+not fold developer detail into `docs/USER_GUIDE.md`, and do not leave user-facing feature
 changes out of it.
 
 The documentation site (`docs-site/`) publishes the files above **unmodified** — it
 points VitePress at the repo root, so the markdown in the repo *is* the site. Never
-copy or paraphrase `README.md`, `DEVELOPMENT.md`, `DESIGN.md` or any component README
-into `docs-site/`; pages there may only add site-specific material (navigation, the
+copy or paraphrase `README.md`, `docs/USER_GUIDE.md`, `DEVELOPMENT.md`, `DESIGN.md` or
+any component README into `docs-site/`; pages there may only add site-specific material (navigation, the
 live-viewer demos). Adding, renaming or moving a published `.md` updates the sidebar in
 `docs-site/.vitepress/config.mts` in the same commit — the build's dead-link check fails
 otherwise. `<ViewerEmbed>` may appear only in pages under `docs-site/`, never in

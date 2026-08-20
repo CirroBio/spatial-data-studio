@@ -2,7 +2,7 @@ import { defineConfig } from 'vitepress';
 
 // The site publishes the repo's own markdown, unmodified, by pointing `srcDir` at the
 // repo root: the file tree *is* the route tree, so the relative links the docs already
-// use between each other (README -> DEVELOPMENT -> DESIGN -> docs/CONTRACT ->
+// use between each other (README -> USER_GUIDE -> DEVELOPMENT -> DESIGN -> docs/CONTRACT ->
 // backend/README) keep working and are dead-link-checked on every build. Nothing here
 // may fork or paraphrase those files — see the docs-site rule in CLAUDE.md. Pages under
 // docs-site/ are the only new prose, and the only place <ViewerEmbed> may appear.
@@ -54,17 +54,20 @@ export default defineConfig({
     outline: [2, 3],
     nav: [
       { text: 'Use', link: '/' },
+      { text: 'Guide', link: '/docs/USER_GUIDE' },
       { text: 'Demos', link: '/demo/' },
       { text: 'Develop', link: '/DEVELOPMENT' },
       { text: 'Reference', link: '/DESIGN' },
     ],
-    // Mirrors the audience split CLAUDE.md draws: README is the user-facing source of
-    // truth, DEVELOPMENT the developer-facing one, and the rest is reference.
+    // Mirrors the audience split CLAUDE.md draws: README orients and routes,
+    // docs/USER_GUIDE is the user-facing source of truth, DEVELOPMENT the
+    // developer-facing one, and the rest is reference.
     sidebar: [
       {
         text: 'Use',
         items: [
           { text: 'Overview', link: '/' },
+          { text: 'User guide', link: '/docs/USER_GUIDE' },
           {
             text: 'Live demos',
             link: '/demo/',

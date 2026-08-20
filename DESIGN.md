@@ -9,7 +9,8 @@ now incorporates everything added since: the Parameter Term Dictionary, region
 annotation and comparison, recipes with staged (PENDING) execution, the expanded
 scanpy / spatialdata-io catalog, snapshots, Cirro
 upload, and the governance layer. `README.md` remains the source of truth for how to
-run the app and the exact current feature set; `docs/CONTRACT.md` is the API contract.
+run the app and `docs/USER_GUIDE.md` for the exact current feature set;
+`docs/CONTRACT.md` is the API contract.
 Where a subsystem was built differently from the original plan, this document
 describes what exists, not the plan.
 
