@@ -7,7 +7,8 @@ share an `id`, so one section per topic ends up holding every dataset in the run
 
 Nothing here is specific to a data type. Which summary file to read and which of its
 columns to surface arrive as `--run-metrics`, straight out of the catalog entry (see
-data_types.schema.json); everything else is derived from the checkpoint itself.
+data_types.schema.json), and `--images-unplaced` is a count discovery took from the same
+entry's `companion_files`; everything else is derived from the checkpoint itself.
 
 The checkpoint is read through `zarr`'s ZipStore rather than
 `persistence.store.load_spatialdata`: only `obs`, `var` and the app state in the root
@@ -48,6 +49,9 @@ def _parse_args():
     p.add_argument("--source-dir", help="the data folder that was analysed (status=ok)")
     p.add_argument("--run-metrics", default=None,
                    help="the catalog's run_metrics block for this data type, as JSON")
+    p.add_argument("--images-unplaced", type=int, default=0,
+                   help="images whose alignment companion was missing from the data folder "
+                        "(counted by discovery, see modules/discovery.nf)")
     p.add_argument("--cluster-key", default=None, help="obs column holding cluster labels")
     p.add_argument("--neighborhood-key", default=None, help="obs column holding niche labels")
     p.add_argument("--outdir", default=".", help="where the *_mqc.json files are written")
@@ -105,7 +109,11 @@ def main() -> int:
     outdir = Path(args.outdir)
     sample = args.sample
 
-    status = {"data_type": args.data_type, "status": args.status}
+    # Deliberately its own column rather than folded into `status`: the analysis really
+    # did complete, and demoting the row to `partial` would make a misplaced background
+    # image indistinguishable from a clustering step that failed.
+    status = {"data_type": args.data_type, "status": args.status,
+              "images_unplaced": args.images_unplaced}
     analysis: dict = {}
 
     if args.status == "ok":
@@ -188,7 +196,12 @@ def main() -> int:
                        "at all; a partial row was analysed and published with some recipe "
                        "steps failing. Either way its log is published next to where its "
                        "checkpoint went (or would have gone), and a partial checkpoint "
-                       "carries each failed step and its log in its own history.",
+                       "carries each failed step and its log in its own history. "
+                       "images_unplaced counts background images the data folder shipped "
+                       "without the alignment file that says where they go: the analysis "
+                       "is unaffected, but those images are drawn in the wrong place and "
+                       "cells will not line up with them. The dataset's log names each "
+                       "one and the file that is missing.",
         "plot_type": "table",
         "pconfig": {"id": "dataset_status_table", "title": "Datasets"},
         "data": {sample: {**status, **{k: analysis[k] for k in ("cells", "n_clusters")
@@ -196,7 +209,8 @@ def main() -> int:
     })
 
     print(f"[ok] {sample} ({args.data_type}): {status['status']}"
-          + (f", {analysis['cells']} cells" if "cells" in analysis else ""))
+          + (f", {analysis['cells']} cells" if "cells" in analysis else "")
+          + (f", {args.images_unplaced} unplaced image(s)" if args.images_unplaced else ""))
     return 0
 
 

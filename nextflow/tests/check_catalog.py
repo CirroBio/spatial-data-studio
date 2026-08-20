@@ -16,8 +16,11 @@ So this asserts, without running any analysis:
   * every data type's display default colours by a common parameter that applies to it;
   * every common parameter is a param in nextflow.config with the same default, and is
     described in nextflow_schema.json with its applicable types spelled out;
+  * every `companion_files` rule is exercised by the fixture, so a rule whose suffix
+    matches nothing real cannot sit in the catalog looking like a check;
   * discovery classifies a synthetic tree of every catalogued type correctly, including
-    the case where one type's folder also matches another's patterns.
+    the case where one type's folder also matches another's patterns, and reports exactly
+    the companion files the fixture leaves missing.
 
 Run from the repo root:  python nextflow/tests/check_catalog.py
 """
@@ -162,6 +165,12 @@ def check_params_exposed(catalog: dict) -> None:
 # a trailing '/' makes a directory.
 FIXTURE = {
     "a/xen1": ["experiment.xenium", "cell_feature_matrix.h5"],
+    # An added-image pair that is complete (H&E) beside one that is not (IF), which is
+    # exactly how the 10x pancreas bundle arrived: the reader places the first and
+    # silently leaves the second at identity.
+    "aligned/xen2": ["experiment.xenium", "cell_feature_matrix.h5",
+                     "S_he_image.ome.tif", "S_he_imagealignment.csv",
+                     "S_if_image.ome.tif"],
     "a/b/vis1": ["spatial/scalefactors_json.json", "spatial/tissue_positions.csv",
                  "filtered_feature_bc_matrix.h5"],
     "hd1": ["binned_outputs/square_008um/spatial/scalefactors_json.json",
@@ -176,10 +185,33 @@ FIXTURE = {
     "junk": ["notes.txt", "readme/"],
 }
 EXPECTED = {
-    "a/xen1": "xenium", "a/b/vis1": "visium", "hd1": "visium_hd",
+    "a/xen1": "xenium", "aligned/xen2": "xenium", "a/b/vis1": "visium", "hd1": "visium_hd",
     "deep/x/y/mer1": "merscope", "cos1": "cosmx", "cur1": "curio",
     "st1": "steinbock", "mc1": "mcmicro",
 }
+# The `companion_files` pairs FIXTURE leaves unsatisfied, as (folder, file, companion).
+# `S_he_image.ome.tif` is deliberately absent: its companion is there, so a satisfied
+# pair must report nothing.
+EXPECTED_COMPANIONS = {
+    ("aligned/xen2", "S_if_image.ome.tif", "S_if_imagealignment.csv"),
+}
+
+
+def check_companions(catalog: dict) -> None:
+    """Every `companion_files` rule must match a file the fixture actually lays down.
+    The rules are suffix comparisons against real vendor file names, so a typo in one
+    silently never fires — the catalog would still validate and the run would still
+    report zero unplaced images."""
+    rules = 0
+    for data_type in catalog["data_types"]:
+        folders = [f for f, tid in EXPECTED.items() if tid == data_type["id"]]
+        names = {name for f in folders for name in FIXTURE[f]}
+        for rule in data_type.get("companion_files", []):
+            rules += 1
+            check(any(name.endswith(rule["suffix"]) for name in names),
+                  f"{data_type['id']}: companion_files suffix {rule['suffix']!r} matches no "
+                  f"file in the discovery fixture; add one to FIXTURE in {Path(__file__).name}")
+    print(f"[ok] all {rules} companion_files rule(s) are exercised by the fixture")
 
 
 def check_discovery(catalog: dict) -> None:
@@ -207,14 +239,21 @@ def check_discovery(catalog: dict) -> None:
         if proc.returncode != 0:
             failures.append(f"discovery_test.nf failed:\n{proc.stdout}\n{proc.stderr}")
             return
-        found = dict(
-            line.split("\t") for line in proc.stdout.splitlines() if "\t" in line)
+        rows = [line.split("\t") for line in proc.stdout.splitlines() if "\t" in line]
+        found = dict(row for row in rows if row[0] != "companion")
+        companions = {tuple(row[1:]) for row in rows if row[0] == "companion"}
 
     check(found == EXPECTED,
           f"discovery mismatch:\n  expected {EXPECTED}\n  got      {found}")
     if found == EXPECTED:
         print(f"[ok] discovery classified all {len(EXPECTED)} synthetic datasets, "
               f"and ignored the folder that is not one")
+    check(companions == EXPECTED_COMPANIONS,
+          f"missing-companion mismatch:\n  expected {sorted(EXPECTED_COMPANIONS)}\n"
+          f"  got      {sorted(companions)}")
+    if companions == EXPECTED_COMPANIONS:
+        print(f"[ok] discovery reported the {len(EXPECTED_COMPANIONS)} unsatisfied companion "
+              f"pair(s), and nothing for the satisfied one")
 
 
 def main() -> int:
@@ -224,6 +263,7 @@ def main() -> int:
     check_applies_to(catalog)
     check_display(catalog)
     check_params_exposed(catalog)
+    check_companions(catalog)
     check_discovery(catalog)
 
     if failures:

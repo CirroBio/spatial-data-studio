@@ -102,3 +102,28 @@ def collectFrom(dir, String at, List types, boolean recurse, Map listings) {
 def discoverCandidates(root, String prefix, List types, boolean recurse) {
     return collectFrom(root, prefix, types, recurse, [:])
 }
+
+/** The `companion_files` pairs `dir` leaves unsatisfied, as `[file, companion, means]`
+ * maps — a file whose declared companion is not beside it.
+ *
+ * A reader that meets one of these reads the file anyway and quietly drops what the
+ * companion carried (see the rule's `missing_means`), so nothing downstream can tell the
+ * result from a complete one. Checking here is the only place that still can: the folder
+ * is in hand, and the answer is a name comparison rather than a guess about the store the
+ * reader went on to build.
+ *
+ * Suffix matching, not globbing, because that is what the reader does — spatialdata-io
+ * derives a Xenium aligned image's alignment file by substituting one suffix for the
+ * other on the same name — so the catalog cannot disagree with it about which two files
+ * are a pair. One directory listing per candidate, uncached: this runs once per dataset,
+ * not once per pattern.
+ */
+def missingCompanions(dir, List companions) {
+    def names = childNames(dir)
+    return companions.collectMany { rule ->
+        return names.findAll { name -> name.endsWith(rule.suffix) }.sort().collect { name ->
+            def stem = name.substring(0, name.length() - rule.suffix.length())
+            return [file: name, companion: stem + rule.companion_suffix, means: rule.missing_means]
+        }.findAll { pair -> !names.contains(pair.companion) }
+    }
+}

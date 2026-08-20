@@ -14,7 +14,7 @@ nextflow.enable.dsl = 2
 //
 // Dependencies are installed at runtime with uv, so there is no image to build.
 
-include { discoverCandidates } from './modules/discovery.nf'
+include { discoverCandidates ; missingCompanions } from './modules/discovery.nf'
 
 /** `value` as the body of a single-quoted shell word.
  *
@@ -64,6 +64,19 @@ process ANALYSE {
         ? "--display-color-by '${shellQuote(spec.display_color_by)}'" : ''
     def render_mode_arg = spec.display_render_mode
         ? "--display-render-mode '${shellQuote(spec.display_render_mode)}'" : ''
+    // A companion the reader wanted and did not find goes at the TOP of this dataset's own
+    // log, above the load that is about to do without it — the load itself says nothing,
+    // so a reader who scrolls to the end of a clean log would conclude all was well. The
+    // same count reaches the report below, since a run of hundreds of datasets is read by
+    // its table, not by opening every log.
+    def unplaced_lines = spec.unplaced.collect { pair ->
+        "WARN: ${pair.file} has no ${pair.companion} beside it; without it ${pair.means}."
+    }
+    def unplaced_log = unplaced_lines
+        ? "printf '%s\\n' " + (unplaced_lines + ['Add the missing file(s) to the data folder and re-run to place these images.', ''])
+            .collect { line -> "'${shellQuote(line)}'" }.join(' ') +
+          " > '${shellQuote(spec.out_dir)}/results.log'"
+        : ": > '${shellQuote(spec.out_dir)}/results.log'"
     // Two statements rather than an `&&` chain: `set -e` does not abort on the left
     // operand of `&&`, so a chain would let a failed install fall through to a
     // confusing ImportError several minutes later instead of stopping here.
@@ -76,6 +89,7 @@ process ANALYSE {
     ${os_setup}
 
     mkdir -p '${shellQuote(spec.out_dir)}'
+    ${unplaced_log}
 
     # Keep the session's working set (unpacked stores, raster tiles) on the work
     # filesystem rather than the container's /tmp, and let admission control see the
@@ -110,7 +124,7 @@ process ANALYSE {
         --session-name '${shellQuote(prefix)}' \\
         ${reader_params_arg} \\
         ${color_by_arg} \\
-        ${render_mode_arg} 2>&1 | tee '${shellQuote(spec.out_dir)}/results.log'
+        ${render_mode_arg} 2>&1 | tee -a '${shellQuote(spec.out_dir)}/results.log'
     rc=\${PIPESTATUS[0]}
     set -e
 
@@ -124,6 +138,7 @@ process ANALYSE {
             --checkpoint '${shellQuote(spec.out_dir)}'/results-*.sdata.zarr.zip \\
             --source-dir '${shellQuote(data_dir)}' \\
             --run-metrics '${shellQuote(spec.run_metrics_json)}' \\
+            --images-unplaced ${spec.unplaced.size()} \\
             --cluster-key '${shellQuote(params.cluster_key)}' \\
             --neighborhood-key '${shellQuote(params.neighborhood_key)}'
     else
@@ -131,6 +146,7 @@ process ANALYSE {
         .venv/bin/python '${shellQuote(metrics_script)}' \\
             --sample '${shellQuote(prefix)}' \\
             --data-type '${shellQuote(spec.id)}' \\
+            --images-unplaced ${spec.unplaced.size()} \\
             --status failed
     fi
     """
@@ -294,9 +310,26 @@ workflow {
             recipe_params_json : groovy.json.JsonOutput.toJson(recipeParamsFor(catalog, typeId)),
             reader_params_json : type.reader_params
                 ? groovy.json.JsonOutput.toJson(type.reader_params) : null,
+            // Files the reader will read without what it needs to interpret them (an
+            // aligned image with no alignment matrix). Resolved here, where the folder
+            // is still in hand — the store the reader goes on to build carries no trace
+            // of the difference.
+            unplaced           : type.companion_files
+                ? missingCompanions(dir, type.companion_files) : [],
             run_metrics_json   : groovy.json.JsonOutput.toJson(type.run_metrics ?: [:]),
         ], dir)
     }
+
+    // Said once, up front, on the run's own console: each dataset's log carries the detail
+    // but nobody opens hundreds of them, and this is the one defect here that leaves a
+    // published result looking entirely healthy.
+    def unplaced = work.findAll { entry -> entry[1].unplaced }
+    if( unplaced )
+        log.warn "${unplaced.sum { entry -> entry[1].unplaced.size() }} image(s) in " +
+                 "${unplaced.size()} dataset(s) have no alignment file beside them and will " +
+                 "be placed at identity, so cells will not line up with them: " +
+                 "${unplaced.collect { entry -> entry[0] }.sort().join(', ')}. Each dataset's " +
+                 "results.log names the file that is missing."
 
     // A built SPA is the one input this workflow does not produce: the repo builds it
     // once (`npm ci && npm run build`) for the docs site and the Docker image alike, and

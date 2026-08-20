@@ -136,10 +136,12 @@ nextflow/   The workflow (one entrypoint), wrapping backend/cli.py; uv installs 
   main.nf           discover datasets under an input -> per-type recipes -> mirrored
                     checkpoints + MultiQC report + a serverless viewer
   data_types.json   the catalog: recognition patterns, readers, recipes, which knob
-                    applies to which type, and how each type's checkpoint opens in the
-                    viewer (schema: data_types.schema.json). All data-type-specific
-                    knowledge lives here, none of it in the workflow
-  modules/          discovery: generic, catalog-driven tree walk and classification
+                    applies to which type, which optional files a reader only reads
+                    correctly in pairs (companion_files), and how each type's checkpoint
+                    opens in the viewer (schema: data_types.schema.json). All
+                    data-type-specific knowledge lives here, none of it in the workflow
+  modules/          discovery: generic, catalog-driven tree walk, classification, and the
+                    companion_files check
   tests/            check_catalog.py (catalog <-> schema <-> params <-> recipes) and the
                     discovery harness it drives
 docker/     single-image build (multi-stage), nginx edge, supervisor
@@ -777,8 +779,11 @@ collection as well as embeddable per page. Pull requests build but do not publis
   `data_types.json` against its schema, checks every recipe it names exists, verifies each
   common parameter's `applies_to` really is the set of types whose recipes declare it,
   checks each type's display default colours by a parameter that applies to it,
-  checks the params agree across `nextflow.config` and `nextflow_schema.json`, and runs
-  discovery over a synthetic tree of every catalogued type.
+  checks the params agree across `nextflow.config` and `nextflow_schema.json`, checks every
+  `companion_files` rule matches a file the fixture lays down (a rule whose suffix has a
+  typo never fires and reports nothing, which reads as "no problem found"), and runs
+  discovery over a synthetic tree of every catalogued type, asserting both the
+  classifications and the companion files the fixture leaves missing.
 - `python nextflow/tests/check_containers.py` — asserts every `*_container` image named
   in `nextflow.config` provides `ps`. Nextflow runs `nxf_trace` inside the container
   under `-with-trace`/`-with-report` and **exits 1** when `ps` is absent, so an image

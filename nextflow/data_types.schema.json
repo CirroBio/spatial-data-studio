@@ -72,6 +72,12 @@
           "description": "Extra kwargs merged into the reader call (cli.py --reader-params)."
         },
         "detect": { "$ref": "#/definitions/detect" },
+        "companion_files": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/companionFile" },
+          "description": "Optional files this format's reader only reads correctly in pairs. Absence of the companion is reported, never fatal."
+        },
         "run_metrics": { "$ref": "#/definitions/runMetrics" },
         "recipes": {
           "type": "array",
@@ -99,6 +105,29 @@
         "render_mode": {
           "enum": ["points", "points+shapes"],
           "description": "points+shapes replaces the markers with cell-boundary polygons once zoomed in far enough, falling back to markers for a type whose shapes are not polygonal (Visium spots) or that carries none."
+        }
+      }
+    },
+    "companionFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["suffix", "companion_suffix", "missing_means"],
+      "description": "One file in the data folder that the reader only interprets fully when a second, name-derived file sits beside it. Matched by suffix rather than glob because that is how the reader itself finds the pair, so the two cannot disagree about which files are companions.",
+      "properties": {
+        "suffix": {
+          "type": "string",
+          "minLength": 1,
+          "description": "File name suffix identifying the file that needs a companion, e.g. _if_image.ome.tif."
+        },
+        "companion_suffix": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The companion's suffix, substituted for `suffix` on the same file name, e.g. _if_imagealignment.csv."
+        },
+        "missing_means": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What the reader silently does instead when the companion is absent. Quoted verbatim into the dataset's log, so write it for whoever has to decide whether to re-upload."
         }
       }
     },

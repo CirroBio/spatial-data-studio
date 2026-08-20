@@ -179,6 +179,18 @@
           ]
         ]
       },
+      "companion_files": [
+        {
+          "suffix": "_he_image.ome.tif",
+          "companion_suffix": "_he_imagealignment.csv",
+          "missing_means": "the H&E image is placed at identity — one image pixel per morphology pixel, no rotation, no offset — and cells will not line up with it"
+        },
+        {
+          "suffix": "_if_image.ome.tif",
+          "companion_suffix": "_if_imagealignment.csv",
+          "missing_means": "the IF image is placed at identity — one image pixel per morphology pixel, no rotation, no offset — and cells will not line up with it"
+        }
+      ],
       "run_metrics": {
         "file": "metrics_summary.csv",
         "format": "csv_first_row",

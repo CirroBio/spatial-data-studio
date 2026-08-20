@@ -72,6 +72,23 @@ a Visium HD run does not also register as the Visium-shaped matrix it contains.
 
 With `--recurse false` each input root is expected to be a dataset itself.
 
+### Files that only work in pairs
+
+Some optional files are only interpretable alongside a second one, and the readers do
+not insist: they read the first and quietly do without what the second carried. A 10x
+Xenium bundle's added H&E or IF image is the case that matters here — where it sits on
+the section is in a `*alignment.csv` beside it, and `spatialdata_io` places an image whose
+alignment file is absent at **identity**: one image pixel per morphology pixel, no
+rotation, no offset. The dataset then analyses and publishes cleanly, and the cells simply
+do not line up with that image in the viewer.
+
+The catalog declares these pairs per type (`companion_files`), so discovery checks the
+folder while it still has it — the checkpoint the reader goes on to build carries no trace
+of the difference. An unsatisfied pair is reported, never fatal: the file is named at the
+**top of that dataset's `results.log`**, above the load that is about to do without it,
+and counted in the report's Datasets table as `images_unplaced`. Add the missing file to
+the data folder and re-run to place the image.
+
 ## Two ways to specify input
 
 **A folder.** Output paths are relative to it, so the layout does not change if you pass
