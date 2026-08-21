@@ -24,7 +24,8 @@ export default function StudioCanvasHost({ sessionId, children }: { sessionId: s
 
   const {
     sessionState, theme, isolatedCategory, hiddenCells,
-    drawPolygons, drawRing, addDrawVertex, clearDraw, setRegionCellCount, setRegionCellIndices,
+    drawPolygons, drawRing, selectionTool, drawShape, setDrawShape,
+    addDrawVertex, clearDraw, setRegionCellCount, setRegionCellIndices,
     shapeAnnotations, activeShapeTool, selectedShapeId, draftVertices,
     setSelectedShapeId, addDraftVertex, clearDraft,
     upsertShapeAnnotation, sendShapeUpdate, commitNewShape,
@@ -43,7 +44,8 @@ export default function StudioCanvasHost({ sessionId, children }: { sessionId: s
     isolatedCategory,
     hiddenCells,
     regions: {
-      drawPolygons, drawRing, addDrawVertex, clearDraw, setRegionCellCount, setRegionCellIndices,
+      drawPolygons, drawRing, selectionTool, drawShape, setDrawShape,
+      addDrawVertex, clearDraw, setRegionCellCount, setRegionCellIndices,
     },
     annotations: {
       shapeAnnotations, activeShapeTool, selectedShapeId, draftVertices,
@@ -56,7 +58,8 @@ export default function StudioCanvasHost({ sessionId, children }: { sessionId: s
     sessionState?.summary.name, sessionState?.fields, sessionState?.data_versions,
     theme, canEdit, editBlockedReason, onDisplayChange, currentSpec,
     isolatedCategory, hiddenCells,
-    drawPolygons, drawRing, addDrawVertex, clearDraw, setRegionCellCount, setRegionCellIndices,
+    drawPolygons, drawRing, selectionTool, drawShape, setDrawShape,
+    addDrawVertex, clearDraw, setRegionCellCount, setRegionCellIndices,
     shapeAnnotations, activeShapeTool, selectedShapeId, draftVertices,
     setSelectedShapeId, addDraftVertex, clearDraft,
     upsertShapeAnnotation, sendShapeUpdate, commitNewShape,

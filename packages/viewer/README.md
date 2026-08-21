@@ -8,7 +8,8 @@ instead of embedding the whole app in an iframe. **One source of truth for the c
 ## What's in it
 
 - `SpatialCanvas` / `EmbeddingCanvas` — the deck.gl canvases, with their layers,
-  legends, minimap, lasso and shape-annotation editing.
+  legends, minimap, cell selection (lasso plus the circle/ellipse/square/rectangle
+  tools of `selectionShapes`) and shape-annotation editing.
 - `CanvasHostProvider` — the contract a host implements to drive them (see below).
 - `DataSourceProvider` + `openCheckpoint` — the read surface the canvases render
   through, and the `.zarr.zip` reader that implements it over HTTP Range with zarrita
@@ -45,7 +46,7 @@ const { source, appState } = await openCheckpoint(url);
 
 `CanvasHost` is the only seam between the canvases and whoever is hosting them: the
 field inventory, the data versions, the theme, the edit gate, and `onDisplayChange` —
-the host decides what persisting a display edit means. Region drawing, shape
+the host decides what persisting a display edit means. Cell selection, shape
 annotations and snapshot export are optional groups; omit one and the canvas turns
 that feature off, affordances included, rather than offering a control that does
 nothing.

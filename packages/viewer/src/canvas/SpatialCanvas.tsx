@@ -12,7 +12,9 @@ import { isSpatialDisplay, type SpatialDisplaySpec, type ImageInfo, type ObsFiel
 import { useCanvasHost, useDisplayEditor } from './canvas-host';
 import type { ShapeAnnotation, ShapeGeometry, ShapeKind } from '../schemas/annotations';
 import { textGeometryAt } from '../schemas/annotations';
-import { SHAPE_ANNOTATIONS_ELEMENT, geometryFromDrag, applyHandleDrag, translateGeometry } from '../lib/shapeAnnotations';
+import { SHAPE_ANNOTATIONS_ELEMENT, geometryFromDrag, applyHandleDrag, translateGeometry, shapeCentroid, shapeHandles } from '../lib/shapeAnnotations';
+import { selectionShapeRing } from '../lib/selectionShapes';
+import { useSelectionShape } from './useSelectionShape';
 import { useArrowPositions } from './useArrowPositions';
 import { useVivImageLayer } from './useVivImageLayer';
 import { useCanvasViewState, shapesFetchZoomThreshold } from './useCanvasViewState';
@@ -49,6 +51,9 @@ const MINIMAP_THUMB_PX = 384;
 const NO_POLYGONS: [number, number][][] = [];
 const NO_POINTS: [number, number][] = [];
 const NO_SHAPES: ShapeAnnotation[] = [];
+// Stable stand-in for a host without region drawing: nothing can place a selection
+// shape without one (the drawing modes are off), so the sink is never called.
+const NO_SHAPE_SINK = () => {};
 
 type Point = [number, number];
 type ShapeDragTarget =
@@ -159,6 +164,11 @@ export default function SpatialCanvas({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [pixelAffine?.join(',')],
   );
+  // A pick resolved into world space, which is where every drawn overlay lives.
+  const pickedWorldPoint = useCallback(
+    (info: PickingInfo): Point | null => (info.coordinate ? toWorld(info.coordinate) : null),
+    [toWorld],
+  );
 
   // Layer-visibility toggles are persisted in the display encoding (fall back to the
   // historical defaults when a checkpoint predates these fields).
@@ -182,6 +192,15 @@ export default function SpatialCanvas({
   const regions = host.regions;
   const polygons = regions?.drawPolygons ?? NO_POLYGONS;
   const currentRing = regions?.drawRing ?? NO_POINTS;
+  // The geometric selection shape (circle/ellipse/square/rectangle) in progress, if any.
+  // Its ring counts toward the selection exactly like a committed lasso ring; a live
+  // drag previews inside useSelectionShape and only lands here on release, so the
+  // membership test below re-runs per gesture rather than per pointer move.
+  const placedSelectionShape = regions?.drawShape ?? null;
+  const placedSelectionRing = useMemo(
+    () => (placedSelectionShape ? selectionShapeRing(placedSelectionShape) : null),
+    [placedSelectionShape],
+  );
 
   // Shape-annotation editor state — the fetched list persists/renders regardless
   // of the active tab; the tool/selection/draft state only matters in 'shapes' mode.
@@ -206,6 +225,8 @@ export default function SpatialCanvas({
   // and subsetting; the shape-annotation editor (canvasMode === 'shapes') uses a
   // separate drag/handle interaction — see useShapeAnnotations/ShapeAnnotationLayers.
   const lassoMode = !!regions && (canvasMode === 'regions' || canvasMode === 'subset');
+  const selectionTool = regions?.selectionTool ?? 'lasso';
+  const setDrawShape = regions?.setDrawShape ?? NO_SHAPE_SINK;
   const shapesMode = !!annotations && canvasMode === 'shapes';
   const drawMode = lassoMode || shapesMode;
   // Pan is suppressed only while actively drawing (a tool armed) or dragging a
@@ -222,7 +243,11 @@ export default function SpatialCanvas({
   useEffect(() => {
     if (!regions) return;
     const { setRegionCellCount, setRegionCellIndices } = regions;
-    const rings = currentRing.length >= 3 ? [...polygons, currentRing] : polygons;
+    const rings = [
+      ...polygons,
+      ...(placedSelectionRing ? [placedSelectionRing] : []),
+      ...(currentRing.length >= 3 ? [currentRing] : []),
+    ];
     if (!positions) {
       setRegionCellCount(0);
       setRegionCellIndices(null);
@@ -239,7 +264,7 @@ export default function SpatialCanvas({
     }
     setRegionCellCount(countPointsInRings(positions.positions, positions.numRows, rings));
     setRegionCellIndices(null);
-  }, [source, positions, polygons, currentRing, regions]);
+  }, [source, positions, polygons, currentRing, placedSelectionRing, regions]);
 
   const { containerRef, canvasSize, viewState, setViewState, fitToData } = useCanvasViewState({
     positions,
@@ -353,8 +378,10 @@ export default function SpatialCanvas({
   }, [canvasMode, regions?.clearDraw, annotations?.clearDraft, annotations?.setSelectedShapeId]);
 
   const handleClick = useCallback((info: PickingInfo) => {
-    if (lassoMode && info.coordinate) {
-      regions?.addDrawVertex(toWorld(info.coordinate));
+    if (lassoMode) {
+      // A geometric selection tool places its shape by dragging (useSelectionShape);
+      // only the lasso builds its ring out of clicks.
+      if (info.coordinate && selectionTool === 'lasso') regions?.addDrawVertex(toWorld(info.coordinate));
       return;
     }
     if (!shapesMode || !info.coordinate || !annotations) return;
@@ -384,7 +411,7 @@ export default function SpatialCanvas({
         : undefined;
       annotations.setSelectedShapeId(hit ?? null);
     }
-  }, [lassoMode, shapesMode, activeShapeTool, regions, annotations, toWorld, radiusScale]);
+  }, [lassoMode, shapesMode, selectionTool, activeShapeTool, regions, annotations, toWorld, radiusScale]);
 
   // True when the pick hits the currently selected shape's body (its fill,
   // stroke, or text glyph) — the surface a drag translates.
@@ -601,6 +628,22 @@ export default function SpatialCanvas({
   }, [display.encoding.shapes_layer, polygonElements]);
 
   const zoom = effectiveZoom(viewState);
+  // OrthographicView scale = 2^zoom, so one screen pixel spans 2^-zoom canvas units.
+  // In image-pixel space those are pixel units; divide by radiusScale (px per world
+  // unit) to get world units per screen pixel — the conversion every world-space
+  // overlay sized in pixels needs (arrowhead geometry, selection-handle grab radius).
+  const worldPerScreenPixel = Math.pow(2, -zoom) / radiusScale;
+
+  // Place / relocate / resize / rotate the geometric selection shape. Everything it
+  // draws is world-space, so it works in the same coordinates the lasso does.
+  const selection = useSelectionShape({
+    enabled: lassoMode,
+    tool: selectionTool,
+    shape: placedSelectionShape,
+    setShape: setDrawShape,
+    toCoord: pickedWorldPoint,
+    unitsPerPixel: worldPerScreenPixel,
+  });
 
   // Shapes overlay: cell-boundary fills drawn on top of the points once zoomed in.
   // The outlines are viewport-culled and the backend serves nothing when the viewport
@@ -663,10 +706,18 @@ export default function SpatialCanvas({
   // Selection graphics are UI overlays that must always be visible: 'always' depth
   // compare so they aren't occluded by any cell layer that writes depth.
   const OVERLAY_PARAMS = { depthCompare: 'always' as const, depthWriteEnabled: false };
-  const drawLayers: Layer[] = lassoMode
-    ? buildLassoLayers(polygons, currentRing, SEL,
-        { idPrefix: 'sel', modelMatrix: worldToPixelMat, parameters: OVERLAY_PARAMS })
-    : [];
+  const drawLayers: Layer[] = [];
+  if (lassoMode) {
+    // The geometric shape draws as one more selection ring — same translucent fill and
+    // stroke as a lassoed one, so what it will select reads the same way.
+    const rings = selection.ring ? [...polygons, selection.ring] : polygons;
+    drawLayers.push(...buildLassoLayers(rings, currentRing, SEL,
+      { idPrefix: 'sel', modelMatrix: worldToPixelMat, parameters: OVERLAY_PARAMS }));
+    if (selection.shape) {
+      drawLayers.push(...buildShapeHandleLayer(selection.handles, selection.shape.center,
+        { idPrefix: 'sel-shape', modelMatrix: worldToPixelMat }));
+    }
+  }
 
   // Shape annotations render whenever they exist, independent of the active tab;
   // the drag-in-progress override keeps the persisted-shape layer showing the
@@ -674,10 +725,6 @@ export default function SpatialCanvas({
   const shapeOverrides = (shapeDragTarget?.kind === 'handle' || shapeDragTarget?.kind === 'translate') && shapeDragPreview
     ? { [shapeDragTarget.shapeId]: shapeDragPreview }
     : {};
-  // OrthographicView scale = 2^zoom, so one screen pixel spans 2^-zoom canvas units.
-  // In image-pixel space those are pixel units; divide by radiusScale (px per world
-  // unit) to get world units per screen pixel for the arrowhead's world-space geometry.
-  const worldPerScreenPixel = Math.pow(2, -zoom) / radiusScale;
   const shapeLayers = buildShapeAnnotationLayers(shapeAnnotations, shapeOverrides, worldPerScreenPixel, worldToPixelMat, radiusScale);
 
   if (shapesMode) {
@@ -685,7 +732,9 @@ export default function SpatialCanvas({
     const handleGeometry = (shapeDragTarget?.kind === 'handle' || shapeDragTarget?.kind === 'translate')
       ? shapeDragPreview : selectedShape?.geometry;
     if (selectedShape && handleGeometry) {
-      shapeLayers.push(...buildShapeHandleLayer(handleGeometry, worldToPixelMat));
+      shapeLayers.push(...buildShapeHandleLayer(
+        shapeHandles(handleGeometry), shapeCentroid(handleGeometry),
+        { idPrefix: 'shape', modelMatrix: worldToPixelMat }));
     }
     if (shapeDragTarget?.kind === 'create' && shapeDragPreview) {
       shapeLayers.push(...buildDragPreviewLayers(shapeDragPreview, worldToPixelMat));
@@ -729,17 +778,17 @@ export default function SpatialCanvas({
         }}
         layers={[...layers, ...drawLayers, ...shapeLayers]}
         controller={lockView ? false
-          : shapeInteracting ? { dragPan: false, doubleClickZoom: false }
+          : shapeInteracting || selection.interacting ? { dragPan: false, doubleClickZoom: false }
           : drawMode ? { doubleClickZoom: false } : true}
         onClick={handleClick}
-        onHover={shapesMode ? handleHover : undefined}
-        onDragStart={handleShapeDragStart}
-        onDrag={handleShapeDrag}
-        onDragEnd={handleShapeDragEnd}
+        onHover={shapesMode ? handleHover : lassoMode ? selection.onHover : undefined}
+        onDragStart={(info) => { handleShapeDragStart(info); selection.onDragStart(info); }}
+        onDrag={(info) => { handleShapeDrag(info); selection.onDrag(info); }}
+        onDragEnd={() => { handleShapeDragEnd(); selection.onDragEnd(); }}
         getCursor={
           overBody || shapeDragTarget?.kind === 'translate' ? () => 'move'
           : shapeInteracting && !overHandle ? () => 'crosshair'
-          : lassoMode ? () => 'crosshair'
+          : lassoMode ? () => selection.cursor
           : ({ isDragging }) => (isDragging ? 'grabbing' : 'grab')
         }
       />
@@ -769,7 +818,8 @@ export default function SpatialCanvas({
       <CellColorLegend visible={legendVisible && showPoints} legend={colorLegend} title={legendTitle}
         scale={legendScale} />
 
-      <DrawHint drawMode={drawMode} canvasMode={canvasMode} annotationTarget={annotationTarget} />
+      <DrawHint drawMode={drawMode} canvasMode={canvasMode} annotationTarget={annotationTarget}
+        selectionTool={selectionTool} shapePlaced={placedSelectionShape !== null} />
 
       {controls?.({
         display,

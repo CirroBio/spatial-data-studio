@@ -4,7 +4,7 @@ import type { PathStyleExtensionProps } from '@deck.gl/extensions';
 import type { Layer } from '@deck.gl/core';
 import type { Matrix4 } from '@math.gl/core';
 import type { ShapeAnnotation, ShapeGeometry } from '../schemas/annotations';
-import { shapeOutline, shapeHandles, shapeCentroid, arrowheadTriangle, ROTATE_HANDLE_ID } from '../lib/shapeAnnotations';
+import { shapeOutline, arrowheadTriangle, ROTATE_HANDLE_ID, type ShapeHandle } from '../lib/shapeAnnotations';
 import { hexToRgb } from './colorUtils';
 
 type Point = [number, number];
@@ -122,19 +122,24 @@ export function buildShapeAnnotationLayers(
   return layers;
 }
 
-/** Edit-handle overlay for the selected shape, shown only while the shape
- * annotation editor is active: a connector arm from the centroid out to the
- * green rotate handle, then the round vertex/radius/rotate handles on top. */
-export function buildShapeHandleLayer(geometry: ShapeGeometry, modelMatrix?: Matrix4): Layer[] {
-  const handles = shapeHandles(geometry);
+/** Edit-handle overlay for a shape being edited: a connector arm from its centroid out
+ * to the green rotate handle, then the round vertex/radius/rotate handles on top. Shared
+ * by the shape-annotation editor (handles from `shapeHandles`) and the geometric
+ * cell-selection shapes (from `selectionShapeHandles`), which are edited the same way but
+ * live in a different overlay — hence the caller-supplied `idPrefix`. */
+export function buildShapeHandleLayer(
+  handles: ShapeHandle[],
+  centroid: Point,
+  { idPrefix, modelMatrix }: { idPrefix: string; modelMatrix?: Matrix4 },
+): Layer[] {
   if (!handles.length) return [];
   const layers: Layer[] = [];
 
   const rotateHandle = handles.find((h) => h.id === ROTATE_HANDLE_ID);
   if (rotateHandle) {
     layers.push(new PathLayer<Point[]>({
-      id: 'shape-handle-rotate-arm',
-      data: [[shapeCentroid(geometry), rotateHandle.position]],
+      id: `${idPrefix}-rotate-arm`,
+      data: [[centroid, rotateHandle.position]],
       getPath: (d) => d,
       getColor: [56, 178, 88, 200],
       getWidth: 1.5,
@@ -144,8 +149,8 @@ export function buildShapeHandleLayer(geometry: ShapeGeometry, modelMatrix?: Mat
     }));
   }
 
-  layers.push(new ScatterplotLayer<typeof handles[number]>({
-    id: 'shape-handles',
+  layers.push(new ScatterplotLayer<ShapeHandle>({
+    id: `${idPrefix}-handles`,
     data: handles,
     getPosition: (d) => d.position,
     getFillColor: (d) => (d.id === ROTATE_HANDLE_ID ? [56, 178, 88, 255] : [255, 255, 255, 255]),

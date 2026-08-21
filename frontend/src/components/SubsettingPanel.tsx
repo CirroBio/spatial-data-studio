@@ -11,7 +11,7 @@ export default function SubsettingPanel() {
     activeSessionId, setBlockingJob, regionCellCount, regionCellIndices,
     hiddenCells, setHiddenCells, sessionState,
   } = useAppStore();
-  const { drawPolygons, drawRing, regionCount, allPolygons, commitDrawRing, clearDraw } = useDrawSelection();
+  const { drawPolygons, drawRing, shapePlaced, regionCount, allPolygons, commitDrawRegion, clearDraw } = useDrawSelection();
 
   const [working, setWorking] = useState(false);
   // A real subset runs `polygon_query` and opens a child session, both of which need
@@ -19,9 +19,10 @@ export default function SubsettingPanel() {
   // ("only keep" / "remove"), but presentation only and reversible.
   const hideOnly = useLocalEditsOnly();
 
-  // The action is offered only once the region is finished: at least one committed
-  // ring and no partially-drawn ring left open (the user commits with Finish region).
-  const finished = drawPolygons.length > 0 && drawRing.length === 0;
+  // The action is offered only once the region is finished: at least one committed ring
+  // (or a placed geometric shape, which encloses an area the moment it exists) and no
+  // partially-drawn ring left open — the user closes that one with Finish region.
+  const finished = (drawPolygons.length > 0 || shapePlaced) && drawRing.length === 0;
 
   function handleHide(invert: boolean) {
     const selected = new Set(regionCellIndices ?? []);
@@ -64,7 +65,8 @@ export default function SubsettingPanel() {
           regionCount={regionCount}
           drawRingLength={drawRing.length}
           drawPolygonsLength={drawPolygons.length}
-          onFinish={commitDrawRing}
+          shapePlaced={shapePlaced}
+          onFinish={commitDrawRegion}
           onClear={clearDraw}
         />
         <button

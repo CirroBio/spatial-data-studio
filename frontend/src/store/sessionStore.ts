@@ -6,12 +6,15 @@ import {
   fetchWhenIdle,
   formatError,
   isSpatialDisplay,
+  selectionShapeRing,
   type DataSource,
   type DisplaySpec,
   type LocalCategorical,
   type ShapeAnnotation,
   type ShapeGeometry,
   type ShapeKind,
+  type SelectionShape,
+  type SelectionTool,
   type SnapshotExportParams,
   type SpatialDisplaySpec,
 } from '@cirrobio/spatial-viewer';
@@ -227,11 +230,19 @@ interface AppStore {
   regionColor: string;
   setRegionTarget: (setName: string, category: string, color: string) => void;
 
-  // polygon draw state — shared between the canvas (draws) and the active tab's
+  // cell-selection draw state — shared between the canvas (draws) and the active tab's
   // panel (commit / apply / clear). drawPolygons holds committed rings; drawRing is
-  // the in-progress ring being clicked out.
+  // the in-progress ring being clicked out, and drawShape the in-progress geometric
+  // shape (one at a time, like the ring) placed by the circle/ellipse/square/rectangle
+  // tools. Both in-progress items count toward the selection before being committed.
   drawPolygons: [number, number][][];
   drawRing: [number, number][];
+  // Which selection tool a canvas drag drives: the click-built lasso, or one of the
+  // geometric shapes. A panel-level choice, shared by the Regions and Subset tabs.
+  selectionTool: SelectionTool;
+  setSelectionTool: (tool: SelectionTool) => void;
+  drawShape: SelectionShape | null;
+  setDrawShape: (shape: SelectionShape | null) => void;
   // Count of cells inside the current drawn region (union of committed rings + the
   // closeable in-progress ring), computed by the active canvas from its plotted
   // positions and surfaced on the Regions/Subset action buttons. 0 when nothing drawn.
@@ -262,7 +273,9 @@ interface AppStore {
   }) => void;
   setRegionCellIndices: (idx: number[] | null) => void;
   addDrawVertex: (pt: [number, number]) => void;
-  commitDrawRing: () => void;
+  // Bank whatever is in progress — the closeable ring and/or the placed geometric
+  // shape — as committed rings, freeing the surface for the next area.
+  commitDrawRegion: () => void;
   clearDraw: () => void;
 
   // shape-annotation editor (arrows/lines/boxes/polygons/ellipses) — the fetched
@@ -470,7 +483,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       // id goes null, so without this the tree renders the previous session's displays and
       // fields for a frame while dataSource already points at the new id.
       return { activeSessionId: id, sessionState: null, isolatedCategory: null, hiddenCells: null,
-               drawPolygons: [], drawRing: [], activeJobIds: new Set(), shapeAnnotations: [],
+               drawPolygons: [], drawRing: [], drawShape: null, activeJobIds: new Set(), shapeAnnotations: [],
                activeShapeTool: null, selectedShapeId: null, draftVertices: [] };
     }),
   checkpointIndex: null,
@@ -632,6 +645,17 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   drawPolygons: [],
   drawRing: [],
+  selectionTool: 'lasso',
+  setSelectionTool: (tool) =>
+    set((s) => {
+      if (tool === s.selectionTool) return {};
+      // Arming a shape tool needs an empty surface to drag on — only one geometric
+      // shape is in progress at a time. Going back to the lasso keeps the placed one,
+      // which is still part of the selection.
+      return tool === 'lasso' ? { selectionTool: tool } : { selectionTool: tool, drawShape: null };
+    }),
+  drawShape: null,
+  setDrawShape: (shape) => set({ drawShape: shape }),
   regionCellCount: 0,
   setRegionCellCount: (n) => set({ regionCellCount: n }),
   regionCellIndices: null,
@@ -705,11 +729,20 @@ export const useAppStore = create<AppStore>((set, get) => ({
       };
     }),
   addDrawVertex: (pt) => set((s) => ({ drawRing: [...s.drawRing, pt] })),
-  commitDrawRing: () =>
-    set((s) => (s.drawRing.length >= 3
-      ? { drawPolygons: [...s.drawPolygons, s.drawRing], drawRing: [] }
-      : {})),
-  clearDraw: () => set({ drawPolygons: [], drawRing: [] }),
+  commitDrawRegion: () =>
+    set((s) => {
+      const committed = [...s.drawPolygons];
+      if (s.drawShape) committed.push(selectionShapeRing(s.drawShape));
+      if (s.drawRing.length >= 3) committed.push(s.drawRing);
+      if (committed.length === s.drawPolygons.length) return {};
+      return {
+        drawPolygons: committed,
+        // A ring too short to close is still being drawn; leave those clicks alone.
+        drawRing: s.drawRing.length >= 3 ? [] : s.drawRing,
+        drawShape: null,
+      };
+    }),
+  clearDraw: () => set({ drawPolygons: [], drawRing: [], drawShape: null }),
 
   shapeAnnotations: [],
   setShapeAnnotations: (shapes) => set({ shapeAnnotations: shapes }),

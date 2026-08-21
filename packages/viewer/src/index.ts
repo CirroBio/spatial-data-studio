@@ -35,9 +35,15 @@ export {
 } from './schemas/annotations';
 export {
   ROTATE_HANDLE_ID, SHAPE_ANNOTATIONS_ELEMENT, applyHandleDrag, arrowheadTriangle,
-  geometryFromDrag, polygonFromClicks, shapeCentroid, shapeHandles, shapeOutline,
-  translateGeometry,
+  centeredRotateHandle, geometryFromDrag, polygonFromClicks, rotatePoint, shapeCentroid,
+  shapeHandles, shapeOutline, translateGeometry, type ShapeHandle,
 } from './lib/shapeAnnotations';
+
+// ---- Geometric cell-selection shapes ----------------------------------------
+export {
+  SELECTION_SHAPE_KINDS, selectionShapeRing, type SelectionShape, type SelectionShapeKind,
+  type SelectionTool,
+} from './lib/selectionShapes';
 
 // ---- Palettes and per-display styling ---------------------------------------
 export {
@@ -67,4 +73,4 @@ export { ApiError } from './lib/apiError';
 export { fetchWhenIdle } from './lib/fetchWhenIdle';
 export { formatError } from './lib/format';
 export { reportError, setErrorSink } from './lib/errors';
-export { countPointsInRings, indicesInRings } from './lib/pointInPolygon';
+export { countPointsInRings, indicesInRings, pointInRing } from './lib/pointInPolygon';

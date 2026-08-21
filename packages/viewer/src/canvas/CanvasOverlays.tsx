@@ -6,6 +6,7 @@ import {
 import type { Channel } from './useImageChannels';
 import type { ColorLegend } from './useSpotColors';
 import type { TileLoadProgress } from './useTileLoadProgress';
+import type { SelectionTool } from '../lib/selectionShapes';
 
 /* Recalculation cue — top left. Visible while the cell layer's own data (spatial
    coordinates, per-cell colors, or cell-boundary polygons) for the current view is
@@ -144,21 +145,30 @@ export function DrawHint({
   drawMode,
   canvasMode,
   annotationTarget,
+  selectionTool,
+  shapePlaced,
 }: {
   drawMode: boolean;
   canvasMode: 'regions' | 'shapes' | 'subset' | null;
   annotationTarget: { regionSetId: string; category: string; color: string } | null;
+  selectionTool: SelectionTool;
+  shapePlaced: boolean;
 }) {
   // The shape-annotation editor (canvasMode === 'shapes') shows its own toolbar
-  // hints in the AnnotationsPanel; this hint is only for the lasso-drag modes.
+  // hints in the AnnotationsPanel; this hint is only for the cell-selection modes.
   if (!drawMode || canvasMode === 'shapes') return null;
   const tone = canvasMode === 'regions' ? 'success' : 'accent';
+  // The lasso collects a vertex per click; a geometric tool is one drag, and once its
+  // shape is down the gesture that matters is adjusting it.
+  const gesture = selectionTool === 'lasso' ? 'click to add points'
+    : shapePlaced ? 'adjust the shape'
+    : `drag out ${selectionTool === 'ellipse' ? 'an' : 'a'} ${selectionTool}`;
   return (
     <div style={{ ...DRAW_HINT, borderColor: themeColor(tone, 0.7), color: themeColor(tone) }}>
       {canvasMode === 'regions'
         ? annotationTarget
-          ? `Annotating ${annotationTarget.regionSetId} / ${annotationTarget.category} — click to add points, then Apply on the left`
-          : 'Annotating — set a region set and category on the left, then click to add points'
+          ? `Annotating ${annotationTarget.regionSetId} / ${annotationTarget.category} — ${gesture}, then Apply on the left`
+          : `Annotating — set a region set and category on the left, then ${gesture}`
         : 'Subsetting — draw a region, then Subset to selection on the left'}
     </div>
   );

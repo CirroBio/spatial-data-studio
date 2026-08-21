@@ -113,9 +113,10 @@ packages/viewer/  @cirrobio/spatial-viewer — the deck.gl canvases and the chec
                   reader as a library, so a Cirro dashboard can render the same canvas
                   natively instead of embedding the app in an iframe. See
                   packages/viewer/README.md
-  src/canvas/     the canvases and their layers, legends, minimap, lasso and shape
-                  editing, plus canvas-host.tsx (the CanvasHost contract) and the
-                  palettes/view-fit helpers a host's own controls need
+  src/canvas/     the canvases and their layers, legends, minimap, cell-selection
+                  (lasso + geometric shapes) and shape-annotation editing, plus
+                  canvas-host.tsx (the CanvasHost contract) and the palettes/view-fit
+                  helpers a host's own controls need
   src/data/       the DataSource contract the canvas renders through, the DataSourceProvider,
                   and checkpointSource (a .zarr.zip read directly with zarrita over HTTP
                   Range — the serverless viewer, DESIGN §14.2). parquetShapes.ts +
@@ -187,6 +188,7 @@ Component-level notes: [`backend/README.md`](backend/README.md),
 | Change the embed protocol (viewer in an iframe under a Cirro dashboard) | `frontend/src/data/embedBridge.ts` (viewer side) + [docs/EMBED_PROTOCOL.md](docs/EMBED_PROTOCOL.md) in the same commit — the dashboard side in `@cirrobio/dashboard` must move together | [docs/EMBED_PROTOCOL.md](docs/EMBED_PROTOCOL.md) |
 | Change what a shared view link carries | `frontend/src/lib/urlViewState.ts` (schema + diff) + `hooks/useUrlViewSync.ts` (writer); add the field's default to `packages/viewer/src/defaults.ts` if it has a constant one | below |
 | Change the deck.gl canvas / rendering | `packages/viewer/src/canvas/` | [packages/viewer/README.md](packages/viewer/README.md) |
+| Change how a cell selection is drawn (lasso, the circle/ellipse/square/rectangle tools) | `packages/viewer/src/lib/selectionShapes.ts` (geometry) + `canvas/useSelectionShape.ts` (the place/move/resize/rotate gesture) + both canvases' overlay wiring; the tool choice and the Finish/Clear actions in `frontend/src/components/DrawControls.tsx` + `hooks/useDrawSelection.ts` | [DESIGN.md](DESIGN.md) §10.2 |
 | Change the docs site's navigation, or publish a doc that isn't on it yet | `docs-site/.vitepress/config.mts` (sidebar + `srcExclude`) | below |
 | Change the docs site's live demos | `docs-site/demo/*.md` + `.vitepress/theme/components/ViewerEmbed.vue`; the catalog, `index.json` and the data itself in `scripts/fetch_example_checkpoints.py` | below |
 | Give the canvas something new from the app (store state, an action, a way to persist) | `packages/viewer/src/canvas/canvas-host.tsx` (the `CanvasHost` contract), then `frontend/src/components/StudioCanvasHost.tsx` (the app's implementation of it) — the canvas never reaches for the store or `api.ts` itself | below |

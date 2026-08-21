@@ -1,5 +1,7 @@
-// Ray-casting point-in-polygon test for one ring (array of [x,y] vertices).
-function inRing(x: number, y: number, ring: [number, number][]): boolean {
+/** Ray-casting point-in-polygon test for one ring (array of [x,y] vertices). Point and
+ * ring must share a coordinate space; used both for cell membership and for hit-testing
+ * a pointer against a drawn selection shape. */
+export function pointInRing(x: number, y: number, ring: [number, number][]): boolean {
   let inside = false;
   for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
     const [xi, yi] = ring[i];
@@ -24,7 +26,7 @@ export function indicesInRings(coords: Float32Array, numRows: number, rings: [nu
   for (let i = 0; i < numRows; i++) {
     const x = coords[i * stride];
     const y = coords[i * stride + 1];
-    if (usable.some((r) => inRing(x, y, r))) out.push(i);
+    if (usable.some((r) => pointInRing(x, y, r))) out.push(i);
   }
   return out;
 }

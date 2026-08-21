@@ -62,7 +62,7 @@ export default function RegionsPanel() {
     applyLocalRegion,
   } = useAppStore();
   const source = useDataSource();
-  const { drawPolygons, drawRing, regionCount, allPolygons, commitDrawRing, clearDraw } = useDrawSelection();
+  const { drawPolygons, drawRing, shapePlaced, regionCount, allPolygons, commitDrawRegion, clearDraw } = useDrawSelection();
 
   const regions: RegionSet[] = sessionState?.app_state.regions ?? [];
   const obsFields = sessionState?.fields.obs ?? [];
@@ -145,7 +145,7 @@ export default function RegionsPanel() {
         <label className="text-[10px] text-muted font-mono uppercase tracking-wide block mb-1.5">Draw a region</label>
         <ol className="text-[10px] text-muted/70 leading-snug list-decimal pl-3.5 mb-2 space-y-0.5">
           <li>Name a region set &amp; category, pick a color.</li>
-          <li>Click points on the canvas to outline the area.</li>
+          <li>Click points on the canvas to outline the area, or pick a shape tool and drag one out.</li>
           <li>Apply label (Finish region first to start a second area).</li>
         </ol>
         <div className="flex flex-col gap-1.5">
@@ -195,7 +195,8 @@ export default function RegionsPanel() {
             regionCount={regionCount}
             drawRingLength={drawRing.length}
             drawPolygonsLength={drawPolygons.length}
-            onFinish={commitDrawRing}
+            shapePlaced={shapePlaced}
+            onFinish={commitDrawRegion}
             onClear={clearDraw}
           />
           <button
@@ -207,7 +208,9 @@ export default function RegionsPanel() {
             {applying ? 'Labeling...' : `Apply label${regionCount ? ` (n=${regionCellCount.toLocaleString()})` : ''}`}
           </button>
           {regionCount === 0 && (
-            <p className="text-[10px] text-muted/60 leading-snug">Click at least 3 points on the canvas to outline a region.</p>
+            <p className="text-[10px] text-muted/60 leading-snug">
+              Click at least 3 points on the canvas to outline a region, or drag out a shape.
+            </p>
           )}
           {regionCount > 0 && !canApply && (
             <p className="text-[10px] text-warn leading-snug">Set a region set and category above.</p>

@@ -567,8 +567,8 @@ as the child's immutable base — **not** as a compute-history step.
 ### 8.1 Flow
 
 1. With the **Subsetting** tab active, the canvas selection mode arms a fork.
-2. User draws box / lasso / circle via editable-layers, producing polygon vertices in
-   the canvas' world space (§9.3). Multiple regions allowed (union).
+2. User selects the cells with one of the canvas' selection tools (§10.2), producing
+   polygon vertices in the canvas' world space (§9.3). Multiple regions allowed (union).
 3. Once the region is **finished** (committed, no partially-drawn ring open), the user
    clicks either **"Only keep cells in region"** or **"Remove cells in region."**
 4. Frontend POSTs the polygon vertices, in canvas world coordinates, to the backend,
@@ -1079,12 +1079,37 @@ cross-tabulation between schemes.
 
 ### 10.2 Creation: lasso, promotion, derived
 
-The existing lasso machinery is reused; only the terminal action differs. With the
-**Annotations** tab active, a drawn selection **labels** cells in place (rather than
+The same cell-selection machinery serves region labeling and subsetting; only the
+terminal action differs. Selection is always a **union of rings** by the time anything
+downstream sees it — client-side `indicesInRings`, or `polygons` for the backend's
+`polygon_query`/`contains_points` — and the tools differ only in how a ring is produced:
+
+- **Lasso** — a vertex per click, closed by the panel's Finish action. The original
+  interaction, and the only one that can trace an arbitrary outline.
+- **Circle / ellipse / square / rectangle** (`lib/selectionShapes.ts`) — one drag places
+  the shape, then it is relocated by its body, resized by its half-extent handles and
+  rotated by a handle floating off its own +Y axis: the shape-annotation editor's
+  interaction, reused down to `buildShapeHandleLayer`. A shape is held
+  **centre-parametrized** (centre + two half-extents + rotation), not as four free
+  vertices like a `box` annotation — that is what keeps a rectangle rectangular under a
+  resize, keeps rotation independent of the corners, and leaves a zero-size shape
+  recoverable. Its ring is generated only where it is consumed, so nothing downstream
+  knows a shape was involved, and the backend needed no change to accept one. A circle
+  is offered no rotate handle, since rotation cannot change it.
+
+One geometric shape is in progress at a time, exactly like the one open lasso ring; the
+panel's Finish action banks it into the committed rings and frees the canvas, so with a
+shape placed a drag over empty canvas still pans the camera. The gesture state machine
+(`canvas/useSelectionShape.ts`) is coordinate-space agnostic — world on the spatial
+canvas, embedding coords in a 2D embedding, screen pixels in a 3D one — and hit-tests
+geometrically (handle distance, point-in-ring) rather than through deck.gl picking, so
+it also drives the 3D embedding's screen-space SVG overlay, which has no pickable layer.
+
+With the **Annotations** tab active, a selection **labels** cells in place (rather than
 subsetting), as a **queued mutating job** (audit-log entry + structural diff + write
 lock — identical lifecycle to subset):
 
-1. user draws box/lasso/circle (strokes union into one region);
+1. user selects one or more areas (they union into one region);
 2. chooses the target region set (create or pick), names the category, picks a color;
 3. backend (`regions.assign()`) computes membership via
    `matplotlib.path.Path.contains_points` over `obsm["spatial"]`, writes

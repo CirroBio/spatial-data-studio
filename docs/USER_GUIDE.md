@@ -89,16 +89,33 @@ width), colored by the cell's value either way.*
 
 ### Annotate
 
-Draw lasso regions to label cells, or draw shapes and text directly on the tissue.
+Select groups of cells to label them, or draw shapes and text directly on the tissue.
 Region labels become ordinary metadata columns you can then analyze by. Applying a label
 recolors the view by that region set and paints the labelled cells in the color you
 picked; the draw color then advances to the next preset for the next group. Labeling
 works on the embedding view too — in 3D it labels every cell visible within the drawn
 region.
 
+### Select cells
+
+Both the **Regions** and **Subset** tabs pick their cells the same way, with a tool you
+choose at the top of the panel:
+
+- **Lasso** — click point after point on the canvas to trace any outline you like, then
+  **Finish region** to close it.
+- **Circle**, **Ellipse**, **Square**, **Rectangle** — drag once on the canvas and the
+  shape appears where you dragged. Then adjust it: drag the shape itself to move it, and
+  its side handles to resize — a circle and a square keep their aspect, so they get one
+  handle driving both. Everything except the circle also gets a green handle on an arm
+  that rotates it. The cell count on the action button follows each adjustment.
+
+A selection can combine areas: **Finish region** banks the shape (or the closed lasso
+ring) and frees the canvas for the next one, and the action applies to all of them
+together. **Clear** discards the lot.
+
 ### Subset
 
-Lasso a region — on the tissue or an embedding — to spin off a child session that keeps
+Select a region — on the tissue or an embedding — to spin off a child session that keeps
 (or removes) just those cells.
 
 ### Share a session safely

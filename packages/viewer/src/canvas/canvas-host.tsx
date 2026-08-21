@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, type ReactNode } from 'react';
 import type { DisplaySpec, SessionFields } from '../types';
 import type { ShapeAnnotation, ShapeGeometry, ShapeKind } from '../schemas/annotations';
+import type { SelectionShape, SelectionTool } from '../lib/selectionShapes';
 import type { SnapshotExportParams } from '../lib/snapshots';
 
 // Everything the canvases need from whatever is hosting them, in one contract.
@@ -11,12 +12,19 @@ import type { SnapshotExportParams } from '../lib/snapshots';
 // canvas components and either host — nothing under components/canvas/ reaches for the
 // app's store or its REST layer.
 
-// Lasso drawing (region labeling / subsetting). The rings live on the host because the
-// active sidebar tab's panel owns the commit / apply / clear actions; the canvas is
-// purely the drawing surface, and reports which cells fall inside.
+// Cell-selection drawing (region labeling / subsetting). The rings live on the host
+// because the active sidebar tab's panel owns the commit / apply / clear actions; the
+// canvas is purely the drawing surface, and reports which cells fall inside.
 export interface RegionDrawHost {
   readonly drawPolygons: [number, number][][];
   readonly drawRing: [number, number][];
+  /** What a drag on the canvas does: collect lasso vertices a click at a time, or place
+   *  a geometric shape (see lib/selectionShapes). The panel owns the choice. */
+  readonly selectionTool: SelectionTool;
+  /** The one geometric shape in progress — the counterpart of `drawRing`, contributing
+   *  its ring to the selection until the panel's Finish action banks it. */
+  readonly drawShape: SelectionShape | null;
+  readonly setDrawShape: (shape: SelectionShape | null) => void;
   readonly addDrawVertex: (pt: [number, number]) => void;
   readonly clearDraw: () => void;
   readonly setRegionCellCount: (n: number) => void;

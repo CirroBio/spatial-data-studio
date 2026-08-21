@@ -134,10 +134,21 @@ export function shapeCentroid(geometry: ShapeGeometry): Point {
   return centroidOf(geometry.vertices as Point[]);
 }
 
-function rotatePoint(p: Point, pivot: Point, angle: number): Point {
+/** `p` rotated by `angle` radians about `pivot`. Shared with the geometric
+ * selection shapes (lib/selectionShapes), which are centre-parametrized the same way
+ * an ellipse annotation is. */
+export function rotatePoint(p: Point, pivot: Point, angle: number): Point {
   const cos = Math.cos(angle), sin = Math.sin(angle);
   const dx = p[0] - pivot[0], dy = p[1] - pivot[1];
   return [pivot[0] + dx * cos - dy * sin, pivot[1] + dx * sin + dy * cos];
+}
+
+/** Rotate-handle position for a shape described by a centre and two half-extents —
+ * an ellipse annotation, or any geometric selection shape (lib/selectionShapes). It
+ * floats off the shape's own +Y axis, proportionally to its size. */
+export function centeredRotateHandle(center: Point, radiusX: number, radiusY: number, rotation: number): Point {
+  const offset = radiusY + ROTATE_HANDLE_GAP * Math.max(radiusX, radiusY);
+  return rotatePoint([center[0], center[1] + offset], center, rotation);
 }
 
 /** World position of the rotate handle. It floats off the shape along an axis
@@ -152,8 +163,7 @@ function rotateHandlePosition(geometry: ShapeGeometry): Point {
   }
   if (geometry.kind === 'ellipse') {
     const { center, radiusX, radiusY, rotation } = geometry;
-    const local: Point = [0, radiusY + ROTATE_HANDLE_GAP * Math.max(radiusX, radiusY)];
-    return rotatePoint([center[0] + local[0], center[1] + local[1]], center, rotation);
+    return centeredRotateHandle(center, radiusX, radiusY, rotation);
   }
   const verts = geometry.vertices as Point[];
   const c = centroidOf(verts);
@@ -172,7 +182,7 @@ function rotateHandlePosition(geometry: ShapeGeometry): Point {
 
 // ---- edit handles ------------------------------------------------------------
 
-interface ShapeHandle {
+export interface ShapeHandle {
   id: string;
   position: Point;
 }

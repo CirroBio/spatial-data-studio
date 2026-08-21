@@ -4,6 +4,8 @@ import { OrthographicView, OrbitView } from '@deck.gl/core';
 import type { Layer, PickingInfo } from '@deck.gl/core';
 import { useArrowField } from '../data/useArrowField';
 import { indicesInRings } from '../lib/pointInPolygon';
+import { selectionShapeRing } from '../lib/selectionShapes';
+import { ROTATE_HANDLE_ID } from '../lib/shapeAnnotations';
 import { isEmbeddingDisplay, type EmbeddingDisplaySpec, type ObsField, type ObsmField, type Viewport } from '../types';
 import { EMBEDDING_ENCODING_DEFAULTS } from '../defaults';
 import { useArrowPositions } from './useArrowPositions';
@@ -12,6 +14,8 @@ import { useEmbeddingViewState, type EmbeddingViewState } from './useEmbeddingVi
 import { useColorField } from './useColorField';
 import { useSnapshotHandler } from './useSnapshotHandler';
 import { buildLassoLayers } from './buildLassoLayers';
+import { buildShapeHandleLayer } from './buildShapeAnnotationLayers';
+import { useSelectionShape } from './useSelectionShape';
 import { useSpotColors, arrowToColorSource } from './useSpotColors';
 import { buildSpotLayer } from './buildSpotLayer';
 import { colorByLabel } from './colorBy';
@@ -23,6 +27,11 @@ import { CANVAS_PLACEHOLDER, CANVAS_ROOT, MONO_FONT, themeColor } from './overla
 // membership effect below aren't handed a fresh array on every render.
 const NO_POLYGONS: [number, number][][] = [];
 const NO_POINTS: [number, number][] = [];
+// Stable stand-in for a host without region drawing — drawing is off without one, so
+// nothing can place a selection shape and the sink is never called.
+const NO_SHAPE_SINK = () => {};
+
+type Point = [number, number];
 
 /** What an in-canvas control panel needs from a mounted EmbeddingCanvas. Same slot
  * contract as SpatialCanvas: the Studio app renders `EmbeddingControls` from this,
@@ -72,6 +81,9 @@ export default function EmbeddingCanvas({
   const regions = host.regions;
   const drawPolygons = regions?.drawPolygons ?? NO_POLYGONS;
   const drawRing = regions?.drawRing ?? NO_POINTS;
+  const selectionTool = regions?.selectionTool ?? 'lasso';
+  const placedSelectionShape = regions?.drawShape ?? null;
+  const setDrawShape = regions?.setDrawShape ?? NO_SHAPE_SINK;
 
   const { is_3d, x_component, y_component, z_component } = display.encoding;
   const coordsPath = `obsm:${display.encoding.obsm_key}`;
@@ -138,17 +150,39 @@ export default function EmbeddingCanvas({
   // on the app background, so the overlay color keys off the app theme.
   const selColor = SELECTION_COLORS[theme][canvasMode === 'regions' ? 'regions' : 'subset'];
 
-  // A click adds a lasso vertex. In 2D the vertex is an embedding coordinate; in 3D the
-  // orbit camera makes an unprojected world point meaningless, so we capture the screen
-  // pixel and select by projecting cells back to screen (see the effect below).
+  // Where a pick lands, in the space this view draws selections in: an embedding
+  // coordinate in 2D; in 3D the orbit camera makes an unprojected world point
+  // meaningless, so the screen pixel is captured instead and cells are selected by
+  // projecting them back to screen (see the membership effect below).
+  const pickedPoint = useCallback((info: PickingInfo): Point | null => {
+    if (is_3d) return info.x != null && info.y != null ? [info.x, info.y] : null;
+    return info.coordinate ? [info.coordinate[0], info.coordinate[1]] : null;
+  }, [is_3d]);
+
+  // Place / relocate / resize / rotate the geometric selection shape. In 3D it lives in
+  // screen pixels alongside the frozen ring, so its own units are already pixels.
+  const selection = useSelectionShape({
+    enabled: lassoMode,
+    tool: selectionTool,
+    shape: placedSelectionShape,
+    setShape: setDrawShape,
+    toCoord: pickedPoint,
+    unitsPerPixel: is_3d ? 1 : Math.pow(2, -((viewState as { zoom?: number } | null)?.zoom ?? 0)),
+  });
+
+  // A click adds a lasso vertex.
   const handleClick = useCallback((info: PickingInfo) => {
-    if (!lassoMode || !regions) return;
-    if (is_3d) {
-      if (info.x != null && info.y != null) regions.addDrawVertex([info.x, info.y]);
-    } else if (info.coordinate) {
-      regions.addDrawVertex([info.coordinate[0], info.coordinate[1]]);
-    }
-  }, [lassoMode, is_3d, regions]);
+    // A geometric selection tool places its shape by dragging (useSelectionShape below);
+    // only the lasso builds its ring out of clicks.
+    if (!lassoMode || !regions || selectionTool !== 'lasso') return;
+    const pt = pickedPoint(info);
+    if (pt) regions.addDrawVertex(pt);
+  }, [lassoMode, regions, selectionTool, pickedPoint]);
+
+  const placedSelectionRing = useMemo(
+    () => (placedSelectionShape ? selectionShapeRing(placedSelectionShape) : null),
+    [placedSelectionShape],
+  );
 
   const clearDraw = regions?.clearDraw;
   // Clear any in-progress drawing when the lasso disarms or the view unmounts, so a
@@ -166,7 +200,11 @@ export default function EmbeddingCanvas({
   useEffect(() => {
     if (!regions) return;
     const { setRegionCellCount, setRegionCellIndices } = regions;
-    const rings = drawRing.length >= 3 ? [...drawPolygons, drawRing] : drawPolygons;
+    const rings = [
+      ...drawPolygons,
+      ...(placedSelectionRing ? [placedSelectionRing] : []),
+      ...(drawRing.length >= 3 ? [drawRing] : []),
+    ];
     if (!positions || !rings.length) {
       setRegionCellCount(0);
       setRegionCellIndices(lassoMode ? [] : null);
@@ -202,13 +240,20 @@ export default function EmbeddingCanvas({
     setRegionCellCount(indices.length);
     setRegionCellIndices(indices);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [positions, drawPolygons, drawRing, is_3d, viewState, lassoMode]);
+  }, [positions, drawPolygons, drawRing, placedSelectionRing, is_3d, viewState, lassoMode]);
 
   const drawLayers = useMemo<Layer[]>(() => {
     if (!lassoMode || is_3d) return [];  // 3D draws a screen-space SVG overlay instead
-    return buildLassoLayers(drawPolygons, drawRing, selColor, { idPrefix: 'embed-draw' });
+    // The geometric shape draws as one more selection ring, then its edit handles on top.
+    const rings = selection.ring ? [...drawPolygons, selection.ring] : drawPolygons;
+    const layers = buildLassoLayers(rings, drawRing, selColor, { idPrefix: 'embed-draw' });
+    if (selection.shape) {
+      layers.push(...buildShapeHandleLayer(selection.handles, selection.shape.center,
+        { idPrefix: 'embed-sel-shape' }));
+    }
+    return layers;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lassoMode, is_3d, drawPolygons, drawRing, canvasMode]);
+  }, [lassoMode, is_3d, drawPolygons, drawRing, selection.ring, selection.shape, selection.handles, canvasMode]);
 
   const { persistDisplay, currentSpec, updateEncoding } = useDisplayEditor(display, isEmbeddingDisplay);
 
@@ -261,6 +306,8 @@ export default function EmbeddingCanvas({
   }, [followDisplayViewport, display.viewport, viewState, is_3d, fitToData, setViewState]);
 
   const colorByName = colorByLabel(colorByPath);
+  // Bound once so the 3D overlay's handle markers below read a narrowed shape.
+  const selectionShape = selection.shape;
 
   if (!viewState) {
     return (
@@ -291,18 +338,25 @@ export default function EmbeddingCanvas({
           // A 3D lasso is captured in screen space (see handleClick); once the camera
           // moves the frozen ring no longer matches the scene, so drop the in-progress
           // /committed region rather than let it select the wrong cells.
-          if (is_3d && lassoMode && (drawRing.length > 0 || drawPolygons.length > 0)) clearDraw?.();
+          if (is_3d && lassoMode && (drawRing.length > 0 || drawPolygons.length > 0 || placedSelectionShape)) clearDraw?.();
         }}
         onClick={handleClick}
+        onHover={lassoMode ? selection.onHover : undefined}
+        onDragStart={selection.onDragStart}
+        onDrag={selection.onDrag}
+        onDragEnd={selection.onDragEnd}
         layers={[...layers, ...drawLayers]}
         controller={(display.encoding.lock_view ?? EMBEDDING_ENCODING_DEFAULTS.lock_view) ? false
+          // A shape gesture owns the pointer, so the camera must not also claim it —
+          // dragRotate too, since the orbit view spends left-drag on rotation.
+          : selection.interacting ? { dragPan: false, dragRotate: false, doubleClickZoom: false }
           : lassoMode ? { doubleClickZoom: false } : true}
-        getCursor={lassoMode ? () => 'crosshair' : ({ isDragging }) => (isDragging ? 'grabbing' : 'grab')}
+        getCursor={lassoMode ? () => selection.cursor : ({ isDragging }) => (isDragging ? 'grabbing' : 'grab')}
       />
 
       {/* 3D lasso overlay: the ring lives in screen pixels (see handleClick), which the
           canvas-sized SVG draws in directly. 2D rings render as deck layers instead. */}
-      {is_3d && lassoMode && (drawPolygons.length > 0 || drawRing.length > 0) && (
+      {is_3d && lassoMode && (drawPolygons.length > 0 || drawRing.length > 0 || selection.ring) && (
         <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}>
           {drawPolygons.map((ring, i) => (
             <polygon key={i} points={ring.map((p) => p.join(',')).join(' ')}
@@ -315,10 +369,28 @@ export default function EmbeddingCanvas({
           {drawRing.map((p, i) => (
             <circle key={i} cx={p[0]} cy={p[1]} r={3} fill={`rgba(${selColor.join(',')},1)`} />
           ))}
+          {selection.ring && (
+            <polygon points={selection.ring.map((p) => p.join(',')).join(' ')}
+              fill={`rgba(${selColor.join(',')},0.15)`} stroke={`rgba(${selColor.join(',')},0.85)`} strokeWidth={2} />
+          )}
+          {/* Edit handles, matching the deck-layer overlay the 2D views draw:
+              white with a blue ring, the rotate handle green on its arm. */}
+          {selectionShape && selection.handles.map((h) => (
+            <g key={h.id}>
+              {h.id === ROTATE_HANDLE_ID && (
+                <line x1={selectionShape.center[0]} y1={selectionShape.center[1]}
+                  x2={h.position[0]} y2={h.position[1]} stroke="rgba(56,178,88,0.8)" strokeWidth={1.5} />
+              )}
+              <circle cx={h.position[0]} cy={h.position[1]} r={5}
+                fill={h.id === ROTATE_HANDLE_ID ? 'rgb(56,178,88)' : '#fff'}
+                stroke="rgb(51,136,255)" strokeWidth={2} />
+            </g>
+          ))}
         </svg>
       )}
 
-      <DrawHint drawMode={lassoMode} canvasMode={canvasMode} annotationTarget={annotationTarget} />
+      <DrawHint drawMode={lassoMode} canvasMode={canvasMode} annotationTarget={annotationTarget}
+        selectionTool={selectionTool} shapePlaced={placedSelectionShape !== null} />
 
       <LoadingCue coordsLoading={coordsLoading} colorLoading={colorLoading} boundariesLoading={false} />
 
