@@ -76,6 +76,16 @@ function bumpShapePending(shapeId: string, delta: number) {
   else pendingShapeJobs.set(shapeId, n);
 }
 
+// The shape editor coalesces rapid edits (a slider drag, characters typed into the
+// text field) into one update job. The window is locally owned from the *first* edit,
+// not from when the request goes out: a refresh landing in between would otherwise
+// adopt the server's pre-edit copy and silently drop everything edited since. The
+// claim is released only once the flush has taken the job's own claim, so ownership
+// never lapses between the two. One timer per shape id — editing shape B inside shape
+// A's window must not cancel A's pending flush.
+const SHAPE_EDIT_DEBOUNCE_MS = 500;
+const shapeEditTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
 // A job's id exists only once its POST resolves, so a `job.completed` frame can beat the
 // response that would have mapped it — resolveShapeJob then finds no shape and the count
 // never comes back down, marking that shape locally owned forever (refreshShapeAnnotations
@@ -288,16 +298,21 @@ interface AppStore {
   refreshShapeAnnotations: (sessionId: string) => Promise<void>;
   upsertShapeAnnotation: (shape: ShapeAnnotation) => void;
   removeShapeAnnotationLocal: (id: string) => void;
+  // Apply an edited shape locally and persist it once the edits stop coming, coalescing
+  // a slider drag or a typed label into one update job. Used by the annotations panel.
+  editShapeAnnotation: (shape: ShapeAnnotation) => void;
   // Persist the current (already-upserted) state of a shape via an update job, reading
   // the latest stored version so a captured-early snapshot can't revert a concurrent
-  // edit, and marking it locally owned until the job lands. Shared by the annotations
-  // panel (debounced style edits) and the canvas (drag-to-move/resize).
+  // edit, and marking it locally owned until the job lands. Used by the canvas
+  // (drag-to-move/resize), which persists per gesture, and by editShapeAnnotation.
   sendShapeUpdate: (shapeId: string) => void;
   // Optimistically remove a shape and enqueue its delete job, tombstoning it so a
   // refetch before the job lands can't resurrect it.
   deleteShape: (id: string) => void;
   // Clear a shape's locally-owned mark once its job completes/fails (called from the
-  // SSE handlers before the reconciling refetch).
+  // SSE handlers before the reconciling refetch). Safe to clear before that refetch
+  // lands: an edit made since is covered by its own claim (see SHAPE_EDIT_DEBOUNCE_MS),
+  // and one made before it is what the completed job just persisted.
   resolveShapeJob: (jobId: string) => void;
   // Persist a freshly drawn shape (optimistically; the job.completed refetch
   // reconciles) and select it. Shared by the canvas (drag/click creation) and the
@@ -802,6 +817,18 @@ export const useAppStore = create<AppStore>((set, get) => ({
     if (shapesAreLocalOnly(get())) return;
     void persistShapeJob(shape.id, 'Create shape failed', () => createShapeAnnotation(sessionId, shape))
       .then((ok) => { if (!ok) get().removeShapeAnnotationLocal(shape.id); });
+  },
+  editShapeAnnotation: (shape) => {
+    get().upsertShapeAnnotation(shape);
+    if (!get().activeSessionId) return;
+    const armed = shapeEditTimers.get(shape.id);
+    if (armed === undefined) bumpShapePending(shape.id, 1);
+    else clearTimeout(armed);
+    shapeEditTimers.set(shape.id, setTimeout(() => {
+      shapeEditTimers.delete(shape.id);
+      get().sendShapeUpdate(shape.id);   // takes the job's own claim
+      bumpShapePending(shape.id, -1);    // releases this window's
+    }, SHAPE_EDIT_DEBOUNCE_MS));
   },
   sendShapeUpdate: (shapeId) => {
     const sessionId = get().activeSessionId;

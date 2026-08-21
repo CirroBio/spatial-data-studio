@@ -1,4 +1,3 @@
-import { useEffect, useRef } from 'react';
 import { useAppStore } from '../store/sessionStore';
 import ColorSwatchPicker from './ColorSwatchPicker';
 import ShapeToolbar from './ShapeToolbar';
@@ -22,8 +21,7 @@ export default function AnnotationsPanel() {
     setSelectedShapeId,
     draftVertices,
     clearDraft,
-    upsertShapeAnnotation,
-    sendShapeUpdate,
+    editShapeAnnotation,
     deleteShape,
     commitNewShape,
   } = useAppStore();
@@ -33,53 +31,27 @@ export default function AnnotationsPanel() {
     if (geometry) commitNewShape(geometry); // commitNewShape clears the draft + selects the new shape
   }
 
-  // Style edits (color/width/alpha sliders) persist debounced, same 500ms
-  // coalescing pattern SpatialCanvas uses for display-encoding edits, so a
-  // slider drag doesn't fire a job per tick. The upsert is immediate (canvas tracks the
-  // drag live); the flush re-reads the latest stored shape via sendShapeUpdate, so a
-  // captured-early snapshot can't revert a concurrent drag/edit. One timer per shape
-  // id: editing shape B inside shape A's window must not cancel A's pending flush.
-  const persistTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
-  function persistShape(shape: ShapeAnnotation) {
-    upsertShapeAnnotation(shape);
-    if (!activeSessionId) return;
-    const timers = persistTimers.current;
-    clearTimeout(timers.get(shape.id));
-    timers.set(shape.id, setTimeout(() => {
-      timers.delete(shape.id);
-      sendShapeUpdate(shape.id);
-    }, 500));
-  }
-  useEffect(() => {
-    const timers = persistTimers.current;
-    return () => {
-      // Flush rather than drop on unmount: an edit still inside its debounce window
-      // must persist. Safe after unmount — sendShapeUpdate reads the store, not
-      // component state, and no-ops for a shape deleted meanwhile.
-      for (const [id, timer] of timers) {
-        clearTimeout(timer);
-        sendShapeUpdate(id);
-      }
-      timers.clear();
-    };
-  }, [sendShapeUpdate]);
-
   const selectedShape = shapeAnnotations.find((s) => s.id === selectedShapeId) ?? null;
 
+  // Edits (color/width/alpha sliders, the text field) apply locally at once and
+  // persist debounced — editShapeAnnotation owns both halves, and keeps the shape
+  // locally owned across the whole window so a refresh can't revert a slider mid-drag
+  // or a label mid-word. Its timers live in the store, so leaving this tab mid-edit
+  // still persists the edit.
   function patchStroke(patch: Partial<StrokeStyle>) {
     if (!selectedShape) return;
-    persistShape({ ...selectedShape, stroke: { ...selectedShape.stroke, ...patch } });
+    editShapeAnnotation({ ...selectedShape, stroke: { ...selectedShape.stroke, ...patch } });
   }
 
   function patchFill(patch: Partial<FillStyle>) {
     if (!selectedShape) return;
     const fill = selectedShape.fill ?? defaultFill();
-    persistShape({ ...selectedShape, fill: { ...fill, ...patch } });
+    editShapeAnnotation({ ...selectedShape, fill: { ...fill, ...patch } });
   }
 
   function patchText(patch: { text?: string; fontSize?: number }) {
     if (!selectedShape || selectedShape.geometry.kind !== 'text') return;
-    persistShape({ ...selectedShape, geometry: { ...selectedShape.geometry, ...patch } });
+    editShapeAnnotation({ ...selectedShape, geometry: { ...selectedShape.geometry, ...patch } });
   }
 
   function handleDelete(id: string) {
