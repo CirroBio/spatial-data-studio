@@ -60,8 +60,19 @@ def have_modules(modules, flow, hint):
 
 def poll(client, sid, predicate, timeout=180):
     t0 = time.time()
+    st = {}
     while time.time() - t0 < timeout:
-        st = client.get(f"/api/sessions/{sid}").json()
+        r = client.get(f"/api/sessions/{sid}")
+        if r.status_code == 503:
+            # "session busy: compute in progress, retry" — deps._read_locked gives up
+            # after READ_LOCK_TIMEOUT_S when a writer holds the session lock (a load's
+            # write-locked raster adoption can exceed it on a slow machine) and
+            # documents the 503 as retryable; the frontend re-issues exactly this
+            # (fetchWhenIdle), so the poll retries too instead of crashing on a body
+            # that has no "summary". The blocked request already consumed the lock
+            # timeout, so no extra sleep before the next attempt.
+            continue
+        st = r.json()
         if predicate(st):
             return st
         time.sleep(0.5)
