@@ -8,7 +8,7 @@ import { useArrowField } from '../data/useArrowField';
 import { fetchWhenIdle } from '../lib/fetchWhenIdle';
 import { countPointsInRings, indicesInRings } from '../lib/pointInPolygon';
 import { reportError } from '../lib/errors';
-import { isSpatialDisplay, type SpatialDisplaySpec, type ImageInfo, type ObsField, type Viewport } from '../types';
+import { isSpatialDisplay, type SpatialDisplaySpec, type ImageInfo, type ObsField } from '../types';
 import { useCanvasHost, useDisplayEditor } from './canvas-host';
 import type { ShapeAnnotation, ShapeGeometry, ShapeKind } from '../schemas/annotations';
 import { textGeometryAt } from '../schemas/annotations';
@@ -18,6 +18,7 @@ import { useSelectionShape } from './useSelectionShape';
 import { useArrowPositions } from './useArrowPositions';
 import { useVivImageLayer } from './useVivImageLayer';
 import { useCanvasViewState, shapesFetchZoomThreshold } from './useCanvasViewState';
+import { useFollowDisplayViewport, near } from './useFollowDisplayViewport';
 import { ZOOM_LIMITS, ZOOM_STEP, effectiveZoom } from './viewFit';
 import { useSpotColors, arrowToColorSource } from './useSpotColors';
 import { Matrix4 } from '@math.gl/core';
@@ -288,38 +289,22 @@ export default function SpatialCanvas({
   const viewStateRef = useRef(viewState);
   viewStateRef.current = viewState;
 
-  // A host that owns the viewport replaces the display's wholesale (the embedded
-  // viewer's apply-display, and the checkpoint's saved viewport on mount); follow it
-  // into the camera. Opt-in on purpose — a live session never restores a persisted
-  // viewport into a mounted canvas (see useCanvasViewState), and doing so there would
-  // let another viewer's PUT echo yank this one's camera. The ref keeps the effect
-  // one-shot per applied viewport object; a camera move the canvas made itself
-  // round-trips through the store as an equal viewport and is left alone.
-  const appliedEmbedViewport = useRef<Viewport | null | undefined>(undefined);
-  useEffect(() => {
-    if (!followDisplayViewport || !viewState) return;
-    const vp = display.viewport;
-    if (appliedEmbedViewport.current === vp) return;
-    appliedEmbedViewport.current = vp;
-    if (!vp) {
-      // null = auto-fit
-      const fit = fitToData();
-      if (fit) setViewState(fit);
-      return;
-    }
-    const t = viewState.target as number[];
-    const zoom = effectiveZoom(viewState);
-    if (
-      Math.abs(t[0] - vp.target[0]) < 1e-6 &&
-      Math.abs(t[1] - vp.target[1]) < 1e-6 &&
-      Math.abs(zoom - vp.zoom) < 1e-6
-    ) return;
-    setViewState({
-      ...viewState,
+  useFollowDisplayViewport({
+    enabled: followDisplayViewport,
+    viewport: display.viewport,
+    viewState,
+    setViewState,
+    fitToData,
+    matches: (vp, vs) => {
+      const t = vs.target as number[];
+      return near(t[0], vp.target[0]) && near(t[1], vp.target[1]) && near(effectiveZoom(vs), vp.zoom);
+    },
+    apply: (vp, vs): OrthographicViewState => ({
+      ...vs,
       target: [vp.target[0], vp.target[1], 0],
       zoom: vp.zoom, zoomX: vp.zoom, zoomY: vp.zoom,
-    });
-  }, [followDisplayViewport, display.viewport, viewState, fitToData, setViewState]);
+    }),
+  });
 
   useSnapshotHandler({
     kind: 'spatial',

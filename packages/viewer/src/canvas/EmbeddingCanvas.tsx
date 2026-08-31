@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useEffect, useRef, type ReactNode } from 'react';
+import { useMemo, useCallback, useEffect, type ReactNode } from 'react';
 import DeckGL from '@deck.gl/react';
 import { OrthographicView, OrbitView } from '@deck.gl/core';
 import type { Layer, PickingInfo } from '@deck.gl/core';
@@ -6,11 +6,12 @@ import { useArrowField } from '../data/useArrowField';
 import { indicesInRings } from '../lib/pointInPolygon';
 import { selectionShapeRing } from '../lib/selectionShapes';
 import { ROTATE_HANDLE_ID } from '../lib/shapeAnnotations';
-import { isEmbeddingDisplay, type EmbeddingDisplaySpec, type ObsField, type ObsmField, type Viewport } from '../types';
+import { isEmbeddingDisplay, type EmbeddingDisplaySpec, type ObsField, type ObsmField } from '../types';
 import { EMBEDDING_ENCODING_DEFAULTS } from '../defaults';
 import { useArrowPositions } from './useArrowPositions';
 import { useCanvasHost, useDisplayEditor } from './canvas-host';
 import { useEmbeddingViewState, type EmbeddingViewState } from './useEmbeddingViewState';
+import { useFollowDisplayViewport, near } from './useFollowDisplayViewport';
 import { useColorField } from './useColorField';
 import { useSnapshotHandler } from './useSnapshotHandler';
 import { buildLassoLayers } from './buildLassoLayers';
@@ -267,43 +268,37 @@ export default function EmbeddingCanvas({
     persistDisplay({ ...currentSpec(), viewport });
   }
 
-  // Follow a viewport the host applied to the display (the embedded viewer's
-  // apply-display, and the checkpoint's saved viewport on mount). Same shape and
-  // rationale as the SpatialCanvas counterpart — opt-in, one-shot per applied
-  // viewport object, and a camera move made here round-trips through the store as an
-  // equal viewport and is left alone.
-  const appliedEmbedViewport = useRef<Viewport | null | undefined>(undefined);
-  useEffect(() => {
-    if (!followDisplayViewport || !viewState) return;
-    const vp = display.viewport;
-    if (appliedEmbedViewport.current === vp) return;
-    appliedEmbedViewport.current = vp;
-    if (!vp) {
-      // null = auto-fit
-      const fit = fitToData();
-      if (fit) setViewState(fit);
-      return;
-    }
-    const v = viewState as { target: number[]; zoom: number; rotationX?: number; rotationOrbit?: number };
-    if (
-      Math.abs(v.target[0] - vp.target[0]) < 1e-6 &&
-      Math.abs(v.target[1] - vp.target[1]) < 1e-6 &&
-      Math.abs(v.zoom - vp.zoom) < 1e-6 &&
-      (vp.rotationX === undefined || Math.abs((v.rotationX ?? 0) - vp.rotationX) < 1e-6) &&
-      (vp.rotationOrbit === undefined || Math.abs((v.rotationOrbit ?? 0) - vp.rotationOrbit) < 1e-6)
-    ) return;
-    setViewState(
-      is_3d
+  // A persisted viewport carries the orbit angles only in 3D mode; a 2D viewport
+  // matches on target + zoom alone, and applying it must not smuggle rotation in.
+  useFollowDisplayViewport({
+    enabled: followDisplayViewport,
+    viewport: display.viewport,
+    viewState,
+    setViewState,
+    fitToData,
+    matches: (vp, vs) => {
+      const v = vs as { target: number[]; zoom: number; rotationX?: number; rotationOrbit?: number };
+      return (
+        near(v.target[0], vp.target[0]) &&
+        near(v.target[1], vp.target[1]) &&
+        near(v.zoom, vp.zoom) &&
+        (vp.rotationX === undefined || near(v.rotationX ?? 0, vp.rotationX)) &&
+        (vp.rotationOrbit === undefined || near(v.rotationOrbit ?? 0, vp.rotationOrbit))
+      );
+    },
+    apply: (vp, vs): EmbeddingViewState => {
+      const v = vs as { rotationX?: number; rotationOrbit?: number };
+      return is_3d
         ? {
-            ...viewState,
+            ...vs,
             target: [vp.target[0], vp.target[1], vp.target[2] ?? 0],
             zoom: vp.zoom,
             rotationX: vp.rotationX ?? v.rotationX,
             rotationOrbit: vp.rotationOrbit ?? v.rotationOrbit,
           }
-        : { ...viewState, target: [vp.target[0], vp.target[1], 0], zoom: vp.zoom },
-    );
-  }, [followDisplayViewport, display.viewport, viewState, is_3d, fitToData, setViewState]);
+        : { ...vs, target: [vp.target[0], vp.target[1], 0], zoom: vp.zoom };
+    },
+  });
 
   const colorByName = colorByLabel(colorByPath);
   // Bound once so the 3D overlay's handle markers below read a narrowed shape.
