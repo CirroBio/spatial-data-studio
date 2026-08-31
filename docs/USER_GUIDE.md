@@ -23,7 +23,10 @@ existing SpatialData `.zarr` store. Each reader input is its own field: a folder
 input opens a filesystem picker, and the reader's options (e.g. whether Xenium reads
 transcripts, cell boundaries, or the morphology image) are toggles/values — so you tailor
 exactly what gets loaded. Large datasets can take a while to read, so the reader's log
-streams live while it works. Datasets stay resident in memory for the session.
+streams live while it works. Datasets stay resident in memory for the session. Opening a
+`.zarr` store (or `.zarr.zip` / `.zarr.tar.gz` archive) that this app previously saved
+also carries the store's recorded compute history into the new session, so the functions
+that produced the data stay visible in the Compute tab.
 
 ### Run analyses without writing code
 

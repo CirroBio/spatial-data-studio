@@ -567,6 +567,14 @@ class Session:
                     imaging.evict_caches(self.sdata)  # old id() is about to be freed
                 self.sdata = new_object
                 self.force_full = True  # a freshly adopted object must be written whole once
+                is_reimport = fn is not None and fn.effect_class == "read"
+                # An imported store may itself be a checkpoint this app wrote (opened
+                # via Import Data instead of the checkpoint loader): its attrs carry
+                # the writing session's app_state, whose compute_history is the
+                # provenance of the data. Carry those records into this session
+                # instead of silently dropping them.
+                if is_reimport:
+                    self._adopt_import_history(new_object)
                 # A reader's images/labels can be single-scale or huge-chunked; tile
                 # them now so the canvas never realizes a multi-GB chunk per tile.
                 # known_stores is keyed by element NAME, not dataset identity, so it's
@@ -577,7 +585,6 @@ class Session:
                 # be wrongly treated as "already known local" — leaving raster_stores[name]
                 # pointing at the PREVIOUS dataset's cache dir. Force a from-scratch
                 # locality check for that case by passing no prior knowledge at all.
-                is_reimport = fn is not None and fn.effect_class == "read"
                 known_stores = {} if is_reimport else self.raster_stores
                 # A read bootstrap's rebuild can be lengthy (multi-GB); stream its
                 # progress over the same job.log channel `target` above already taps,
@@ -922,6 +929,37 @@ class Session:
         if load_id:
             BUS.publish("session.loading", {"load_id": load_id, "done": True, "status": "ready",
                                             "hash_check": hash_check, "message": "Ready"})
+
+    def _adopt_import_history(self, new_object) -> None:
+        """Carry an imported store's own compute_history into this session.
+
+        Import Data on a store this app previously saved (registry/custom/
+        read_spatialdata.py) adopts the object but not `attrs["app_state"]`, so
+        without this the functions that produced the data vanish from History.
+        The store's records are inserted ahead of this import's own read record,
+        which is already in the collection and postdates them. Only a blob that
+        migrates cleanly (same rules as the checkpoint loader) is adopted — a
+        foreign, malformed, or newer-than-app app_state is ignored rather than
+        poisoned into the session's state, where the save job's validate_app_state
+        would reject it long after the import. Runs under the caller's write lock.
+        The adopted records' logs live in the archive's logs/ and stay readable
+        through get_log's lazy extract_dir fallback."""
+        prior = (getattr(new_object, "attrs", None) or {}).get("app_state")
+        if not isinstance(prior, dict) or not prior.get("compute_history"):
+            return
+        if prior.get("schema_version", 0) > appstate.SCHEMA_VERSION:
+            return
+        import copy
+        try:
+            migrated = appstate.migrate(copy.deepcopy(prior))
+        except ValueError:
+            return
+        # Skip ids already present: a read-effect re-run on an open session can
+        # import the same store twice, and duplicated records would render twice.
+        seen = {r.get("id") for r in self.app_state["compute_history"]}
+        adopted = [r for r in migrated["compute_history"] if r.get("id") not in seen]
+        if adopted:
+            self.app_state["compute_history"][:0] = adopted
 
     # ---- status bookkeeping ----------------------------------------------
     def _publish_summary(self) -> None:

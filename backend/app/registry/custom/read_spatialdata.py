@@ -38,7 +38,9 @@ Opens an existing SpatialData store as a new session. Accepts either a `.zarr`
 directory or a compressed archive of one (`.zarr.zip` or `.zarr.tar.gz`); an
 archive is unpacked to a temporary directory that the session owns and cleans up
 when it closes. This is the raw-import counterpart to opening an app checkpoint —
-any `app_state` stored in the object is ignored; the session starts fresh.
+the session starts with fresh displays and plots, but if the store was written by
+this app its recorded compute history is carried into the new session, so the
+provenance of the data stays visible in History.
 
 Parameters
 ----------

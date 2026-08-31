@@ -174,8 +174,10 @@ the "Import Data" flow. Accepts either a `.zarr` directory or a compressed
 archive of one (`.zarr.zip` or `.zarr.tar.gz`); an archive is unpacked to a
 temporary directory the session owns and removes on close. Wraps
 `spatialdata.read_zarr` — the reflected reader alone only opens a `.zarr`
-directory, so the archive handling is added here. Any `app_state` in the object
-is ignored (raw import, not a checkpoint reload).
+directory, so the archive handling is added here. Displays, plots and the rest of
+the `app_state` in the object are not reloaded (raw import, not a checkpoint
+reload), but a compute history recorded by this app is carried into the new
+session so the provenance of the data stays visible in History.
 
 **Citation:** SpatialData (Marconato et al., Nat Methods 22, 58-62 (2025));
 `.zarr.zip` / `.zarr.tar.gz` archive extraction original to this repository.
