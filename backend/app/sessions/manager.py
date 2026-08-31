@@ -145,31 +145,37 @@ class SessionManager:
         return [self.summary(s) for s in list(self.sessions.values())]
 
     def state(self, sess: Session) -> dict:
+        """Full session state for GET /api/sessions/{id} and the MCP tools.
+
+        The CALLER must already hold `sess.lock`'s read side — every route reaches
+        here through deps._read_locked. The lock is deliberately not acquired here:
+        RWLock is non-reentrant and writer-preferring, so a nested acquire under the
+        caller's read hold deadlocks the session permanently the moment a writer
+        queues between the two acquires."""
         from ..transport.arrow import describe_fields
         fields = {}
         app_state = sess.app_state
-        with sess.lock.reading():
-            try:
-                # Read the live AnnData under the read lock: the worker mutates obs/obsm
-                # under the write lock, so an unguarded describe_fields can hit a torn read
-                # or "dict changed size during iteration" mid-compute.
-                fields = describe_fields(sess.active_table(), sess.sdata)
-            except RuntimeError:
-                pass
-            # regions.assign (sessions/regions.py) mutates app_state["regions"] and each
-            # display's nested `encoding` IN PLACE under the write lock — appending
-            # region entries, rebinding entry["categories"], writing enc["color_by"] and
-            # nested enc["category_colors"][...] — so the shallow dict(d) display copies
-            # below would still share (and FastAPI would serialize, post-lock) the live
-            # sub-dicts mid-mutation. Deep-copy just those substructures, under the read
-            # lock so the copy itself can't tear either; plots/history can be huge, so
-            # the whole app_state is deliberately NOT deep-copied.
-            regions_copy = copy.deepcopy(app_state.get("regions", []))
-            displays_copy = [
-                {**d, "encoding": copy.deepcopy(d["encoding"])}
-                if d.get("encoding") is not None else dict(d)
-                for d in list(app_state.get("displays", []))
-            ]
+        try:
+            # Read the live AnnData under the caller's read lock: the worker mutates
+            # obs/obsm under the write lock, so an unguarded describe_fields can hit a
+            # torn read or "dict changed size during iteration" mid-compute.
+            fields = describe_fields(sess.active_table(), sess.sdata)
+        except RuntimeError:
+            pass
+        # regions.assign (sessions/regions.py) mutates app_state["regions"] and each
+        # display's nested `encoding` IN PLACE under the write lock — appending
+        # region entries, rebinding entry["categories"], writing enc["color_by"] and
+        # nested enc["category_colors"][...] — so the shallow dict(d) display copies
+        # below would still share (and FastAPI would serialize, post-lock) the live
+        # sub-dicts mid-mutation. Deep-copy just those substructures, under the
+        # caller's read lock so the copy itself can't tear either; plots/history can
+        # be huge, so the whole app_state is deliberately NOT deep-copied.
+        regions_copy = copy.deepcopy(app_state.get("regions", []))
+        displays_copy = [
+            {**d, "encoding": copy.deepcopy(d["encoding"])}
+            if d.get("encoding") is not None else dict(d)
+            for d in list(app_state.get("displays", []))
+        ]
         # Snapshot the mutable collections: the worker thread appends to / rewrites
         # compute_history/plots and bumps data_versions as bookkeeping AFTER releasing
         # the write lock, so returning the live app_state would let FastAPI serialize
