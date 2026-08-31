@@ -63,8 +63,10 @@ store
                 return CallResult(status="failed", log=buf.getvalue() + "\n" + traceback.format_exc(),
                                   error=short_error(e))
             log = buf.getvalue()
-        # The session cleans extract_dir on close (same contract as create_from_load);
-        # zarr reads chunks from it lazily for the object's lifetime.
-        if extract_dir is not None:
-            session.extract_dir = extract_dir
-        return CallResult(status="completed", log=log, new_object=sdata)
+        # Stage extract_dir on the result rather than on the session: the worker
+        # adopts it together with the object under the write lock (session._run_call),
+        # which also retires the previous dir a re-import replaces. zarr reads chunks
+        # from it lazily for the object's lifetime; the session cleans it on close
+        # (same contract as create_from_load).
+        return CallResult(status="completed", log=log, new_object=sdata,
+                          extract_dir=extract_dir)

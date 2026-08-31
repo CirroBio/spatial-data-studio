@@ -428,17 +428,30 @@ class Session:
                 if job is None or job["status"] == "cancelled":
                     continue
                 job["status"] = "running"
-            if not self.manager.admit_job(self):
-                # Memory boundary hit at dequeue: hold the job (put it back) rather than
-                # fail it — admit_job reports it as "held", and the pressure (often a
-                # transient tile burst) usually clears in seconds. Reset to queued so it
-                # retries and stays cancellable; back off so we don't spin.
+            # Memory boundary at dequeue: hold THIS job in place until admit_job accepts
+            # it, rather than re-putting it on the queue — a tail re-put would let a
+            # later-submitted job run first, breaking strict seriality (DESIGN §6.2).
+            # The pressure (often a transient tile burst) usually clears in seconds.
+            # For each wait the job is flipped back to "queued" so cancel() can still
+            # claim it, then re-claimed — exactly one of cancel/run wins, as at dequeue.
+            # admit_job publishes memory.warning per refused check, so the hold reports
+            # once per backoff interval (the cadence the old re-queue loop had).
+            cancelled = False
+            while not self.manager.admit_job(self):
                 with self._book:
                     j = self._jobs.get(job_id)
                     if j is not None and j["status"] == "running":
                         j["status"] = "queued"
-                        self._queue.put((job_id, kind, payload))
                 self._stop.wait(self._MEMORY_HOLD_BACKOFF_S)
+                if self._stop.is_set():
+                    return
+                with self._book:
+                    j = self._jobs.get(job_id)
+                    if j is None or j["status"] != "queued":  # cancelled during the hold
+                        cancelled = True
+                        break
+                    j["status"] = "running"
+            if cancelled:
                 continue
             try:
                 self._dispatch(job_id, kind, payload)
@@ -547,88 +560,107 @@ class Session:
             self._fail(job_id, kind, result.error or "failed", log=result.log)
             return
 
-        with self.lock.writing():
-            if result.new_object is not None:
-                new_object = result.new_object
-                import anndata
-                if isinstance(new_object, anndata.AnnData):
-                    # Reflected read.* squidpy readers (visium/vizgen/nanostring) return
-                    # a bare AnnData, which has no .tables: adopting it as-is leaves
-                    # _default_table_key None and the session "ready" but silently dead.
-                    # Wrap it here, at the single adoption point, so the raster-collision
-                    # guard and everything downstream sees a SpatialData.
-                    from spatialdata import SpatialData
-                    new_object = SpatialData(tables={"table": new_object})
-                # Adopt a returned object (read bootstrap / Edge B) under the write lock
-                # so readers never see a new sdata with a stale table key.
-                replaced = self.sdata is not None and self.sdata is not new_object
-                if replaced:
-                    from .. import imaging
-                    imaging.evict_caches(self.sdata)  # old id() is about to be freed
-                self.sdata = new_object
-                self.force_full = True  # a freshly adopted object must be written whole once
-                is_reimport = fn is not None and fn.effect_class == "read"
-                # An imported store may itself be a checkpoint this app wrote (opened
-                # via Import Data instead of the checkpoint loader): its attrs carry
-                # the writing session's app_state, whose compute_history is the
-                # provenance of the data. Carry those records into this session
-                # instead of silently dropping them.
-                if is_reimport:
-                    self._adopt_import_history(new_object)
-                # A reader's images/labels can be single-scale or huge-chunked; tile
-                # them now so the canvas never realizes a multi-GB chunk per tile.
-                # known_stores is keyed by element NAME, not dataset identity, so it's
-                # only trustworthy on a same-object reshape: a genuine re-import (a
-                # read-effect function re-run on an already-open session,
-                # registry/custom/read_spatialdata.py) can hand back a fresh dataset
-                # that happens to reuse a conventional image name, which would otherwise
-                # be wrongly treated as "already known local" — leaving raster_stores[name]
-                # pointing at the PREVIOUS dataset's cache dir. Force a from-scratch
-                # locality check for that case by passing no prior knowledge at all.
-                known_stores = {} if is_reimport else self.raster_stores
-                # A read bootstrap's rebuild can be lengthy (multi-GB); stream its
-                # progress over the same job.log channel `target` above already taps,
-                # so the import spinner keeps moving during this (write-lock-held) rebuild.
-                progress = ((lambda message, pct=None: BUS.publish(
-                    "job.log", {"session_id": self.id, "job_id": job_id, "chunk": f"{message}\n"}))
-                            if is_reimport else None)
-                self._adopt_rasters(known_stores, progress)
-                self.active_table_key = self._default_table_key()
-                if not self.app_state["displays"]:
-                    self.manager.auto_displays(self)
-                self.status = "ready"  # the read bootstrap adopted the object
-                self.error = None
-                self._publish_summary()
-                # Replacing the live object mid-session (e.g. sc.pp.filter_cells adopted
-                # whole, §4.6) changed every field: the row-count differs, so any cached
-                # canvas array is now stale. The facet diff can't express a wholesale
-                # swap, so bump every field path of the new table explicitly, letting the
-                # canvas refetch and dependent plots invalidate.
-                if replaced and not result.changed_fields:
-                    result.changed_fields = self._table_field_paths()
-            else:
-                # The common compute/plot path: write the child's changed facets back
-                # onto the live object. This is the only live-object mutation here, so it
-                # alone needs the write lock.
-                from ..registry import kernel
-                if result.changed_facets:
-                    kernel.apply_changed_facets(self.active_table(), self.sdata, result.changed_facets)
-                    if "images" in result.changed_facets or "labels" in result.changed_facets:
-                        # A compute that wrote an images/labels facet in place (mutating
-                        # facets without reshaping the table, so it never reaches the
-                        # new_object branch above) still needs tile-chunking, or it
-                        # reproduces the multi-GB-chunk-per-tile OOM rasters.py exists
-                        # to prevent, and the new element never gets a raster_stores
-                        # entry. An ordinary in-session mutation, never a re-import, so
-                        # the existing known_stores map is always trusted.
-                        self._adopt_rasters(self.raster_stores)
-                        # imaging's chunk/norm caches key on (id(sdata), element, ...),
-                        # and an in-place facet merge keeps the same object identity —
-                        # so without an eviction, raster_store would keep serving
-                        # pre-compute chunk bytes under the new ETag and thumbnails
-                        # would keep the stale channel norm.
+        try:
+            with self.lock.writing():
+                if result.new_object is not None:
+                    new_object = result.new_object
+                    import anndata
+                    if isinstance(new_object, anndata.AnnData):
+                        # Reflected read.* squidpy readers (visium/vizgen/nanostring) return
+                        # a bare AnnData, which has no .tables: adopting it as-is leaves
+                        # _default_table_key None and the session "ready" but silently dead.
+                        # Wrap it here, at the single adoption point, so the raster-collision
+                        # guard and everything downstream sees a SpatialData.
+                        from spatialdata import SpatialData
+                        new_object = SpatialData(tables={"table": new_object})
+                    # Adopt a returned object (read bootstrap / Edge B) under the write lock
+                    # so readers never see a new sdata with a stale table key.
+                    replaced = self.sdata is not None and self.sdata is not new_object
+                    if replaced:
                         from .. import imaging
-                        imaging.evict_caches(self.sdata)
+                        imaging.evict_caches(self.sdata)  # old id() is about to be freed
+                    self.sdata = new_object
+                    self.force_full = True  # a freshly adopted object must be written whole once
+                    if result.extract_dir is not None and result.extract_dir != self.extract_dir:
+                        # A reader staged the temp dir its archive unpacked into (see
+                        # CallResult.extract_dir); own it atomically with the object it
+                        # backs. The previous dir served only the object just replaced,
+                        # so retire it here — a re-import would otherwise leak one
+                        # unpacked multi-GB dir per run (WORK_DIR is tmpfs in the
+                        # shipped compose).
+                        if self.extract_dir:
+                            shutil.rmtree(self.extract_dir, ignore_errors=True)
+                        self.extract_dir = result.extract_dir
+                    is_reimport = fn is not None and fn.effect_class == "read"
+                    # An imported store may itself be a checkpoint this app wrote (opened
+                    # via Import Data instead of the checkpoint loader): its attrs carry
+                    # the writing session's app_state, whose compute_history is the
+                    # provenance of the data. Carry those records into this session
+                    # instead of silently dropping them.
+                    if is_reimport:
+                        self._adopt_import_history(new_object)
+                    # A reader's images/labels can be single-scale or huge-chunked; tile
+                    # them now so the canvas never realizes a multi-GB chunk per tile.
+                    # known_stores is keyed by element NAME, not dataset identity, so it's
+                    # only trustworthy on a same-object reshape: a genuine re-import (a
+                    # read-effect function re-run on an already-open session,
+                    # registry/custom/read_spatialdata.py) can hand back a fresh dataset
+                    # that happens to reuse a conventional image name, which would otherwise
+                    # be wrongly treated as "already known local" — leaving raster_stores[name]
+                    # pointing at the PREVIOUS dataset's cache dir. Force a from-scratch
+                    # locality check for that case by passing no prior knowledge at all.
+                    known_stores = {} if is_reimport else self.raster_stores
+                    # A read bootstrap's rebuild can be lengthy (multi-GB); stream its
+                    # progress over the same job.log channel `target` above already taps,
+                    # so the import spinner keeps moving during this (write-lock-held) rebuild.
+                    progress = ((lambda message, pct=None: BUS.publish(
+                        "job.log", {"session_id": self.id, "job_id": job_id, "chunk": f"{message}\n"}))
+                                if is_reimport else None)
+                    self._adopt_rasters(known_stores, progress)
+                    self.active_table_key = self._default_table_key()
+                    if not self.app_state["displays"]:
+                        self.manager.auto_displays(self)
+                    self.status = "ready"  # the read bootstrap adopted the object
+                    self.error = None
+                    self._publish_summary()
+                    # Replacing the live object mid-session (e.g. sc.pp.filter_cells adopted
+                    # whole, §4.6) changed every field: the row-count differs, so any cached
+                    # canvas array is now stale. The facet diff can't express a wholesale
+                    # swap, so bump every field path of the new table explicitly, letting the
+                    # canvas refetch and dependent plots invalidate.
+                    if replaced and not result.changed_fields:
+                        result.changed_fields = self._table_field_paths()
+                else:
+                    # The common compute/plot path: write the child's changed facets back
+                    # onto the live object. This is the only live-object mutation here, so it
+                    # alone needs the write lock.
+                    from ..registry import kernel
+                    if result.changed_facets:
+                        kernel.apply_changed_facets(self.active_table(), self.sdata, result.changed_facets)
+                        if "images" in result.changed_facets or "labels" in result.changed_facets:
+                            # A compute that wrote an images/labels facet in place (mutating
+                            # facets without reshaping the table, so it never reaches the
+                            # new_object branch above) still needs tile-chunking, or it
+                            # reproduces the multi-GB-chunk-per-tile OOM rasters.py exists
+                            # to prevent, and the new element never gets a raster_stores
+                            # entry. An ordinary in-session mutation, never a re-import, so
+                            # the existing known_stores map is always trusted.
+                            self._adopt_rasters(self.raster_stores)
+                            # imaging's chunk/norm caches key on (id(sdata), element, ...),
+                            # and an in-place facet merge keeps the same object identity —
+                            # so without an eviction, raster_store would keep serving
+                            # pre-compute chunk bytes under the new ETag and thumbnails
+                            # would keep the stale channel norm.
+                            from .. import imaging
+                            imaging.evict_caches(self.sdata)
+        except Exception:
+            # Adoption failed before the staged dir was owned (self.extract_dir still
+            # differs): nothing tracks it — close() cleans only self.extract_dir — so
+            # drop it here or the unpacked archive leaks. A failure AFTER the swap
+            # leaves the dir owned (equal), and close() handles it.
+            if result.extract_dir is not None and result.extract_dir != self.extract_dir:
+                shutil.rmtree(result.extract_dir, ignore_errors=True)
+            raise
 
         self.saved = False  # a completed compute/plot changed the object or its cached state
 

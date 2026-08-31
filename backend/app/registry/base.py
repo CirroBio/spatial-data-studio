@@ -147,6 +147,13 @@ class CallResult:
     figure_pdf: bytes | None = None
     figure_png: bytes | None = None
     new_object: object | None = None
+    # Temp dir a reader unpacked an archive into (new_object reads chunks from it
+    # lazily). Staged here rather than written onto the session at execute() time so
+    # the worker swaps it in atomically with the object adoption (session._run_call,
+    # under the write lock) — mutating the session early would strand the previous
+    # dir (leaking one unpacked multi-GB dir per re-import) and, on a failed
+    # adoption, leave the still-live old object reading from an untracked dir.
+    extract_dir: str | None = None
     error: str | None = None
 
 
