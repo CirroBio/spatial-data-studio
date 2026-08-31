@@ -44,6 +44,13 @@ _CATALOG_PATH = Path(__file__).with_name("library_catalog.yaml")
 _log = logging.getLogger(__name__)
 
 
+def key_of(descriptor: dict) -> str:
+    """Registry key of a `{namespace, function, ...}` descriptor. `.get` on purpose:
+    a malformed descriptor composes a key ("None.None") that misses the registry and
+    is rejected by `Registry.require`, rather than raising KeyError here."""
+    return f"{descriptor.get('namespace')}.{descriptor.get('function')}"
+
+
 def _module_version(name: str) -> str:
     try:
         mod = importlib.import_module(name)
@@ -136,6 +143,16 @@ class Registry:
 
     def get(self, key: str) -> Function | None:
         return self.entries.get(key)
+
+    def require(self, descriptor: dict) -> Function:
+        """The entry a descriptor resolves to, or ValueError — the reject-unknown
+        guard every execution boundary (HTTP jobs route, MCP tools) runs before
+        enqueueing. ValueError rather than KeyError so boundaries can surface
+        `str(e)` verbatim (str of a KeyError adds quotes)."""
+        entry = self.get(key_of(descriptor))
+        if entry is None:
+            raise ValueError(f"unknown function {key_of(descriptor)}")
+        return entry
 
     def public(self) -> dict:
         return {"functions": [e.to_public() for e in self.entries.values()],

@@ -258,8 +258,7 @@ class SessionManager:
         cs, m = imaging.world_to_system(parent.sdata, parent.active_table(),
                                         payload.get("coordinate_system"))
         if not np.allclose(m, np.eye(3)):
-            aff = [m[0, 0], m[0, 1], m[1, 0], m[1, 1], m[0, 2], m[1, 2]]  # shapely: a,b,d,e,xoff,yoff
-            polys = [affine_transform(p, aff) for p in polys]
+            polys = [affine_transform(p, transform.shapely_affine(m)) for p in polys]
         geom = polys[0] if len(polys) == 1 else MultiPolygon(polys)
         # "remove" mode (invert): the box must contain every cell, so use the whole
         # object's extent, padded slightly so cells on the edge aren't dropped.

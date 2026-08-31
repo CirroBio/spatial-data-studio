@@ -500,13 +500,14 @@ def image_info(sdata, element, table=None) -> dict:
     domain the client compositor needs. Session-specific fields (the raster store URL,
     the `client_compositing` gate) are layered on by the live route; the checkpoint
     sidecar (`persistence.store._write_viewer_sidecar`) bakes this dict as-is."""
+    from .sessions import transform
+
     arr = _level_array(sdata.images[element], 0)
     w, h = int(arr.shape[-1]), int(arr.shape[-2])
     m = pixel_to_world(sdata, element, table)
     # 6-float affine [a,b,c,d,e,f]: world_x = a*px + b*py + c, world_y = d*px + e*py + f,
     # where (px, py) are level-0 pixel coords.
-    affine6 = [float(m[0, 0]), float(m[0, 1]), float(m[0, 2]),
-               float(m[1, 0]), float(m[1, 1]), float(m[1, 2])]
+    affine6 = transform.affine6(m)
     return {"element": element,
             "height": h, "width": w,
             "channels": int(arr.shape[0]) if arr.ndim == 3 else 1,

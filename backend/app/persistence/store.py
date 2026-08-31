@@ -918,6 +918,7 @@ def _shape_element_transforms(sdata, table_keys: list[str],
     system the cells live in) is omitted rather than failing the save. The store is still
     fully readable, and the reader withholds that element's boundaries instead of drawing
     them somewhere it cannot justify."""
+    from ..sessions import transform
     from ..transport import geometry
 
     placed: dict[str, dict[str, list[float]]] = {}
@@ -930,9 +931,7 @@ def _shape_element_transforms(sdata, table_keys: list[str],
                 _log.warning("no boundary placement for shapes '%s' against table '%s': %s",
                              element, key, exc)
                 continue
-            placed.setdefault(element, {})[key] = [
-                float(m[0, 0]), float(m[0, 1]), float(m[0, 2]),
-                float(m[1, 0]), float(m[1, 1]), float(m[1, 2])]
+            placed.setdefault(element, {})[key] = transform.affine6(m)
     return placed
 
 

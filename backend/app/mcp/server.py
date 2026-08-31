@@ -184,6 +184,19 @@ def _job_report(sess, job_id: str, status: str) -> dict:
     return out
 
 
+async def _special_job_report(sess, job_id: str, wait: bool, timeout_s: float,
+                              **extra) -> dict:
+    """Await (or not) an already-enqueued special job (save/annotate/shape_annotate...)
+    and build the report its tool returns: job_id + status + `extra`, plus the log
+    tail on failure. Unlike `_job_report` there is no history entry to attach —
+    special jobs have no app_state record (see main.job_state)."""
+    status = await _await_job(sess, job_id, timeout_s) if wait else "queued"
+    out = {"job_id": job_id, "status": status, **extra}
+    if status == "failed":
+        out["log_tail"] = _log_tail(sess, job_id)
+    return out
+
+
 def _meta_block(meta: dict) -> str:
     return json.dumps(meta, indent=1)
 
@@ -269,9 +282,10 @@ async def create_session(checkpoint_path: str | None = None, reader: dict | None
         else:
             descriptor = {"namespace": reader_namespace(reader),
                           "function": reader["function"], "params": reader.get("params", {})}
-            if REGISTRY.get(f"{descriptor['namespace']}.{descriptor['function']}") is None:
-                raise RuntimeError(f"unknown reader {descriptor['namespace']}.{descriptor['function']}"
-                                   " (see list_readers)")
+            try:
+                REGISTRY.require(descriptor)
+            except ValueError as e:
+                raise RuntimeError(f"{e} (see list_readers)")
             sess = _mgr().create_from_read(descriptor, name)
     except (RuntimeError, FileNotFoundError, KeyError) as e:
         raise ValueError(str(e))
@@ -324,10 +338,9 @@ async def save_checkpoint(session_id: str | None = None, path: str | None = None
     sess = _writable(session_id)
     target = path or default_save_path(sess)
     job_id = sess.enqueue_special("save", {"path": target, "hash_name": not path})
-    status = await _await_job(sess, job_id, timeout_s) if wait else "queued"
-    out = {"job_id": job_id, "status": status, "path": sess.store_path if status == "completed" else target}
-    if status == "failed":
-        out["log_tail"] = _log_tail(sess, job_id)
+    out = await _special_job_report(sess, job_id, wait, timeout_s, path=target)
+    if out["status"] == "completed":
+        out["path"] = sess.store_path  # the save may have appended the hash suffix
     return out
 
 
@@ -430,8 +443,10 @@ async def run_function(namespace: str, function: str, params: dict | None = None
     server-side; view it with view_plot(job_id)). Returns the history entry with
     status, structural_diff, and a log tail on failure."""
     agent.bind_agent()
-    if REGISTRY.get(f"{namespace}.{function}") is None:
-        raise ValueError(f"unknown function {namespace}.{function} (see search_functions)")
+    try:
+        REGISTRY.require({"namespace": namespace, "function": function})
+    except ValueError as e:
+        raise ValueError(f"{e} (see search_functions)")
     sess = _writable(session_id)
     try:
         job_id = sess.enqueue_descriptor({"namespace": namespace, "function": function,
@@ -671,16 +686,13 @@ async def annotate_region(region_set: str, category: str, polygons: list | None 
         payload["color"] = color
     payload.update(await _selection_payload(sess, polygons, cell_indices, space, display_id))
     job_id = sess.enqueue_special("annotate", payload)
-    status = await _await_job(sess, job_id, timeout_s) if wait else "queued"
-    out = {"job_id": job_id, "status": status}
-    if status == "completed":
+    out = await _special_job_report(sess, job_id, wait, timeout_s)
+    if out["status"] == "completed":
         def _counts():
             col = sess.active_table().obs[region_set].astype(str)
             return {v: int(n) for v, n in col.value_counts().items()}
         out["region_set_counts"] = await _read_locked(sess, _counts)
         out["note"] = "all displays now color by this region set"
-    elif status == "failed":
-        out["log_tail"] = _log_tail(sess, job_id)
     return out
 
 
@@ -747,11 +759,7 @@ async def add_shape_annotation(shape: dict, session_id: str | None = None,
     sess = _writable(session_id)
     shape = {**shape, "stroke": {**_STROKE_DEFAULTS, **(shape.get("stroke") or {})}}
     job_id = sess.enqueue_special("shape_annotate", {"op": "create", "shape": shape})
-    status = await _await_job(sess, job_id, timeout_s) if wait else "queued"
-    out = {"job_id": job_id, "status": status}
-    if status == "failed":
-        out["log_tail"] = _log_tail(sess, job_id)
-    return out
+    return await _special_job_report(sess, job_id, wait, timeout_s)
 
 
 @mcp_server.tool()
@@ -761,8 +769,7 @@ async def delete_shape_annotation(shape_id: str, session_id: str | None = None,
     agent.bind_agent()
     sess = _writable(session_id)
     job_id = sess.enqueue_special("shape_annotate", {"op": "delete", "shape_id": shape_id})
-    status = await _await_job(sess, job_id, timeout_s) if wait else "queued"
-    return {"job_id": job_id, "status": status}
+    return await _special_job_report(sess, job_id, wait, timeout_s)
 
 
 # ---- data access ---------------------------------------------------------------------

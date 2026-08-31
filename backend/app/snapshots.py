@@ -380,6 +380,7 @@ def _draw_shapes(ax, session, enc, element, view_bbox, p2w, w2p, n_cells, dpi) -
     live canvas, where the outlines drop out and the points show)."""
     from matplotlib.collections import PathCollection
     from shapely.affinity import affine_transform
+    from .sessions import transform
     from .transport import geometry
 
     # The query bbox is world space; convert from pixel space when an image is shown.
@@ -395,7 +396,7 @@ def _draw_shapes(ax, session, enc, element, view_bbox, p2w, w2p, n_cells, dpi) -
 
     # World -> view (pixel) space, the same transform the points carry.
     if w2p is not None:
-        aff = [w2p[0, 0], w2p[0, 1], w2p[1, 0], w2p[1, 1], w2p[0, 2], w2p[1, 2]]
+        aff = transform.shapely_affine(w2p)
         geoms = [affine_transform(g, aff) for g in geoms]
 
     rgba = _cell_rgba(session, enc, n_cells)

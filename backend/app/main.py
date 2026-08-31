@@ -271,8 +271,10 @@ async def release_lock(sid: str):
 
 # ---- jobs ------------------------------------------------------------------
 def _require_known(descriptor: dict):
-    if REGISTRY.get(f"{descriptor.get('namespace')}.{descriptor.get('function')}") is None:
-        raise HTTPException(400, "unknown function")
+    try:
+        REGISTRY.require(descriptor)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 @app.post("/api/sessions/{sid}/jobs")

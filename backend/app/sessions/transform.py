@@ -73,8 +73,7 @@ def get_affine6(sdata, table) -> list[float]:
         # catch stays narrow so a genuine failure in here surfaces instead of silently
         # rendering a misaligned overlay that looks like a data problem.
         return list(IDENTITY6)
-    return [float(m[0, 0]), float(m[0, 1]), float(m[0, 2]),
-            float(m[1, 0]), float(m[1, 1]), float(m[1, 2])]
+    return affine6(m)
 
 
 def _multiregion_regions(sdata, table) -> dict | None:
@@ -139,8 +138,7 @@ def _multiregion_world_xy(sdata, table, system: str) -> np.ndarray | None:
             return None
         mask = rows == name
         if mask.any():
-            out[mask] = apply_affine6_xy(
-                [a[0, 0], a[0, 1], a[0, 2], a[1, 0], a[1, 1], a[1, 2]], xy[mask])
+            out[mask] = apply_affine6_xy(affine6(a), xy[mask])
             placed |= mask
     if not placed.all():
         stray = sorted(set(rows[~placed]))
@@ -210,6 +208,24 @@ def world_xy(sdata, table) -> np.ndarray:
 def matrix3x3(affine6: list[float]) -> np.ndarray:
     a, b, c, d, e, f = affine6
     return np.array([[a, b, c], [d, e, f], [0.0, 0.0, 1.0]], dtype=float)
+
+
+# The same six numbers travel in two element orders: the row-major [a, b, c, d, e, f]
+# this module exchanges with the frontend (and imaging/persistence bake into manifests),
+# and shapely.affinity.affine_transform's [a, b, d, e, xoff, yoff] with the translation
+# last. Flatten through these two helpers rather than hand-indexing a matrix — a
+# transposed index silently misplaces geometry instead of erroring.
+def affine6(m) -> list[float]:
+    """Row-major 6-float affine [a, b, c, d, e, f] from a 3x3 (or 2x3) matrix."""
+    return [float(m[0, 0]), float(m[0, 1]), float(m[0, 2]),
+            float(m[1, 0]), float(m[1, 1]), float(m[1, 2])]
+
+
+def shapely_affine(m) -> list[float]:
+    """Shapely-ordered 6-float affine [a, b, d, e, xoff, yoff] from a 3x3 (or 2x3)
+    matrix, for shapely.affinity.affine_transform."""
+    return [float(m[0, 0]), float(m[0, 1]), float(m[1, 0]), float(m[1, 1]),
+            float(m[0, 2]), float(m[1, 2])]
 
 
 def apply_affine6_xy(affine6: list[float], xy: np.ndarray) -> np.ndarray:

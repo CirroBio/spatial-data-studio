@@ -203,7 +203,7 @@ def clipped_polygons(sdata, table, element: str, bbox, limit: int | None = None)
         return [], np.empty(0, dtype="int32")
 
     sub = gdf.iloc[hits]
-    aff = [m[0, 0], m[0, 1], m[1, 0], m[1, 1], m[0, 2], m[1, 2]]  # shapely: a,b,d,e,xoff,yoff
+    aff = transform.shapely_affine(m)
     geoms = [affine_transform(g, aff) for g in sub.geometry.to_numpy()]
     return geoms, cell_index(table, list(sub.index))
 
