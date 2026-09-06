@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Build and push the Spatial Data Studio image to the Cirro public ECR,
-# tagged with the current git commit hash.
+# Build and push the Spatial Data Studio image to the Cirro public ECR, tagged
+# with the current git commit hash and with any git tags pointing at that commit.
 set -euo pipefail
 
 REGISTRY="public.ecr.aws/cirrobio"
@@ -13,10 +13,14 @@ if [ -n "$(git status --porcelain)" ]; then
   exit 1
 fi
 
-# 2. Commit hash to tag the image with.
+# 2. Image tags: the commit hash, plus every git tag on HEAD (e.g. v1.2.3).
 HASH="$(git rev-parse --short HEAD)"
+TAGS=("$HASH")
+while IFS= read -r tag; do
+  TAGS+=("$tag")
+done < <(git tag --points-at HEAD)
+
 LOCAL="${IMAGE}:${HASH}"
-REMOTE="${REGISTRY}/${IMAGE}:${HASH}"
 
 # 3. Authenticate Docker to the public ECR registry.
 aws ecr-public get-login-password --region us-east-1 \
@@ -26,10 +30,10 @@ aws ecr-public get-login-password --region us-east-1 \
 #    Context is the repo root; Dockerfile lives under docker/.
 docker build --platform linux/amd64 -f docker/Dockerfile -t "$LOCAL" .
 
-# 5. Tag it with the remote URI.
-docker tag "$LOCAL" "$REMOTE"
-
-# 6. Push.
-docker push "$REMOTE"
-
-echo "pushed ${REMOTE}"
+# 5. Tag and push once per image tag.
+for tag in "${TAGS[@]}"; do
+  remote="${REGISTRY}/${IMAGE}:${tag}"
+  docker tag "$LOCAL" "$remote"
+  docker push "$remote"
+  echo "pushed ${remote}"
+done
