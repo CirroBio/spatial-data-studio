@@ -183,10 +183,6 @@ export default function SpatialCanvas({
   const invertX = display.encoding.invert_x ?? SPATIAL_ENCODING_DEFAULTS.invert_x;
   const invertY = display.encoding.invert_y ?? SPATIAL_ENCODING_DEFAULTS.invert_y;
   const bg = display.encoding.background ?? SPATIAL_ENCODING_DEFAULTS.background;
-  const views = useMemo(
-    () => [new FlipOrthographicView({ id: 'main', flipX: invertX, flipY: invertY })],
-    [invertX, invertY],
-  );
   // Polygon draw state lives on the host so the active tab's left panel owns the
   // commit / apply / clear actions; the canvas is purely the drawing surface. Absent
   // (a host that offers no region drawing) the lasso stays disarmed.
@@ -742,6 +738,25 @@ export default function SpatialCanvas({
   const layerNames = fields?.layers ?? [];
   const colorByName = colorByLabel(colorByPath);
 
+  // The controller is declared on the view, NOT as DeckGL's `controller` prop. Deck only
+  // copies that prop onto a view when the prop is truthy (`Deck._getViews`, "Backward
+  // compatibility: support controller prop"), and it writes it onto the view instance in
+  // place — so a memoized view keeps whatever controller an earlier render gave it, and
+  // `controller={false}` never takes it back. Lock view therefore did nothing at all
+  // unless the view happened to be re-created; the other branches below are truthy
+  // objects, so only the lock was affected. `viewState` is controlled, so re-minting the
+  // view when this changes leaves the camera where it is.
+  const controller = useMemo(
+    () => (lockView ? false
+      : shapeInteracting || selection.interacting ? { dragPan: false, doubleClickZoom: false }
+      : drawMode ? { doubleClickZoom: false } : true),
+    [lockView, shapeInteracting, selection.interacting, drawMode],
+  );
+  const views = useMemo(
+    () => [new FlipOrthographicView({ id: 'main', flipX: invertX, flipY: invertY, controller })],
+    [invertX, invertY, controller],
+  );
+
   if (!viewState) {
     return (
       <div ref={containerRef} style={CANVAS_PLACEHOLDER}>
@@ -762,9 +777,6 @@ export default function SpatialCanvas({
           persistDisplay({ ...currentSpec(), viewport: { target: [t[0], t[1]], zoom: v.zoom as number } });
         }}
         layers={[...layers, ...drawLayers, ...shapeLayers]}
-        controller={lockView ? false
-          : shapeInteracting || selection.interacting ? { dragPan: false, doubleClickZoom: false }
-          : drawMode ? { doubleClickZoom: false } : true}
         onClick={handleClick}
         onHover={shapesMode ? handleHover : lassoMode ? selection.onHover : undefined}
         onDragStart={(info) => { handleShapeDragStart(info); selection.onDragStart(info); }}

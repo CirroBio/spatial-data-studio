@@ -233,6 +233,15 @@ one means. Region drawing, shape annotations and snapshot export are *optional* 
 a host that omits one turns that feature off, affordances included, rather than
 presenting a control that does nothing.
 
+Both canvases declare deck.gl's camera controller **on the view** they hand to
+`<DeckGL views={...}>`, never through its `controller` prop. Deck copies that prop onto
+the first view only when the prop is truthy (`Deck._getViews`, "Backward compatibility:
+support controller prop"), and it writes it onto the view instance in place — so a
+memoized view keeps whatever controller an earlier render gave it, and `controller={false}`
+never takes it back. That silently disabled `lock_view`: every other branch is a truthy
+options object, so the lock was the only setting affected. Keep the controller inside the
+`useMemo` that builds the view, with the lock in its dependency list.
+
 `frontend/src/components/StudioCanvasHost.tsx` is the app's implementation and the only
 place the store and the canvas meet: it reads the store, `useEditGate()` and
 `hooks/useDisplayPersistence.ts` (the optimistic store write + the 500 ms debounced

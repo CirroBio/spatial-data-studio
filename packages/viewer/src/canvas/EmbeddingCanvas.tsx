@@ -129,10 +129,6 @@ export default function EmbeddingCanvas({
   const legendVisible = display.encoding.legend_visible !== false;
   const legendTitle = display.encoding.legend_title || colorByLabel(colorByPath);
 
-  const views = useMemo(
-    () => (is_3d ? [new OrbitView({ id: 'main' })] : [new OrthographicView({ id: 'main', flipY: false })]),
-    [is_3d],
-  );
 
   const layers = useMemo(() => {
     if (!positions || !colors) return [] as Layer[];
@@ -304,6 +300,26 @@ export default function EmbeddingCanvas({
   // Bound once so the 3D overlay's handle markers below read a narrowed shape.
   const selectionShape = selection.shape;
 
+  // Declared on the view, NOT as DeckGL's `controller` prop: deck copies that prop onto
+  // a view only when it is truthy (`Deck._getViews`, "Backward compatibility: support
+  // controller prop"), mutating the view instance in place, so a memoized view keeps the
+  // controller an earlier render gave it and `controller={false}` never takes it back.
+  // Lock view did nothing as a result; the other branches are truthy objects and worked.
+  const controller = useMemo(
+    () => ((display.encoding.lock_view ?? EMBEDDING_ENCODING_DEFAULTS.lock_view) ? false
+      // A shape gesture owns the pointer, so the camera must not also claim it —
+      // dragRotate too, since the orbit view spends left-drag on rotation.
+      : selection.interacting ? { dragPan: false, dragRotate: false, doubleClickZoom: false }
+      : lassoMode ? { doubleClickZoom: false } : true),
+    [display.encoding.lock_view, selection.interacting, lassoMode],
+  );
+  const views = useMemo(
+    () => (is_3d
+      ? [new OrbitView({ id: 'main', controller })]
+      : [new OrthographicView({ id: 'main', flipY: false, controller })]),
+    [is_3d, controller],
+  );
+
   if (!viewState) {
     return (
       <div ref={containerRef} style={CANVAS_PLACEHOLDER}>
@@ -341,11 +357,6 @@ export default function EmbeddingCanvas({
         onDrag={selection.onDrag}
         onDragEnd={selection.onDragEnd}
         layers={[...layers, ...drawLayers]}
-        controller={(display.encoding.lock_view ?? EMBEDDING_ENCODING_DEFAULTS.lock_view) ? false
-          // A shape gesture owns the pointer, so the camera must not also claim it —
-          // dragRotate too, since the orbit view spends left-drag on rotation.
-          : selection.interacting ? { dragPan: false, dragRotate: false, doubleClickZoom: false }
-          : lassoMode ? { doubleClickZoom: false } : true}
         getCursor={lassoMode ? () => selection.cursor : ({ isDragging }) => (isDragging ? 'grabbing' : 'grab')}
       />
 
