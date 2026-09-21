@@ -233,6 +233,15 @@ one means. Region drawing, shape annotations and snapshot export are *optional* 
 a host that omits one turns that feature off, affordances included, rather than
 presenting a control that does nothing.
 
+Both canvases declare deck.gl's camera controller **on the view** they hand to
+`<DeckGL views={...}>`, never through its `controller` prop. Deck copies that prop onto
+the first view only when the prop is truthy (`Deck._getViews`, "Backward compatibility:
+support controller prop"), and it writes it onto the view instance in place — so a
+memoized view keeps whatever controller an earlier render gave it, and `controller={false}`
+never takes it back. That silently disabled `lock_view`: every other branch is a truthy
+options object, so the lock was the only setting affected. Keep the controller inside the
+`useMemo` that builds the view, with the lock in its dependency list.
+
 `frontend/src/components/StudioCanvasHost.tsx` is the app's implementation and the only
 place the store and the canvas meet: it reads the store, `useEditGate()` and
 `hooks/useDisplayPersistence.ts` (the optimistic store write + the 500 ms debounced
@@ -640,9 +649,10 @@ Tests: `src/lib/urlViewState.test.ts` (vitest, `npm run test -w spatial-data-stu
 covers the encoder. That one vitest run covers both workspaces — `frontend/vite.config.ts`
 includes `../packages/viewer/src/**/*.test.ts`, since the canvas library has no runner of
 its own. Also `e2e/serverless-share.spec.ts` covers the wiring by sharing a link
-between two browser contexts. The e2e drives the camera through the zoom buttons —
-`onZoom` writes the viewport directly, bypassing deck's controller, which synthetic drag
-and wheel events never reach.
+between two browser contexts. That spec drives the camera through the zoom buttons,
+which is the simpler lever: `onZoom` writes the viewport directly and does not depend on
+deck's controller being live. A synthetic wheel *does* reach the controller, though —
+`e2e/lock-view.spec.ts` turns on that fact to prove the camera is frozen.
 
 ## Documentation site
 
@@ -823,6 +833,10 @@ collection as well as embeddable per page. Pull requests build but do not publis
   loaded, since half the tour's targets only exist in one of the two. The
   webServer entries reuse whatever already listens on 5173/8000, so make sure those
   are this app's servers and not another project's.
+  `e2e/lock-view.spec.ts` covers `lock_view` through the embed protocol: it locks a
+  canvas that is already live (the sequence a host's inspector produces, and the only
+  one that catches a stale deck controller — loaded pre-locked, there is no stale
+  controller to survive) and asserts the wheel stops producing `display-changed`.
 
 ## Test datasets
 

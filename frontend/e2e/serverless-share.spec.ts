@@ -4,10 +4,10 @@
 // wiring the unit tests can't see — that edits reach the URL, and that a fresh page
 // load rebuilds the same view from it.
 //
-// The deck.gl canvas is not drivable by automation (synthetic drag and wheel events
-// never reach deck's controller), so everything here goes through real DOM controls.
-// The zoom buttons are the lever for the camera: `onZoom` sets React view state and
-// writes the viewport directly, bypassing the controller entirely.
+// Everything here goes through real DOM controls. The zoom buttons are the simpler lever
+// for the camera: `onZoom` sets React view state and writes the viewport directly, so it
+// does not depend on deck's controller being live. (A synthetic wheel does reach the
+// controller — see `lock-view.spec.ts`, which relies on that.)
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
 
