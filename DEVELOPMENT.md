@@ -649,9 +649,10 @@ Tests: `src/lib/urlViewState.test.ts` (vitest, `npm run test -w spatial-data-stu
 covers the encoder. That one vitest run covers both workspaces — `frontend/vite.config.ts`
 includes `../packages/viewer/src/**/*.test.ts`, since the canvas library has no runner of
 its own. Also `e2e/serverless-share.spec.ts` covers the wiring by sharing a link
-between two browser contexts. The e2e drives the camera through the zoom buttons —
-`onZoom` writes the viewport directly, bypassing deck's controller, which synthetic drag
-and wheel events never reach.
+between two browser contexts. That spec drives the camera through the zoom buttons,
+which is the simpler lever: `onZoom` writes the viewport directly and does not depend on
+deck's controller being live. A synthetic wheel *does* reach the controller, though —
+`e2e/lock-view.spec.ts` turns on that fact to prove the camera is frozen.
 
 ## Documentation site
 
@@ -832,6 +833,10 @@ collection as well as embeddable per page. Pull requests build but do not publis
   loaded, since half the tour's targets only exist in one of the two. The
   webServer entries reuse whatever already listens on 5173/8000, so make sure those
   are this app's servers and not another project's.
+  `e2e/lock-view.spec.ts` covers `lock_view` through the embed protocol: it locks a
+  canvas that is already live (the sequence a host's inspector produces, and the only
+  one that catches a stale deck controller — loaded pre-locked, there is no stale
+  controller to survive) and asserts the wheel stops producing `display-changed`.
 
 ## Test datasets
 
