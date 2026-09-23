@@ -27,7 +27,17 @@ neighborhood.*
 
 ## Run it
 
-The quickest way to try it on your own machine is the single Docker image:
+Everything ships as one Docker image. The published build needs nothing but Docker and a
+folder of your own data — no clone, no build:
+
+```bash
+docker run -d -p 8080:8888 \
+  -v "$(pwd)/data":/data -e SDS_DATA_DIR=/data \
+  public.ecr.aws/cirrobio/spatial-data-studio:v1
+```
+
+Open `http://localhost:8080` and start a session on anything in that folder. From a
+clone, the compose file builds the same image and brings a small test section with it:
 
 ```bash
 python scripts/prepare_test_data.py     # writes test-data/visium_hne.zarr (~375 MB, needs squidpy)

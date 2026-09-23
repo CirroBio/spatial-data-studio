@@ -18,14 +18,16 @@ const MARK =
   'M 17.66 -36.53 A 38.71 38.71 0 0 0 73.12 -68.69 A 40.57 40.57 0 1 1 95.94 -29.34 '
   + 'A 38.71 38.71 0 0 0 40.47 2.82 A 40.57 40.57 0 1 1 17.66 -36.53 Z';
 
+// A panel is either a few shell lines — prompt, command, trailing comment, with `\n`
+// inside a command where it wraps onto its own row — or numbered steps, for the one way
+// of running it that is not a command at all.
 const ways = [
   {
     id: 'docker',
     label: 'Docker',
     lines: [
-      ['$ ', 'python scripts/prepare_test_data.py', '  # test data'],
-      ['$ ', 'docker compose up --build -d', '  # SPA + backend'],
-      ['$ ', 'open http://localhost:8080', ''],
+      ['$ ', 'docker run -d -p 8080:8888 \\\n    -v "$(pwd)/data":/data \\\n    -e SDS_DATA_DIR=/data \\\n    public.ecr.aws/cirrobio/spatial-data-studio:v1', ''],
+      ['$ ', 'open http://localhost:8080', '  # your data, under /data'],
     ],
   },
   {
@@ -40,9 +42,10 @@ const ways = [
   {
     id: 'cirro',
     label: 'In Cirro',
-    lines: [
-      ['', 'public.ecr.aws/cirrobio/spatial-data-studio:v1', ''],
-      ['', '', '  # the workspace image'],
+    steps: [
+      'In your Cirro project, create a workspace.',
+      'Pick Spatial Data Studio as the workspace image.',
+      'Open it — the project\'s datasets are already there, and so is everyone else in the lab.',
     ],
   },
 ];
@@ -105,21 +108,27 @@ function step(from: string, delta: number) {
               <div
                 v-for="way in ways"
                 :key="way.id"
-                class="cmds"
                 role="tabpanel"
                 :id="`panel-${way.id}`"
                 :aria-labelledby="`tab-${way.id}`"
                 :hidden="active !== way.id"
               >
-                <code v-for="(line, i) in way.lines" :key="i" class="cmd"><span class="p">{{ line[0] }}</span>{{ line[1] }}<span class="c">{{ line[2] }}</span></code>
+                <div v-if="way.lines" class="cmds">
+                  <code v-for="(line, i) in way.lines" :key="i" class="cmd"><span class="p">{{ line[0] }}</span>{{ line[1] }}<span class="c">{{ line[2] }}</span></code>
+                </div>
+                <ol v-else class="steps">
+                  <li v-for="(step, i) in way.steps" :key="i">{{ step }}</li>
+                </ol>
               </div>
             </div>
 
-            <p class="note">The Docker quickstart is the whole install: one image holds the
-            SPA and the backend, and it bind-mounts a single data folder holding inputs,
-            checkpoints and snapshots together. The details are in
-            <a :href="withBase('/docker/README')">Run with Docker</a> and
-            <a :href="withBase('/DEVELOPMENT')">the development guide</a>. To try it with
+            <p class="note">One image holds the SPA and the backend, and the folder you mount
+            holds inputs, checkpoints and snapshots together — so the published build is the
+            whole install, with nothing to clone and nothing to compile. Memory limits and the
+            rest of the environment are in
+            <a :href="withBase('/docker/README')">Run with Docker</a>; running from a clone is
+            in <a :href="withBase('/DEVELOPMENT')">the development guide</a>; the workspace is
+            <a href="#run-it-where-the-data-is">further down this page</a>. To see it with
             nothing installed at all, the <a :href="withBase('/demo/')">live demos</a> are the
             real viewer running in your browser.</p>
           </div>
@@ -391,7 +400,7 @@ function step(from: string, delta: number) {
       <div class="page">
         <section>
           <p class="eyebrow">The data backend</p>
-          <h2>Run it where the data is</h2>
+          <h2 id="run-it-where-the-data-is">Run it where the data is</h2>
 
           <p class="narrow">Spatial data is big in a way that decides the architecture. One Xenium
           run is a few hundred thousand cells under a morphology image measured in gigabytes, and
@@ -836,6 +845,20 @@ em.emph { font-style: normal; font-weight: 600; color: var(--ink); }
 /* `.cmds` would otherwise out-specify the UA's `[hidden]` rule and show every panel. */
 .cmds[hidden] { display: none; }
 
+.steps {
+  /* VitePress's reset drops list markers; this list wants them. */
+  list-style: decimal;
+  margin: 0;
+  padding: 14px 18px 16px 38px;
+  font-size: 14.5px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+
+.steps li { margin-bottom: 8px; }
+.steps li:last-child { margin-bottom: 0; }
+.steps li::marker { font-family: var(--vp-font-family-mono); font-size: 12px; color: var(--ink-3); }
+
 .cmd {
   display: block;
   font-family: var(--vp-font-family-mono);
@@ -851,6 +874,10 @@ em.emph { font-style: normal; font-weight: 600; color: var(--ink); }
 }
 
 .cmd:first-child { border-top: 0; }
+
+/* The masthead's column is narrower than the ones in the sections below, and the image
+   reference is long enough that a point of size decides whether it wraps. */
+.installer .cmd { font-size: 12.5px; }
 .cmd .c { color: var(--ink-3); }
 .cmd .p { color: var(--accent-ink); user-select: none; }
 
