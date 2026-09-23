@@ -52,7 +52,7 @@ For users:
 - **[`docs/USER_GUIDE.md`](docs/USER_GUIDE.md)** — what the app does: loading data,
   running analyses and recipes, the canvas and display settings, annotating and
   subsetting, sharing sessions, saving checkpoints and snapshots, the AI assistant, the
-  no-backend checkpoint viewer, and uploading to Cirro.
+  no-backend checkpoint viewer, and working in Cirro.
 - **[`docker/README.md`](docker/README.md)** — running the Docker image, its memory
   limits and environment contract.
 - **[`backend/app/registry/custom/README.md`](backend/app/registry/custom/README.md)** —

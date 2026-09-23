@@ -5,7 +5,23 @@ import { defineConfig } from 'vitepress';
 // use between each other (README -> USER_GUIDE -> DEVELOPMENT -> DESIGN -> docs/CONTRACT ->
 // backend/README) keep working and are dead-link-checked on every build. Nothing here
 // may fork or paraphrase those files — see the docs-site rule in CLAUDE.md. Pages under
-// docs-site/ are the only new prose, and the only place <ViewerEmbed> may appear.
+// docs-site/ are the only new prose, and the only place <ViewerEmbed> may appear. The
+// landing page (docs-site/index.md -> LandingPage.vue) is the one exception that rule
+// names: it presents and routes, and must not become the only place a fact is written.
+// The Cirro brand mark, the same geometry as frontend/public/favicon.svg: a ring with a
+// blank channel carved through it by the two-node link glyph. Inlined as a data URI
+// because VitePress only ever serves a public directory at `<srcDir>/public` — here the
+// repo root — and a top-level public/ folder existing solely to hold this one file would
+// be worse than the encoding. Both fills are brand colors, so one mark serves both themes.
+const CIRRO_MARK = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-103.9 -134.2 262 262">
+  <mask id="c" maskUnits="userSpaceOnUse" x="-176" y="-176" width="352" height="352">
+    <rect x="-176" y="-176" width="352" height="352" fill="#fff"/>
+    <path d="M 17.66 -36.53 A 38.71 38.71 0 0 0 73.12 -68.69 A 40.57 40.57 0 1 1 95.94 -29.34 A 38.71 38.71 0 0 0 40.47 2.82 A 40.57 40.57 0 1 1 17.66 -36.53 Z" fill="#000" stroke="#000" stroke-width="34.8"/>
+  </mask>
+  <circle r="79" fill="none" stroke="#0e7ca0" stroke-width="42" mask="url(#c)"/>
+  <path d="M 17.66 -36.53 A 38.71 38.71 0 0 0 73.12 -68.69 A 40.57 40.57 0 1 1 95.94 -29.34 A 38.71 38.71 0 0 0 40.47 2.82 A 40.57 40.57 0 1 1 17.66 -36.53 Z" fill="#24bfd3"/>
+</svg>`;
+
 export default defineConfig({
   srcDir: '..',
   base: '/spatial-data-studio/',
@@ -43,7 +59,11 @@ export default defineConfig({
   ],
 
   rewrites: {
-    'README.md': 'index.md',
+    // `/` is the site's own landing page (the only presentation-first page here); the
+    // README keeps its orientation job at `/overview`, and the links other docs make to
+    // `../README.md` resolve through this map.
+    'docs-site/index.md': 'index.md',
+    'README.md': 'overview.md',
     'docs-site/demo/index.md': 'demo/index.md',
     'docs-site/demo/xenium-pancreas.md': 'demo/xenium-pancreas.md',
     'docs-site/demo/visium-colon.md': 'demo/visium-colon.md',
@@ -51,9 +71,10 @@ export default defineConfig({
   },
 
   themeConfig: {
+    logo: `data:image/svg+xml,${encodeURIComponent(CIRRO_MARK)}`,
     outline: [2, 3],
     nav: [
-      { text: 'Use', link: '/' },
+      { text: 'Use', link: '/overview' },
       { text: 'Guide', link: '/docs/USER_GUIDE' },
       { text: 'Demos', link: '/demo/' },
       { text: 'Develop', link: '/DEVELOPMENT' },
@@ -66,7 +87,7 @@ export default defineConfig({
       {
         text: 'Use',
         items: [
-          { text: 'Overview', link: '/' },
+          { text: 'Overview', link: '/overview' },
           { text: 'User guide', link: '/docs/USER_GUIDE' },
           {
             text: 'Live demos',

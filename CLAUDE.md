@@ -29,7 +29,12 @@ The documentation site (`docs-site/`) publishes the files above **unmodified** �
 points VitePress at the repo root, so the markdown in the repo *is* the site. Never
 copy or paraphrase `README.md`, `docs/USER_GUIDE.md`, `DEVELOPMENT.md`, `DESIGN.md` or
 any component README into `docs-site/`; pages there may only add site-specific material (navigation, the
-live-viewer demos). Adding, renaming or moving a published `.md` updates the sidebar in
+landing page, the live-viewer demos). The landing page
+(`docs-site/index.md` → `.vitepress/theme/components/LandingPage.vue`, served at `/`)
+is presentation: it orients a reader and routes into the docs, and every fact it states
+must already be stated — and stay stated — in the repo markdown it links to. A change
+that makes the landing page wrong is fixed on the landing page *and* in whichever doc
+owns the fact; `README.md` keeps its own orientation job at `/overview`. Adding, renaming or moving a published `.md` updates the sidebar in
 `docs-site/.vitepress/config.mts` in the same commit — the build's dead-link check fails
 otherwise. `<ViewerEmbed>` may appear only in pages under `docs-site/`, never in
 published repo markdown, which has to stay readable on GitHub.

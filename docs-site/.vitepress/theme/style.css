@@ -1,0 +1,52 @@
+/* Cirro's typefaces and palette, so the documentation looks like the application it
+   documents. Every value here is the one frontend/src/index.css uses, which takes them
+   in turn from @cirrobio/ui's theme.ts: light is the palette as Cirro's portal uses it,
+   dark recasts it onto the brand's deep navy with the logo's bright teal as the accent.
+   Change one side and change the other — a docs site in a different blue than the app
+   reads as a different product. */
+@import '@fontsource-variable/geist/wght.css';
+@import '@fontsource-variable/geist-mono/wght.css';
+
+:root {
+  --vp-font-family-base: 'Geist Variable', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --vp-font-family-mono: 'Geist Mono Variable', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+
+  /* brand-1 is link text, brand-2 its hover, brand-3 anything filled with the brand. */
+  --vp-c-brand-1: #0e7ca0;
+  --vp-c-brand-2: #0b6480;
+  --vp-c-brand-3: #0e7ca0;
+  --vp-c-brand-soft: rgb(14 124 160 / 14%);
+
+  --vp-c-bg: #fafbfc;
+  --vp-c-bg-alt: #f2f7f8;
+  --vp-c-bg-soft: #f2f7f8;
+  --vp-c-bg-elv: #ffffff;
+
+  --vp-c-text-1: #050b26;
+  --vp-c-text-2: #4a4a58;
+  --vp-c-text-3: #6b6b6b;
+
+  --vp-c-divider: #e0e0e0;
+  --vp-c-border: #cbd8dd;
+  --vp-c-gutter: #e0e0e0;
+}
+
+.dark {
+  --vp-c-brand-1: #24bfd3;
+  --vp-c-brand-2: #5cd3e4;
+  --vp-c-brand-3: #1a9ab5;
+  --vp-c-brand-soft: rgb(36 191 211 / 16%);
+
+  --vp-c-bg: #070b24;
+  --vp-c-bg-alt: #0b1430;
+  --vp-c-bg-soft: #0f1a30;
+  --vp-c-bg-elv: #0f1a30;
+
+  --vp-c-text-1: #e8eef3;
+  --vp-c-text-2: #a6b4c6;
+  --vp-c-text-3: #8da0b0;
+
+  --vp-c-divider: #1e3049;
+  --vp-c-border: #23465e;
+  --vp-c-gutter: #1e3049;
+}

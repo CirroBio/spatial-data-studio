@@ -233,7 +233,41 @@ You can try this without installing anything — the
 running in your browser against a hosted checkpoint, over public Visium and Xenium
 sections as well as synthetic ones.
 
-## Upload to Cirro
+## Work in Cirro
+
+Spatial data is big. One Xenium run is a few hundred thousand cells under a morphology
+image measured in gigabytes, and a project usually holds several of them, so copying a
+section onto a laptop to look at it is the slow part of the work. The alternative is to
+run the app next to the data. [Cirro](https://cirro.bio/) is the data platform this app
+is built alongside, and it meets the app in three places: a workspace that runs it on
+the project's own data, one running app the whole lab can be in at once, and a way to
+publish what you found back into the project for people who are running nothing at all.
+
+### Run it where the data is
+
+A Cirro workspace runs a container image inside a project, with that project's datasets
+mounted. The app ships as a single image for exactly that —
+`public.ecr.aws/cirrobio/spatial-data-studio:v1`, whose tags and environment are in
+[`docker/README.md`](../docker/README.md) — and it reads its data folder from the
+image's `$HOME`, which is where the workspace puts the project's datasets. So the app
+opens on data you never downloaded, nothing is copied back, and the machine doing the
+analysis is the workspace's rather than yours: a section too big for a laptop is only a
+bigger workspace.
+
+### Be in it together
+
+A workspace is one running app, and everyone in the lab can open it at once. Whoever
+opens a session holds its edit lock; everyone else can watch, and each analysis the
+lock-holder runs appears on their screens as it finishes rather than on a reload. What
+you are *looking* at stays yours — color by a different gene, change the channels, zoom
+somewhere else — while someone else drives the analysis, and the padlock hands the lock
+over when you want a turn. [Share a session safely](#share-a-session-safely) covers what
+the padlock shows and how to take, release, or rename. Sessions are independent of each
+other, so two people working on different datasets in the same workspace do not collide;
+how many can be resident at once is a setting of the deployment
+([`docker/README.md`](../docker/README.md)).
+
+### Publish what you found
 
 You can publish saved checkpoints to [Cirro](https://cirro.bio/) from the menu in the
 right-hand sidebar. Each person signs in with their own Cirro account, so several

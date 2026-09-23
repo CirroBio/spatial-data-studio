@@ -18,6 +18,25 @@ with [uv](https://docs.astral.sh/uv/) (pinned in the Dockerfile) — much faster
 than pip, but still a few minutes on the first build; subsequent builds are
 cached unless `requirements.txt` changes.
 
+## The published image
+
+Releases are pushed to Cirro's public ECR by `publish-image.sh` at the repo root
+(from a clean tree, built for `linux/amd64`):
+
+```
+public.ecr.aws/cirrobio/spatial-data-studio
+```
+
+Each push tags the image with the commit hash and with every git tag on that commit,
+plus the moving `v<major>.<minor>` and `v<major>` aliases of each release tag — so
+`v1.0.1` also publishes `v1.0` and `v1`, and an alias only ever moves forward. Pin an
+exact `vX.Y.Z` for a reproducible deployment; track `v1` to follow the series.
+
+This is the image a hosted deployment runs, including a
+[Cirro](https://cirro.bio/) workspace: `SDS_DATA_DIR` defaults to the image's `$HOME`,
+which is where such an environment mounts the project's datasets, so the container needs
+no volume configuration of its own to open data that is already there.
+
 ## Run (via compose)
 
 ```

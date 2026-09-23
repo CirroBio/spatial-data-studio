@@ -150,8 +150,9 @@ docker/     single-image build (multi-stage), nginx edge, supervisor
 docs/       USER_GUIDE.md (the user-facing docs), CONTRACT.md (REST/SSE/Arrow API),
             images/ (doc screenshots)
 docs-site/  VitePress documentation site published to GitHub Pages. Renders the repo's own
-            markdown in place (srcDir is the repo root); demo/ holds the only new pages, and
-            viewer-data/ the committed demo checkpoints they embed
+            markdown in place (srcDir is the repo root); index.md + theme/components/
+            LandingPage.vue is the landing page and demo/ the live demos — the only new
+            pages — and viewer-data/ the committed demo checkpoints they embed
 scripts/    test-data prep: prepare_test_data.py (Visium H&E), prepare_xenium_data.py (Xenium),
             prepare_xenium_tma.py (Xenium TMA grid for the Identify TMAs detector);
             fetch_example_checkpoints.py (the docs site's demo checkpoints, from Cirro)
@@ -190,12 +191,13 @@ Component-level notes: [`backend/README.md`](backend/README.md),
 | Change the deck.gl canvas / rendering | `packages/viewer/src/canvas/` | [packages/viewer/README.md](packages/viewer/README.md) |
 | Change how a cell selection is drawn (lasso, the circle/ellipse/square/rectangle tools) | `packages/viewer/src/lib/selectionShapes.ts` (geometry) + `canvas/useSelectionShape.ts` (the place/move/resize/rotate gesture) + both canvases' overlay wiring; the tool choice and the Finish/Clear actions in `frontend/src/components/DrawControls.tsx` + `hooks/useDrawSelection.ts` | [DESIGN.md](DESIGN.md) §10.2 |
 | Change the docs site's navigation, or publish a doc that isn't on it yet | `docs-site/.vitepress/config.mts` (sidebar + `srcExclude`) | below |
+| Change the docs site's landing page | `docs-site/index.md` + `.vitepress/theme/components/LandingPage.vue`, and the repo doc that owns whatever fact moved | below |
 | Change the docs site's live demos | `docs-site/demo/*.md` + `.vitepress/theme/components/ViewerEmbed.vue`; the catalog, `index.json` and the data itself in `scripts/fetch_example_checkpoints.py` | below |
 | Give the canvas something new from the app (store state, an action, a way to persist) | `packages/viewer/src/canvas/canvas-host.tsx` (the `CanvasHost` contract), then `frontend/src/components/StudioCanvasHost.tsx` (the app's implementation of it) — the canvas never reaches for the store or `api.ts` itself | below |
 | Change an in-canvas settings panel, or what the canvas hands one | `frontend/src/components/canvas/CanvasControls.tsx` / `EmbeddingControls.tsx` (Tailwind app UI), and `SpatialCanvasControls` / `EmbeddingCanvasControls` in `packages/viewer/src/canvas/` for the slot payload | below |
 | Publish or version the canvas library | `packages/viewer/package.json` + [packages/viewer/README.md](packages/viewer/README.md) ("Releasing") | — |
 | Change how a display setting is persisted (the debounced PUT, the edit gate, the refetch flush) | `frontend/src/hooks/useDisplayPersistence.ts` | below |
-| Retune the palette, theme tokens, fonts, or the Cirro mark | `frontend/src/index.css` (tokens) + `frontend/tailwind.config.js` (names) + `packages/viewer/src/canvas/overlayStyles.ts` (the library overlays' fallbacks) + `frontend/src/components/CirroMark.tsx` / `public/favicon.svg` (logo) | [frontend/README.md](frontend/README.md) |
+| Retune the palette, theme tokens, fonts, or the Cirro mark | `frontend/src/index.css` (tokens) + `frontend/tailwind.config.js` (names) + `packages/viewer/src/canvas/overlayStyles.ts` (the library overlays' fallbacks) + `frontend/src/components/CirroMark.tsx` / `public/favicon.svg` (logo) + `docs-site/.vitepress/theme/style.css` and the `CIRRO_MARK` in `docs-site/.vitepress/config.mts` (the docs site's copy of the same palette and mark) | [frontend/README.md](frontend/README.md) |
 | Change the canvas minimap (overview inset) | `packages/viewer/src/canvas/Minimap.tsx` (overlay + navigation) + `SpatialCanvas.tsx` (extent/thumbnail wiring) + `backend/app/snapshots.py` `_draw_minimap` (figure inset) | [DESIGN.md](DESIGN.md) §9.11 |
 | Change how the browser reads raw image data (client-side Viv compositing) | `backend/app/routers/imaging.py` raster route + `/image/{element}/info` fields; `rasters.py` `raster_stores` map | [docs/CONTRACT.md](docs/CONTRACT.md) |
 | Change the parameter-form UI | `frontend/src/components/forms/` (`FunctionFields` renders the widgets incl. the `FsPicker` filesystem picker; `FunctionForm` adds the submit footer; the New Session dialog reuses `FunctionFields` as the reader's input form) | — |
@@ -680,7 +682,24 @@ CLAUDE.md forbids forking any of it into `docs-site/`. Two consequences:
   job assembles rather than VitePress rendering it, and links to the excluded agent
   files.
 
-**The live demos** are the only new prose (`docs-site/demo/`). They embed the real
+**It wears the app's skin.** `.vitepress/theme/style.css` restates Cirro's typefaces
+(Geist / Geist Mono, self-hosted through `@fontsource-variable`) and the palette from
+`frontend/src/index.css` as VitePress's own `--vp-c-*` variables, so the documentation
+and the application are the same product on sight. The brand mark in the nav bar is the
+`CIRRO_MARK` in `config.mts` — the geometry of `frontend/public/favicon.svg`, inlined as
+a data URI because VitePress only serves a public directory at `<srcDir>/public`, which
+here is the repo root. A change to the app's palette, typefaces or mark moves both.
+
+**The landing page** at `/` is the one presentation-first page on the site:
+`docs-site/index.md` (a `layout: page` with no sidebar) rendering
+`.vitepress/theme/components/LandingPage.vue`. It orients a first-time reader and routes
+into the docs, and every fact it states is owned by a repo markdown file it links to — so
+a change that makes it wrong is fixed on the landing page *and* in the doc that owns the
+fact. `README.md` keeps its own orientation job, rewritten to `/overview`; that
+`rewrites` entry is also what keeps the `../README.md` links the other docs make
+resolving.
+
+**The live demos** are the other new prose (`docs-site/demo/`). They embed the real
 serverless viewer through `<ViewerEmbed>`
 (`.vitepress/theme/components/ViewerEmbed.vue`), registered globally by the theme. It is
 an `<iframe>` over the built SPA, not the `@cirrobio/spatial-viewer` library: this site
