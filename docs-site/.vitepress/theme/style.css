@@ -1,9 +1,13 @@
-/* Cirro's typefaces and palette, so the documentation looks like the application it
-   documents. Every value here is the one frontend/src/index.css uses, which takes them
-   in turn from @cirrobio/ui's theme.ts: light is the palette as Cirro's portal uses it,
-   dark recasts it onto the brand's deep navy with the logo's bright teal as the accent.
-   Change one side and change the other — a docs site in a different blue than the app
-   reads as a different product. */
+/* Cirro's typefaces and palette, taken from @cirrobio/ui's theme.ts: light is the
+   palette as Cirro's portal uses it, dark recasts it onto the brand's deep navy with
+   the logo's bright teal as the accent. A docs site in a different blue than the
+   product reads as a different product, so change one side and change the other.
+
+   This file, theme/components/SiteBrand.vue, theme/components/Layout.vue and
+   theme/assets/cirro-*.png are shared verbatim between prompt-nb's docs-site and
+   Spatial Data Studio's — that sameness is what makes the two Cirro documentation
+   sites read as one shelf. Change one of them in one repository and change it in
+   the other. */
 @import '@fontsource-variable/geist/wght.css';
 @import '@fontsource-variable/geist-mono/wght.css';
 

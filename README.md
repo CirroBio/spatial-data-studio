@@ -3,16 +3,6 @@
 **Interactive analysis and visualization for spatial omics data — in the browser,
 no code required.**
 
-> ### Documentation → [cirrobio.github.io/spatial-data-studio][docs]
->
-> [**User guide**](docs/USER_GUIDE.md) — everything the app does ·
-> [**Live demos**][demos] — the real viewer, nothing to install ·
-> [**Run with Docker**](docker/README.md) ·
-> [**Development guide**](DEVELOPMENT.md)
-
-[docs]: https://cirrobio.github.io/spatial-data-studio/
-[demos]: https://cirrobio.github.io/spatial-data-studio/demo/
-
 Open a spatial transcriptomics dataset (Xenium, Visium, Visium HD, CosMx, MERSCOPE, or
 anything else [SpatialData](https://spatialdata.scverse.org/) can read), run
 [`squidpy`](https://squidpy.readthedocs.io/) and
@@ -27,8 +17,8 @@ neighborhood.*
 
 ## Run it
 
-Everything ships as one Docker image. The published build needs nothing but Docker and a
-folder of your own data — no clone, no build:
+Everything ships as one Docker image, so the published build needs nothing but Docker
+and a folder of your own data:
 
 ```bash
 docker run -d -p 8080:8888 \
@@ -36,56 +26,38 @@ docker run -d -p 8080:8888 \
   public.ecr.aws/cirrobio/spatial-data-studio:v1
 ```
 
-Open `http://localhost:8080` and start a session on anything in that folder. From a
-clone, the compose file builds the same image and brings a small test section with it:
+Open `http://localhost:8080` and start a session on anything in that folder.
+[`docker/README.md`](docker/README.md) has the compose file, the memory limits and the
+full environment contract; [`DEVELOPMENT.md`](DEVELOPMENT.md#local-dev-environment) has
+how to run from a clone instead. Or try it with nothing installed at all — the
+[live demos][demos] are the real viewer running in your browser.
 
-```bash
-python scripts/prepare_test_data.py     # writes test-data/visium_hne.zarr (~375 MB, needs squidpy)
-docker compose up --build -d            # builds the SPA + backend into one image
-open http://localhost:8080              # New Session -> /data/visium_hne.zarr
-```
+## Documentation
 
-The compose file bind-mounts a single read-write data directory at `/data`, holding
-inputs, saved checkpoints, and snapshots together. It defaults to `test-data/`; point it
-at your own folder with `SDS_DATA_HOST_DIR` (env var or `.env` entry), e.g.
-`SDS_DATA_HOST_DIR=/path/to/data docker compose up`. Memory limits, the manual
-`docker run` form, and the full environment contract are in
-[`docker/README.md`](docker/README.md). To run from source for development instead, see
-[`DEVELOPMENT.md`](DEVELOPMENT.md#local-dev-environment).
+**[cirrobio.github.io/spatial-data-studio][docs]** renders every file below, so the
+same words read the same on GitHub and on the site.
 
-## All the documentation
+[docs]: https://cirrobio.github.io/spatial-data-studio/
+[demos]: https://cirrobio.github.io/spatial-data-studio/demo/
 
-The site above is rendered from these files, so they read the same on GitHub.
+| | |
+| --- | --- |
+| [User guide](docs/USER_GUIDE.md) | what the app does — the source of truth for it |
+| [Run with Docker](docker/README.md) | the image, its memory limits and environment |
+| [Analysis methods](backend/app/registry/custom/README.md) | what each bundled method does |
+| [Development guide](DEVELOPMENT.md) | architecture, repo layout, dev setup, tests |
+| [Design](DESIGN.md) | the full specification and the reasoning behind it |
+| [API contract](docs/CONTRACT.md) | the REST / SSE / Arrow contract |
+| [Contributing](CONTRIBUTING.md) | adding a recipe or an analysis function |
+| [License](LICENSE.md) | the Cirro Bio Source Available License |
 
-For users:
-
-- **[`docs/USER_GUIDE.md`](docs/USER_GUIDE.md)** — what the app does: loading data,
-  running analyses and recipes, the canvas and display settings, annotating and
-  subsetting, sharing sessions, saving checkpoints and snapshots, the AI assistant, the
-  no-backend checkpoint viewer, and working in Cirro.
-- **[`docker/README.md`](docker/README.md)** — running the Docker image, its memory
-  limits and environment contract.
-- **[`backend/app/registry/custom/README.md`](backend/app/registry/custom/README.md)** —
-  what each bundled analysis method does.
-
-For developers:
-
-- **[`DEVELOPMENT.md`](DEVELOPMENT.md)** — architecture, repo layout, where to make a
-  change, local dev setup, tests, and the offline CLI.
-- **[`DESIGN.md`](DESIGN.md)** — the full design specification and the reasoning
-  behind it.
-- **[`docs/CONTRACT.md`](docs/CONTRACT.md)** — the REST / SSE / Arrow API contract.
-- **[`CONTRIBUTING.md`](CONTRIBUTING.md)** — add a recipe (one JSON file) or a custom
-  analysis function, and the Contributor Policy those contributions are accepted
-  under.
-- **[`LICENSE.md`](LICENSE.md)** — the Cirro Bio Source Available License. The default
-  grant covers evaluation, review, and preparing contributions; any other use,
-  including production use, needs a written authorization from Cirro Bio, Inc.
+The default licence grant covers evaluation, review, and preparing contributions; any
+other use, including production use, needs a written authorization from Cirro Bio, Inc.
 
 > **Maintenance rule:** this README stays a short orientation — the pitch, how to run
 > the app, and where the docs are. [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) is the
-> source of truth for **what the app does**, and
-> [`DEVELOPMENT.md`](DEVELOPMENT.md) for the developer-facing detail. Any change that
-> adds, removes, or alters a user-facing capability updates the user guide in the same
-> commit (and refreshes a screenshot if it materially changes a pictured panel); a
-> change to the run command updates this README. See [`CLAUDE.md`](CLAUDE.md).
+> source of truth for **what the app does**, and [`DEVELOPMENT.md`](DEVELOPMENT.md) for
+> the developer-facing detail. Any change that adds, removes, or alters a user-facing
+> capability updates the user guide in the same commit (and refreshes a screenshot if it
+> materially changes a pictured panel); a change to the run command updates this README.
+> See [`CLAUDE.md`](CLAUDE.md).

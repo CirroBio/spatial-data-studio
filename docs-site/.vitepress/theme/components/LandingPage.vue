@@ -12,12 +12,6 @@ import { withBase } from 'vitepress';
 // the same picture work in README.md on GitHub.
 const hero = withBase('/docs/images/hero.jpg');
 
-// The Cirro mark's two-node link glyph, traced from the logo artwork — the same path
-// frontend/src/components/CirroMark.tsx and frontend/public/favicon.svg carry.
-const MARK =
-  'M 17.66 -36.53 A 38.71 38.71 0 0 0 73.12 -68.69 A 40.57 40.57 0 1 1 95.94 -29.34 '
-  + 'A 38.71 38.71 0 0 0 40.47 2.82 A 40.57 40.57 0 1 1 17.66 -36.53 Z';
-
 // A panel is either a few shell lines — prompt, command, trailing comment, with `\n`
 // inside a command where it wraps onto its own row — or numbered steps, for the one way
 // of running it that is not a command at all.
@@ -64,20 +58,6 @@ function step(from: string, delta: number) {
   <div class="landing">
     <div class="page">
       <header class="masthead">
-        <a class="wordmark" href="https://cirro.bio/">
-          <svg class="glyph" width="30" height="30" viewBox="-103.9 -134.2 262 262" role="img" aria-label="Cirro">
-            <mask id="cirro-channel" maskUnits="userSpaceOnUse" x="-176" y="-176" width="352" height="352">
-              <rect x="-176" y="-176" width="352" height="352" fill="#fff" />
-              <path :d="MARK" fill="#000" stroke="#000" stroke-width="34.8" />
-            </mask>
-            <circle r="79" fill="none" stroke="#0e7ca0" stroke-width="42" mask="url(#cirro-channel)" />
-            <path :d="MARK" fill="#24bfd3" />
-          </svg>
-          <span class="brand">Cirro</span>
-          <span class="rule" aria-hidden="true"></span>
-          <span class="name">spatial data studio</span>
-        </a>
-
         <div class="masthead-grid">
           <div>
             <h1>Analyze a spatial section without writing code</h1>
@@ -753,44 +733,7 @@ em.emph { font-style: normal; font-weight: 600; color: var(--ink); }
 
 /* masthead */
 
-.masthead { padding: 56px 0 44px; }
-
-/* Out-specifies the `.landing a` underline above — the lockup is a mark, not a link
-   in running text. */
-.landing a.wordmark { text-decoration: none; }
-
-.wordmark {
-  display: inline-flex;
-  align-items: center;
-  gap: 11px;
-  margin-bottom: 40px;
-  color: var(--ink);
-  text-decoration: none;
-}
-
-.wordmark:hover { color: var(--ink); }
-
-.wordmark .glyph { display: block; }
-
-.wordmark .brand {
-  font-size: 19px;
-  font-weight: 600;
-  letter-spacing: -.01em;
-}
-
-.wordmark .rule {
-  width: 1px;
-  height: 18px;
-  background: var(--rule-strong);
-  margin: 0 3px;
-}
-
-.wordmark .name {
-  font-family: var(--vp-font-family-mono);
-  font-size: 13px;
-  letter-spacing: .1em;
-  color: var(--ink-2);
-}
+.masthead { padding: 24px 0 44px; }
 
 .masthead-grid {
   display: grid;

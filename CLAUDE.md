@@ -39,6 +39,13 @@ owns the fact; `README.md` keeps its own orientation job at `/overview`. Adding,
 otherwise. `<ViewerEmbed>` may appear only in pages under `docs-site/`, never in
 published repo markdown, which has to stay readable on GitHub.
 
+The site's chrome is **shared with prompt-nb's `docs-site/`**, so the two Cirro
+documentation sites read as one shelf: `theme/style.css` (the Cirro palette and
+typefaces), `theme/components/SiteBrand.vue` (the Cirro-wordmark-and-product header
+lockup), `theme/components/Layout.vue` (that lockup plus the brand rule above the nav)
+and `theme/assets/cirro-*.png` are the same files in both repositories. Changing one of
+them here is a change to make there too.
+
 ## Keep run.sh / stop.sh current (always)
 
 `run.sh` is the local dev launcher (backend `uvicorn` + frontend `npm run dev`);

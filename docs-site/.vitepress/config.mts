@@ -8,11 +8,13 @@ import { defineConfig } from 'vitepress';
 // docs-site/ are the only new prose, and the only place <ViewerEmbed> may appear. The
 // landing page (docs-site/index.md -> LandingPage.vue) is the one exception that rule
 // names: it presents and routes, and must not become the only place a fact is written.
+
 // The Cirro brand mark, the same geometry as frontend/public/favicon.svg: a ring with a
-// blank channel carved through it by the two-node link glyph. Inlined as a data URI
-// because VitePress only ever serves a public directory at `<srcDir>/public` — here the
-// repo root — and a top-level public/ folder existing solely to hold this one file would
-// be worse than the encoding. Both fills are brand colors, so one mark serves both themes.
+// blank channel carved through it by the two-node link glyph. It is the site's favicon.
+// Inlined as a data URI because VitePress only ever serves a public directory at
+// `<srcDir>/public` — here the repo root — and a top-level public/ folder existing solely
+// to hold this one file would be worse than the encoding. Both fills are brand colors, so
+// one mark serves both themes.
 const CIRRO_MARK = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-103.9 -134.2 262 262">
   <mask id="c" maskUnits="userSpaceOnUse" x="-176" y="-176" width="352" height="352">
     <rect x="-176" y="-176" width="352" height="352" fill="#fff"/>
@@ -29,6 +31,10 @@ export default defineConfig({
   description: 'Interactive analysis and visualization for spatial transcriptomics.',
   cleanUrls: true,
   lastUpdated: true,
+
+  head: [
+    ['link', { rel: 'icon', href: `data:image/svg+xml,${encodeURIComponent(CIRRO_MARK)}` }],
+  ],
 
   // With the whole repo as srcDir, anything not excluded becomes a page. Agent
   // instructions, governance skills and the MCP guides are written for tools, not
@@ -71,7 +77,11 @@ export default defineConfig({
   },
 
   themeConfig: {
-    logo: `data:image/svg+xml,${encodeURIComponent(CIRRO_MARK)}`,
+    // The header lockup is theme/components/SiteBrand.vue, filled into the nav bar's
+    // title slot by theme/components/Layout.vue — the same Cirro-wordmark-plus-product
+    // header prompt-nb's docs carry. VitePress's own title would sit beside it saying
+    // the name a second time.
+    siteTitle: false,
     outline: [2, 3],
     nav: [
       { text: 'Use', link: '/overview' },
