@@ -28,6 +28,20 @@ def shellQuote(value) {
     return value.toString().replace("'", "'\\''")
 }
 
+/** `prefix` as a published path: accents dropped, any other non-ASCII run replaced by '-'.
+ *
+ * Prefixes come from folder names and --input keys, which may be any Unicode, but the
+ * head job's JVM can run without a UTF-8 locale, and then Nextflow cannot encode such a
+ * path when it collects a task's outputs ("Malformed input or input contains unmappable
+ * characters") — the task's work is lost after it succeeded. The unchanged prefix is
+ * still each dataset's name everywhere a name is shown.
+ */
+def asciiPath(String prefix) {
+    return java.text.Normalizer.normalize(prefix, java.text.Normalizer.Form.NFKD)
+        .replaceAll('\\p{M}+', '')
+        .replaceAll('[^\\x20-\\x7E]+', '-')
+}
+
 process ANALYSE {
     tag "${prefix} (${spec.label})"
     container params.analysis_container
@@ -142,7 +156,7 @@ process ANALYSE {
             --cluster-key '${shellQuote(params.cluster_key)}' \\
             --neighborhood-key '${shellQuote(params.neighborhood_key)}'
     else
-        echo 'WARN: ${shellQuote(prefix)} (${shellQuote(spec.id)}) failed; see ${shellQuote(prefix)}/results.log' >&2
+        echo 'WARN: ${shellQuote(prefix)} (${shellQuote(spec.id)}) failed; see ${shellQuote(spec.out_dir.substring('out/'.length()))}/results.log' >&2
         .venv/bin/python '${shellQuote(metrics_script)}' \\
             --sample '${shellQuote(prefix)}' \\
             --data-type '${shellQuote(spec.id)}' \\
@@ -301,7 +315,7 @@ workflow {
             reader          : type.reader,
             // Each dataset owns a folder named for where it was found, holding
             // results-<hash>.sdata.zarr.zip, its lowres-<hash> copy, plots/ and results.log.
-            out_dir         : "out/${at}".toString(),
+            out_dir         : "out/${asciiPath(at)}".toString(),
             recipes         : params.preprocess ? type.recipes : [],
             // The colour column is one the recipes write, so it only exists when they ran.
             display_color_by   : params.preprocess && type.display?.color_by_param
@@ -319,6 +333,16 @@ workflow {
             run_metrics_json   : groovy.json.JsonOutput.toJson(type.run_metrics ?: [:]),
         ], dir)
     }
+
+    // The viewer lists each dataset under its own name, not its ASCII folder, so two
+    // names that fold to one folder would overwrite each other's results.
+    def names_by_folder = work.groupBy { entry -> entry[1].out_dir.substring('out/'.length()) }
+        .collectEntries { folder, entries -> [folder, entries.collect { entry -> entry[0] }] }
+    def clashes = names_by_folder.findAll { _folder, names -> names.size() > 1 }
+    if( clashes )
+        error "datasets would publish to the same folder once their names are made ASCII: " +
+              clashes.collect { folder, names -> "${names.join(' and ')} -> ${folder}" }.join('; ') +
+              ". Rename one of each, or give them distinct --input keys."
 
     // Said once, up front, on the run's own console: each dataset's log carries the detail
     // but nobody opens hundreds of them, and this is the one defect here that leaves a
@@ -366,8 +390,8 @@ workflow {
             .map { f ->
                 def rel = f.substring(f.indexOf('/out/') + '/out/'.length())
                 // Both checkpoints of a dataset sit in its own folder, so the folder
-                // path is the label and the file name says which of the two it is.
-                [rel.substring(0, rel.lastIndexOf('/')), rel]
+                // names the dataset and the file name says which of the two it is.
+                [names_by_folder[rel.substring(0, rel.lastIndexOf('/'))][0], rel]
             }
             .toList(),
     )

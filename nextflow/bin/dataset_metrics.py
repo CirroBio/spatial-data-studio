@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
+import unicodedata
 from pathlib import Path
 
 import pandas as pd
@@ -96,7 +98,11 @@ def _run_metrics(source_dir: Path, config: dict | None) -> dict:
 
 def _section(outdir: Path, sample: str, name: str, doc: dict) -> None:
     # '/' is meaningful in a sample name (it is a published path) but not in a file name.
-    token = sample.replace("/", "__") or "dataset"
+    # Non-ASCII is folded as main.nf's asciiPath folds it, and for the same reason: the
+    # head job may be unable to encode such a name when it collects this task's outputs.
+    folded = "".join(ch for ch in unicodedata.normalize("NFKD", sample)
+                     if not unicodedata.combining(ch))
+    token = re.sub(r"[^\x20-\x7e]+", "-", folded).replace("/", "__") or "dataset"
     (outdir / f"{token}_{name}_mqc.json").write_text(json.dumps(doc, indent=2, default=float))
 
 

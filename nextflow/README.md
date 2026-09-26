@@ -122,6 +122,12 @@ replaces the root's own path; anything found by recursion nests beneath it:
 Roots may be local paths or `s3://`, `gs://`, `az://` — discovery goes through Nextflow's
 own `file()` API, so it uses whatever credentials the executor already has.
 
+**Published folders are ASCII.** A folder name or key with other characters is folded:
+accents are dropped and anything else becomes `-`, so `Melanoma — Xenium 5K` publishes
+to `results/results/Melanoma - Xenium 5K/`. The viewer listing, the report and the name
+recorded in each checkpoint keep the original. Two datasets that fold to the same
+folder stop the run before any analysis starts.
+
 ## Output layout
 
 ```
