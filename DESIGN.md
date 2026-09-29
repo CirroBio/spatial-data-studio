@@ -1343,9 +1343,10 @@ A checkpoint is **directly readable by a browser** over HTTP Range, with no back
 (§14.2). `ZIP_STORED` is what makes that possible — a zarr chunk, and equally a shape
 parquet, is a contiguous byte span — and four write-time steps in
 `_write_browser_reader_support` serve it. The first three are what the serverless viewer
-needs to exist at all, not an optimization: a checkpoint written before them is rejected
-on open (§14.2), because a Zarr v3 store carries no child index and the reader could not
-even name the table.
+needs to exist at all, not an optimization: without them the reader falls back to reading
+the store as plain SpatialData (§14.2), which draws no boundaries and reads genes from the
+whole matrix, and without consolidated metadata it could not even name the table, because
+a Zarr v3 store carries no child index.
 
 - **`_shard_rasters`** rewrites image/label arrays with the Zarr v3 sharding codec
   (inner chunk `_SHARD_INNER` 512, shard `_SHARD_SIZE` 4096), region-by-region so
@@ -1434,6 +1435,18 @@ call `api.ts` directly — `useArrowField`, `useVivImageLayer`, `usePolygonBbox`
 `VarNameSelect`, `SpatialCanvas` — read the source from `DataSourceProvider` instead.
 Everything downstream (palettes, point styling, channel shaders, legends, minimap,
 invert axes, backdrop) already worked off plain typed arrays and is untouched.
+
+The same reader opens a `.zarr/` folder (a URL whose path ends in `/`), and a store this
+app never saved. A folder is read one object per key — `FetchStore` for a public folder,
+or `HostSignedFolderStore` under an embed host whose bucket needs a presigned URL per
+object (docs/EMBED_PROTOCOL.md "Folder stores"). A store without the `viewer/` sidecar
+(nf-core/sopa or spatialdata-io output) gets one derived in the browser by
+`plainSpatialData.deriveSidecar`: the first table with `obsm/spatial`, and each image's
+manifest built from its OME metadata, placed against the cells the way `imaging.pixel_to_world`
+reconciles them. Contrast defaults come from the coarsest level, as `_channel_norm` computes
+them. Its default displays follow `manager.auto_displays`. What the backend bakes and
+the browser cannot cheaply derive stays missing: the shapes spatial index (so no boundaries)
+and the CSC gene mirror (so a gene reads the whole CSR matrix).
 
 Details that make it work:
 

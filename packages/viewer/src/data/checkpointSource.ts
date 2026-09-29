@@ -1,7 +1,11 @@
-// DataSource backed by a `.zarr.zip` checkpoint read directly over HTTP Range with
-// zarrita — no backend (DESIGN §14). The zip is `ZIP_STORED`, so a zarr chunk is a
-// contiguous byte span the reader can fetch on its own; `ZipFileStore` pulls the
-// central directory once and range-reads entries after that.
+// DataSource backed by a SpatialData store read directly over HTTP with zarrita — no
+// backend (DESIGN §14). Two containers:
+//  - a `.zarr.zip` checkpoint, read by HTTP Range: the zip is `ZIP_STORED`, so a zarr
+//    chunk is a contiguous byte span, and `ZipFileStore` pulls the central directory once
+//    and range-reads entries after that;
+//  - a `.zarr/` folder, one object per key (`folderStore`).
+// Either may be an app-saved checkpoint (with the `viewer/` sidecar) or a plain
+// SpatialData store, whose sidecar is derived instead (`plainSpatialData`).
 //
 // Field data is materialized into the *same* Arrow schemas the live
 // `/data/{field_path}` route emits (`transport/arrow.py:resolve_field`), so
@@ -9,6 +13,7 @@
 import { loadOmeZarrFromStore } from '@vivjs/loaders';
 import { Schema, Table, makeTable } from 'apache-arrow';
 import type { AbsolutePath, AsyncReadable, RangeQuery } from '@zarrita/storage';
+import FetchStore from '@zarrita/storage/fetch';
 import ZipFileStore from '@zarrita/storage/zip';
 import * as zarr from 'zarrita';
 import {
@@ -19,6 +24,8 @@ import {
 import { SHAPE_ANNOTATIONS_ELEMENT } from '../lib/shapeAnnotations';
 import type { ShapeIndexEntry, ShapeReader } from './parquetShapes';
 import type { DataSource, ElementInventory, ImageLoader, LocalCategorical } from './types';
+import { type FolderAccess, HostSignedFolderStore } from './folderStore';
+import { autoDisplays, childrenOf, type Contents, deriveSidecar, UnrenderableStoreError } from './plainSpatialData';
 
 // Highest `viewer/` sidecar layout this build understands. Mirrors
 // `persistence.store.VIEWER_SIDECAR_VERSION`; bumped only by a breaking layout change.
@@ -209,6 +216,13 @@ async function readBytes(root: Root, path: string): Promise<Uint8Array<ArrayBuff
   return chunk.data as Uint8Array<ArrayBuffer>;
 }
 
+// A string column that may be a plain array or AnnData's nullable string group (newer
+// AnnData writes `obs`/`var` indexes and string columns this way; sopa's stores do).
+async function readStringColumn(root: Root, path: string): Promise<string[]> {
+  const node = await zarr.open.v3(root.resolve(path));
+  return readStrings(root, node.kind === 'group' ? `${path}/values` : path);
+}
+
 async function readStrings(root: Root, path: string): Promise<string[]> {
   const arr = await zarr.open.v3(root.resolve(path), { kind: 'array' });
   const chunk = await zarr.get(arr);
@@ -239,17 +253,46 @@ export interface CheckpointHandle {
   figures: FigureIndex;
 }
 
-/** Open a checkpoint for reading. `source` is a `blob:`/`http(s):` URL, or a File the
- * user picked (which `file://` pages need — range GETs don't work there).
- * `refreshUrl` re-signs an expiring URL mid-session; a File needs none. */
+/** A URL whose path ends in `/` names a `.zarr/` folder rather than a `.zarr.zip`. */
+export function isFolderUrl(url: string): boolean {
+  return new URL(url, globalThis.location?.href).pathname.endsWith('/');
+}
+
+async function openRawStore(
+  target: string | File, refreshUrl?: CheckpointUrlRefresher, folder?: FolderAccess,
+): Promise<Required<AsyncReadable>> {
+  if (typeof target !== 'string') return ZipFileStore.fromBlob(target);
+  if (!isFolderUrl(target)) return new ZipFileStore(new RangeGetReader(target, refreshUrl));
+  return folder ? HostSignedFolderStore.open(folder) : new FetchStore(target);
+}
+
+// Every store this reader opens is Zarr v3, rooted at `zarr.json`. Say what the store
+// is instead when it is not, rather than surfacing zarrita's "Not found: group at /".
+async function requireZarrV3Root(store: AsyncReadable): Promise<void> {
+  if (await store.get('/zarr.json')) return;
+  if (await store.get('/.zgroup') ?? await store.get('/.zmetadata')) {
+    throw new UnrenderableStoreError(
+      'This is a Zarr v2 store, and the viewer reads SpatialData stores written as Zarr v3 '
+      + '(spatialdata 0.3 and later). If it is a SpatialData store, re-save it with a current '
+      + 'spatialdata to view it.');
+  }
+  throw new UnrenderableStoreError('This is not a zarr store: it has no zarr.json at its root.');
+}
+
+/** Open a SpatialData store for reading. `target` is a `blob:`/`http(s):` URL — of a
+ * `.zarr.zip`, or of a `.zarr/` folder when its path ends in `/` — or a File the user
+ * picked (which `file://` pages need — range GETs don't work there). `refreshUrl`
+ * re-signs an expiring zip URL mid-session; a File needs none. `folder` reads a folder
+ * whose objects must each be signed (an embed host's S3 bucket); without it a folder URL
+ * is fetched as-is. */
 export async function openCheckpoint(
   target: string | File,
   refreshUrl?: CheckpointUrlRefresher,
+  folder?: FolderAccess,
 ): Promise<CheckpointHandle> {
   const url = typeof target === 'string' ? target : target.name;
-  const rawStore = typeof target === 'string'
-    ? new ZipFileStore(new RangeGetReader(target, refreshUrl))
-    : ZipFileStore.fromBlob(target);
+  const rawStore = await openRawStore(target, refreshUrl, folder);
+  await requireZarrV3Root(rawStore);
   // Every open is pinned to v3 (`open.v3`) rather than letting zarrita auto-detect:
 // checkpoints are always Zarr v3, and the auto-detect path probes v2 first, which
 // costs a 404 per node and leaves the losing probe's rejection unhandled — surfacing
@@ -261,19 +304,13 @@ export async function openCheckpoint(
   const contents = 'contents' in store ? store.contents() : [];
   const root = zarr.root(store);
   const rootAttrs = (await (await zarr.open.v3(root, { kind: 'group' })).attrs) as Record<string, unknown>;
-  const appState = (rootAttrs.app_state ?? {}) as Record<string, unknown>;
+  const savedAppState = (rootAttrs.app_state ?? {}) as Record<string, unknown>;
 
-  const sidecar = (await readGroupAttrs(root, 'viewer')) as unknown as ViewerSidecar | null;
-  // Without the sidecar there is nothing to degrade to: a Zarr v3 store carries no
-  // child index, so with neither it nor consolidated metadata the reader cannot even
-  // name the table, and the viewer would present an empty session with no explanation.
-  // Fail with something the user can act on instead.
-  if (!sidecar) {
-    throw new Error(
-      'This checkpoint was saved before the serverless viewer existed, so it carries none ' +
-      'of the metadata the browser needs to read it. Open it in the app and save it again.',
-    );
-  }
+  // A store without the sidecar is a plain SpatialData store (or a checkpoint saved
+  // before the sidecar existed): derive what the sidecar would have said, or explain why
+  // there is nothing to show.
+  const sidecar = ((await readGroupAttrs(root, 'viewer'))
+    ?? await deriveSidecar(root, contents, rootAttrs)) as unknown as ViewerSidecar;
   if (sidecar.sidecar_version > VIEWER_SIDECAR_VERSION) {
     throw new Error(
       `This checkpoint was written for a newer viewer (sidecar v${sidecar.sidecar_version}; ` +
@@ -294,7 +331,7 @@ export async function openCheckpoint(
   // strings, read once.
   let varNames: string[] | null = null;
   const varNamesOnce = async (): Promise<string[]> => {
-    if (varNames === null) varNames = await readStrings(root, `tables/${table}/var/_index`);
+    if (varNames === null) varNames = await readStringColumn(root, `tables/${table}/var/_index`);
     return varNames;
   };
 
@@ -459,21 +496,22 @@ export async function openCheckpoint(
     },
   };
 
-  return {
-    source, appState, figures: sidecar.figures ?? {},
-    fields: await deriveFields(root, contents, table, sidecar),
+  const fields = await deriveFields(root, contents, table, sidecar);
+  // A store saved by anything but this app has no displays; give it the ones a live
+  // session would have started with. Like the backend, they color by the first pandas
+  // Categorical — not any string column, which is as likely an id with a level per cell.
+  const categoricals: string[] = [];
+  for (const { name } of fields.obs) {
+    const attrs = await readGroupAttrs(root, `tables/${table}/obs/${name}`).catch(() => null);
+    if (attrs?.['encoding-type'] === 'categorical') categoricals.push(name);
+  }
+  const savedDisplays = savedAppState.displays as unknown[] | undefined;
+  const appState = savedDisplays?.length ? savedAppState : {
+    schema_version: 3, compute_history: [], plots: [], regions: [],
+    ...savedAppState,
+    displays: autoDisplays(fields, categoricals),
   };
-}
-
-type Contents = { path: string; kind: 'array' | 'group' }[];
-
-/** Immediate children of a group, from the consolidated listing. */
-function childrenOf(contents: Contents, group: string): string[] {
-  const prefix = `${group}/`;
-  return contents
-    .map((entry) => entry.path.replace(/^\//, ''))
-    .filter((path) => path.startsWith(prefix) && !path.slice(prefix.length).includes('/'))
-    .map((path) => path.slice(prefix.length));
+  return { source, appState, figures: sidecar.figures ?? {}, fields };
 }
 
 // The inventory the Color By / obsm pickers read, in the shape `GET /api/sessions/{id}`
@@ -494,7 +532,10 @@ async function deriveFields(
   for (const name of columnOrder.filter((n) => n !== indexName)) {
     const path = `tables/${table}/obs/${name}`;
     if (kindByPath.get(path) === 'group') {
-      obs.push({ name, kind: 'categorical' });
+      // A group is a pandas Categorical or one of AnnData's nullable arrays; only the
+      // nullable numeric ones plot as numbers.
+      const encoding = (await readGroupAttrs(root, path))?.['encoding-type'];
+      obs.push({ name, kind: NULLABLE_NUMERIC.has(String(encoding)) ? 'numeric' : 'categorical' });
       continue;
     }
     const arr = await zarr.open.v3(root.resolve(path), { kind: 'array' });
@@ -503,6 +544,9 @@ async function deriveFields(
 
   const obsm: ObsmField[] = [];
   for (const name of childrenOf(contents, `tables/${table}/obsm`)) {
+    // AnnData may store an obsm entry as a dataframe (a group of columns — sopa writes
+    // per-channel `intensities` that way); only an array is an embedding to plot.
+    if (kindByPath.get(`tables/${table}/obsm/${name}`) !== 'array') continue;
     const arr = await zarr.open.v3(root.resolve(`tables/${table}/obsm/${name}`), { kind: 'array' });
     // A 1-D obsm array has one component, not zero — `arrow.py` reports 1 for the same
     // element, and 0 made the picker offer an embedding with no axes to choose.
@@ -535,7 +579,10 @@ async function deriveFields(
 // answer about a healthy checkpoint.
 async function arrayLength(root: Root, path: string): Promise<number> {
   try {
-    return (await zarr.open.v3(root.resolve(path), { kind: 'array' })).shape[0];
+    const node = await zarr.open.v3(root.resolve(path));
+    // A nullable column (a group of `values` + `mask`) is as long as its values.
+    const array = node.kind === 'group' ? await zarr.open.v3(root.resolve(`${path}/values`), { kind: 'array' }) : node;
+    return array.shape[0];
   } catch (err) {
     if (zarr.isZarritaError(err, 'NotFoundError')) return 0;
     throw err;
@@ -583,11 +630,32 @@ function applyAffineXy(xs: Float32Array, ys: Float32Array, [a, b, c, d, e, f]: n
   }
 }
 
-// AnnData writes a categorical obs column as a group of `codes` + `categories`, and a
-// plain column as an array. Mirrors `_obs_batch`'s two shapes.
+// AnnData's nullable arrays: a group of `values` plus a boolean `mask` (true = missing).
+const NULLABLE_NUMERIC = new Set(['nullable-integer', 'nullable-boolean']);
+const NULLABLE_STRING = 'nullable-string-array';
+
+// AnnData writes a categorical obs column as a group of `codes` + `categories`, a
+// nullable column as a group of `values` + `mask`, and a plain column as an array.
 async function readObs(root: Root, table: string, key: string): Promise<Table> {
   const path = `tables/${table}/obs/${key}`;
   const node = await zarr.open.v3(root.resolve(path));
+  const encoding = node.kind === 'group' ? String(((await node.attrs) as Record<string, unknown>)['encoding-type']) : '';
+  if (encoding === NULLABLE_STRING || NULLABLE_NUMERIC.has(encoding)) {
+    const [values, mask] = await Promise.all([
+      encoding === NULLABLE_STRING ? readStrings(root, `${path}/values`) : readNumeric(root, `${path}/values`),
+      readNumeric(root, `${path}/mask`),
+    ]);
+    if (encoding === NULLABLE_STRING) {
+      // A missing value reads as its own level, as the backend's categorical read shows NaN.
+      const { codes, categories } = encodeCategories((values as string[]).map((v, i) => (mask[i] ? 'NaN' : v)));
+      return withMetadata(makeTable({ code: codes }), new Map([
+        ['kind', 'categorical'],
+        ['categories', JSON.stringify(categories)],
+      ]));
+    }
+    const numbers = Float64Array.from(values as Float64Array, (v, i) => (mask[i] ? NaN : v));
+    return withMetadata(makeTable({ value: numbers }), new Map([['kind', 'numeric']]));
+  }
   if (node.kind === 'group') {
     const categories = await readStrings(root, `${path}/categories`);
     const codes = Int32Array.from(await readNumeric(root, `${path}/codes`));

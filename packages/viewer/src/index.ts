@@ -13,7 +13,9 @@ export {
 // ---- Where the data comes from ----------------------------------------------
 export { DataSourceProvider, useDataSource } from './data/context';
 export type { DataSource, ElementInventory, ImageLoader, LocalCategorical } from './data/types';
-export { openCheckpoint, type CheckpointHandle, type CheckpointUrlRefresher } from './data/checkpointSource';
+export { isFolderUrl, openCheckpoint, type CheckpointHandle, type CheckpointUrlRefresher } from './data/checkpointSource';
+export { HostSignedFolderStore, type FolderAccess } from './data/folderStore';
+export { UnrenderableStoreError } from './data/plainSpatialData';
 export { useArrowField } from './data/useArrowField';
 
 // ---- The display model ------------------------------------------------------
