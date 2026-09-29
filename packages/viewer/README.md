@@ -12,8 +12,10 @@ instead of embedding the whole app in an iframe. **One source of truth for the c
   tools of `selectionShapes`) and shape-annotation editing.
 - `CanvasHostProvider` — the contract a host implements to drive them (see below).
 - `DataSourceProvider` + `openCheckpoint` — the read surface the canvases render
-  through, and the `.zarr.zip` reader that implements it over HTTP Range with zarrita
-  and no backend at all. `openCheckpoint` also returns the file's `app_state`, its field
+  through, and the reader that implements it with zarrita and no backend at all: a
+  `.zarr.zip` over HTTP Range, or a `.zarr/` folder (`HostSignedFolderStore` when each
+  object needs its own presigned URL). A store this app did not save is read as plain
+  SpatialData, with its table, image manifests and default displays derived on open. `openCheckpoint` also returns the file's `app_state`, its field
   inventory, and its `figures` index (which plots it carries a rendered figure for);
   `DataSource.getPlotFigure(plotId, format)` reads one as a blob, so a host can show the
   saved SVG/PDF/PNG figures without a backend.

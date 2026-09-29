@@ -60,11 +60,17 @@ config (`SpatialDataDisplay` in the dashboard package) — same field names
     displays: Array<{ id: string; name: string } & DisplayPayload>, // saved displays in app_state order
     obsColumns: Array<{ name: string; kind: 'categorical' | 'numeric' }>,
     images: Array<{ element: string; channelNames: string[]; isRgb: boolean;
-                    contrastRange: [number, number][] }>,
+                    contrastRange: [number, number][];     // per channel [min, max] of the data
+                    contrastLimits: [number, number][] }>, // per channel default contrast (1.1.0+)
     obsmKeys: Array<{ key: string; nComponents: number }>,
+    shapes: string[],  // polygon shape elements the canvas can draw as boundaries (1.1.0+)
   }
 }
 ```
+   `contrastLimits` is the contrast a channel shows when the display sets none, so a
+   host's contrast control can start where the canvas does. `shapes` lists the boundary
+   sets a display's `shapes_layer` may name. Both were added in 1.1.0; a host should treat
+   them as optional when it may talk to an older viewer.
 2. `display-changed` — debounced (<=500ms) whenever the ACTIVE display's
    encoding or viewport changes in-iframe (user pans/zooms or uses in-canvas
    controls):
@@ -124,6 +130,41 @@ not retried forever. Concurrent reads that all expire at the same moment share
 one re-sign rather than each asking for their own, and a request that goes
 unanswered for 15s rejects.
 
+### Folder stores
+
+A checkpoint URL whose **path** ends in `/` names a `.zarr/` folder rather than a
+`.zarr.zip` (1.1.0+). An object store has no single presigned URL for a folder, so in embed
+mode the viewer asks the host to sign each object key and to list the folder. Keys and
+prefixes are relative to the store root. The folder URL itself is never fetched, so any
+URL under the folder with a trailing-slash path works (a presign of the folder key is
+convenient).
+
+Viewer -> parent:
+```ts
+{ source: 'sds-embed', version: 1, type: 'sign-keys', requestId: string, keys: string[] }
+{ source: 'sds-embed', version: 1, type: 'list-keys', requestId: string, prefix: string }
+```
+
+Parent -> viewer:
+```ts
+{ source: 'cirro-dashboard', version: 1, type: 'signed-keys',
+  requestId: string, urls: string[] | null }   // same order as keys; null = failed
+{ source: 'cirro-dashboard', version: 1, type: 'listed-keys',
+  requestId: string, keys: string[] | null }   // every key under prefix; null = failed
+```
+
+The viewer lists the whole folder once (`prefix: ''`) when it opens, and answers a key
+absent from that listing as missing without fetching it. That keeps S3's 403-for-a-missing-key
+(a presigner without ListBucket) from reading as an expired signature. It batches the
+keys requested in one tick into one `sign-keys`, reuses a signature for four minutes, and
+re-signs a listed key once if a GET answers 401/403. Requests unanswered for 15s reject.
+
+A folder need not have been saved by this app. The viewer opens any consolidated Zarr v3
+SpatialData store and derives the table, image manifests and default displays itself
+(`packages/viewer/src/data/plainSpatialData.ts`). When the store holds nothing it can show
+(no table with `obsm/spatial`, Zarr v2, no consolidated metadata, not zarr at all), it
+posts `error` with a message saying which.
+
 ## Handshake order
 
 1. Parent creates iframe with `embed=1`.
@@ -136,26 +177,41 @@ unanswered for 15s rejects.
 
 ## Dashboard node contract (implemented in @cirrobio/dashboard)
 
-- Node type id: `'spatialdata'` (NODE_TYPE.spatialdata).
+The host side lives in Cirro-portal's `packages/dashboard/src/views/spatialdata/`. The
+viewer itself is deployed as the Cirro-tools `spatialdata` tool (this repo's release
+`viewer-dist.tar.gz`, served unmodified at `/tools/spatialdata/`).
+
+- Node type id: `'spatialdata'` (`NODE_TYPE.spatialData`).
 - Config type `SpatialDataConfig`:
 ```ts
 interface SpatialDataConfig {
+  title: string;
   datasetId: string;
-  datasetName?: string;
-  path: string;            // dataset-relative path to the .zarr.zip
-  sizeBytes?: number;
-  title?: string;
+  datasetName: string;
+  path: string;            // dataset-relative path to the .zarr.zip or .zarr folder
   display?: DisplayPayload & { id?: string };  // persisted display settings
 }
 ```
-- New OPTIONAL host capability in SqlHostCapabilities:
+  A node added from the dashboard's "+ Spatial" picker has no `display` until the viewer
+  first opens, and then saves the one it starts on.
+- Optional host capability in `SqlHostCapabilities`:
 ```ts
-/** Base URL of a deployed Spatial Data Studio serverless viewer build
- *  (directory containing index.html). When absent, spatialdata nodes render
- *  an explanatory placeholder instead of an iframe. */
-spatialViewerUrl?: () => Promise<string> | string;
+/** Directory of a deployed Spatial Data Studio viewer (holding index.html). When
+ *  absent, or when datasetFileUrl is absent, spatialdata nodes render an explanatory
+ *  placeholder instead of an iframe. */
+readonly spatialViewerUrl?: string;
 ```
-- File detection predicate (do NOT widen isTabularFile):
+  The checkpoint URL, and every `refresh-checkpoint-url` answer, is signed through the
+  existing `datasetFileUrl(projectId, datasetId, path)` capability.
+- File and folder detection (do NOT widen isTabularFile):
 ```ts
 isSpatialDataFile(path) === /\.zarr\.zip$/i.test(path)   // covers .sdata.zarr.zip
+isSpatialDataFolder(path) === /\.zarr\/?$/i.test(path)   // any .zarr folder
 ```
+  A `.zarr` folder is offered whether or not it is SpatialData; the viewer's `error` says
+  when it is not something it can show. The host signs a folder's objects through
+  `datasetFileUrl` and lists them from the dataset's file manifest.
+- Persistence: settings-panel edits are always saved to the node. Viewer-side
+  `display-changed` events (camera moves, display switches) are saved only while the
+  tile's settings panel is open, so exploring a tile that is not locked
+  (`lock_view`) leaves its saved framing alone.

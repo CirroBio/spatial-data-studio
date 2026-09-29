@@ -119,7 +119,11 @@ packages/viewer/  @cirrobio/spatial-viewer — the deck.gl canvases and the chec
                   helpers a host's own controls need
   src/data/       the DataSource contract the canvas renders through, the DataSourceProvider,
                   and checkpointSource (a .zarr.zip read directly with zarrita over HTTP
-                  Range — the serverless viewer, DESIGN §14.2). parquetShapes.ts +
+                  Range, or a .zarr/ folder — the serverless viewer, DESIGN §14.2).
+                  folderStore.ts reads a folder whose objects an embed host signs one by
+                  one (docs/EMBED_PROTOCOL.md "Folder stores"); plainSpatialData.ts derives
+                  the viewer sidecar and default displays for a store this app did not
+                  save (sopa, spatialdata-io output). parquetShapes.ts +
                   wkbGeoArrow.ts are the boundary half: the shape file is GeoParquet, not
                   zarr, so it is range-queried with hyparquet against its covering index
   src/types.ts    the display model (DisplaySpec/DisplayEncoding/SessionFields/ImageInfo)
@@ -181,6 +185,8 @@ Component-level notes: [`backend/README.md`](backend/README.md),
 | Change where a save writes, what the file is named, or what the session is called | `backend/app/main.py` (`_validated_destination`, `_validated_name`) + `deps.py` (`default_save_path`) + `sessions/session.py` (`rename`, `_run_load`) + `frontend/src/components/SaveCheckpointDialog.tsx` | below |
 | Change how rendered plot figures are stored, served or shown | `backend/app/persistence/store.py` (`_write_figures`, `read_figure`, `figure_index`) + `sessions/session.py` (`figure`, `figure_index`, `figures_to_persist`) + `frontend/src/lib/figures.ts` + `components/PlotGallery.tsx` / `FigureLightbox.tsx` / `PlotDetail.tsx` | below |
 | Change what the serverless viewer can read from a checkpoint | `backend/app/persistence/store.py` (`_write_viewer_sidecar`, the writer half) + `packages/viewer/src/data/checkpointSource.ts` (the reader half) — the two must move together | [DESIGN.md](DESIGN.md) §14.1–14.2, [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) §4 |
+| Change how a store without the sidecar (plain SpatialData) is read — which table, where images sit, the default displays | `packages/viewer/src/data/plainSpatialData.ts` (its image placement ports `imaging.pixel_to_world`, its displays `manager.auto_displays`; keep them agreeing) + `plainSpatialData.test.ts` | [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) §9 |
+| Change how a `.zarr/` folder is read under an embed host (signing, listing) | `packages/viewer/src/data/folderStore.ts` + `frontend/src/data/embedBridge.ts` (`embedFolderAccess`) + [docs/EMBED_PROTOCOL.md](docs/EMBED_PROTOCOL.md) | [docs/EMBED_PROTOCOL.md](docs/EMBED_PROTOCOL.md) |
 | Change how cell boundaries are indexed or range-queried | `backend/app/persistence/store.py` (`_index_shapes`, `_row_group_rows`, `_selectivity` — the writer half) + `packages/viewer/src/data/parquetShapes.ts` and `wkbGeoArrow.ts` (the reader half). A change to the on-disk index must keep `test_e2e.run_shape_index_check` passing: it re-derives the pruning from the file and compares it against a brute-force row scan | [DESIGN.md](DESIGN.md) §14.1–14.2, [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) §4.4 |
 | Change the shape of `app_state`, the `viewer/` sidecar, `X_csc`, or `index.json` | `backend/app/schemas/checkpoint/*.schema.json` (the JSON Schema is validated against on every write) + [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) in the same commit — `sds-governance/checks/check_checkpoint_schema_docs.py` fails the build otherwise | [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) |
 | Add a render-path call the canvas makes | `packages/viewer/src/data/types.ts` (the `DataSource` interface), then **both** `frontend/src/data/apiSource.ts` and `packages/viewer/src/data/checkpointSource.ts` | [DESIGN.md](DESIGN.md) §14.2 |

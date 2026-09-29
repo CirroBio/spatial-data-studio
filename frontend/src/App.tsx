@@ -8,7 +8,7 @@ import { useCheckpointSession } from './data/useCheckpointSession';
 import {
   checkpointUrlFromLocation, fetchCheckpointIndex, isEmbedMode, openCheckpointPath,
 } from './data/checkpointIndex';
-import { requestFreshCheckpointUrl, useEmbedBridge } from './data/embedBridge';
+import { embedFolderAccess, requestFreshCheckpointUrl, useEmbedBridge } from './data/embedBridge';
 import CheckpointIndexPage from './components/CheckpointIndexPage';
 import { useSSE } from './hooks/useSSE';
 import { useUrlViewSync } from './hooks/useUrlViewSync';
@@ -53,7 +53,12 @@ export default function App() {
   const embed = useMemo(isEmbedMode, []) && checkpointUrl !== null;
   // An embed host signs checkpoint URLs for minutes at a time, so the reader
   // re-signs through the host rather than dying partway through a long session.
-  const checkpoint = useCheckpointSession(checkpointUrl, embed ? requestFreshCheckpointUrl : undefined);
+  // A `.zarr/` folder has no single URL to sign, so the host signs each of its objects.
+  const checkpoint = useCheckpointSession(
+    checkpointUrl,
+    embed ? requestFreshCheckpointUrl : undefined,
+    embed ? embedFolderAccess : undefined,
+  );
   useEmbedBridge(embed, checkpoint);
   // Shareable view links, serverless only and never under an embed host — there the
   // dashboard owns display state over postMessage and a URL writer would race it.

@@ -9,7 +9,7 @@ import { useEffect, useState } from 'react';
 import { useAppStore } from '../store/sessionStore';
 import {
   formatError, isEmbeddingDisplay, isSpatialDisplay, openCheckpoint,
-  type CheckpointUrlRefresher, type DataSource,
+  type CheckpointUrlRefresher, type DataSource, type FolderAccess,
 } from '@cirrobio/spatial-viewer';
 import type { AppState, SessionState } from '../types';
 import {
@@ -17,7 +17,8 @@ import {
 } from '../lib/urlViewState';
 
 function displayName(url: string): string {
-  const last = url.split('/').pop() ?? url;
+  // A `.zarr/` folder URL ends in `/`; name it by the folder.
+  const last = url.split('?')[0].replace(/\/+$/, '').split('/').pop() ?? url;
   return decodeURIComponent(last.split('?')[0]) || 'Checkpoint';
 }
 
@@ -29,10 +30,12 @@ export interface CheckpointSession {
 
 /** Open `target` and install it as the active (read-only) session. Returns the data
  * source the canvas should read through. `refreshUrl` (embed mode) re-signs the
- * checkpoint URL when it expires mid-session. */
+ * checkpoint URL when it expires mid-session, and `folder` (embed mode) signs and lists
+ * the objects of a `.zarr/` folder. */
 export function useCheckpointSession(
   target: string | File | null,
   refreshUrl?: CheckpointUrlRefresher,
+  folder?: FolderAccess,
 ): CheckpointSession {
   const [source, setSource] = useState<DataSource | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -48,7 +51,7 @@ export function useCheckpointSession(
     setLoading(true);
     setError(null);
 
-    openCheckpoint(target, refreshUrl)
+    openCheckpoint(target, refreshUrl, folder)
       .then(({ source: opened, appState, fields, figures }) => {
         if (stale) return;
         const saved = applyBackgroundFromUrl(appState as unknown as AppState);

@@ -647,11 +647,14 @@ granularities:
   a backend-less reader has no data to fall back to if the sidecar it finds is
   newer than the version it understands, so this app's own reader **refuses**
   to open a checkpoint whose `sidecar_version` exceeds what it was built
-  against, rather than guessing at an unknown shape. A checkpoint with **no**
-  `viewer/` group at all (written before the sidecar existed) is refused
-  outright by a backend-less reader for the same reason — Zarr v3 has no child
-  index, so without the sidecar's `table_keys` a reader can't even enumerate
-  what tables exist. Additive keys do **not** bump this version: `figures`
+  against, rather than guessing at an unknown shape. A store with **no**
+  `viewer/` group at all (written before the sidecar existed, or not written by
+  this app) is read as plain SpatialData: the backend-less reader derives what the
+  sidecar would have said from the consolidated metadata (the first table with
+  `obsm/spatial`, each image's manifest, identity `coords_transform`; see
+  `packages/viewer/src/data/plainSpatialData.ts`), and refuses the store only when
+  that finds nothing to draw. Consolidated metadata is then required, because Zarr
+  v3 has no child index to enumerate tables from otherwise. Additive keys do **not** bump this version: `figures`
   (§4.3) was added without one, because an older reader ignoring a key it does
   not know still renders the file correctly, while a bump would make it refuse
   a file it could have read.

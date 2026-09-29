@@ -7,6 +7,7 @@
 import { useEffect, useRef } from 'react';
 import { useAppStore } from '../store/sessionStore';
 import {
+  SHAPE_ANNOTATIONS_ELEMENT,
   isEmbeddingDisplay,
   isSpatialDisplay,
   type DisplayEncoding,
@@ -16,6 +17,7 @@ import {
   type SpatialDisplaySpec,
   type Viewport,
 } from '@cirrobio/spatial-viewer';
+import type { FolderAccess } from '@cirrobio/spatial-viewer';
 import type { CheckpointSession } from './useCheckpointSession';
 
 const EMBED_MESSAGE_SOURCE = 'sds-embed';
@@ -37,8 +39,11 @@ export interface EmbedInventory {
     channelNames: string[];
     isRgb: boolean;
     contrastRange: [number, number][];
+    contrastLimits: [number, number][];
   }>;
   obsmKeys: Array<{ key: string; nComponents: number }>;
+  // Polygonal shape elements the canvas can draw as cell boundaries.
+  shapes: string[];
 }
 
 type ViewerMessage =
@@ -46,6 +51,8 @@ type ViewerMessage =
   | { type: 'display-changed'; display: EmbedDisplayPayload }
   | { type: 'search-vars-result'; requestId: string; names: string[] }
   | { type: 'refresh-checkpoint-url'; requestId: string }
+  | { type: 'sign-keys'; requestId: string; keys: readonly string[] }
+  | { type: 'list-keys'; requestId: string; prefix: string }
   | { type: 'error'; message: string };
 
 type ParentMessage =
@@ -71,47 +78,77 @@ function isParentMessage(data: unknown): data is ParentMessage {
   );
 }
 
-// How long the host gets to answer a re-sign request before the read that
+// How long the host gets to answer a signing or listing request before the read that
 // triggered it gives up. Generous: the host may round-trip to its own API.
-const CHECKPOINT_URL_TIMEOUT_MS = 15_000;
+const HOST_REPLY_TIMEOUT_MS = 15_000;
 
-let checkpointUrlRequests = 0;
+let hostRequests = 0;
 
-/**
- * Ask the embed host for a freshly signed checkpoint URL. Wired into the
- * checkpoint reader (`CheckpointUrlRefresher`), which calls this when a range
- * read comes back expired — the host's URLs are short-lived and a session
- * outlives them. Each call listens for its own `requestId` only, so concurrent
- * requests can't cross-resolve.
- */
-export function requestFreshCheckpointUrl(): Promise<string> {
-  checkpointUrlRequests += 1;
-  const requestId = `checkpoint-url-${checkpointUrlRequests}`;
+/** Post a request to the embed host and resolve with `pick(reply)` from the host's
+ * reply of `replyType` carrying the same `requestId`; each call listens for its own
+ * id only, so concurrent requests can't cross-resolve. `pick` returning undefined
+ * means the host could not answer. */
+function requestFromHost<T>(
+  request: { type: 'refresh-checkpoint-url' | 'sign-keys' | 'list-keys' } & Record<string, unknown>,
+  replyType: string,
+  pick: (reply: Record<string, unknown>) => T | undefined,
+  failure: string,
+): Promise<T> {
+  hostRequests += 1;
+  const requestId = `${request.type}-${hostRequests}`;
   return new Promise((resolve, reject) => {
     const onMessage = (event: MessageEvent) => {
-      const msg = event.data as {
-        source?: unknown; version?: unknown; type?: unknown; requestId?: unknown; url?: unknown;
-      } | null;
+      const msg = event.data as Record<string, unknown> | null;
       if (
         !msg || msg.source !== PARENT_MESSAGE_SOURCE || msg.version !== PROTOCOL_VERSION ||
-        msg.type !== 'checkpoint-url' || msg.requestId !== requestId
+        msg.type !== replyType || msg.requestId !== requestId
       ) return;
       cleanup();
-      if (typeof msg.url === 'string' && msg.url) resolve(msg.url);
-      else reject(new Error('The dashboard could not refresh the checkpoint URL'));
+      const value = pick(msg);
+      if (value === undefined) reject(new Error(failure));
+      else resolve(value);
     };
     const timer = setTimeout(() => {
       cleanup();
-      reject(new Error('Timed out waiting for a refreshed checkpoint URL'));
-    }, CHECKPOINT_URL_TIMEOUT_MS);
+      reject(new Error(`${failure} (timed out)`));
+    }, HOST_REPLY_TIMEOUT_MS);
     function cleanup(): void {
       window.removeEventListener('message', onMessage);
       clearTimeout(timer);
     }
     window.addEventListener('message', onMessage);
-    postToParent({ type: 'refresh-checkpoint-url', requestId });
+    postToParent({ ...request, requestId } as ViewerMessage);
   });
 }
+
+/**
+ * Ask the embed host for a freshly signed checkpoint URL. Wired into the
+ * checkpoint reader (`CheckpointUrlRefresher`), which calls this when a range
+ * read comes back expired — the host's URLs are short-lived and a session
+ * outlives them.
+ */
+export function requestFreshCheckpointUrl(): Promise<string> {
+  return requestFromHost(
+    { type: 'refresh-checkpoint-url' }, 'checkpoint-url',
+    (reply) => (typeof reply.url === 'string' && reply.url ? reply.url : undefined),
+    'The dashboard could not refresh the checkpoint URL',
+  );
+}
+
+/** A `.zarr/` folder has no single URL to sign: the host signs each object and lists
+ * the folder on request (docs/EMBED_PROTOCOL.md, "Folder stores"). */
+export const embedFolderAccess: FolderAccess = {
+  signKeys: (keys) => requestFromHost(
+    { type: 'sign-keys', keys }, 'signed-keys',
+    (reply) => (Array.isArray(reply.urls) && reply.urls.length === keys.length ? reply.urls as string[] : undefined),
+    'The dashboard could not sign the store\'s files',
+  ),
+  listKeys: (prefix) => requestFromHost(
+    { type: 'list-keys', prefix }, 'listed-keys',
+    (reply) => (Array.isArray(reply.keys) ? reply.keys as string[] : undefined),
+    'The dashboard could not list the store\'s files',
+  ),
+};
 
 function payloadFromSpec(spec: DisplaySpec): EmbedDisplayPayload {
   return spec.type === 'spatial_canvas'
@@ -232,13 +269,20 @@ export function useEmbedBridge(enabled: boolean, checkpoint: CheckpointSession):
               channelNames: info.channel_names,
               isRgb: info.is_rgb ?? false,
               contrastRange: info.contrast_range ?? info.contrast_limits ?? [],
+              contrastLimits: info.contrast_limits ?? [],
             };
           } catch {
             // A broken image element degrades its inventory entry, not the handshake.
-            return { element, channelNames: [], isRgb: false, contrastRange: [] };
+            return { element, channelNames: [], isRgb: false, contrastRange: [], contrastLimits: [] };
           }
         }),
       );
+      // The boundary sets the canvas can draw, picked the way its own overlay picks them.
+      const elements = source.getElements ? await source.getElements().catch(() => null) : null;
+      const shapes = (elements?.shapes ?? [])
+        .filter((s) => s.name !== SHAPE_ANNOTATIONS_ELEMENT)
+        .filter((s) => s.geometry.some((g) => g === 'Polygon' || g === 'MultiPolygon'))
+        .map((s) => s.name);
       if (cancelled) return;
       // Prime the echo guard so mounting the first display doesn't immediately
       // repeat what the inventory already carries.
@@ -255,6 +299,7 @@ export function useEmbedBridge(enabled: boolean, checkpoint: CheckpointSession):
           obsColumns: state.fields.obs.map(({ name, kind }) => ({ name, kind })),
           images,
           obsmKeys: state.fields.obsm.map((f) => ({ key: f.name, nComponents: f.n_components })),
+          shapes,
         },
       });
     })();

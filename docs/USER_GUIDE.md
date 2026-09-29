@@ -209,6 +209,17 @@ and save it again to add them. Any host that serves the file with HTTP range req
 will do — put the built app, your `.zarr.zip` files, and a small `index.json` listing
 them in one folder and the page becomes a browsable collection you can switch between.
 
+The viewer also opens SpatialData stores it did not save: a `.zarr.zip`, or a `.zarr/`
+folder (point `?checkpoint=` at the folder with a trailing `/`), such as nf-core/sopa or
+spatialdata-io output. It finds the table, places the images against the cells, and starts
+on the displays a new session would: the spatial view colored by the first categorical
+column over the first image, and a UMAP (or other embedding) view when the table has one.
+Such a store must be Zarr v3 with consolidated metadata (what spatialdata 0.3 and later
+write), and its table needs `obsm["spatial"]`; when one of those is missing the viewer
+says which instead of opening an empty view. Two things need a store saved by this app:
+cell boundaries are not drawn, and coloring by a gene reads the table's whole expression
+matrix rather than one gene's slice (a few seconds on a 2 GB sopa store).
+
 The **Plots** view works here too: the figures saved with the checkpoint are in the file,
 so the grid, the fullscreen view and the SVG/PDF/PNG downloads all work with no backend.
 The left panel opens collapsed and holds one thing: the history of the analysis that
