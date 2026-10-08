@@ -284,7 +284,9 @@ export class UnrenderableStoreError extends Error {}
 /**
  * Derive the viewer sidecar for a plain SpatialData store, or explain why there is
  * nothing to show. The table is the first under `tables/` that has spatial coordinates
- * (`obsm/spatial`); images are every element under `images/`.
+ * (`obsm/spatial`); images are every element under `images/`. A store with images and
+ * no tables at all (imaging not yet segmented) opens image-only, its images keyed by
+ * the `""` table key as the app's own writer keys them.
  */
 export async function deriveSidecar(root: Root, contents: Contents, rootAttrs: Record<string, unknown>): Promise<DerivedSidecar> {
   if (contents.length === 0) {
@@ -293,17 +295,21 @@ export async function deriveSidecar(root: Root, contents: Contents, rootAttrs: R
       + 'Write it with spatialdata (which consolidates by default), or run '
       + '`spatialdata.SpatialData.write_consolidated_metadata()` on it.');
   }
+  const what = rootAttrs.spatialdata_attrs ? 'This SpatialData store' : 'This zarr store is not a SpatialData store and';
   const tables = childrenOf(contents, 'tables');
   const table = tables.find((t) => childrenOf(contents, `tables/${t}/obsm`).includes('spatial'));
-  if (!table) {
-    const what = rootAttrs.spatialdata_attrs ? 'This SpatialData store' : 'This zarr store is not a SpatialData store and';
+  // Tables without spatial coordinates still hold cells, which an image-only view would
+  // silently drop; those stay an explained refusal.
+  const imageOnly = !table && tables.length === 0 && childrenOf(contents, 'images').length > 0;
+  if (!table && !imageOnly) {
     throw new UnrenderableStoreError(tables.length === 0
-      ? `${what} has no table, so there are no cells for the viewer to draw.`
+      ? `${what} has no table and no image, so there is nothing for the viewer to draw.`
       : `${what} has no table with spatial coordinates (obsm "spatial"), so the viewer cannot place its cells. `
         + `Tables found: ${tables.join(', ')}.`);
   }
+  const tableKey = table ?? '';
   const worldKey = 'spatial';
-  const spotBox = await spotBoxOf(root, table, worldKey);
+  const spotBox = table ? await spotBoxOf(root, table, worldKey) : null;
 
   const candidates = new Map<string, Map<string, Affine3>>();
   for (const group of ['shapes', 'labels', 'points']) {
@@ -324,12 +330,18 @@ export async function deriveSidecar(root: Root, contents: Contents, rootAttrs: R
     }
     const pixelToWorld = reconcileImage(layout.transforms, candidates, spotBox, layout.info.width, layout.info.height);
     images[element] = {
-      [table]: {
+      [tableKey]: {
         ...layout.info,
         pixel_to_world: toAffine6(pixelToWorld) as ImageInfo['pixel_to_world'],
         bounds: boxThrough(pixelToWorld, [0, 0, layout.info.width, layout.info.height]),
       },
     };
+  }
+  if (!table) {
+    if (Object.keys(images).length === 0) {
+      throw new UnrenderableStoreError(`${what} has no table, and none of its images could be read.`);
+    }
+    return { sidecar_version: 2, table_keys: [], images, coords_transform: {}, world_key: {} };
   }
 
   return {

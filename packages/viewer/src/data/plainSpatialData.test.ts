@@ -13,17 +13,19 @@ import { openCheckpoint } from './checkpointSource';
 const PX_PER_UM = 4.7;
 const xy = (name: string) => ({ name, axes: [{ name: 'x' }, { name: 'y' }] });
 
-/** A minimal consolidated Zarr v3 SpatialData store, in memory. */
-async function plainStore() {
+/** A minimal consolidated Zarr v3 SpatialData store, in memory. Without a table it is an
+ *  image that has not been segmented yet: no tables group at all. */
+async function plainStore({ withTable = true } = {}) {
   const store = new Map<string, Uint8Array>();
   const root = zarr.root(store);
   await zarr.create(root, { attributes: { spatialdata_attrs: { version: '0.2' } } });
-  for (const g of ['tables', 'tables/table', 'tables/table/obsm', 'images', 'shapes']) {
-    await zarr.create(root.resolve(g));
+  for (const g of ['images', 'shapes']) await zarr.create(root.resolve(g));
+  if (withTable) {
+    for (const g of ['tables', 'tables/table', 'tables/table/obsm']) await zarr.create(root.resolve(g));
+    await zarr.create(root.resolve('tables/table/obs'), { attributes: { 'column-order': [], _index: '_index' } });
+    const spots = await zarr.create(root.resolve('tables/table/obsm/spatial'), { shape: [2, 2], chunkShape: [2, 2], dtype: 'float64' });
+    await zarr.set(spots, null, { data: new Float64Array([0, 0, 100, 100]), shape: [2, 2], stride: [2, 1] });
   }
-  await zarr.create(root.resolve('tables/table/obs'), { attributes: { 'column-order': [], _index: '_index' } });
-  const spots = await zarr.create(root.resolve('tables/table/obsm/spatial'), { shape: [2, 2], chunkShape: [2, 2], dtype: 'float64' });
-  await zarr.set(spots, null, { data: new Float64Array([0, 0, 100, 100]), shape: [2, 2], stride: [2, 1] });
   await zarr.create(root.resolve('shapes/cells'), {
     attributes: { axes: ['x', 'y'], coordinateTransformations: [{ type: 'scale', scale: [PX_PER_UM, PX_PER_UM], input: xy('xy'), output: xy('global') }] },
   });
@@ -58,6 +60,8 @@ async function plainStore() {
   const rootAttrs = (await (await zarr.open.v3(opened, { kind: 'group' })).attrs) as Record<string, unknown>;
   return { store, root: opened, contents, rootAttrs };
 }
+
+const toAffine6Identity = [1, 0, 0, 0, 1, 0];
 
 function close(actual: readonly number[], expected: readonly number[], digits = 6): void {
   expect(actual.length).toBe(expected.length);
@@ -121,11 +125,30 @@ describe('deriveSidecar on a plain store', () => {
     close(info.contrast_range![0], [0, 999]);
   });
 
-  it('explains a store with no table instead of opening an empty session', async () => {
+  it('opens a store with images and no tables image-only, in the image\'s own space', async () => {
+    const { root, contents, rootAttrs } = await plainStore({ withTable: false });
+    const sidecar = await deriveSidecar(root, contents, rootAttrs);
+    expect(sidecar.table_keys).toEqual([]);
+    expect(sidecar.coords_transform).toEqual({});
+    // Keyed by "" — the no-table key the app's own writer uses, and the one
+    // `getImageInfo` falls back to when the session has no table.
+    const info = sidecar.images.dapi[''];
+    expect(info.channel_names).toEqual(['DAPI']);
+    close(info.pixel_to_world, toAffine6Identity);
+    close(info.bounds, [0, 0, 470, 470]);
+  });
+
+  it('explains a store with neither a table nor an image', async () => {
+    const { root, contents, rootAttrs } = await plainStore({ withTable: false });
+    const empty = contents.filter((e) => !e.path.startsWith('/images'));
+    await expect(deriveSidecar(root, empty, rootAttrs)).rejects.toThrow(UnrenderableStoreError);
+    await expect(deriveSidecar(root, empty, rootAttrs)).rejects.toThrow(/no table and no image/);
+  });
+
+  it('still refuses tables without spatial coordinates rather than dropping their cells', async () => {
     const { root, contents, rootAttrs } = await plainStore();
-    const imagesOnly = contents.filter((e) => !e.path.startsWith('/tables'));
-    await expect(deriveSidecar(root, imagesOnly, rootAttrs)).rejects.toThrow(UnrenderableStoreError);
-    await expect(deriveSidecar(root, imagesOnly, rootAttrs)).rejects.toThrow(/no table/);
+    const unplaced = contents.filter((e) => e.path !== '/tables/table/obsm/spatial');
+    await expect(deriveSidecar(root, unplaced, rootAttrs)).rejects.toThrow(/Tables found: table/);
   });
 
   it('explains a store without consolidated metadata', async () => {
@@ -182,6 +205,25 @@ describe('openCheckpoint on a host-signed .zarr folder', () => {
     expect(displays[0].encoding).toMatchObject({ coords: 'obsm:spatial', image_layer: 'dapi', color_by: null });
     const info = await handle.source.getImageInfo('dapi');
     close(info.pixel_to_world, [1 / PX_PER_UM, 0, 0, 0, 1 / PX_PER_UM, 0]);
+  });
+
+  it('opens an image-only plain store with a display over the image and no cells', async () => {
+    const { store } = await plainStore({ withTable: false });
+    vi.stubGlobal('fetch', async (url: string) => {
+      const bytes = store.get(`/${url.slice('https://signed/'.length)}`);
+      return bytes ? new Response(new Uint8Array(bytes)) : new Response(null, { status: 404 });
+    });
+    const access = {
+      listKeys: async () => [...store.keys()].map((k) => k.slice(1)),
+      signKeys: async (keys: readonly string[]) => keys.map((k) => `https://signed/${k}`),
+    };
+    const handle = await openCheckpoint('https://bucket.example/imaging.zarr/', undefined, access);
+    expect(handle.fields.images).toEqual(['dapi']);
+    expect(handle.fields.obs).toEqual([]);
+    const displays = handle.appState.displays as { type: string; encoding: Record<string, unknown> }[];
+    expect(displays.map((d) => d.type)).toEqual(['spatial_canvas']);
+    expect(displays[0].encoding).toMatchObject({ coords: null, image_layer: 'dapi', color_by: null });
+    close((await handle.source.getImageInfo('dapi')).pixel_to_world, toAffine6Identity);
   });
 
   it('explains a folder that is not a zarr store', async () => {

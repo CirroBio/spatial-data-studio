@@ -349,14 +349,19 @@ export default function SpatialCanvas({
     persistDisplay({ ...currentSpec(), viewport: { target: [t[0], t[1]], zoom: vs.zoom as number } });
   }, [persistDisplay, currentSpec]);
 
-  // Clear any in-progress drawing when leaving/entering a draw mode.
+  // Clear any in-progress drawing when leaving/entering a draw mode. Keyed on the
+  // reset functions, not on `regions`/`annotations`: a new host object each render
+  // would otherwise wipe a drawing mid-stroke.
+  const clearDraw = regions?.clearDraw;
+  const clearDraft = annotations?.clearDraft;
+  const setSelectedShapeId = annotations?.setSelectedShapeId;
   useEffect(() => {
-    regions?.clearDraw();
-    annotations?.clearDraft();
-    annotations?.setSelectedShapeId(null);
+    clearDraw?.();
+    clearDraft?.();
+    setSelectedShapeId?.(null);
     setShapeDragTarget(null);
     setShapeDragPreview(null);
-  }, [canvasMode, regions?.clearDraw, annotations?.clearDraft, annotations?.setSelectedShapeId]);
+  }, [canvasMode, clearDraw, clearDraft, setSelectedShapeId]);
 
   const handleClick = useCallback((info: PickingInfo) => {
     if (lassoMode) {
@@ -790,7 +795,9 @@ export default function SpatialCanvas({
         }
       />
 
-      {showMinimap && minimapExtent && canvasSize && (
+      {/* The inset draws a server-composited thumbnail or the cell scatter; a serverless
+          image-only store has neither, and an empty box would only cover the image. */}
+      {showMinimap && minimapExtent && canvasSize && (minimapImageUrl || positions) && (
         <Minimap
           imageUrl={minimapImageUrl}
           positions={positions}
