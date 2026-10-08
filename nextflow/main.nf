@@ -122,9 +122,11 @@ process ANALYSE {
     # truncated, mis-exported or unreadable. Its log is published and the run carries on
     # with the other candidates, rather than one bad folder in a thousand aborting the
     # sweep. A broken venv above is not caught — that is the environment failing, not the
-    # data. An individual recipe step that fails no longer reaches here at all: cli.py
-    # keeps it in the checkpoint's history as `failed` with its log and runs the rest, so
-    # rc is 0 and the metrics below report the dataset as `partial`.
+    # data — and neither is rc 137, which cli.py returns when the OS killed its compute
+    # worker (in practice the OOM killer): the task fails so nextflow.config can retry it
+    # with more memory. An individual recipe step that fails otherwise does not reach
+    # here at all: cli.py keeps it in the checkpoint's history as `failed` with its log
+    # and runs the rest, so rc is 0 and the metrics below report the dataset as `partial`.
     set +e
     .venv/bin/python '${shellQuote(backend)}/cli.py' \\
         --parser '${shellQuote(spec.reader)}' \\
@@ -141,6 +143,9 @@ process ANALYSE {
         ${render_mode_arg} 2>&1 | tee -a '${shellQuote(spec.out_dir)}/results.log'
     rc=\${PIPESTATUS[0]}
     set -e
+    if [ "\$rc" -eq 137 ]; then
+        exit 137
+    fi
 
     # cli.py names each checkpoint `<base>-<content hash>.sdata.zarr.zip`, so the hash
     # asserts the bytes on the next load; only the base is ours to choose.

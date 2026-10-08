@@ -940,7 +940,11 @@ entry with its log — the same model the live app uses for a queued function th
 the log is printed and saved into the output checkpoint, and the next step runs. The exit
 status is 0 for any run whose input loaded (the failure count is reported on the last
 lines of stdout); only a failed read/load is fatal. Reopening the output in the app shows
-each failed step and its log.
+each failed step and its log. A read or step whose compute worker the OS killed (loky's
+`TerminatedWorkerError`, in practice the OOM killer) is the exception: `Session` records
+it (`worker_killed`) and the CLI exits 137 without saving, the same status a SIGKILLed
+task reports, so the workflow retries it with more memory instead of publishing a
+`failed` or `partial` dataset.
 
 **Nextflow.** One workflow, `nextflow/main.nf`, wrapping the CLI in a container that
 installs the pinned Python deps at runtime with `uv`, so there is no image to build.

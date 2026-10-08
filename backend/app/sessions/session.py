@@ -10,7 +10,7 @@ import shutil
 import threading
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import BrokenExecutor, ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -211,6 +211,8 @@ class Session:
         self._queue: "queue.Queue" = queue.Queue()
         self._jobs = {}                 # job_id -> {kind, descriptor, status}
         self._failed_logs = {}          # job_id -> log (FAILED vanish from history; log still fetchable)
+        # Jobs whose compute worker died mid-call (OOM kill, segfault) rather than raising.
+        self._worker_killed = set()
         # plot_id -> {"svg":bytes,"pdf":bytes,"png":bytes} for the plots THIS session
         # drew; `figure`/`figure_index` fall back to the ones a loaded checkpoint carries.
         self.plot_figures = {}
@@ -480,6 +482,12 @@ class Session:
                 self._run_set_transform(job_id, payload)
             elif kind == "load":
                 self._run_load(job_id, payload)
+        except BrokenExecutor as e:
+            # loky's TerminatedWorkerError: the OS killed the compute worker, which is
+            # the environment failing rather than the call. The offline CLI tells the
+            # two apart (worker_killed) so a workflow can retry with more memory.
+            self._worker_killed.add(job_id)
+            self._fail(job_id, kind, str(e))
         except Exception as e:  # worker must never die
             self._fail(job_id, kind, str(e))
         finally:
@@ -1161,6 +1169,9 @@ class Session:
     def job_status(self, job_id: str):
         job = self._jobs.get(job_id)
         return job["status"] if job else None
+
+    def worker_killed(self, job_id: str) -> bool:
+        return job_id in self._worker_killed
 
     def job_ids(self) -> list[str]:
         """Ids of every job in the bookkeeping table, whatever its status

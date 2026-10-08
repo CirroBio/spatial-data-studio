@@ -38,7 +38,9 @@ keep-in-history model the live app uses for a queued function that fails. Only a
 failure to read/load the input is fatal (there is no object to analyse). The exit
 status is therefore 0 for a run whose input loaded, however many steps failed; the
 failure count is reported on the last lines of stdout, and every failure is in the
-saved history.
+saved history. The exception is a read or step whose compute worker the OS killed —
+almost always for running out of memory: that is the machine failing, not the data,
+so the run stops there with exit status 137 instead of saving a partial result.
 """
 from __future__ import annotations
 
@@ -50,6 +52,9 @@ import time
 from pathlib import Path
 
 ZARR_PARSERS = ("zarr", "spatialdata")
+# What a SIGKILLed process reports, and what Nextflow sees when the OOM killer takes the
+# whole task, so a workflow retries both with more memory (nextflow/nextflow.config).
+WORKER_KILLED_EXIT = 137
 
 
 def _parse_args(argv):
@@ -129,6 +134,14 @@ def _wait(sess, job_id, timeout=7200, interval=0.2):
     raise TimeoutError(f"job {job_id} did not finish within {timeout}s")
 
 
+def _exit_if_worker_killed(sess, job_id, label):
+    if sess.worker_killed(job_id):
+        log, _ = sess.get_log(job_id)
+        print(f"{label}: the compute worker was killed, most likely for running out of "
+              f"memory:\n{log}", file=sys.stderr)
+        raise SystemExit(WORKER_KILLED_EXIT)
+
+
 def _output_name(args) -> str:
     if args.name:
         return args.name
@@ -183,6 +196,7 @@ def _open_session(manager, args, reader):
     # The read bootstrap is the session's first (and, here, only) queued job.
     read_id = sess.app_state["compute_history"][-1]["id"]
     if _wait(sess, read_id) != "completed":
+        _exit_if_worker_killed(sess, read_id, f"reader {namespace}.{function}")
         log, _ = sess.get_log(read_id)
         raise SystemExit(f"reader {namespace}.{function} failed:\n{log}")
     return sess
@@ -235,7 +249,8 @@ def _run_steps(sess, steps: list, out_dir: Path) -> tuple[int, list[str]]:
     write lock, so the remaining steps see exactly the object the last successful step
     left behind. The log travels into the output checkpoint (`logs/<job_id>.log.gz`, via
     `save_spatialdata`), so reopening it in the app shows the failure and its log the
-    same way the live session did."""
+    same way the live session did. A step whose compute worker was killed ends the run
+    instead (exit WORKER_KILLED_EXIT): with more memory it would have succeeded."""
     plots_written = 0
     failed = []
     for i, step in enumerate(steps, start=1):
@@ -251,6 +266,7 @@ def _run_steps(sess, steps: list, out_dir: Path) -> tuple[int, list[str]]:
             continue
         status = _wait(sess, job_id)
         if status in ("failed", "cancelled"):
+            _exit_if_worker_killed(sess, job_id, f"[{i:02d}] {label}")
             log, _ = sess.get_log(job_id)
             failed.append(f"{i:02d} {label}")
             print(f"[{i:02d}] {label} {status}; kept in history, running the next step. Log:")

@@ -160,7 +160,10 @@ full app (New Session → Load) when you need to compute on them.
 **A dataset that fails to load does not fail the run.** Its log is published where its
 checkpoint would have gone, it appears in the report's Datasets table as `failed`, and
 the other datasets carry on. A broken environment (the dependency install) still stops
-the task — that is not the data's fault.
+the task — that is not the data's fault — and so does running out of memory, whether the
+OOM killer takes the whole task or only the analysis's worker process. That task exits
+137 and is retried with more memory (32 GB, then 64, then 96); if the last attempt runs
+out too, the run fails rather than publishing the dataset as `failed`.
 
 **A recipe step that fails does not stop the analysis either.** The step is kept in the
 checkpoint's history as `failed` with its log and the following steps still run, so the
