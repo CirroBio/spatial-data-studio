@@ -157,9 +157,12 @@ Serving the `results/` directory over HTTP — any static host — renders every
 the browser with no backend (DESIGN §14.3). The same `.zarr.zip` files also open in the
 full app (New Session → Load) when you need to compute on them.
 
-**A dataset that fails to load does not fail the run.** Its log is published where its
-checkpoint would have gone, it appears in the report's Datasets table as `failed`, and
-the other datasets carry on. A broken environment (the dependency install) still stops
+**A dataset that fails to load does not fail the run** — unless every dataset failed, or
+`--fail_on_dataset_error` is set. Its log is published where its checkpoint would have
+gone, it appears in the report's Datasets table as `failed`, and the other datasets carry
+on; the run's console warns with the path of each failed dataset's log. When no dataset
+produced a checkpoint, or any failed under `--fail_on_dataset_error`, the run fails with
+that list instead, and publishes no viewer. A broken environment (the dependency install) still stops
 the task — that is not the data's fault — and so does running out of memory, whether the
 OOM killer takes the whole task or only the analysis's worker process. That task exits
 137 and is retried with more memory (32 GB, then 64, then 96); if the last attempt runs
@@ -201,6 +204,7 @@ per-gene cell floor. A parameter is simply ignored by a type that does not use i
 | `--data_types` | all | Comma-separated ids to look for, e.g. `xenium,visium`. |
 | `--recurse` | `true` | Walk into subfolders. |
 | `--preprocess` | `true` | Run each type's recipes. Off loads and publishes unanalysed. |
+| `--fail_on_dataset_error` | `false` | Fail the run if any dataset produces no checkpoint. Off, only a run where none did fails. |
 | `--lowres_max_image_mb` | `10` | Image budget for the low-res copy. |
 | `--min_reads_per_cell` | `10` | (Xenium, MERSCOPE, CosMx, Visium, Visium HD, Curio) |
 | `--max_reads_per_cell` | `35000` | (Visium, Visium HD, Curio) |

@@ -47,6 +47,11 @@
           "type": "boolean",
           "default": true,
           "description": "Run each data type's preprocessing recipes after loading. Off loads and publishes the data unanalysed."
+        },
+        "fail_on_dataset_error": {
+          "type": "boolean",
+          "default": false,
+          "description": "Fail the run if any dataset produces no checkpoint. Off, a dataset that cannot be read is published as its log and reported as failed while the others carry on, and the run fails only if no dataset produced one."
         }
       }
     },

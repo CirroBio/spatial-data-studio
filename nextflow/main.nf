@@ -285,6 +285,29 @@ def recipeParamsFor(Map catalog, String typeId) {
     return values
 }
 
+/** Stop the run when it published too little to call a success.
+ *
+ * ANALYSE turns a dataset that cannot be read into a published log and a `failed` row in
+ * the report, and exits 0 so one bad folder does not abort a sweep. Left there, a run in
+ * which every dataset failed would still succeed and publish a viewer listing nothing.
+ * Every dataset failing always stops the run; some failing does with
+ * --fail_on_dataset_error, and is otherwise a warning. Runs before PUBLISH_VIEWER, so a
+ * stopped run publishes no viewer.
+ */
+def requireCheckpoints(List manifest, List datasets) {
+    def produced = manifest.collect { entry -> entry[0] } as Set
+    def missing = datasets.findAll { name -> !produced.contains(name) }.sort()
+    if( !missing ) return
+    def summary = "${missing.size()} of ${datasets.size()} dataset(s) produced no checkpoint; " +
+                  "each one's log says why: " +
+                  missing.collect { name -> "results/${asciiPath(name)}/results.log" }.join(', ')
+    if( missing.size() < datasets.size() && !params.fail_on_dataset_error ) {
+        log.warn summary
+        return
+    }
+    error summary
+}
+
 workflow {
     if( !params.input ) error "Missing --input (a data folder, or a .json/.yaml file of prefix -> folder)"
 
@@ -398,6 +421,7 @@ workflow {
                 // names the dataset and the file name says which of the two it is.
                 [names_by_folder[rel.substring(0, rel.lastIndexOf('/'))][0], rel]
             }
-            .toList(),
+            .toList()
+            .map { entries -> requireCheckpoints(entries, work.collect { entry -> entry[0] }); entries },
     )
 }
