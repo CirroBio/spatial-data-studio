@@ -790,7 +790,9 @@ export default function SpatialCanvas({
         }
       />
 
-      {showMinimap && minimapExtent && canvasSize && (
+      {/* The inset draws a server-composited thumbnail or the cell scatter; a serverless
+          image-only store has neither, and an empty box would only cover the image. */}
+      {showMinimap && minimapExtent && canvasSize && (minimapImageUrl || positions) && (
         <Minimap
           imageUrl={minimapImageUrl}
           positions={positions}

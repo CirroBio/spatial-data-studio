@@ -862,6 +862,10 @@ collection as well as embeddable per page. Pull requests build but do not publis
   canvas that is already live (the sequence a host's inspector produces, and the only
   one that catches a stale deck controller — loaded pre-locked, there is no stale
   controller to survive) and asserts the wheel stops producing `display-changed`.
+  `e2e/image-only.spec.ts` opens `e2e/fixtures/image-only.sdata.zarr.zip` (the CLI's
+  checkpoint of a two-channel store with no table, 85 KB) and asserts the canvas gets a
+  camera that the wheel moves. Fixtures under `e2e/fixtures/` are committed despite the
+  `*.zarr.zip` ignore rule; keep them small.
 
 ## Test datasets
 

@@ -43,17 +43,18 @@ export function useCanvasViewState(
   // fits until one lands and re-runs when `canvasSize` arrives, so the first real fit
   // lands as soon as layout settles.
   const fitToData = useCallback((): OrthographicViewState | null => {
-    if (!positions) return null;
     const { width, height } = measuredCanvasSize(canvasSize, containerRef);
     // When the display has an image, the canvas coordinate space IS the image's pixel
     // space (SpatialCanvas: image at [0,0,W,H], points carry a world->pixel modelMatrix),
-    // so frame the image's level-0 pixel extent. The cells overlay it.
+    // so frame the image's level-0 pixel extent. The cells overlay it, so this needs no
+    // positions — and a store with an image but no cells has none to wait for.
     if (display.encoding.image_layer && imageInfo?.pixel_to_world && imageInfo.levels.length) {
       const { width: W, height: H } = imageInfo.levels[0];
       const fit = fitBounds({ d0min: 0, d0max: W, d1min: 0, d1max: H }, width, height);
       if (!fit) return null;
       return { target: [fit.centerX, fit.centerY, 0], zoom: fit.zoom, ...ZOOM_LIMITS };
     }
+    if (!positions) return null;
     let { d0min, d0max, d1min, d1max } = positions.bounds;
     // Frame the whole section: union the spot extent with the image extent when the
     // image is shown, so a tissue image larger than the spots is fully visible.
@@ -75,7 +76,8 @@ export function useCanvasViewState(
   // once per session load. Wait for the image bounds before the first fit when a
   // tissue image is shown, so the whole section (which can extend beyond the spots)
   // is framed, not just the spots — unless the image-info fetch failed, in which
-  // case the spots are all there is to frame.
+  // case the spots are all there is to frame. The image frame does not wait for the
+  // spots (`fitToData` returns null until whichever extent it needs has arrived).
   //
   // It also runs again whenever the image element changes: the canvas coordinate space
   // IS the chosen image's pixel space, so a camera framed for the previous element (or
@@ -86,7 +88,6 @@ export function useCanvasViewState(
   useEffect(() => {
     const element = display.encoding.image_layer;
     if (viewState && framedElement.current === element) return;
-    if (!positions) return;
     if (element && !imageInfo && !imageInfoFailed) return;
     const fit = fitToData();
     if (!fit) return;

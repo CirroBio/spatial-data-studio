@@ -161,8 +161,10 @@ re-signs a listed key once if a GET answers 401/403. Requests unanswered for 15s
 
 A folder need not have been saved by this app. The viewer opens any consolidated Zarr v3
 SpatialData store and derives the table, image manifests and default displays itself
-(`packages/viewer/src/data/plainSpatialData.ts`). When the store holds nothing it can show
-(no table with `obsm/spatial`, Zarr v2, no consolidated metadata, not zarr at all), it
+(`packages/viewer/src/data/plainSpatialData.ts`). A store with images and no tables at all
+opens image-only (1.1.2+): `ready` lists its images and no `obsmKeys`, and a display sets
+`coords: null`. When the store holds nothing it can show (neither a table nor an image, a
+table without `obsm/spatial`, Zarr v2, no consolidated metadata, not zarr at all), it
 posts `error` with a message saying which.
 
 ## Handshake order

@@ -216,7 +216,10 @@ on the displays a new session would: the spatial view colored by the first categ
 column over the first image, and a UMAP (or other embedding) view when the table has one.
 Such a store must be Zarr v3 with consolidated metadata (what spatialdata 0.3 and later
 write), and its table needs `obsm["spatial"]`; when one of those is missing the viewer
-says which instead of opening an empty view. Two things need a store saved by this app:
+says which instead of opening an empty view. A store with images and no table at all —
+multiplexed imaging not yet segmented, say — opens on the image alone, with its channel
+controls and no cells; a checkpoint saved from such a session opens the same way.
+Two things need a store saved by this app:
 cell boundaries are not drawn, and coloring by a gene reads the table's whole expression
 matrix rather than one gene's slice (a few seconds on a 2 GB sopa store).
 

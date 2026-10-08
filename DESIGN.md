@@ -1033,6 +1033,9 @@ the main view is showing, so a zoomed-in view keeps its context.
   `target ± (canvasSize/2)/2**zoom`, the same relation §14 uses for a snapshot's framing.
   The view is y-up (deck's `flipY` is off unless `invert_y`), so the inset maps a content
   `y` to a CSS `y` from the bottom and mirrors itself with `invert_x`/`invert_y`.
+- **When it's drawn.** Only with something to show: the serverless reader has no
+  thumbnail endpoint, so an image display with no cells there gets no inset rather than an
+  empty box over the image.
 - **What's in it.** The whole-image composite from `GET
   /api/sessions/{id}/image/{element}/thumbnail?channels=&max_px=` (the coarsest pyramid
   level, tinted with the visible channels' colors — contrast overrides don't reach it),
@@ -1443,7 +1446,11 @@ object (docs/EMBED_PROTOCOL.md "Folder stores"). A store without the `viewer/` s
 (nf-core/sopa or spatialdata-io output) gets one derived in the browser by
 `plainSpatialData.deriveSidecar`: the first table with `obsm/spatial`, and each image's
 manifest built from its OME metadata, placed against the cells the way `imaging.pixel_to_world`
-reconciles them. Contrast defaults come from the coarsest level, as `_channel_norm` computes
+reconciles them. A store with images and no tables at all derives an image-only sidecar
+(`table_keys: []`, each image under the `""` key in its own coordinate system); one whose
+tables lack `obsm/spatial` is still refused, since an image-only view would drop its cells.
+The spatial canvas frames an image display from the image's extent alone
+(`useCanvasViewState`), so a display with no cells to wait for still gets a camera. Contrast defaults come from the coarsest level, as `_channel_norm` computes
 them. Its default displays follow `manager.auto_displays`. What the backend bakes and
 the browser cannot cheaply derive stays missing: the shapes spatial index (so no boundaries)
 and the CSC gene mirror (so a gene reads the whole CSR matrix).

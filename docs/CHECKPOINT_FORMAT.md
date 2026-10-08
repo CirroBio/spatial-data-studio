@@ -653,7 +653,9 @@ granularities:
   sidecar would have said from the consolidated metadata (the first table with
   `obsm/spatial`, each image's manifest, identity `coords_transform`; see
   `packages/viewer/src/data/plainSpatialData.ts`), and refuses the store only when
-  that finds nothing to draw. Consolidated metadata is then required, because Zarr
+  that finds nothing to draw. A store with images and no tables at all reads as
+  image-only: `table_keys` empty and each image under the `""` key, as this app writes
+  a table-less checkpoint. Consolidated metadata is then required, because Zarr
   v3 has no child index to enumerate tables from otherwise. Additive keys do **not** bump this version: `figures`
   (§4.3) was added without one, because an older reader ignoring a key it does
   not know still renders the file correctly, while a bump would make it refuse

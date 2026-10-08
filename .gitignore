@@ -28,6 +28,8 @@ checkpoints/
 # ...except the docs site's demo checkpoints, which are downsampled on purpose and
 # committed so the Pages build never downloads them (scripts/fetch_example_checkpoints.py).
 !docs-site/viewer-data/*.zarr.zip
+# ...and the e2e suite's small fixtures, each a case no demo checkpoint covers.
+!frontend/e2e/fixtures/*.zarr.zip
 
 # Local
 .DS_Store
