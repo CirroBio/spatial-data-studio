@@ -22,6 +22,7 @@ import {
   type SessionFields,
 } from '../types';
 import { SHAPE_ANNOTATIONS_ELEMENT } from '../lib/shapeAnnotations';
+import type { ShapeAnnotation } from '../schemas/annotations';
 import type { ShapeIndexEntry, ShapeReader } from './parquetShapes';
 import type { DataSource, ElementInventory, ImageLoader, LocalCategorical } from './types';
 import { type FolderAccess, HostSignedFolderStore } from './folderStore';
@@ -251,6 +252,10 @@ export interface CheckpointHandle {
   // Which plots this file carries a rendered figure for, same shape as the live
   // session's `figures`.
   figures: FigureIndex;
+  // The `annotations` shapes element, as `GET /api/sessions/{id}/shape-annotations`
+  // lists it; empty when the store has none. Separate from the open so that a damaged
+  // element costs the annotations, not the whole checkpoint.
+  readShapeAnnotations(): Promise<ShapeAnnotation[]>;
 }
 
 /** A URL whose path ends in `/` names a `.zarr/` folder rather than a `.zarr.zip`. */
@@ -457,9 +462,9 @@ export async function openCheckpoint(
         // Only what the boundary overlay reads is populated: it picks the polygonal
         // shape sets out of `shapes` and ignores the rest. The data inspector, which
         // uses the other facets, is a live-session panel.
-        // The annotations element is withheld from this list only — `getShapesGeoArrow`
-        // still serves it, so annotations stay readable; it just never stands in for
-        // cell boundaries.
+        // The annotations element must never stand in for cell boundaries. The writer
+        // leaves it out of the spatial index, so it is normally absent already; it is
+        // drawn from `readShapeAnnotations` instead.
         return {
           tables: [], points: [], labels: [],
           images: Object.keys(sidecar.images).map((name) => ({ name })),
@@ -511,7 +516,18 @@ export async function openCheckpoint(
     ...savedAppState,
     displays: autoDisplays(fields, categoricals),
   };
-  return { source, appState, figures: sidecar.figures ?? {}, fields };
+  async function readShapeAnnotations(): Promise<ShapeAnnotation[]> {
+    if (!fields.shapes.includes(SHAPE_ANNOTATIONS_ELEMENT)) return [];
+    // A plain zip entry rather than a zarr node, like the boundary parquets — but small
+    // enough to read whole.
+    const path = `/shapes/${SHAPE_ANNOTATIONS_ELEMENT}/shapes.parquet` as AbsolutePath;
+    const bytes = await rawStore.get(path);
+    if (!bytes) throw new Error(`checkpoint has no entry ${path}`);
+    const { readShapeAnnotations: decode } = await import('./parquetAnnotations');
+    return decode(bytes);
+  }
+
+  return { source, appState, figures: sidecar.figures ?? {}, fields, readShapeAnnotations };
 }
 
 // The inventory the Color By / obsm pickers read, in the shape `GET /api/sessions/{id}`

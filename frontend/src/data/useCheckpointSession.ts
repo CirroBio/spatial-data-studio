@@ -52,7 +52,7 @@ export function useCheckpointSession(
     setError(null);
 
     openCheckpoint(target, refreshUrl, folder)
-      .then(({ source: opened, appState, fields, figures }) => {
+      .then(({ source: opened, appState, fields, figures, readShapeAnnotations }) => {
         if (stale) return;
         const saved = applyBackgroundFromUrl(appState as unknown as AppState);
         const summary = {
@@ -97,6 +97,17 @@ export function useCheckpointSession(
         store.setIsolatedCategory(spatial?.encoding.isolated_category ?? null);
         setSource(opened);
         setLoading(false);
+        // After activation, which clears the previous session's shapes. Read-only like
+        // the rest of the checkpoint: with `read_only` set the canvas offers no shape
+        // tools, so these are drawn and never edited.
+        readShapeAnnotations()
+          .then((shapes) => { if (!stale) store.setShapeAnnotations(shapes); })
+          .catch((err: unknown) => {
+            if (stale) return;
+            store.pushNotification({
+              kind: 'error', message: `Failed to read annotations: ${formatError(err)}`,
+            });
+          });
       })
       .catch((err: unknown) => {
         if (stale) return;

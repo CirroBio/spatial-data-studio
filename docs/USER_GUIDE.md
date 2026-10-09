@@ -197,7 +197,8 @@ pseudobulk differential expression (DESeq2), and region feature differences
 
 A saved checkpoint is a single `.zarr.zip` the viewer can read on its own. Open the app
 with `?checkpoint=<url>` and it reads that file directly over HTTP range requests: the
-tissue image, the cells, the cell-boundary shapes, and every display setting (color by
+tissue image, the cells, the cell-boundary shapes, the text and shape annotations drawn on
+the dataset, and every display setting (color by
 any obs column or gene, palettes and per-category colors, point size and shape, channel
 colors and contrast, legends, layer visibility, pan and zoom) work exactly as they do
 live, with no backend and no server to run. It streams only what the current view needs
@@ -227,8 +228,10 @@ The **Plots** view works here too: the figures saved with the checkpoint are in 
 so the grid, the fullscreen view and the SVG/PDF/PNG downloads all work with no backend.
 The left panel opens collapsed and holds one thing: the history of the analysis that
 produced the checkpoint — expand it to see each function that was run, and click an entry
-for its parameters and timing. Anything that would act on the data (running an analysis,
-annotating, subsetting, drawing a new plot, saving) needs the live app. You can still
+for its parameters and timing. The checkpoint's annotations are drawn exactly as the live
+app draws them, but can't be selected, moved, edited or deleted, and no new ones can be
+added. Anything that would act on the data (running an analysis, annotating, subsetting,
+drawing a new plot, saving) needs the live app. You can still
 export what you see as a PNG; the publication-quality PDF figure of the current view
 isn't available this way.
 

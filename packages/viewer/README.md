@@ -19,6 +19,9 @@ instead of embedding the whole app in an iframe. **One source of truth for the c
   inventory, and its `figures` index (which plots it carries a rendered figure for);
   `DataSource.getPlotFigure(plotId, format)` reads one as a blob, so a host can show the
   saved SVG/PDF/PNG figures without a backend.
+  `readShapeAnnotations()` on the same handle returns the store's drawn shape
+  annotations as `ShapeAnnotation`s (empty without an `annotations` element), ready for
+  the host's `annotations.shapeAnnotations`.
 - The display model (`DisplaySpec`, `DisplayEncoding`, `SessionFields`, `ImageInfo`, …)
   and `SPATIAL_ENCODING_DEFAULTS` / `EMBEDDING_ENCODING_DEFAULTS` — the fallbacks the
   canvases apply for absent encoding fields, so a host authoring a display agrees with

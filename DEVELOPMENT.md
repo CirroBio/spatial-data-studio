@@ -125,7 +125,9 @@ packages/viewer/  @cirrobio/spatial-viewer — the deck.gl canvases and the chec
                   the viewer sidecar and default displays for a store this app did not
                   save (sopa, spatialdata-io output). parquetShapes.ts +
                   wkbGeoArrow.ts are the boundary half: the shape file is GeoParquet, not
-                  zarr, so it is range-queried with hyparquet against its covering index
+                  zarr, so it is range-queried with hyparquet against its covering index;
+                  parquetAnnotations.ts reads the `annotations` shapes element whole and
+                  decodes it the way transport/annotations.py serves it
   src/types.ts    the display model (DisplaySpec/DisplayEncoding/SessionFields/ImageInfo)
   src/defaults.ts the fallbacks the canvases apply for absent encoding fields, exported so
                   a host that authors a display agrees with what will actually render
@@ -188,6 +190,7 @@ Component-level notes: [`backend/README.md`](backend/README.md),
 | Change how a store without the sidecar (plain SpatialData) is read — which table, where images sit, the default displays | `packages/viewer/src/data/plainSpatialData.ts` (its image placement ports `imaging.pixel_to_world`, its displays `manager.auto_displays`; keep them agreeing) + `plainSpatialData.test.ts` | [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) §9 |
 | Change how a `.zarr/` folder is read under an embed host (signing, listing) | `packages/viewer/src/data/folderStore.ts` + `frontend/src/data/embedBridge.ts` (`embedFolderAccess`) + [docs/EMBED_PROTOCOL.md](docs/EMBED_PROTOCOL.md) | [docs/EMBED_PROTOCOL.md](docs/EMBED_PROTOCOL.md) |
 | Change how cell boundaries are indexed or range-queried | `backend/app/persistence/store.py` (`_index_shapes`, `_row_group_rows`, `_selectivity` — the writer half) + `packages/viewer/src/data/parquetShapes.ts` and `wkbGeoArrow.ts` (the reader half). A change to the on-disk index must keep `test_e2e.run_shape_index_check` passing: it re-derives the pruning from the file and compares it against a brute-force row scan | [DESIGN.md](DESIGN.md) §14.1–14.2, [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) §4.4 |
+| Change the shape-annotation row format (columns, `params`, style fallbacks) | `backend/app/sessions/shape_annotations.py` (`_row`, the writer) + `transport/annotations.py` (`list_shape_annotations`, the live read) + `packages/viewer/src/data/parquetAnnotations.ts` (the serverless read, and its `parquetAnnotations.test.ts`) — the two readers must decode a row identically | [DESIGN.md](DESIGN.md) §14.2 |
 | Change the shape of `app_state`, the `viewer/` sidecar, `X_csc`, or `index.json` | `backend/app/schemas/checkpoint/*.schema.json` (the JSON Schema is validated against on every write) + [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) in the same commit — `sds-governance/checks/check_checkpoint_schema_docs.py` fails the build otherwise | [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) |
 | Add a render-path call the canvas makes | `packages/viewer/src/data/types.ts` (the `DataSource` interface), then **both** `frontend/src/data/apiSource.ts` and `packages/viewer/src/data/checkpointSource.ts` | [DESIGN.md](DESIGN.md) §14.2 |
 | Change what the serverless viewer shows (collapsed-by-default sidebar with the analysis history only, the Plots view, PNG export) | `frontend/src/components/Sidebar.tsx` (the serverless branch), `store/sessionStore.ts` (`leftMenuOpen` default), `components/PlotGallery.tsx`, `packages/viewer/src/lib/canvasCapture.ts` | [DESIGN.md](DESIGN.md) §14.2 |

@@ -487,7 +487,8 @@ reader gets back is unchanged.
 
 Point/circle shapes are not indexed (they are drawn as scatter from the table's
 coordinates, not as outlines), nor is the `annotations` element (a handful of
-user-drawn shapes whose row order is the order the annotation list shows).
+user-drawn shapes whose row order is the order the annotation list shows), which the
+serverless viewer reads whole instead.
 
 Per-element report in the sidecar attrs — schema
 [`viewer_sidecar.schema.json`](../backend/app/schemas/checkpoint/viewer_sidecar.schema.json)

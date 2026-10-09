@@ -1502,6 +1502,20 @@ Details that make it work:
   `GeoArrowPolygonLayer` are shared verbatim. The reader is **code-split**: a parquet
   reader plus a zstd decompressor is ~100 KB gzipped, and only a checkpoint with
   indexed boundaries loads it.
+- **Shape annotations** (`packages/viewer/src/data/parquetAnnotations.ts`) come out of
+  `shapes/annotations/shapes.parquet` the same way, as a plain zip entry read by
+  `hyparquet` — but whole, since the element is a handful of shapes and the writer
+  leaves it out of the spatial index (§14.1). Each row decodes to the
+  `ShapeAnnotation` that `transport/annotations.py:list_shape_annotations` would serve
+  for it, with the same per-column fallbacks: `kind` + the `params` JSON make the
+  geometry, the polygon `geometry` column is not read, and the shape id is the pandas
+  index, found through the file's `pandas` metadata (`index_columns`, which names
+  `__index_level_0__` for the unnamed index `shape_annotations.create` writes). The
+  result is the handle's `readShapeAnnotations()`, separate from the open so a damaged
+  element costs a toast rather than the checkpoint; `useCheckpointSession` puts it in
+  the store's `shapeAnnotations`, the slot `refreshShapeAnnotations` fills from the
+  live route, so `buildShapeAnnotationLayers` draws both modes identically. With no
+  `annotations` element it returns `[]` without a request.
 - The checkpoint is presented as a synthetic **read-only session**, so
   `editBlockReason`'s existing `summary.read_only` gate disables compute, regions,
   annotations, subsetting and transform edits with no second notion of "can't write".
@@ -1512,7 +1526,10 @@ when `?checkpoint=` is present — `store/sessionStore.ts`) and, when expanded, 
 only the record of the analysis that produced the checkpoint: the compute-history
 list with no tab strip and no recipe footer (`Sidebar.tsx`'s serverless branch,
 gated on the URL rather than the async data source so the tab strip never flashes
-in). Regions, annotations and subsetting are not offered — nothing can run. The **Plots**
+in). Regions, annotations and subsetting are not offered — nothing can run. The
+checkpoint's own shape annotations are still drawn, read-only: `canvasMode` is null
+for a read-only session, so the canvas never enters the shape editor and no shape can be
+selected, dragged, created or deleted. The **Plots**
 view is offered, because the figures are in the file: the same grid and fullscreen
 carousel as the backed app, read-only (no redraw).
 The browser-only edit plumbing those tabs once used on checkpoints
