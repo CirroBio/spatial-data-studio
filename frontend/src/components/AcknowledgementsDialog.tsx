@@ -1,10 +1,21 @@
 import { useEffect, useState } from 'react';
-import { getThirdPartyLicenses, type ThirdPartyLicense } from '../api';
+import { getPythonLicenses, type ThirdPartyLicense } from '../api';
 import { formatError } from '@cirrobio/spatial-viewer';
 import { ModalOverlay, ModalHeader } from './DetailModal';
 
 interface Props {
+  /** False in serverless mode, where there is no backend to list its Python packages. */
+  withBackend: boolean;
   onClose: () => void;
+}
+
+// The npm list ships inside the SPA (a lazy chunk, read at build time from the committed
+// SBOM) rather than coming from the backend, so a serverless deployment can show it too.
+async function npmLicenses(): Promise<ThirdPartyLicense[]> {
+  const { components } = await import('../../../sds-governance/sbom_frontend.json');
+  return components
+    .map((c) => ({ name: c.name, version: c.version, license: c.licenses[0]?.license.name ?? 'UNKNOWN' }))
+    .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
 }
 
 function LicenseTable({ title, entries }: { title: string; entries: ThirdPartyLicense[] }) {
@@ -42,15 +53,15 @@ function LicenseTable({ title, entries }: { title: string; entries: ThirdPartyLi
   );
 }
 
-export default function AcknowledgementsDialog({ onClose }: Props) {
+export default function AcknowledgementsDialog({ withBackend, onClose }: Props) {
   const [licenses, setLicenses] = useState<{ python: ThirdPartyLicense[]; npm: ThirdPartyLicense[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    getThirdPartyLicenses()
-      .then(setLicenses)
+    Promise.all([npmLicenses(), withBackend ? getPythonLicenses().then((r) => r.python) : []])
+      .then(([npm, python]) => setLicenses({ python, npm }))
       .catch((err) => setError(formatError(err)));
-  }, []);
+  }, [withBackend]);
 
   return (
     <ModalOverlay onClose={onClose} widthClassName="w-[560px]">

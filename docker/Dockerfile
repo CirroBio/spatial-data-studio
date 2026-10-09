@@ -20,6 +20,8 @@ RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
 COPY frontend/ ./frontend/
 COPY packages/viewer/ ./packages/viewer/
+# The Acknowledgements view bundles the npm license list from this SBOM.
+COPY sds-governance/sbom_frontend.json ./sds-governance/
 # Builds @cirrobio/spatial-viewer first, then the app.
 RUN npm run build
 
@@ -65,6 +67,13 @@ RUN uv pip install --system --no-cache -r requirements.txt \
 
 # Copy backend source
 COPY backend/ ./backend/
+
+# The Acknowledgements view's Python list (GET /api/about/licenses) reads
+# sds-governance/sbom.json, which is generated rather than committed. Scan this image's
+# own installed packages so the list matches what ships; the scan is also the R15
+# license gate, so a forbidden or un-adjudicated copyleft package fails the build.
+COPY sds-governance/ ./sds-governance/
+RUN cd sds-governance/checks && python scan_licenses.py
 
 # Copy built SPA from stage 1 into the static dir that uvicorn (and nginx) serves
 COPY --from=spa-builder /build/frontend/dist /app/spa

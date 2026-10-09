@@ -439,8 +439,8 @@ async def delete_shape_annotation(sid: str, shape_id: str):
 
 @app.get("/api/about/licenses")
 async def list_third_party_licenses():
-    """Third-party libraries in use and their licenses, for the in-app
-    Acknowledgements view (v2 Part 9.2)."""
+    """Third-party Python libraries in use and their licenses, for the in-app
+    Acknowledgements view (v2 Part 9.2). The SPA lists its own npm packages."""
     from . import acknowledgements
     return acknowledgements.catalog()
 

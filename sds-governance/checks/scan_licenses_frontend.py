@@ -1,6 +1,6 @@
-"""Frontend third-party license manifest (v2 Part 9.2/9.4) — walks the resolved
-`node_modules` tree and records each package's license, backing the in-app
-Acknowledgements view alongside the backend SBOM (`scan_licenses.py`). Not wired
+"""Frontend third-party license manifest (v2 Part 9.2/9.4) — records the license of
+every package the app needs at runtime, backing the in-app Acknowledgements view
+alongside the backend SBOM (`scan_licenses.py`). The SPA bundles this file. Not wired
 into `make check` as a gate: there's no npm equivalent of R15's forbidden-package
 list defined yet. Regenerate on frontend dependency upgrades, per §9.5.
 """
@@ -12,6 +12,7 @@ from pathlib import Path
 # into the repo root's node_modules; there is no frontend/node_modules.
 REPO_ROOT = Path(__file__).resolve().parents[2]
 NODE_MODULES = REPO_ROOT / "node_modules"
+LOCKFILE = REPO_ROOT / "package-lock.json"
 OUT_PATH = Path(__file__).resolve().parents[1] / "sbom_frontend.json"
 
 
@@ -28,12 +29,19 @@ def _license_of(data: dict) -> str:
 
 
 def _iter_packages():
+    # The lockfile flags a package `dev`/`devOptional` when only devDependencies reach
+    # it (build tooling: vite, typescript, eslint, ...); those never ship in the bundle.
+    # `link` entries are the workspace members themselves.
+    packages = json.loads(LOCKFILE.read_text())["packages"]
     seen = set()
-    for pkg_json in sorted(NODE_MODULES.glob("*/package.json")) + sorted(NODE_MODULES.glob("@*/*/package.json")):
-        try:
-            data = json.loads(pkg_json.read_text())
-        except (OSError, json.JSONDecodeError):
+    for path in sorted(packages):
+        entry = packages[path]
+        if not path.startswith("node_modules/") or entry.get("dev") or entry.get("devOptional") or entry.get("link"):
             continue
+        pkg_json = REPO_ROOT / path / "package.json"
+        if not pkg_json.exists():  # an optional dependency not installed on this platform
+            continue
+        data = json.loads(pkg_json.read_text())
         name, version = data.get("name"), data.get("version", "unknown")
         if not name or (name, version) in seen:
             continue

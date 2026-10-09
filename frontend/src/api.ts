@@ -508,9 +508,9 @@ export interface ThirdPartyLicense {
   license: string;
 }
 
-export async function getThirdPartyLicenses(): Promise<{ python: ThirdPartyLicense[]; npm: ThirdPartyLicense[] }> {
+export async function getPythonLicenses(): Promise<{ python: ThirdPartyLicense[] }> {
   const res = await apiFetch('/api/about/licenses');
-  return res.json() as Promise<{ python: ThirdPartyLicense[]; npm: ThirdPartyLicense[] }>;
+  return res.json() as Promise<{ python: ThirdPartyLicense[] }>;
 }
 
 // ---- Cirro upload -----------------------------------------------------------

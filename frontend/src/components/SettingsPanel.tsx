@@ -333,7 +333,7 @@ export default function SettingsPanel({ onNewSession }: Props) {
         </div>
       </aside>
 
-      {showAbout && <AcknowledgementsDialog onClose={() => setShowAbout(false)} />}
+      {showAbout && <AcknowledgementsDialog withBackend={!captureOnly} onClose={() => setShowAbout(false)} />}
       {saveOpen && activeSessionId && (
         <Suspense fallback={null}>
           <SaveCheckpointDialog sessionId={activeSessionId} onClose={() => setSaveOpen(false)} />

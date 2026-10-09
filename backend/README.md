@@ -45,7 +45,7 @@ app/
   datasets.py            saved-checkpoint scan for the load/upload pickers (prewarmed cache)
   prewarm.py             background queue that warms slow first-open menu lists off the event loop
   cirro.py               Cirro dataset upload (client-credentials auth, symlink bundle)
-  acknowledgements.py    third-party license catalog from the SBOMs
+  acknowledgements.py    third-party Python license catalog from the SBOM
 cli.py                   offline recipe runner — reuses the registry/session engine headlessly
 ```
 

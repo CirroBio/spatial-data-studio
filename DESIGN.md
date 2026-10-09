@@ -1920,7 +1920,7 @@ Arrow IPC (binary). See `docs/CONTRACT.md` for the full contract.
 | `GET`/`HEAD` | `/api/checkpoints/{name}` | Serve a saved checkpoint `.zarr.zip` for direct browser reads (Range) |
 | `POST` | `/api/cirro/auth` | Start this browser's Cirro device-code login; returns the login URL |
 | `POST` | `/api/cirro/upload` | Upload selected checkpoints + the viewer to Cirro (session-independent) |
-| `GET` | `/api/about/licenses` | Third-party licenses (from SBOMs) |
+| `GET` | `/api/about/licenses` | Third-party Python licenses (from the SBOM) |
 
 ### 19.2 SSE event types
 
@@ -2258,7 +2258,10 @@ confirmed with counsel.**
   adjudication. The app may remain proprietary and be distributed without releasing app
   source; the baseline obligation is attribution.
 - **Baseline obligations:** bundle a `THIRD_PARTY_LICENSES` (surfaced in the in-app
-  **About / Acknowledgements** view via `GET /api/about/licenses` from the SBOMs);
+  **About / Acknowledgements** view: Python packages via `GET /api/about/licenses`
+  from `sbom.json`, which the Docker build generates by scanning the image's own
+  installed packages; npm runtime packages — not build tooling — bundled into the SPA
+  from `sbom_frontend.json`, so a serverless deployment shows them too);
   preserve Apache-2.0 `NOTICE` files; respect the BSD-3 non-endorsement clause.
 - **GPL exposure — clustering (resolved, GPL removed):** Leiden/Louvain via scanpy
   pull GPL deps (`python-igraph`, `leidenalg`, `louvain`). These were removed: Leiden
