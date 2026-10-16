@@ -220,9 +220,13 @@ write), and its table needs `obsm["spatial"]`; when one of those is missing the 
 says which instead of opening an empty view. A store with images and no table at all —
 multiplexed imaging not yet segmented, say — opens on the image alone, with its channel
 controls and no cells; a checkpoint saved from such a session opens the same way.
-Two things need a store saved by this app:
-cell boundaries are not drawn, and coloring by a gene reads the table's whole expression
-matrix rather than one gene's slice (a few seconds on a 2 GB sopa store).
+Cell boundaries draw from such a store too: each polygon shapes element is offered under
+**Cell boundaries**, placed against the cells and colored like them. Without the spatial
+index a saved checkpoint carries, the viewer reads an element's outlines whole the first
+time it draws them, so a boundary set holding more than 32 MB of geometry is not drawn
+from a plain store; save it from this app to get those. Coloring by a gene also reads the
+table's whole expression matrix rather than one gene's slice (a few seconds on a 2 GB sopa
+store).
 
 The **Plots** view works here too: the figures saved with the checkpoint are in the file,
 so the grid, the fullscreen view and the SVG/PDF/PNG downloads all work with no backend.

@@ -4,7 +4,7 @@
 // against an independent brute-force implementation rather than against themselves.
 import { describe, expect, it } from 'vitest';
 import {
-  type Bbox, asFiniteBox, intersects, invertAffine6, selectRowRuns, transformBboxAabb,
+  type Bbox, asFiniteBox, intersects, invertAffine6, selectRowRuns, transformBboxAabb, wkbRowBoxes,
 } from './parquetShapes';
 import { decodeWkbPolygons, polygonTable } from './wkbGeoArrow';
 
@@ -270,6 +270,26 @@ describe('decodeWkbPolygons', () => {
     // schema error far from the cause. Fail here, with the remedy.
     const blob = encodeMultiPolygon([SQUARE, SQUARE_WITH_HOLE]);
     expect(() => decodeWkbPolygons([blob], false)).toThrow(/re-save the checkpoint/);
+  });
+});
+
+describe('wkbRowBoxes', () => {
+  // A plain store's parquet has no covering column; these boxes stand in for it, so a
+  // wrong one drops cells exactly as a wrong covering statistic would.
+  const SHIFTED: Polygon = [[[20, 30], [25, 30], [25, 38], [20, 38], [20, 30]]];
+  const EMPTY: Polygon = [];
+
+  it('boxes each row over all its parts and rings, in row order', () => {
+    const boxes = wkbRowBoxes([
+      encodeMultiPolygon([SQUARE, SHIFTED]),
+      encodeMultiPolygon([SQUARE_WITH_HOLE]),
+    ], true);
+    expect(boxes).toEqual([[0, 0, 25, 38], [0, 0, 10, 10]]);
+  });
+
+  it('gives null rows and empty geometries no box, keeping the rest aligned', () => {
+    const boxes = wkbRowBoxes([null, encodePolygon(EMPTY), encodePolygon(SHIFTED)], false);
+    expect(boxes).toEqual([null, null, [20, 30, 25, 38]]);
   });
 });
 

@@ -23,10 +23,13 @@ import {
 } from '../types';
 import { SHAPE_ANNOTATIONS_ELEMENT } from '../lib/shapeAnnotations';
 import type { ShapeAnnotation } from '../schemas/annotations';
+import type { FileMetaData } from 'hyparquet';
 import type { ShapeIndexEntry, ShapeReader } from './parquetShapes';
 import type { DataSource, ElementInventory, ImageLoader, LocalCategorical } from './types';
 import { type FolderAccess, HostSignedFolderStore } from './folderStore';
-import { autoDisplays, childrenOf, type Contents, deriveSidecar, UnrenderableStoreError } from './plainSpatialData';
+import {
+  autoDisplays, cellIndexOf, childrenOf, type Contents, deriveSidecar, UnrenderableStoreError,
+} from './plainSpatialData';
 
 // Highest `viewer/` sidecar layout this build understands. Mirrors
 // `persistence.store.VIEWER_SIDECAR_VERSION`; bumped only by a breaking layout change.
@@ -314,8 +317,9 @@ export async function openCheckpoint(
   // A store without the sidecar is a plain SpatialData store (or a checkpoint saved
   // before the sidecar existed): derive what the sidecar would have said, or explain why
   // there is nothing to show.
-  const sidecar = ((await readGroupAttrs(root, 'viewer'))
-    ?? await deriveSidecar(root, contents, rootAttrs)) as unknown as ViewerSidecar;
+  const saved = await readGroupAttrs(root, 'viewer');
+  const derived = saved ? null : await deriveSidecar(root, rawStore, contents, rootAttrs);
+  const sidecar = (saved ?? derived) as unknown as ViewerSidecar;
   if (sidecar.sidecar_version > VIEWER_SIDECAR_VERSION) {
     throw new Error(
       `This checkpoint was written for a newer viewer (sidecar v${sidecar.sidecar_version}; ` +
@@ -371,6 +375,33 @@ export async function openCheckpoint(
       + 'again to get them back.', sidecar.sidecar_version, table);
   }
 
+  // A plain store has no baked `cell_index` mirror. Its mapping is computed whole, once
+  // per element, on the first viewport that draws the element.
+  const plainCellIndexes = new Map<string, Promise<Int32Array>>();
+  const plainCellIndex = (element: string, footer: FileMetaData): Promise<Int32Array> => {
+    let pending = plainCellIndexes.get(element);
+    if (!pending) {
+      pending = (async () => {
+        const { readRowLabels } = await import('./parquetShapes');
+        const indexName = ((await readGroupAttrs(root, `tables/${table}/obs`))?._index as string) ?? '_index';
+        // `instance_key in obs.columns`, as `geometry.cell_index` asks: the index is not
+        // a column.
+        const instanceKey = (await readGroupAttrs(root, `tables/${table}`))?.instance_key;
+        const hasInstances = typeof instanceKey === 'string' && instanceKey !== indexName
+          && childrenOf(contents, `tables/${table}/obs`).includes(instanceKey);
+        const [labels, names, instances] = await Promise.all([
+          readRowLabels(rawStore, element, footer, shapeIndex[element].file_bytes),
+          readStringColumn(root, `tables/${table}/obs/${indexName}`),
+          hasInstances ? readObsValues(root, table, instanceKey) : null,
+        ]);
+        return cellIndexOf(labels, names, instances);
+      })();
+      plainCellIndexes.set(element, pending);
+      pending.catch(() => plainCellIndexes.delete(element));
+    }
+    return pending;
+  };
+
   // Boundary reader, code-split: a parquet reader plus a zstd decompressor is ~100 KB
   // gzipped, and most sessions (every live one, and any checkpoint without boundaries)
   // never touch it.
@@ -381,8 +412,12 @@ export async function openCheckpoint(
       // consolidated-metadata wrapper.
       shapesOnce = import('./parquetShapes').then(({ createShapeReader }) => createShapeReader(
         rawStore, shapeIndex, shapeAffines,
-        async (element, start, stop) => Int32Array.from(
-          await readSpan(root, `viewer/shapes/${element}/${table}/cell_index`, start, stop)),
+        derived
+          ? async (element, start, stop) => (
+            await plainCellIndex(element, derived.shape_footers[element])).slice(start, stop)
+          : async (element, start, stop) => Int32Array.from(
+            await readSpan(root, `viewer/shapes/${element}/${table}/cell_index`, start, stop)),
+        derived?.shape_footers,
       ));
     }
     return shapesOnce;
@@ -689,6 +724,18 @@ async function readObs(root: Root, table: string, key: string): Promise<Table> {
   }
   const values = await readNumeric(root, path);
   return withMetadata(makeTable({ value: values }), new Map([['kind', 'numeric']]));
+}
+
+// An obs column's values as `obs[key].to_numpy()` gives them: a categorical's levels
+// per row, a numeric column's numbers.
+async function readObsValues(root: Root, table: string, key: string): Promise<(string | number)[]> {
+  const column = await readObs(root, table, key);
+  const categories = column.schema.metadata.get('categories');
+  if (categories) {
+    const levels = JSON.parse(categories) as string[];
+    return globalThis.Array.from(column.getChild('code')?.toArray() as Int32Array, (code) => levels[code]);
+  }
+  return globalThis.Array.from(column.getChild('value')?.toArray() as Float64Array);
 }
 
 // One gene's column as a dense float32 `value` column, matching `_gene_batch`.

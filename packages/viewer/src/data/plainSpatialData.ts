@@ -7,12 +7,20 @@
 // from the store's consolidated metadata, the way the backend would (`imaging.image_info`,
 // `manager.auto_displays`), and the reader then treats it like any other checkpoint.
 //
-// What it does not derive: the shapes spatial index (plain shapes parquet has no
-// `bbox` covering column), so a plain store's cell boundaries are not drawn, and the
-// CSC gene mirror, so coloring by a gene reads the table's whole CSR matrix.
+// Cell boundaries are derived too, with less than a checkpoint carries: a plain shapes
+// parquet has no `bbox` covering column to prune by, so the boundary reader reads an
+// element's geometry whole on first use (`parquetShapes`), and there is no baked
+// `cell_index`, so the shape -> cell mapping is computed here from the parquet's row
+// labels and the table's obs.
+//
+// What it does not derive: the CSC gene mirror, so coloring by a gene reads the table's
+// whole CSR matrix.
 import * as zarr from 'zarrita';
 import type { AsyncReadable } from '@zarrita/storage';
+import type { FileMetaData } from 'hyparquet';
 import type { ImageInfo } from '../types';
+import { SHAPE_ANNOTATIONS_ELEMENT } from '../lib/shapeAnnotations';
+import type { ShapeIndexEntry } from './parquetShapes';
 
 type Root = zarr.Location<AsyncReadable>;
 export type Contents = { path: string; kind: 'array' | 'group' }[];
@@ -235,21 +243,30 @@ export function reconcileImage(
 ): Affine3 {
   const systems = systemOrder(image.keys());
   const fallback = systems.length ? image.get(systems[0]) ?? IDENTITY : IDENTITY;
-  if (!spotBox) return fallback;
-  let best: { spots: Affine3; image: Affine3; score: number } = { spots: IDENTITY, image: fallback, score: -1 };
-  for (const system of systems) {
-    const toSystem = image.get(system) ?? IDENTITY;
-    const extent = boxThrough(toSystem, [0, 0, width, height]);
+  return reconcile(image, candidates, spotBox, [0, 0, width, height]) ?? fallback;
+}
+
+/** An element's intrinsic -> spot-space affine, found by the search `reconcileImage`
+ *  describes with `intrinsic` as the element's extent; null when nothing overlays. */
+function reconcile(
+  element: Map<string, Affine3>, candidates: Map<string, Map<string, Affine3>>,
+  spotBox: Box | null, intrinsic: Box,
+): Affine3 | null {
+  if (!spotBox) return null;
+  let best = { spots: IDENTITY, toSystem: IDENTITY, score: -1 };
+  for (const system of systemOrder(element.keys())) {
+    const toSystem = element.get(system) ?? IDENTITY;
+    const extent = boxThrough(toSystem, intrinsic);
     const options = [IDENTITY, ...[...candidates.values()].flatMap((byElement) => {
       const a = byElement.get(system);
       return a ? [a] : [];
     })];
     for (const spots of options) {
       const score = iou(boxThrough(spots, spotBox), extent);
-      if (score > best.score) best = { spots, image: toSystem, score };
+      if (score > best.score) best = { spots, toSystem, score };
     }
   }
-  return best.score > 0 ? multiply(invert(best.spots), best.image) : fallback;
+  return best.score > 0 ? multiply(invert(best.spots), best.toSystem) : null;
 }
 
 async function spotBoxOf(root: Root, table: string, worldKey: string): Promise<Box | null> {
@@ -276,6 +293,11 @@ export interface DerivedSidecar {
   images: Record<string, Record<string, ImageInfo>>;
   coords_transform: Record<string, number[]>;
   world_key: Record<string, string>;
+  shapes: Record<string, ShapeIndexEntry>;
+  shapes_transform: Record<string, Record<string, number[]>>;
+  // The footers read to build `shapes`, handed to the boundary reader: a plain store's
+  // `file_bytes` only bounds the file, so the reader cannot locate them itself.
+  shape_footers: Record<string, FileMetaData>;
 }
 
 /** Why a store cannot be shown, phrased for the person who opened it. */
@@ -288,7 +310,9 @@ export class UnrenderableStoreError extends Error {}
  * no tables at all (imaging not yet segmented) opens image-only, its images keyed by
  * the `""` table key as the app's own writer keys them.
  */
-export async function deriveSidecar(root: Root, contents: Contents, rootAttrs: Record<string, unknown>): Promise<DerivedSidecar> {
+export async function deriveSidecar(
+  root: Root, rawStore: Required<AsyncReadable>, contents: Contents, rootAttrs: Record<string, unknown>,
+): Promise<DerivedSidecar> {
   if (contents.length === 0) {
     throw new UnrenderableStoreError(
       'This store has no consolidated metadata, so the viewer cannot see what it contains. '
@@ -341,7 +365,10 @@ export async function deriveSidecar(root: Root, contents: Contents, rootAttrs: R
     if (Object.keys(images).length === 0) {
       throw new UnrenderableStoreError(`${what} has no table, and none of its images could be read.`);
     }
-    return { sidecar_version: 2, table_keys: [], images, coords_transform: {}, world_key: {} };
+    return {
+      sidecar_version: 2, table_keys: [], images, coords_transform: {}, world_key: {},
+      shapes: {}, shapes_transform: {}, shape_footers: {},
+    };
   }
 
   return {
@@ -350,7 +377,107 @@ export async function deriveSidecar(root: Root, contents: Contents, rootAttrs: R
     images,
     coords_transform: { [table]: toAffine6(IDENTITY) },
     world_key: { [table]: worldKey },
+    ...await deriveShapeIndex(root, rawStore, contents, table, candidates, spotBox),
   };
+}
+
+// Geometry types the boundary reader decodes. A parquet listing any other type is left
+// out whole rather than drawn in part: one Point row would fail the WKB decode of every
+// viewport containing it.
+const POLYGONAL = new Set(['Polygon', 'MultiPolygon']);
+
+/**
+ * The boundary elements of a plain store, as `persistence.store._index_shapes` and
+ * `_shape_element_transforms` would report them, from each parquet's footer alone.
+ *
+ * Placement mirrors `transport/geometry.py:element_to_world` for a single-table store.
+ * The table's own region element shares its cells' intrinsic space, so it takes the
+ * table's (identity) affine. Any other element is reconciled against the spots the way
+ * an image is, from the bounds its GeoParquet metadata declares, falling back to
+ * identity when nothing overlays them — the backend's standing assumption too.
+ */
+async function deriveShapeIndex(
+  root: Root, rawStore: Required<AsyncReadable>, contents: Contents, table: string,
+  candidates: Map<string, Map<string, Affine3>>, spotBox: Box | null,
+): Promise<Pick<DerivedSidecar, 'shapes' | 'shapes_transform' | 'shape_footers'>> {
+  const out: Pick<DerivedSidecar, 'shapes' | 'shapes_transform' | 'shape_footers'> = {
+    shapes: {}, shapes_transform: {}, shape_footers: {},
+  };
+  const elements = childrenOf(contents, 'shapes').filter((e) => e !== SHAPE_ANNOTATIONS_ELEMENT);
+  if (elements.length === 0) return out;
+  const regions = [(await groupAttrs(root, `tables/${table}`)).region].flat()
+    .filter((r) => r !== undefined && r !== null).map(String);
+  const region = regions.length === 1 ? regions[0] : null;
+  // Code-split with the reader it belongs to; a store without shapes never loads it.
+  const { readParquetFooter } = await import('./parquetShapes');
+  const footers = await Promise.all(elements.map((element) => (
+    readParquetFooter(rawStore, `/shapes/${element}/shapes.parquet`).catch((err: unknown) => {
+      // As for an image: one unreadable element costs its boundaries, not the store.
+      console.warn('[plain store] skipping shapes "%s": %s', element, err instanceof Error ? err.message : err);
+      return null;
+    }))));
+  for (const [i, element] of elements.entries()) {
+    const footer = footers[i];
+    if (!footer) continue;
+    const { metadata, fileBytes, footerBytes } = footer;
+    const geo = geoColumn(metadata);
+    const numRows = Number(metadata.num_rows);
+    if (!geo || numRows === 0 || geo.geometry_types.length === 0
+        || !geo.geometry_types.every((t) => POLYGONAL.has(t))) continue;
+    const toWorld = element === region || !geo.bbox
+      ? IDENTITY
+      : reconcile(candidates.get(`shapes/${element}`) ?? new Map(), candidates, spotBox, geo.bbox) ?? IDENTITY;
+    out.shapes[element] = {
+      geometry_types: geo.geometry_types,
+      num_rows: numRows,
+      row_groups: metadata.row_groups.length,
+      file_bytes: fileBytes,
+      footer_bytes: footerBytes,
+      // Without declared bounds nothing can be rejected up front; every viewport reads.
+      bounds: geo.bbox ?? [-Infinity, -Infinity, Infinity, Infinity],
+      // The writer's measure of how well row groups prune; a plain file is unsorted.
+      selectivity: 1,
+    };
+    out.shapes_transform[element] = { [table]: toAffine6(toWorld) };
+    out.shape_footers[element] = metadata;
+  }
+  return out;
+}
+
+/** The primary geometry column's GeoParquet metadata, or null for a file that is not
+ *  GeoParquet. `bbox` is optional in the spec; geopandas writes it. */
+function geoColumn(metadata: FileMetaData): { geometry_types: string[]; bbox?: Box } | null {
+  const raw = metadata.key_value_metadata?.find((kv) => kv.key === 'geo')?.value;
+  if (typeof raw !== 'string') return null;
+  const geo = JSON.parse(raw) as {
+    primary_column: string;
+    columns: Record<string, { geometry_types?: string[]; bbox?: number[] }>;
+  };
+  const column = geo.columns[geo.primary_column];
+  if (!column) return null;
+  return {
+    geometry_types: column.geometry_types ?? [],
+    ...(column.bbox?.length === 4 ? { bbox: column.bbox as Box } : {}),
+  };
+}
+
+/**
+ * Each shape row's position in the table's obs, -1 when unmatched — the mapping
+ * `transport/geometry.py:cell_index` computes and a checkpoint bakes. Label-based: a
+ * label matching the obs index wins, else one matching the table's `instance_key`
+ * column. Duplicates resolve as there: the last obs name, the first instance.
+ */
+export function cellIndexOf(
+  labels: readonly (string | number)[], obsNames: readonly string[],
+  instances: readonly (string | number)[] | null,
+): Int32Array {
+  const byName = new Map<string | number, number>();
+  obsNames.forEach((name, i) => byName.set(name, i));
+  const byInstance = new Map<string | number, number>();
+  instances?.forEach((value, i) => {
+    if (!byInstance.has(value)) byInstance.set(value, i);
+  });
+  return Int32Array.from(labels, (label) => byName.get(label) ?? byInstance.get(label) ?? -1);
 }
 
 // obsm keys the default embedding display prefers, best first (`_PREFERRED_EMBEDDINGS`).

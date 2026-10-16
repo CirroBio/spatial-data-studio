@@ -652,8 +652,9 @@ granularities:
   `viewer/` group at all (written before the sidecar existed, or not written by
   this app) is read as plain SpatialData: the backend-less reader derives what the
   sidecar would have said from the consolidated metadata (the first table with
-  `obsm/spatial`, each image's manifest, identity `coords_transform`; see
-  `packages/viewer/src/data/plainSpatialData.ts`), and refuses the store only when
+  `obsm/spatial`, each image's manifest, identity `coords_transform`, and each
+  polygonal shapes element's `shapes` entry and `shapes_transform` from its parquet
+  footer; see `packages/viewer/src/data/plainSpatialData.ts`), and refuses the store only when
   that finds nothing to draw. A store with images and no tables at all reads as
   image-only: `table_keys` empty and each image under the `""` key, as this app writes
   a table-less checkpoint. Consolidated metadata is then required, because Zarr

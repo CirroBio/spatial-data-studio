@@ -21,12 +21,17 @@
 // path: if nothing prunes, every row group survives step 3 and steps 4-5 read the file
 // whole — the right answer for the small elements where that happens, and bounded by
 // `MAX_QUERY_DOWNLOAD_BYTES` either way.
+//
+// A plain SpatialData store's parquet has no `covering` column at all. Nothing prunes
+// there either, and step 4 has no boxes to read, so the element's geometry is read whole
+// once, each row's box computed from its vertices, and both kept for the element's
+// lifetime: later viewports are answered from memory.
 import type { AsyncBuffer, ColumnData, FileMetaData, RowGroup } from 'hyparquet';
-import { parquetMetadataAsync, parquetRead } from 'hyparquet';
+import { parquetMetadata, parquetMetadataAsync, parquetRead } from 'hyparquet';
 import { compressors } from 'hyparquet-compressors';
 import type { AbsolutePath, AsyncReadable } from '@zarrita/storage';
 import type { Table } from 'apache-arrow';
-import { decodeWkbPolygons, polygonTable } from './wkbGeoArrow';
+import { type PolygonBuffers, decodeWkbPolygons, polygonTable } from './wkbGeoArrow';
 
 /** One entry of the viewer sidecar's `shapes` map — `store._index_shapes`' report.
  * Schema: `backend/app/schemas/checkpoint/viewer_sidecar.schema.json#/$defs/shape_index`. */
@@ -66,6 +71,10 @@ const COALESCE_GAP_BYTES = 128 * 1024;
 // 8-byte length+magic trailer and any page-index growth since the report was written.
 // Sized so a footer read is a single request even if the file was rewritten.
 const FOOTER_SLACK_BYTES = 16 * 1024;
+
+// First suffix read for a footer no sidecar sized (`readParquetFooter`). A geopandas
+// footer is a few KiB; a larger one costs a second read of exactly its length.
+const FOOTER_PROBE_BYTES = 64 * 1024;
 
 /** Why a query returned nothing, for the console when boundaries don't appear. */
 export type ShapeQueryOutcome =
@@ -178,9 +187,15 @@ export function createShapeReader(
   index: Record<string, ShapeIndexEntry>,
   affines: Record<string, number[]>,
   readCellIndex: (element: string, start: number, stop: number) => Promise<Int32Array>,
+  preloadedFooters: Record<string, FileMetaData> = {},
 ): ShapeReader {
-  const footers = new Map<string, Promise<FileMetaData>>();
+  // Seeded with the footers already read to build a plain store's index, which the
+  // sidecar-sized fetch below could not locate: their `file_bytes` only bounds the file.
+  const footers = new Map<string, Promise<FileMetaData>>(
+    Object.entries(preloadedFooters).map(([element, metadata]) => [element, Promise.resolve(metadata)]));
   const inverses = new Map<string, number[]>();
+  // A covering-less element's geometry and per-row boxes, read once (see the header).
+  const uncovered = new Map<string, Promise<UncoveredRows>>();
 
   // The world->intrinsic direction, cached: it is inverted once per element, not once
   // per viewport.
@@ -256,31 +271,55 @@ export function createShapeReader(
       const partial = { rowGroupsKept: keptGroupCount(groups, kept), candidateRows, projectedBytes };
       if (projectedBytes > MAX_QUERY_DOWNLOAD_BYTES) return empty('over-budget', partial);
 
-      // Step 4: the covering column for the surviving runs, ~4 doubles a row against the
-      // geometry's hundreds of bytes. Exact per-row test, matching the live route's
-      // `sindex.intersection` (also a bbox test, so both sources return the same set).
-      const boxes = await readColumn<Record<string, number | null> | null>(
-        file, metadata, kept, 'bbox');
-      const hits: number[] = [];
-      for (let i = 0; i < boxes.values.length; i++) {
+      // Step 4: each surviving row's own box. Exact per-row test, matching the live
+      // route's `sindex.intersection` (also a bbox test, so both sources return the same
+      // set).
+      let rowBoxes: (Bbox | null)[];
+      let boxBytes: number;
+      let readGeometry: () => Promise<{ values: Uint8Array[]; bytes: number }>;
+      if (coveringPaths(metadata)) {
+        // The covering column for the surviving runs, ~4 doubles a row against the
+        // geometry's hundreds of bytes.
+        const boxes = await readColumn<Record<string, number | null> | null>(
+          file, metadata, kept, 'bbox');
         // An empty or missing geometry has a *null* bbox, not a NaN one. Nulls must be
         // tested for rather than compared: `-5 <= null` coerces to `-5 <= 0` and is
         // true, so such a row would read as a hit near the origin and then hand
         // `decodeWkbPolygons` a null blob.
-        const box = asFiniteBox(boxes.values[i]);
+        rowBoxes = boxes.values.map(asFiniteBox);
+        boxBytes = boxes.bytes;
+        readGeometry = () => readColumn<Uint8Array>(file, metadata, kept, 'geometry');
+      } else {
+        // Nothing prunes without statistics, so `kept` is every row and the cached
+        // rows line up with it.
+        let pending = uncovered.get(element);
+        const fresh = !pending;
+        if (!pending) {
+          pending = readUncoveredRows(file, metadata, kept, multi);
+          uncovered.set(element, pending);
+          pending.catch(() => uncovered.delete(element));
+        }
+        const rows = await pending;
+        rowBoxes = rows.boxes;
+        boxBytes = fresh ? rows.bytes : 0;
+        readGeometry = async () => ({ values: rows.blobs, bytes: 0 });
+      }
+      const hits: number[] = [];
+      for (let i = 0; i < rowBoxes.length; i++) {
+        const box = rowBoxes[i];
         if (box && intersects(window, box)) hits.push(i);
       }
       if (hits.length === 0) {
-        return empty('pruned-empty', { ...partial, transferredBytes: boxes.bytes });
+        return empty('pruned-empty', { ...partial, transferredBytes: boxBytes });
       }
       if (limit !== undefined && hits.length > limit) {
         // The whole point of reading `bbox` first: a zoomed-out viewport costs the
         // covering column and nothing else.
         return empty('over-limit',
-                     { ...partial, hitRows: hits.length, transferredBytes: boxes.bytes });
+                     { ...partial, hitRows: hits.length, transferredBytes: boxBytes });
       }
 
-      const blobs = await readColumn<Uint8Array>(file, metadata, kept, 'geometry');
+      const blobs = await readGeometry();
       const buffers = decodeWkbPolygons(hits.map((i) => blobs.values[i]), multi);
       applyAffineXy(buffers.xy, affines[element]);
       const cellIndex = await gatherCellIndex(readCellIndex, element, kept, hits);
@@ -288,7 +327,7 @@ export function createShapeReader(
         table: polygonTable(buffers, cellIndex, multi),
         report: {
           element, outcome: 'ok', rowGroupsTotal: entry.row_groups, hitRows: hits.length,
-          transferredBytes: boxes.bytes + blobs.bytes, ...partial,
+          transferredBytes: boxBytes + blobs.bytes, ...partial,
         },
       };
     },
@@ -351,6 +390,111 @@ async function readColumn<T>(
     }
   }
   return { values, bytes };
+}
+
+interface UncoveredRows {
+  // Typed as present: a null blob has a null box, so it is never a hit and never decoded.
+  blobs: Uint8Array[];
+  boxes: (Bbox | null)[];
+  bytes: number;
+}
+
+async function readUncoveredRows(
+  file: EntryBuffer, metadata: FileMetaData, runs: { start: number; end: number }[], multi: boolean,
+): Promise<UncoveredRows> {
+  const geometry = await readColumn<Uint8Array>(file, metadata, runs, 'geometry');
+  return { blobs: geometry.values, boxes: wkbRowBoxes(geometry.values, multi), bytes: geometry.bytes };
+}
+
+/** Each WKB row's bounding box, null for a null or empty geometry — what the `covering`
+ * column would have held. */
+export function wkbRowBoxes(blobs: (Uint8Array | null)[], multi: boolean): (Bbox | null)[] {
+  const rows = blobs.flatMap((blob, row) => (blob ? [row] : []));
+  const { xy, ringOffsets, partOffsets, polygonOffsets } = decodeWkbPolygons(
+    blobs.filter((blob): blob is Uint8Array => blob !== null), multi);
+  const boxes: (Bbox | null)[] = blobs.map(() => null);
+  rows.forEach((row, k) => {
+    const [first, last] = vertexRange({ ringOffsets, partOffsets, polygonOffsets }, k);
+    if (last === first) return;
+    const box: Bbox = [Infinity, Infinity, -Infinity, -Infinity];
+    for (let v = first; v < last; v++) {
+      const x = xy[2 * v];
+      const y = xy[2 * v + 1];
+      if (x < box[0]) box[0] = x;
+      if (y < box[1]) box[1] = y;
+      if (x > box[2]) box[2] = x;
+      if (y > box[3]) box[3] = y;
+    }
+    boxes[row] = box;
+  });
+  return boxes;
+}
+
+// Row `k`'s vertices are one contiguous span of `xy`: its parts' rings, back to back.
+function vertexRange(
+  { ringOffsets, partOffsets, polygonOffsets }: Omit<PolygonBuffers, 'xy'>, k: number,
+): [number, number] {
+  const firstPart = polygonOffsets ? polygonOffsets[k] : k;
+  const endPart = polygonOffsets ? polygonOffsets[k + 1] : k + 1;
+  return [ringOffsets[partOffsets[firstPart]], ringOffsets[partOffsets[endPart]]];
+}
+
+/**
+ * The footer of a parquet no sidecar reported on (a plain store's), from suffix reads
+ * alone: no store here exposes an entry's size, and a presigned URL refuses HEAD.
+ *
+ * `fileBytes` is the end of the footer as the metadata places it — exact for any writer
+ * that puts the footer straight after the data, and otherwise an underestimate of the
+ * file that still bounds every column chunk, which is all the reader uses it for once
+ * the footer is in hand.
+ */
+export async function readParquetFooter(
+  store: Required<AsyncReadable>, key: AbsolutePath,
+): Promise<{ metadata: FileMetaData; fileBytes: number; footerBytes: number }> {
+  const suffix = async (length: number): Promise<Uint8Array> => {
+    const bytes = await store.getRange(key, { suffixLength: length });
+    if (!bytes) throw new Error(`store has no entry ${key}`);
+    return bytes;
+  };
+  let tail = await suffix(FOOTER_PROBE_BYTES);
+  const footerBytes = new DataView(tail.buffer, tail.byteOffset, tail.byteLength)
+    .getUint32(tail.byteLength - 8, true);
+  if (footerBytes + 8 > tail.byteLength) tail = await suffix(footerBytes + 8);
+  const metadata = parquetMetadata(toArrayBuffer(tail), { geoparquet: false });
+  let dataEnd = 0;
+  const reach = (offset: bigint | undefined, length: number | undefined): void => {
+    if (offset !== undefined && length !== undefined) dataEnd = Math.max(dataEnd, Number(offset) + length);
+  };
+  for (const group of metadata.row_groups) {
+    for (const chunk of group.columns) {
+      const meta = chunk.meta_data;
+      if (meta) reach(meta.dictionary_page_offset ?? meta.data_page_offset, Number(meta.total_compressed_size));
+      reach(chunk.column_index_offset, chunk.column_index_length);
+      reach(chunk.offset_index_offset, chunk.offset_index_length);
+      if (meta) reach(meta.bloom_filter_offset, meta.bloom_filter_length);
+    }
+  }
+  return { metadata, fileBytes: dataEnd + footerBytes + 8, footerBytes };
+}
+
+/** A shapes parquet's row labels in file order, as `persistence.store._parquet_row_labels`
+ * reads them: the pandas index column if one was written, else the implicit 0..n-1 of a
+ * RangeIndex. Int64 labels come back as numbers, to compare equal to a numeric obs
+ * column. */
+export async function readRowLabels(
+  store: Required<AsyncReadable>, element: string, metadata: FileMetaData, fileBytes: number,
+): Promise<(string | number)[]> {
+  const pandas = metadata.key_value_metadata?.find((kv) => kv.key === 'pandas')?.value;
+  const indexColumns = (pandas ? (JSON.parse(pandas) as { index_columns?: unknown[] }).index_columns ?? [] : [])
+    .filter((c): c is string => typeof c === 'string');
+  const rows = Number(metadata.num_rows);
+  if (indexColumns.length === 0) return Array.from({ length: rows }, (_, i) => i);
+  const file = new EntryBuffer(store, `/shapes/${element}/shapes.parquet` as AbsolutePath, fileBytes);
+  const { values } = await readColumn<unknown>(file, metadata, [{ start: 0, end: rows }], indexColumns[0]);
+  // `readColumn` leaves byte arrays undecoded, which a string index column is.
+  const text = new TextDecoder();
+  return values.map((value) => (typeof value === 'bigint' ? Number(value)
+    : value instanceof Uint8Array ? text.decode(value) : value as string | number));
 }
 
 /** `column`'s chunk byte ranges over a run of row groups, with neighbours closer than

@@ -1347,8 +1347,8 @@ A checkpoint is **directly readable by a browser** over HTTP Range, with no back
 parquet, is a contiguous byte span — and four write-time steps in
 `_write_browser_reader_support` serve it. The first three are what the serverless viewer
 needs to exist at all, not an optimization: without them the reader falls back to reading
-the store as plain SpatialData (§14.2), which draws no boundaries and reads genes from the
-whole matrix, and without consolidated metadata it could not even name the table, because
+the store as plain SpatialData (§14.2), which reads each boundary element whole rather than
+by viewport and reads genes from the whole matrix, and without consolidated metadata it could not even name the table, because
 a Zarr v3 store carries no child index.
 
 - **`_shard_rasters`** rewrites image/label arrays with the Zarr v3 sharding codec
@@ -1592,6 +1592,16 @@ checkpoint takes that same fallback even when it *is* indexed: it carries no
 (`coords_transform` is the region element's affine, which is the boundary element's only
 by coincidence), so they are withheld with a re-save message rather than drawn somewhere
 unverifiable.
+
+A plain store (no `viewer/` group at all) gets both methods from a derived index instead
+(`plainSpatialData.ts`). Each polygonal shapes element's footer is read by suffix range at
+open, since no store exposes an entry's size; placement ports `element_to_world` (the
+table's region element takes the table's affine, any other is reconciled against the spots
+as an image is); and `cell_index` is computed from the parquet's row labels and the table's
+obs, as `geometry.cell_index` does. With no `covering` column nothing prunes, so the reader
+reads the element's geometry whole on its first query, computes each row's box from its
+vertices, and answers later viewports from memory, under the same
+`MAX_QUERY_DOWNLOAD_BYTES` ceiling.
 
 Not possible without the backend, by construction: compute (squidpy/scanpy/recipes),
 real subsetting (`sd.polygon_query`), saving, and the matplotlib vector-PDF snapshot

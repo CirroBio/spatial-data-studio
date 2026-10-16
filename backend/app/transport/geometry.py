@@ -61,7 +61,8 @@ def cell_index(table, index_labels) -> np.ndarray:
     get -1.
 
     Shared with the checkpoint writer, which bakes the same mapping into the viewer
-    sidecar for the serverless reader (`persistence.store._write_shape_cell_index`)."""
+    sidecar for the serverless reader (`persistence.store._write_shape_cell_index`). A
+    store with no sidecar is mapped by its port, `plainSpatialData.ts:cellIndexOf`."""
     obs = table.obs
     name_to_pos = {label: i for i, label in enumerate(obs.index)}
     inst_to_pos: dict = {}
@@ -124,7 +125,10 @@ def element_to_world(sdata, table, element: str, gdf) -> np.ndarray:
     the viewer sidecar (`persistence.store._shape_element_transforms`) so the serverless
     reader places the same polygons the same way. It is called there rather than mirrored
     in JS: two derivations of a coordinate transform diverging is invisible on the store
-    that agrees and looks like corrupt data on the one that doesn't."""
+    that agrees and looks like corrupt data on the one that doesn't. The one exception is
+    a store this app did not save, which has no sidecar to bake into: the serverless
+    viewer places its boundaries with a port of this (`plainSpatialData.ts:
+    deriveShapeIndex`), so a change here is a change there too."""
     if element == transform.region_name(table):
         return transform.matrix3x3(transform.get_affine6(sdata, table))
 
