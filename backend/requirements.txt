@@ -28,5 +28,6 @@ matplotlib==3.11.0
 shapely==2.1.2
 geopandas==1.1.4   # 1.2 writes df.attrs into GeoParquet metadata and fails on spatialdata's transform objects (store._index_shape_parquet)
 geoarrow-pyarrow==0.2.0   # GeoArrow polygon encoding for the cell-boundary display endpoint (/shapes/{element}/geoarrow)
+geoarrow-c==0.3.1   # geoarrow-pyarrow 0.2.0's own dependency, unpinned there; 0.4.0 removed the CVectorType it calls
 zarr==3.1.6
 PyYAML==6.0.3
