@@ -12,7 +12,7 @@ export interface Provenance {
 }
 
 export function withAppTag(extra: Tag[] = []): Tag[] {
-  return [APP_TAG, ...extra.filter((t) => !(t.key === APP_TAG.key && t.value === APP_TAG.value))];
+  return [APP_TAG, ...extra.filter((t) => t.value !== APP_TAG.value)];
 }
 
 export function provenanceText(cirro: Pick<CirroSession, 'displayName' | 'username'>, p: Provenance): string {

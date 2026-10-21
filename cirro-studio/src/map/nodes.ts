@@ -26,7 +26,8 @@ export interface StageNode {
 /** Tags a person gave the dataset: not the app's own bookkeeping, not folders. */
 export function userTags(d: DatasetRecord | undefined): string[] {
   return (d?.tags ?? [])
-    .filter((t) => !(t.key === APP_TAG.key) && !t.key.startsWith(`${APP_TAG.value}.`) && !t.value.startsWith(FOLDER_PREFIX))
+    // Versions saved before tags became plain values also carry keyed `spatial-data-studio.*` ones.
+    .filter((t) => t.value !== APP_TAG.value && !t.key.startsWith(`${APP_TAG.value}.`) && !t.value.startsWith(FOLDER_PREFIX))
     .map((t) => (t.key ? `${t.key}: ${t.value}` : t.value));
 }
 
