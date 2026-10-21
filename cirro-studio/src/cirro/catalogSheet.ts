@@ -1,9 +1,9 @@
 // The project's catalog: what scanning each dataset found, kept so the next visit — by
 // anyone in the project — lists only the datasets nobody has scanned yet. It is a Cirro
 // sheet (`spatial_data_studio.catalog`) where the project can have one, and this
-// browser's storage where it can't (sheets off, not reachable, or not permitted).
+// browser's storage where it can't (sheets off, not permitted, or failing).
 import {
-  ColumnDataType, EntityType, FetchError, SemanticColumnType, SheetCreationMode, SqlSortOrder,
+  ColumnDataType, EntityType, SemanticColumnType, SheetCreationMode, SqlSortOrder,
   type ColumnDef, type Sheet,
 } from '@cirrobio/api-client';
 import { APP_TAG, APP_VERSION, SHEET_NAMESPACE } from '../app/appInfo';
@@ -117,13 +117,27 @@ class SheetCatalog implements CatalogCache {
     const rows = scans.flatMap((s) => {
       const [head, ...items] = rowsOf(s);
       return [...items, head];
-    }).filter((r) => !this.items.has(r.item)).map((r) => ({
+    }).map((r) => ({
       ...r,
       dataset: `cirro:${this.cirro.tenantId}:${this.projectId}:dataset:${r.dataset_id}`,
       app_version: APP_VERSION,
     }));
-    for (let i = 0; i < rows.length; i += BATCH) {
-      const batch = rows.slice(i, i + BATCH);
+    try {
+      await this.insert(sheetId, rows);
+    } catch (e) {
+      // Someone else opening the project writes the same rows, and the sheet refuses the
+      // later write (a duplicate item, or two writes colliding). Read what landed, and try
+      // once more.
+      if (refusedPermission(e)) throw e;
+      await this.load();
+      await this.insert(sheetId, rows);
+    }
+  }
+
+  private async insert(sheetId: string, rows: CatalogRow[]): Promise<void> {
+    const fresh = rows.filter((r) => !this.items.has(r.item));
+    for (let i = 0; i < fresh.length; i += BATCH) {
+      const batch = fresh.slice(i, i + BATCH);
       await this.cirro.data.sheets.insertSheetData({
         projectId: this.projectId, sheetId,
         insertRowsRequest: { inserts: batch.map((values) => ({ values })) },
@@ -141,9 +155,7 @@ export async function openCatalog(cirro: CirroSession, projectId: string): Promi
   try {
     sheets = await cirro.data.sheets.getSheets({ projectId });
   } catch (e) {
-    // Cirro has answered sheet preflights from other sites with 401, which the browser
-    // reports as a network failure; any refusal or failure here leaves the app working.
-    if (e instanceof FetchError) return browser('This project\'s sheets can\'t be reached from this site, so the catalog is kept in this browser.');
+    // Any refusal or failure here leaves the app working.
     return browser(refusedPermission(e) ? `The catalog is kept in this browser: ${describeError(e)}` : `The catalog is kept in this browser (${describeError(e)}).`);
   }
   const sheet = sheets.find((s) => s.namespaceName === SHEET_NAMESPACE && s.tableName === TABLE && s.sheetType === 'TABLE');

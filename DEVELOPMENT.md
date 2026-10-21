@@ -789,7 +789,8 @@ Pull requests build but do not publish.
 - `npm run test:studio` — the Cirro app's unit tests (vitest): the version stack (writing
   AnnData columns, embeddings and `uns` into a draft over a real checkpoint, and the
   viewer reading the result), the draft's change list, the in-browser analyses against
-  reference values, and figure export. `src/stack/python.test.ts` also reads a written
+  reference values, figure export, and where a page load starts and what the log-in box
+  suggests (`src/tenants.test.ts`). `src/stack/python.test.ts` also reads a written
   two-version stack back with anndata and spatialdata through `python/sds_layers.py`,
   and checks that `flatten` refuses a stack whose manifests reach outside their folders;
   it runs where `.venv-introspect` exists and skips itself elsewhere (CI).

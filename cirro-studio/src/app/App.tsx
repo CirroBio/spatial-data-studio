@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useState } from 'react';
 import type { Project } from '@cirrobio/api-client';
 import { describeError, type CirroSession } from '../cirro/session';
 import { EXAMPLES_ID } from '../data/examples';
-import { EXAMPLES_TENANT, type Tenant } from '../tenants';
+import { EXAMPLES_TENANT } from '../tenants';
 import { appKey } from './appInfo';
 import { navigate, useRoute } from './route';
 import { Shell } from './Shell';
@@ -30,7 +30,7 @@ function useProjects(session: CirroSession | null) {
   return state;
 }
 
-export function App({ tenants, session }: { tenants: Tenant[]; session: CirroSession | null }) {
+export function App({ session }: { session: CirroSession | null }) {
   const route = useRoute();
   const { projects, error } = useProjects(session);
 
@@ -51,10 +51,10 @@ export function App({ tenants, session }: { tenants: Tenant[]; session: CirroSes
     }
   }, [session, project, route.project, route.tenant, tenantId]);
 
-  if (session && !projects) return <Shell session={session} tenants={tenants} projects={null}><p className="page-message muted">Loading your projects…</p></Shell>;
+  if (session && !projects) return <Shell session={session} projects={null}><p className="page-message muted">Loading your projects…</p></Shell>;
   if (session && !project) {
     return (
-      <Shell session={session} tenants={tenants} projects={projects}>
+      <Shell session={session} projects={projects}>
         <div className="page-message">
           {error ? <p className="notice notice-danger">{error}</p> : projects?.length
             ? <p>Choose a project from the menu above.</p>
@@ -66,7 +66,7 @@ export function App({ tenants, session }: { tenants: Tenant[]; session: CirroSes
   const collection = collectionFor(session, project ? { id: project.id, name: project.name } : null);
   return (
     <StudioProvider session={session} collection={collection}>
-      <Shell session={session} tenants={tenants} projects={projects}>
+      <Shell session={session} projects={projects}>
         <Suspense fallback={<p className="page-message muted">Loading…</p>}>
           {route.section === 'item' || route.section === 'task' ? <ItemPage /> : <MapView />}
         </Suspense>

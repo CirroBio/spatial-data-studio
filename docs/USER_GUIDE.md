@@ -325,10 +325,16 @@ Cirro account, reads your project's spatial data where it is stored, runs its an
 in your browser, and saves what you find back to the project. Open it at
 [cirrobio.github.io/spatial-data-studio/app/](https://cirrobio.github.io/spatial-data-studio/app/).
 **Explore example data** opens four example sections with no account, and anything you
-save there stays in your browser. **Log In with Cirro** opens your own projects, once
-your organization's Cirro is connected to the app. Signed in, the menu at the top right
-(your Cirro and your name) has **Log out** on every page, including when your account
-can't see any projects yet.
+save there stays in your browser. **Log In with Cirro** opens your own projects: it asks
+which Cirro you use, suggesting the ones it knows as you type their name, and taking the
+address you use for any other (such as cirro.example.org). It remembers your choice for
+next time. Logging in works once your organization's Cirro has registered the app. If you
+weren't signed in to Cirro already, Cirro may stop at "Invalid authorize link" after you
+sign in there; log in again and it goes through. When a Cirro can't be reached or the
+log-in doesn't finish, the page says why and offers **Try again** or **Log in to another
+Cirro**. Signed in, the menu at the top right (your Cirro and your name) has **Log out**
+and **Log in to another Cirro** on every page, including when your account can't see any
+projects yet.
 
 ### The map of a project
 
@@ -482,8 +488,8 @@ labels is kilobytes, beside a store of gigabytes that is not copied. The dataset
 tagged as this app's, filed in the store's Cirro folder, and carries a note saying what
 was saved and by whom; the top bar says the catalog is updating while the project is
 read again to list it. **Discard** throws the changes away. Until you do one or the
-other they are kept in this browser, so a reload loses nothing. Logging out discards a
-project's unsaved changes (the app asks first), so the next person to log in on the same
+other they are kept in this browser, so a reload loses nothing. Logging out, or logging
+in to another Cirro, discards a project's unsaved changes (the app asks first), so the next person to log in on the same
 browser can't open them; the examples' changes stay.
 
 Every version names the one it was saved on, by dataset ID. A stack of versions

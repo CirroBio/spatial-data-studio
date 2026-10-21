@@ -49,13 +49,13 @@ jobs:
         run: npm run build:studio
 
       - name: Check the Cirro app's tenants
-        # Every tenant needs an id, a client ID and an https origin; an empty list is a
-        # site that offers only the examples.
+        # Every tenant needs an id and an https origin; the app asks each for its client ID
+        # by callback URL, so an entry carries one only for a registration without discovery.
         run: |
           node -e '
             const { tenants } = JSON.parse(require("fs").readFileSync("cirro-studio/deploy/tenants.json", "utf8"));
             for (const t of tenants) {
-              if (!t.id || !t.clientId || !/^https:\/\/[^/]+$/.test(t.url)) throw new Error(`bad tenant ${JSON.stringify(t)}`);
+              if (!t.id || !/^https:\/\/[^/]+$/.test(t.url)) throw new Error(`bad tenant ${JSON.stringify(t)}`);
             }'
 
       - name: Build the docs site

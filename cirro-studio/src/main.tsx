@@ -4,7 +4,7 @@ import type { SystemInfoResponse } from '@cirrobio/api-client';
 import '@fontsource-variable/geist';
 import '@fontsource-variable/geist-mono';
 import { REDIRECT_URI, signInError } from './signInState';
-import { EXAMPLES_TENANT, loadTenants, startOf, takeSignInNow, type Tenant } from './tenants';
+import { EXAMPLES_TENANT, chooseTenant, forgetTenant, loadTenants, showSignIn, startOf, takeSignInNow, type Tenant } from './tenants';
 import { FatalError, SignInPage, StartPages } from './start/Start';
 import { App } from './app/App';
 import { APP_NAME } from './app/appInfo';
@@ -37,30 +37,37 @@ const tryAgain = <button type="button" className="button button-primary" onClick
 
 // A Cirro tenant: its public system info, then sign-in through its authorize page, then
 // the app with an API client whose token comes from the sign-in library on every call.
-async function startTenant(tenant: Tenant, tenants: Tenant[]) {
+async function startTenant(tenant: Tenant) {
   const signInNow = takeSignInNow();
+  // A tenant that fails can be retried, or left for another; the saved choice would reopen it.
+  const tenantActions = (
+    <div className="button-row">
+      <button type="button" className="button button-primary" onClick={() => chooseTenant(tenant)}>Try again</button>
+      <button type="button" className="button" onClick={() => { forgetTenant(); showSignIn(); }}>Log in to another Cirro</button>
+    </div>
+  );
   root.render(<main className="centered-page"><p className="muted">Connecting to {tenant.name}…</p></main>);
   const res = await fetch(`${tenant.url}/api/info/system`).catch(() => null);
   if (!res?.ok) {
-    render(<FatalError title={`Can't reach ${tenant.name}`} message="Cirro didn't answer. Check your connection and try again." action={tryAgain} />);
+    render(<FatalError title={`Can't reach ${tenant.name}`} message="Cirro didn't answer. Check your connection and try again." action={tenantActions} />);
     return;
   }
   const system = (await res.json()) as SystemInfoResponse;
   const tenantName = system.tenantInfo.name || tenant.name;
   if (system.maintenanceModeEnabled) {
-    render(<FatalError title={`${tenantName} is in maintenance`} message="Cirro is being updated. Try again in a few minutes." action={tryAgain} />);
+    render(<FatalError title={`${tenantName} is in maintenance`} message="Cirro is being updated. Try again in a few minutes." action={tenantActions} />);
     return;
   }
   const failed = signInError();
   if (failed) {
-    render(<FatalError title={`Logging in to ${tenantName} didn't finish`} message={`Cirro answered: ${failed}`} action={tryAgain} />);
+    render(<FatalError title={`Logging in to ${tenantName} didn't finish`} message={`Cirro answered: ${failed}`} action={tenantActions} />);
     return;
   }
   const { activeUser, createSignIn, currentUser, signOut, startSignIn, usernameOf } = await import('./auth');
   // A step caught with this resolves to undefined, meaning "failed, already shown" — not
   // currentUser's null, which means nobody is signed in.
   const didntFinish = (e: unknown): undefined => {
-    render(<FatalError title={`Logging in to ${tenantName} didn't finish`} message={describeError(e)} action={tryAgain} />);
+    render(<FatalError title={`Logging in to ${tenantName} didn't finish`} message={describeError(e)} action={tenantActions} />);
   };
   const signIn = await createSignIn(tenant.url, tenant.clientId).catch(didntFinish);
   if (!signIn) return;
@@ -103,7 +110,7 @@ async function startTenant(tenant: Tenant, tenants: Tenant[]) {
     },
     openProject: (project) => new CirroCollection(session, project.id, project.name),
   };
-  render(<App tenants={tenants} session={session} />);
+  render(<App session={session} />);
 }
 
 // GitHub Pages can't send a frame-ancestors header, so the app refuses to run inside
@@ -122,8 +129,8 @@ if (window.top !== window.self) {
     .then((tenants) => {
       const start = startOf(tenants);
       if (!('tenant' in start)) render(<StartPages tenants={tenants} screen={start.screen} unknownFromUrl={start.unknownFromUrl} />);
-      else if (start.tenant === EXAMPLES_TENANT) render(<App tenants={tenants} session={null} />);
-      else return startTenant(start.tenant, tenants);
+      else if (start.tenant === EXAMPLES_TENANT) render(<App session={null} />);
+      else return startTenant(start.tenant);
     })
     .catch((e: unknown) => {
       console.error(e);

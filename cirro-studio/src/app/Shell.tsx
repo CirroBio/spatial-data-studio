@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import type { Project } from '@cirrobio/api-client';
 import { describeError, type CirroSession } from '../cirro/session';
-import { forgetTenant, openExamples, showLanding, showSignIn, type Tenant } from '../tenants';
+import { forgetTenant, openExamples, showLanding, showSignIn } from '../tenants';
 import { About } from './About';
 import { APP_NAME, APP_VERSION } from './appInfo';
 import { navigate, useRoute } from './route';
@@ -62,34 +62,38 @@ function CatalogStatus() {
   return null;
 }
 
-function AccountMenu({ session, tenants }: { session: CirroSession | null; tenants: Tenant[] }) {
-  const [problem, setProblem] = useState<string | null>(null);
-  const [unsaved, setUnsaved] = useState(0);
+// Where the app goes once logged out: the start page, or the log-in box for another Cirro.
+type Leaving = { next: () => void };
+
+function AccountMenu({ session }: { session: CirroSession | null }) {
+  const [problem, setProblem] = useState<Leaving & { message: string } | null>(null);
+  const [unsaved, setUnsaved] = useState<Leaving & { drafts: number } | null>(null);
   const [about, setAbout] = useState(false);
   const aboutDialog = about && <About onClose={() => setAbout(false)} />;
   if (!session) {
     return (
       <>
         <button type="button" className="topbar-button" onClick={() => setAbout(true)}>About</button>
-        {tenants.length > 0 && <button type="button" className="button button-primary shell-log-in" onClick={showSignIn}>Log In (Cirro)</button>}
+        <button type="button" className="button button-primary shell-log-in" onClick={showSignIn}>Log In (Cirro)</button>
         {aboutDialog}
       </>
     );
   }
-  const logOut = async () => {
+  // Another Cirro starts with logging out of this one, so a tab never mixes two tenants' data.
+  const logOut = async (next: () => void) => {
     forgetTenant();
     try {
       await session.signOut();
-      showLanding();
+      next();
     } catch (e) {
-      setProblem(describeError(e));
+      setProblem({ message: describeError(e), next });
     }
   };
-  const askToLogOut = async () => {
+  const askToLogOut = async (next: () => void) => {
     // Where the browser refuses storage, no draft was kept.
     const drafts = await countCirroDrafts().catch(() => 0);
-    if (drafts > 0) setUnsaved(drafts);
-    else await logOut();
+    if (drafts > 0) setUnsaved({ drafts, next });
+    else await logOut(next);
   };
   return (
     <>
@@ -97,24 +101,24 @@ function AccountMenu({ session, tenants }: { session: CirroSession | null; tenan
         {(close) => (
           <div className="menu" role="menu">
             <button type="button" className="menu-item" onClick={() => { close(); openExamples(); }}>Explore example data</button>
-            {tenants.length > 1 && <button type="button" className="menu-item" onClick={() => { close(); showSignIn(); }}>Switch to another Cirro</button>}
+            <button type="button" className="menu-item" onClick={() => { close(); void askToLogOut(showSignIn); }}>Log in to another Cirro</button>
             <button type="button" className="menu-item" onClick={() => { close(); setAbout(true); }}>About {APP_NAME}</button>
-            <button type="button" className="menu-item" onClick={() => { close(); void askToLogOut(); }}>Log out</button>
+            <button type="button" className="menu-item" onClick={() => { close(); void askToLogOut(showLanding); }}>Log out</button>
             <p className="menu-note muted">{APP_NAME} {APP_VERSION}</p>
           </div>
         )}
       </Popover>
-      {unsaved > 0 && (
+      {unsaved && (
         <div className="modal-backdrop" role="dialog" aria-modal="true">
           <div className="modal">
             <h2>Discard unsaved changes?</h2>
             <p>
-              {unsaved === 1 ? 'One store has changes' : `${unsaved} stores have changes`} not saved as a version. This browser
+              {unsaved.drafts === 1 ? 'One store has changes' : `${unsaved.drafts} stores have changes`} not saved as a version. This browser
               keeps them only while you are logged in, so logging out discards them.
             </p>
             <div className="button-row">
-              <button type="button" className="button" onClick={() => setUnsaved(0)}>Stay logged in</button>
-              <button type="button" className="button button-danger" onClick={() => { setUnsaved(0); void logOut(); }}>Log out and discard</button>
+              <button type="button" className="button" onClick={() => setUnsaved(null)}>Stay logged in</button>
+              <button type="button" className="button button-danger" onClick={() => { setUnsaved(null); void logOut(unsaved.next); }}>Log out and discard</button>
             </div>
           </div>
         </div>
@@ -124,8 +128,8 @@ function AccountMenu({ session, tenants }: { session: CirroSession | null; tenan
         <div className="modal-backdrop" role="dialog" aria-modal="true">
           <div className="modal">
             <h2>Logged out</h2>
-            <p>{problem}</p>
-            <button type="button" className="button button-primary" onClick={showLanding}>Continue</button>
+            <p>{problem.message}</p>
+            <button type="button" className="button button-primary" onClick={problem.next}>Continue</button>
           </div>
         </div>
       )}
@@ -135,8 +139,8 @@ function AccountMenu({ session, tenants }: { session: CirroSession | null; tenan
 
 // The session comes from App rather than the studio: the shell also frames the pages
 // shown before a project opens, where the account menu still has to offer Log out.
-export function Shell({ session, tenants, projects, children }: {
-  session: CirroSession | null; tenants: Tenant[]; projects: Project[] | null; children: ReactNode;
+export function Shell({ session, projects, children }: {
+  session: CirroSession | null; projects: Project[] | null; children: ReactNode;
 }) {
   return (
     <div className="shell">
@@ -148,7 +152,7 @@ export function Shell({ session, tenants, projects, children }: {
         </nav>
         <span className="shell-spacer" />
         <CatalogStatus />
-        <AccountMenu session={session} tenants={tenants} />
+        <AccountMenu session={session} />
       </header>
       <main className="shell-main">{children}</main>
     </div>

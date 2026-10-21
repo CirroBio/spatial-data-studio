@@ -21,7 +21,8 @@ npm run dev:studio   # http://localhost:5171
 ```
 
 The port is fixed because Cirro's development registration on dev.cirro.bio
-(`public/tenants.json`) lists `http://localhost:5171` as this app's redirect URI.
+(`public/tenants.json`) lists `http://localhost:5171` as this app's redirect URI. That
+registration isn't discoverable, so its entry carries its `clientId`.
 **Explore example data** needs no sign-in. The examples are `examples/` (this app's own
 raw-counts Xenium store and its `index.json`) and the docs site's demo checkpoints
 (`docs-site/viewer-data/`), which the dev server serves at `/examples/` and `/viewer/`,
@@ -45,8 +46,10 @@ as in CI.
 ```
 src/main.tsx        boot: refuse to run framed, load tenants.json, sign in, start the app
 src/auth.ts         oidc-client-ts against the tenant's authorize page (openid scope,
-                    PKCE, sessionStorage); signInState.ts is what needs no library
-src/tenants.ts      runtime tenant registry (tenants.json) and where a page load starts
+                    PKCE, sessionStorage, client ID from the tenant by callback URL);
+                    signInState.ts is what needs no library
+src/tenants.ts      the tenants the log-in box suggests (tenants.json), a typed Cirro
+                    address, and where a page load starts
 src/app/            shell, URL routing (route.ts), the catalog store (catalog.ts), the
                     project model (library.ts: stages, stores with their versions, figures,
                     lineage links), the studio context (studio.tsx)
@@ -101,15 +104,22 @@ is a change to make there too.
 
 ## Connecting a tenant
 
-The published site (`deploy/tenants.json`) lists no tenants until a Cirro registration
-exists for it, so it offers only the examples. To connect one:
+The app gets its client ID from each tenant by its callback URL (dynamic client
+registration, `src/auth.ts`), so the published site needs nothing built in for a tenant.
+To connect one:
 
-1. Register a **Public App** in that tenant, with redirect URI
+1. A tenant admin registers a **Public App** with redirect URI
    `https://cirrobio.github.io/spatial-data-studio/app/` (exactly, trailing slash
-   included). Request the permissions in `cirro-permissions.json` as project
-   permissions.
-2. Add `{ "id", "name", "url", "clientId" }` for the tenant to `deploy/tenants.json`.
-   The Pages workflow checks every entry and copies the file over the development one.
+   included), **discovery enabled**, and the permissions in `cirro-permissions.json` as
+   project permissions, and approves it. A registration without discovery works only
+   with its `clientId` in the tenant's `deploy/tenants.json` entry.
+2. `deploy/tenants.json` lists the tenants the log-in box suggests, each an `id`, a
+   `name` and a `url` (the tenant's web address). The box suggests the entries whose
+   name, id or address match once three characters are typed, takes the address of a
+   Cirro the file doesn't list, and remembers the last choice. It lists Cirro Demo, Cirro
+   Development, Fred Hutch Cancer Center and Salk Institute; logging in to one works once
+   it has registered the app. The Pages workflow checks every entry and copies the file
+   over the development one.
 3. Before asking a tenant's admins to approve it, run the kit's scanner and review
    skill. The app kit's deploy skill describes the request itself.
 
@@ -117,14 +127,18 @@ exists for it, so it offers only the examples. To connect one:
    python3 ../Cirro-app-kit/tools/scan.py cirro-studio
    ```
 
-   It reports one medium finding, `unpinned-cirro` for `@cirrobio/spatial-viewer: *`. That
-   is the workspace sibling (`packages/viewer`), resolved to its sources by the Vite alias
-   rather than installed from npm, so there is no published version to pin.
+   It reports two medium findings, `unpinned-cirro` for `@cirrobio/spatial-viewer: *` and
+   `@cirrobio/studio-ui: *`. Those are the workspace siblings (`packages/viewer` and
+   `packages/studio-ui`), resolved to their sources by the Vite aliases rather than
+   installed from npm, so there is no published version to pin.
 
 The site is served from github.io, an origin other sites share, so tokens stay in
 sessionStorage. A new tab signs in again, and nothing else on github.io can read the
-tokens. GitHub Pages can't send a `frame-ancestors` header, so `main.tsx` refuses to run
-inside another page's frame.
+tokens. Served from an origin of its own (a custom domain), the app kit allows keeping
+the login in localStorage, shared by every tab, once the tenant's admins have shortened
+the refresh-token lifetime on the app's client; the registration has no field for it.
+GitHub Pages can't send a `frame-ancestors` header, so `main.tsx` refuses to run inside
+another page's frame.
 
 ## Deploying
 

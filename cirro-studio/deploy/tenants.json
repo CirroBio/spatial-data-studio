@@ -1,3 +1,28 @@
 {
-  "tenants": []
+  "tenants": [
+    {
+      "id": "demo",
+      "name": "Cirro Demo",
+      "url": "https://demo.cirro.bio",
+      "addedAt": "2026-10-21"
+    },
+    {
+      "id": "dev",
+      "name": "Cirro Development",
+      "url": "https://dev.cirro.bio",
+      "addedAt": "2026-10-21"
+    },
+    {
+      "id": "fredhutch",
+      "name": "Fred Hutch Cancer Center",
+      "url": "https://fredhutch.cirro.bio",
+      "addedAt": "2026-10-21"
+    },
+    {
+      "id": "salk",
+      "name": "Salk Institute",
+      "url": "https://salk.cirro.bio",
+      "addedAt": "2026-10-21"
+    }
+  ]
 }

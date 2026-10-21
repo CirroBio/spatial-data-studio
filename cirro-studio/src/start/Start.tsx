@@ -1,8 +1,12 @@
-// The pages before the app: the landing page, the choice of tenant to log in to, and
-// what is shown when starting fails.
-import type { ReactNode } from 'react';
+// The pages before the app: the landing page, the log-in box for a Cirro tenant, and
+// what is shown when starting fails. The first two move between each other without
+// reloading, so the backdrop carries on.
+import { useEffect, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { APP_NAME, CIRRO_URL, DOCS_URL, REPO_URL } from '../app/appInfo';
-import { chooseTenant, openExamples, showLanding, showSignIn, type StartScreen, type Tenant } from '../tenants';
+import {
+  SUGGEST_AFTER, chooseTenant, hostOf, lastTenant, openExamples, showLanding, startScreenOf, startUrl, suggestTenants, tenantNamed,
+  type StartScreen, type Tenant,
+} from '../tenants';
 import Backdrop from './Backdrop';
 
 
@@ -44,9 +48,9 @@ const SignInIcon = () => (
   </svg>
 );
 
-function Landing({ hasTenants }: { hasTenants: boolean }) {
+function Landing({ onSignIn }: { onSignIn: () => void }) {
   return (
-    <Frame>
+    <>
       <h1 className="start-title">{APP_NAME}</h1>
       <p className="start-lede">
         Spatial omics in your browser: open tissue sections cell by cell, find what sets regions and cell types apart,
@@ -58,45 +62,134 @@ function Landing({ hasTenants }: { hasTenants: boolean }) {
           <span className="start-choice-title">Explore example data</span>
           <span className="start-choice-text">Xenium and Visium sections, ready to open. No account needed.</span>
         </button>
-        <button type="button" className="start-choice" onClick={showSignIn} disabled={!hasTenants}>
+        <button type="button" className="start-choice" onClick={onSignIn}>
           <SignInIcon />
           <span className="start-choice-title">Log In with Cirro</span>
-          <span className="start-choice-text">
-            {hasTenants ? 'Your projects: images, instrument runs and SpatialData, with versions saved back to Cirro.' : 'No Cirro is connected to this site yet.'}
-          </span>
+          <span className="start-choice-text">Your projects: images, instrument runs and SpatialData, with versions saved back to Cirro.</span>
         </button>
       </div>
-    </Frame>
+    </>
   );
 }
 
-function SignIn({ tenants, unknownFromUrl }: { tenants: Tenant[]; unknownFromUrl?: string }) {
+// The user names their Cirro: the box suggests listed tenants once SUGGEST_AFTER
+// characters are typed, and takes any Cirro's address.
+function SignIn({ tenants, unknownFromUrl, onBack }: { tenants: Tenant[]; unknownFromUrl?: string; onBack: () => void }) {
+  const [text, setText] = useState(() => lastTenant(tenants)?.name ?? '');
+  // The suggestion list opens on typing and closes on a pick, Escape or leaving the box.
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(-1);
+  const choice = tenantNamed(text, tenants);
+  const typed = text.trim().length >= SUGGEST_AFTER;
+  const suggestions = open ? suggestTenants(text, tenants) : [];
+  const pick = (t: Tenant) => {
+    setText(t.name);
+    setOpen(false);
+    setActive(-1);
+  };
+  const onKey = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (!suggestions.length) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const step = e.key === 'ArrowDown' ? 1 : -1;
+      setActive((i) => (i + step + suggestions.length) % suggestions.length);
+    } else if (e.key === 'Enter' && active >= 0) {
+      e.preventDefault();
+      pick(suggestions[active]);
+    } else if (e.key === 'Escape') {
+      setOpen(false);
+    }
+  };
+  return (
+    <form
+      className="card start-card"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (choice) chooseTenant(choice);
+      }}
+    >
+      <h2>Log In (Cirro)</h2>
+      {unknownFromUrl && (
+        <p role="alert" className="notice notice-warning">
+          The link named <code>{unknownFromUrl}</code>, which this site doesn't connect to.
+        </p>
+      )}
+      <div className="popover start-tenant">
+        <label className="field">
+          <span>Your organization's Cirro</span>
+          <input
+            className="input"
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded={suggestions.length > 0}
+            aria-controls="start-tenant-options"
+            aria-activedescendant={active >= 0 && suggestions[active] ? `start-tenant-${suggestions[active].id}` : undefined}
+            value={text}
+            onChange={(e) => {
+              setText(e.target.value);
+              setOpen(true);
+              setActive(-1);
+            }}
+            onKeyDown={onKey}
+            onBlur={() => setOpen(false)}
+            placeholder="Its name or address"
+            autoComplete="off"
+            spellCheck={false}
+            autoFocus
+          />
+        </label>
+        {suggestions.length > 0 && (
+          <ul id="start-tenant-options" role="listbox" className="popover-panel popover-left menu start-tenant-options">
+            {suggestions.map((t, i) => (
+              <li
+                key={t.id}
+                id={`start-tenant-${t.id}`}
+                role="option"
+                aria-selected={i === active}
+                className="menu-item"
+                // Before the box's blur, which would close the list first.
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  pick(t);
+                }}
+                onMouseEnter={() => setActive(i)}
+              >
+                <span>{t.name}</span>
+                <span className="muted">{hostOf(t)}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      {typed && !choice && !suggestions.length && <p className="muted">Pick a suggestion, or type the address you use for Cirro, such as cirro.example.org.</p>}
+      <p className="muted">
+        You'll sign in on Cirro's own page, which shows what this app may do. If you aren't signed in to Cirro already,
+        it may stop at "Invalid authorize link" once you are; log in here again and it goes through.
+      </p>
+      <button type="submit" className="button button-primary" disabled={!choice}>{choice ? `Log in to ${choice.name}` : 'Log in'}</button>
+      <button type="button" className="link-button" onClick={onBack}>← Back</button>
+    </form>
+  );
+}
+
+export function StartPages({ tenants, screen: first, unknownFromUrl }: { tenants: Tenant[]; screen: StartScreen; unknownFromUrl?: string }) {
+  const [screen, setScreen] = useState(first);
+  useEffect(() => {
+    const onPop = () => setScreen(startScreenOf(new URLSearchParams(window.location.search)));
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+  const go = (next: StartScreen) => {
+    window.history.pushState(null, '', startUrl(next));
+    setScreen(next);
+  };
   return (
     <Frame>
-      <div className="card start-card">
-        <h2>Log in with Cirro</h2>
-        {unknownFromUrl && <p className="notice notice-warning">This site isn't connected to the Cirro called "{unknownFromUrl}".</p>}
-        <p className="muted">Choose your organization's Cirro. You'll sign in on Cirro's own page, which shows what this app may do.</p>
-        <ul className="start-tenants">
-          {tenants.map((t) => (
-            <li key={t.id}>
-              <button type="button" className="button start-tenant" onClick={() => chooseTenant(t)}>
-                <span>{t.name}</span>
-                <span className="muted">{new URL(t.url).host}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
-        <button type="button" className="link-button" onClick={showLanding}>← Back</button>
-      </div>
+      {screen === 'sign-in'
+        ? <SignIn tenants={tenants} unknownFromUrl={unknownFromUrl} onBack={() => go('landing')} />
+        : <Landing onSignIn={() => go('sign-in')} />}
     </Frame>
   );
-}
-
-export function StartPages({ tenants, screen, unknownFromUrl }: { tenants: Tenant[]; screen: StartScreen; unknownFromUrl?: string }) {
-  return screen === 'sign-in'
-    ? <SignIn tenants={tenants} unknownFromUrl={unknownFromUrl} />
-    : <Landing hasTenants={tenants.length > 0} />;
 }
 
 export function SignInPage({ tenantName, onSignIn }: { tenantName: string; onSignIn: () => void }) {
