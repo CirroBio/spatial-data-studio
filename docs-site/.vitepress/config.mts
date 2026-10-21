@@ -90,6 +90,9 @@ export default defineConfig({
       { text: 'Demos', link: '/demo/' },
       { text: 'Develop', link: '/DEVELOPMENT' },
       { text: 'Reference', link: '/DESIGN' },
+      // The Cirro app, which the deploy job publishes beside the site. `_self` keeps the
+      // router from taking it for a docs page and showing its 404.
+      { text: 'Open the app', link: '/app/', target: '_self' },
     ],
     // Mirrors the audience split CLAUDE.md draws: README orients and routes,
     // docs/USER_GUIDE is the user-facing source of truth, DEVELOPMENT the
