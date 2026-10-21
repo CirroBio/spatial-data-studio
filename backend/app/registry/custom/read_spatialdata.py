@@ -1,9 +1,10 @@
 """SpatialData-zarr importer — the "Import Data" reader for an already-SpatialData
 store. spatialdata's own `read_zarr` only opens a `.zarr` directory; this reader
-additionally accepts a `.zarr.zip` or `.zarr.tar.gz` archive by unpacking it to a
-temp dir (owned by the session, cleaned on close) before reading. Extraction +
-format detection live in persistence/store.read_spatialdata_archive, shared with
-the checkpoint load path."""
+additionally accepts a `.zarr.zip` or `.zarr.tar.gz` archive, or the folder of a version
+the Cirro app saved (docs/LAYER_FORMAT.md), by unpacking or flattening it to a temp dir
+(owned by the session, cleaned on close) before reading. Extraction + format detection
+live in persistence/store.read_spatialdata_archive, shared with the checkpoint load
+path."""
 from __future__ import annotations
 
 import traceback
@@ -13,7 +14,8 @@ from ._docs import custom_doc
 
 _STORE_PARAM = ParamSpec(
     "store", {"type": "string"}, "text", None, required=True,
-    tooltip="Path to a SpatialData store: a .zarr directory, or a .zarr.zip / .zarr.tar.gz archive",
+    tooltip=("Path to a SpatialData store: a .zarr directory, a .zarr.zip / .zarr.tar.gz "
+             "archive, or the folder of a version saved in the Cirro app"),
     path_kind="either")
 
 
@@ -29,15 +31,19 @@ class ReadSpatialDataZarr(Function):
     input_kind = "either"
     label = "SpatialData zarr (.zarr / .zip / .tar.gz)"
     citation = ("SpatialData (Marconato, L., Palla, G., Yamauchi, K.A. et al. Nat Methods 22, "
-                "58-62 (2025)); .zarr.zip / .zarr.tar.gz archive extraction added in this repository.")
+                "58-62 (2025)); .zarr.zip / .zarr.tar.gz archive extraction and saved-version "
+                "reading added in this repository.")
     documentation = custom_doc("spatialdata-zarr-import")
-    summary = "Open a SpatialData store: a .zarr directory, or a .zarr.zip / .zarr.tar.gz archive."
+    summary = ("Open a SpatialData store: a .zarr directory, a .zarr.zip / .zarr.tar.gz archive, "
+               "or a version saved in the Cirro app.")
     doc = """SpatialData zarr import
 
-Opens an existing SpatialData store as a new session. Accepts either a `.zarr`
-directory or a compressed archive of one (`.zarr.zip` or `.zarr.tar.gz`); an
-archive is unpacked to a temporary directory that the session owns and cleans up
-when it closes. This is the raw-import counterpart to opening an app checkpoint —
+Opens an existing SpatialData store as a new session. Accepts a `.zarr` directory,
+a compressed archive of one (`.zarr.zip` or `.zarr.tar.gz`), or the folder of a
+version saved in the Cirro app, which holds only what it changed over the store
+below it; an archive is unpacked, and a version assembled with everything below it,
+into a temporary directory that the session owns and cleans up when it closes. This
+is the raw-import counterpart to opening an app checkpoint —
 the session starts with fresh displays and plots, but if the store was written by
 this app its recorded compute history is carried into the new session, so the
 provenance of the data stays visible in History.
@@ -45,8 +51,8 @@ provenance of the data stays visible in History.
 Parameters
 ----------
 store
-    Path to the SpatialData store (a `.zarr` directory, or a `.zarr.zip` /
-    `.zarr.tar.gz` archive) under the data directory.
+    Path to the SpatialData store (a `.zarr` directory, a `.zarr.zip` /
+    `.zarr.tar.gz` archive, or a saved version's folder) under the data directory.
 """
     params = [_STORE_PARAM]
 

@@ -17,12 +17,18 @@ or write the stack out as one ordinary store, which is what ``spatialdata.read_z
 needs: it opens a path, or a group on a local or fsspec store, but not the store
 ``open_stack`` returns::
 
-    python sds_layers.py flatten downloads/<top version id> out.zarr
+    python backend/app/persistence/sds_layers.py flatten downloads/<top version id> out.zarr
 
 Flattening a stack whose base is a ``.zarr`` folder links the base's objects instead of
 copying them (``--copy`` to copy); a ``.zarr.zip`` base is extracted.
 
-Only the standard library and zarr-python 3 are needed.
+Where dataset folders are named otherwise, as in a Cirro workspace, which mounts each
+attached dataset under its name, pass a map from dataset ID to folder name (``folders``,
+or ``--folders`` with a JSON object such as ``"$SDS_CIRRO_DATASETS"``). A dataset the map
+names is looked up in its folder, any other by its ID.
+
+Only the standard library and zarr-python 3 are needed. The Studio's backend opens
+versions through this file too (``persistence/store.py``).
 """
 
 from __future__ import annotations
@@ -33,7 +39,7 @@ import re
 import shutil
 import sys
 import zipfile
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncIterator, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -82,16 +88,37 @@ def parse_ref(ref: str) -> tuple[str, str]:
     return parts[3], path
 
 
-def _dataset_file(datasets: Path, dataset_id: str, path: str) -> Path:
+class MissingDataset(FileNotFoundError):
+    """A dataset of the stack is not in the datasets folder."""
+
+    def __init__(self, dataset_id: str, folder: Path):
+        super().__init__(f"dataset {dataset_id} is not at {folder}")
+        self.dataset_id = dataset_id
+
+
+def _dataset_folder(datasets: Path, dataset_id: str, folders: Mapping[str, str] | None) -> Path:
+    if folders is None or dataset_id not in folders:
+        return datasets / dataset_id
+    # The map is the deployment's, not the manifest's, but a folder it names is held to
+    # the rules a dataset ID's folder meets by construction: one inside `datasets`.
+    where = f"the folder of dataset {dataset_id}"
+    folder = datasets / _check_relative(folders[dataset_id], where)
+    _check_inside(folder, datasets, where)
+    return folder
+
+
+def _dataset_file(datasets: Path, dataset_id: str, path: str,
+                  folders: Mapping[str, str] | None = None) -> Path:
     """Where a downloaded dataset's file is: under ``data/`` or at the folder's top."""
-    folder = datasets / dataset_id
+    folder = _dataset_folder(datasets, dataset_id, folders)
+    if not folder.is_dir():
+        raise MissingDataset(dataset_id, folder)
     for candidate in (folder / "data" / path, folder / path):
         if candidate.exists():
             _check_inside(candidate, folder, f"{path!r} in dataset {dataset_id}")
             return candidate
     raise FileNotFoundError(
-        f"dataset {dataset_id} is not downloaded under {datasets} "
-        f"(looked for {path!r} in {folder}/data and {folder})"
+        f"dataset {dataset_id} has no {path!r} (looked in {folder}/data and {folder})"
     )
 
 
@@ -137,13 +164,17 @@ class Stack:
     versions: list[Version]
 
     @classmethod
-    def resolve(cls, top: Path, datasets: Path | None = None) -> Stack:
+    def resolve(cls, top: Path, datasets: Path | None = None,
+                folders: Mapping[str, str] | None = None) -> Stack:
         """Follow ``parent`` references down from ``top``.
 
         ``top`` is a version's folder (or its ``layer.json``); parents are looked up in
-        ``datasets`` (default: the folder holding ``top``'s dataset folder) by dataset ID.
+        ``datasets`` (default: the folder holding ``top``'s dataset folder), in the folder
+        ``folders`` maps their dataset ID to, or else in the one named by the ID.
         """
-        manifest_path = top if top.name == LAYER_MANIFEST else _find_manifest(top)
+        manifest_path = top if top.name == LAYER_MANIFEST else find_manifest(top)
+        if manifest_path is None:
+            raise FileNotFoundError(f"no {LAYER_MANIFEST} in {top} or {top / 'data'}")
         if datasets is None:
             datasets = _dataset_root(manifest_path)
         versions = []
@@ -155,7 +186,7 @@ class Stack:
             versions.append(current)
             ref = current.manifest["parent"]
             dataset_id, path = parse_ref(ref)
-            target = _dataset_file(datasets, dataset_id, path)
+            target = _dataset_file(datasets, dataset_id, path, folders)
             if target.name != LAYER_MANIFEST:
                 return cls(target, list(reversed(versions)))
             if target.resolve() in seen:
@@ -196,11 +227,12 @@ class Stack:
 _BASE = Path("<base>")
 
 
-def _find_manifest(folder: Path) -> Path:
+def find_manifest(folder: Path) -> Path | None:
+    """``folder``'s ``layer.json``, under ``data/`` or at its top; None when it has none."""
     for candidate in (folder / "data" / LAYER_MANIFEST, folder / LAYER_MANIFEST):
-        if candidate.exists():
+        if candidate.is_file():
             return candidate
-    raise FileNotFoundError(f"no {LAYER_MANIFEST} in {folder} or {folder / 'data'}")
+    return None
 
 
 def _dataset_root(manifest_path: Path) -> Path:
@@ -222,11 +254,12 @@ def _base_keys(base: Path) -> Iterable[str]:
 def flatten(stack: Stack, out: Path, link: bool = True) -> int:
     """Write the stack as one ordinary ``.zarr`` folder; returns the number of objects.
 
-    With ``link``, objects from a folder base are symbolic links into it, so flattening a
-    large store costs only the version's own objects.
+    ``out`` must not exist, or be an empty folder. With ``link``, objects from a folder
+    base are symbolic links into it, so flattening a large store costs only the version's
+    own objects.
     """
-    if out.exists():
-        raise FileExistsError(f"{out} exists; flatten writes a new folder")
+    if out.exists() and not (out.is_dir() and not any(out.iterdir())):
+        raise FileExistsError(f"{out} exists; flatten writes a new or empty folder")
     zipped = None if stack.base.is_dir() else zipfile.ZipFile(stack.base)
     count = 0
     try:
@@ -253,12 +286,13 @@ def flatten(stack: Stack, out: Path, link: bool = True) -> int:
     return count
 
 
-def open_stack(top: str | Path, datasets: str | Path | None = None):
+def open_stack(top: str | Path, datasets: str | Path | None = None,
+               folders: Mapping[str, str] | None = None):
     """A read-only zarr store over the stack, for ``zarr.open_group``.
 
     ``spatialdata.read_zarr`` can't read it; ``flatten`` the stack for that.
     """
-    stack = Stack.resolve(Path(top), Path(datasets) if datasets else None)
+    stack = Stack.resolve(Path(top), Path(datasets) if datasets else None, folders)
     return _stack_store_class()(stack)
 
 
@@ -341,19 +375,29 @@ def _stack_store_class():
     return StackStore
 
 
+def _folder_map(text: str) -> dict[str, str]:
+    folders = json.loads(text)
+    if not isinstance(folders, dict):
+        raise argparse.ArgumentTypeError("expected a JSON object of dataset ID to folder name")
+    return folders
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
     f = sub.add_parser("flatten", help="write a version stack out as one .zarr folder")
     f.add_argument("version", type=Path, help="the top version's dataset folder (or its layer.json)")
     f.add_argument("out", type=Path, help="the .zarr folder to write")
-    f.add_argument("--datasets", type=Path, help="folder holding every dataset of the stack by ID")
+    f.add_argument("--datasets", type=Path, help="folder holding every dataset of the stack")
+    f.add_argument("--folders", type=_folder_map,
+                   help="JSON object naming the folder of each dataset ID not in a folder of that name")
     f.add_argument("--copy", action="store_true", help="copy a folder base's objects instead of linking them")
     d = sub.add_parser("describe", help="list a stack's versions, bottom to top")
     d.add_argument("version", type=Path)
     d.add_argument("--datasets", type=Path)
+    d.add_argument("--folders", type=_folder_map)
     args = parser.parse_args(argv)
-    stack = Stack.resolve(args.version, args.datasets)
+    stack = Stack.resolve(args.version, args.datasets, args.folders)
     if args.command == "describe":
         print(f"base: {stack.base}")
         for i, v in enumerate(stack.versions, 1):

@@ -141,7 +141,9 @@ async def cirro_upload(body: dict, x_sds_cirro_token: str | None = Header(defaul
     resolved: list[str] = []
     for p in session_paths:
         target = Path(p).resolve()
-        if not within_data_dir(target) or not target.exists():
+        # A file: the picker this comes from (`GET /api/fs/datasets`) also lists the
+        # folders of saved versions, which the serverless bundle can't open.
+        if not within_data_dir(target) or not target.is_file():
             raise HTTPException(400, f"not a saved checkpoint session: {p}")
         resolved.append(str(target))
     upload_id = UPLOADS.submit(x_sds_cirro_token, cred, body["project_id"],

@@ -102,7 +102,9 @@ backend/    FastAPI app
                   (streams a running reader's log to the client live during import)
   app/recipes/    curated analysis recipes — JSON bundle files, discovered at startup
   app/persistence/ store (.zarr / .zarr.zip; also the raster sharding + `viewer/` sidecar
-                  that make a checkpoint readable by the serverless viewer)
+                  that make a checkpoint readable by the serverless viewer); sds_layers.py
+                  reads a Cirro app version stack (docs/LAYER_FORMAT.md): the backend opens
+                  versions through it, and it runs standalone as a CLI
   app/imaging.py  tiled image pyramid + channel compositing + coordinate reconciliation;
                   the /image/{element}/info manifest also advertises the client-compositing
                   path (raster_base_url, zarr_group_path, contrast_limits, is_rgb)
@@ -113,7 +115,7 @@ backend/    FastAPI app
                   per-session on-disk zarr store is also served raw (see the raster route)
                   for client-side (Viv) GPU compositing, with WebP tiles as the fallback
   app/snapshots.py matplotlib figure render (vector PDF/raster PNG) + gallery list/delete
-  app/datasets.py saved-checkpoint scan for the load/upload pickers (prewarmed cache) +
+  app/datasets.py saved-checkpoint and saved-version scan for the load/upload pickers (prewarmed cache) +
                   the one-level data-dir browse behind /api/fs/browse and browse_data_dir
   app/prewarm.py  background async queue that warms slow first-open menu lists off the event loop
   app/cirro.py    Cirro dataset upload (per-browser device-code auth, symlink-based upload folder)
@@ -158,7 +160,6 @@ cirro-studio/  the Cirro app: a front-end-only OAuth app over the same viewer li
                   editor, layer.json (docs/LAYER_FORMAT.md)
   src/analysis/   the in-browser analyses (Wilcoxon, PCA/kNN/Leiden, Moran's I,
                   neighborhood enrichment, niches, gene scores), run in a Web Worker
-  python/sds_layers.py  reading a version stack from Python
 nextflow/   The workflow (one entrypoint), wrapping backend/cli.py; uv installs deps at
             runtime, so there is no image build
   main.nf           discover datasets under an input -> per-type recipes -> mirrored
@@ -234,12 +235,13 @@ Component-level notes: [`backend/README.md`](backend/README.md),
 | Change how a reader param is classified as a folder/file/value input | `backend/app/registry/reader_paths.py` (`path_kind` + the absolute/relative path sets, shared with `sessions/manager.py` validation) | [docs/CONTRACT.md](docs/CONTRACT.md) |
 | Change how a snapshot figure renders or what it embeds | `backend/app/snapshots.py` (render + metadata) + `frontend/src/components/SnapshotExportModal.tsx` (framing/output) + `frontend/src/components/SnapshotBrowser.tsx` (gallery) | [DESIGN.md](DESIGN.md) §14 |
 | Change Cirro upload | `backend/app/cirro.py` (client + bundle + `UploadQueue`) + `backend/app/routers/cirro.py` (routes) + `frontend/src/components/CirroUploadDialog.tsx` | [DESIGN.md](DESIGN.md) §15 |
-| Change the Cirro app's version format (layer.json, the overlay, how a stack is read) | `cirro-studio/src/stack/` (`manifest.ts`, `layeredStore.ts`, `editor.ts`, `zarrWrite.ts`) + `cirro-studio/python/sds_layers.py` (the Python reader) + [docs/LAYER_FORMAT.md](docs/LAYER_FORMAT.md) in the same commit; `src/stack/python.test.ts` reads a written stack back with anndata | [docs/LAYER_FORMAT.md](docs/LAYER_FORMAT.md) |
+| Change the Cirro app's version format (layer.json, the overlay, how a stack is read) | `cirro-studio/src/stack/` (`manifest.ts`, `layeredStore.ts`, `editor.ts`, `zarrWrite.ts`) + `backend/app/persistence/sds_layers.py` (the Python reader, which the Studio also opens versions through) + [docs/LAYER_FORMAT.md](docs/LAYER_FORMAT.md) in the same commit; `src/stack/python.test.ts` reads a written stack back with anndata, and `test_e2e.run_version_flow` opens a hand-written one in the Studio | [docs/LAYER_FORMAT.md](docs/LAYER_FORMAT.md) |
 | Change an analysis the Cirro app runs in the browser | `cirro-studio/src/analysis/` (the method + its test), `ops.ts` (the worker's operation table) and `defaults.ts` (the parameters a panel records in a version's provenance); its panel in `cirro-studio/src/tasks/`, listed in `TASKS` in `TaskList.tsx` (with the kind of report it keeps) | [cirro-studio/README.md](cirro-studio/README.md) |
 | Change what an analysis's report shows in the Cirro app | `cirro-studio/src/reports/<Kind>Report.tsx` (registered by kind in `ReportView.tsx`), drawn from what the task keeps with `keepResult` (`reports/store.ts`: the tables and `meta.summary`); shared parts (stat tiles, sections, the gene-set action, tissue thumbnails) in `reports/parts.tsx` and `src/charts/` | [docs/LAYER_FORMAT.md](docs/LAYER_FORMAT.md) |
 | Change which datasets the Cirro app recognizes, or what it finds in them | `cirro-studio/src/data/discover.ts` (stores, images, versions; runs come from `nextflow/data_types.json`) + `cirro-studio/src/cirro/cirroCollection.ts` (`worthScanning`) + `catalogSheet.ts` (the project catalog's columns) | [cirro-studio/README.md](cirro-studio/README.md) |
 | Change how the Cirro app lays out an opened item, or its look | `cirro-studio/src/item/ViewFrame.tsx` (the view edge to edge, the drawers, `[` / `]` / `\`, the bar over the view) + `ViewTabs.tsx` (the views) + `ViewTools.tsx` (scale bar, zoom and fit on the canvas) + `StorePage.tsx`; how a store first looks (its color or else outlined cells, its backdrop, the color the views share) in `displayState.ts`; the docked display settings in `LensCanvas.tsx`, styled by `src/styles/studio-ui.css`; the palette in `cirro-studio/src/styles/tokens.css`, which mirrors `frontend/src/index.css` (change both) | [cirro-studio/README.md](cirro-studio/README.md) |
 | Change the Cirro app's sign-in, tenants or permissions | `cirro-studio/src/auth.ts` + `signInState.ts` + `tenants.ts` + `public/tenants.json` / `deploy/tenants.json` + `cirro-permissions.json` | [cirro-studio/README.md](cirro-studio/README.md) |
+| Change how the Cirro app starts and manages workspaces running the full Studio | `cirro-studio/src/workspaces/` (`cirro.ts`: the environment, folder names, sizes, the per-user limit, Cirro's lifecycle; `Workspaces.tsx`: the top-bar button and sheet; `NewWorkspace.tsx`: the form; `request.ts`: what an item asks for) + `cirro-permissions.json`; the Studio reads the folder map (`SDS_CIRRO_DATASETS`) in `backend/app/config.py` | [cirro-studio/README.md](cirro-studio/README.md#workspaces) |
 | Change Cirro login (device code, credential scoping, expiry) | `backend/app/cirro.py` (`CredentialStore`, `start_login`) + `backend/app/routers/cirro.py` (`/api/cirro/auth`) + `frontend/src/components/CirroConnectDialog.tsx` + the token helpers in `frontend/src/api.ts` | [DESIGN.md](DESIGN.md) §15 |
 
 ### The canvas host seam
@@ -470,6 +472,12 @@ and snapshots all live there; `run.sh` sets it to `data/` (or `test-data/` with
 defaults to `$HOME` (the container image relies on this, running from `$HOME`
 where the deployment environment mounts datasets, e.g. `$HOME/datasets`).
 
+In a Cirro workspace the attached datasets are mounted read-only under
+`$HOME/datasets/<folder name>`, and the Cirro app sets `SDS_CIRRO_DATASETS` to a JSON
+object mapping each dataset ID to its folder. That map is how a saved version's parent
+is found ([docs/LAYER_FORMAT.md](docs/LAYER_FORMAT.md#in-the-studio)). `run.sh` leaves it
+unset.
+
 `SDS_APP_URL` is the URL a *person* opens the app at; the MCP assistant quotes it
 when directing the user to a session. `run.sh` defaults it to the Vite dev server
 (`http://localhost:5173`); docker-compose sets it to the published port. The MCP
@@ -478,8 +486,8 @@ endpoint itself rides the backend (`POST /api/mcp` on :8000 in dev) — the repo
 `SDS_MCP_IDLE_RELEASE_S` (default 900) is how long the assistant's presence (and any
 edit lock it holds) survives without a tool call.
 
-The *working set* — the unpacked `.zarr.zip` extract dir and per-session normalized
-raster caches (each up to a few hundred MB) — lives separately under `SDS_WORK_DIR`,
+The *working set* — the unpacked `.zarr.zip` extract dir, the flattened copy of an
+opened version, and per-session normalized raster caches (each up to a few hundred MB) — lives separately under `SDS_WORK_DIR`,
 kept out of `DATA_DIR` so a transient `*.zarr` extract never shows up in the dataset
 picker. For local dev, `run.sh` creates a dedicated `sds-work.XXXXXX` dir under the
 system temp dir and **deletes it on exit** (its cleanup trap fires on normal exit,
@@ -789,9 +797,11 @@ Pull requests build but do not publish.
 - `npm run test:studio` — the Cirro app's unit tests (vitest): the version stack (writing
   AnnData columns, embeddings and `uns` into a draft over a real checkpoint, and the
   viewer reading the result), the draft's change list, the in-browser analyses against
-  reference values, figure export, and where a page load starts and what the log-in box
-  suggests (`src/tenants.test.ts`). `src/stack/python.test.ts` also reads a written
-  two-version stack back with anndata and spatialdata through `python/sds_layers.py`,
+  reference values, figure export, where a page load starts and what the log-in box
+  suggests (`src/tenants.test.ts`), and a workspace's folder names, machine sizes,
+  folder map and Cirro's limit refusal (`src/workspaces/workspaces.test.ts`).
+  `src/stack/python.test.ts` also reads a written two-version stack back with anndata
+  and spatialdata through `backend/app/persistence/sds_layers.py`,
   and checks that `flatten` refuses a stack whose manifests reach outside their folders;
   it runs where `.venv-introspect` exists and skips itself elsewhere (CI).
 
@@ -830,6 +840,12 @@ Pull requests build but do not publish.
   are absent), viewer
   presence + the per-session edit lock (auto-lock on attach, 423 for everyone else,
   release → take, and the heartbeat timeout freeing a lock — `run_session_lock_flow`),
+  a saved version opened as in a Cirro workspace (`run_version_flow`: a hand-written
+  version over a read-only copy of the Visium store, found through the
+  `SDS_CIRRO_DATASETS` folder map — listed by the open dialog and browse, opened from a
+  private flattened copy, saved as a new checkpoint while a save over the version is
+  refused, both dataset folders unchanged, and a 400 naming a parent that isn't
+  attached),
   the MCP assistant surface over the real `/api/mcp` transport (`run_mcp_flow`:
   initialize/tools, reader-backed create_session, lock takeover etiquette,
   compute+plot+`view_plot` PNG, and the vision coordinate contract — the

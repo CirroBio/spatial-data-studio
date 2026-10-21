@@ -170,14 +170,17 @@ within one section, so its p-values describe this sample — use *Pseudobulk DE
 ## SpatialData zarr import
 
 `io.read_zarr` (read). Opens an existing SpatialData store as a new session for
-the "Import Data" flow. Accepts either a `.zarr` directory or a compressed
-archive of one (`.zarr.zip` or `.zarr.tar.gz`); an archive is unpacked to a
-temporary directory the session owns and removes on close. Wraps
-`spatialdata.read_zarr` — the reflected reader alone only opens a `.zarr`
-directory, so the archive handling is added here. Displays, plots and the rest of
-the `app_state` in the object are not reloaded (raw import, not a checkpoint
-reload), but a compute history recorded by this app is carried into the new
-session so the provenance of the data stays visible in History.
+the "Import Data" flow. Accepts a `.zarr` directory, a compressed archive of one
+(`.zarr.zip` or `.zarr.tar.gz`), or the folder of a version saved in the Cirro app
+([docs/LAYER_FORMAT.md](../../../../docs/LAYER_FORMAT.md)), which holds only what it
+changed over the store below it. An archive is unpacked, and a version assembled with
+everything below it, into a temporary directory the session owns and removes on
+close. Wraps `spatialdata.read_zarr` — the reflected reader alone only opens a
+`.zarr` directory, so the archive and version handling is added here. Displays,
+plots and the rest of the `app_state` in the object are not reloaded (raw import,
+not a checkpoint reload), but a compute history recorded by this app is carried
+into the new session so the provenance of the data stays visible in History.
 
 **Citation:** SpatialData (Marconato et al., Nat Methods 22, 58-62 (2025));
-`.zarr.zip` / `.zarr.tar.gz` archive extraction original to this repository.
+`.zarr.zip` / `.zarr.tar.gz` archive extraction and saved-version reading original to
+this repository.

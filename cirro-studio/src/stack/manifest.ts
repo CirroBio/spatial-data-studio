@@ -1,7 +1,7 @@
 // `layer.json`: the manifest of one saved version. A version is a dataset holding this
 // file and, under `overlay/`, only the store objects the version added or replaced. The
 // format is specified in docs/LAYER_FORMAT.md; the Python reader in
-// cirro-studio/python/sds_layers.py reads the same file.
+// backend/app/persistence/sds_layers.py reads the same file.
 import { z } from 'zod';
 
 export const LAYER_FORMAT = 'spatial-data-studio.layer';

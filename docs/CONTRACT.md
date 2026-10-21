@@ -53,8 +53,8 @@ ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_cate
 | GET  | `/api/functions/coverage` | — | parameter-term coverage report (unmatched params ranked by reuse) |
 | GET  | `/api/sessions` | — | `{sessions:[SessionSummary]}` |
 | POST | `/api/sessions` | `{name?, source:{kind:"read"|"load", ...}, load_id?}` | `SessionSummary` — returned immediately with `status:"loading"` for both kinds; the checkpoint unzip/read/re-tile (`load`) and the reader bootstrap (`read`) run on the session's worker, so the load never blocks the request past a fronting proxy's origin timeout. `load_id` is a client nonce to receive `session.loading` progress + the terminal event during a `load`; the load's `hash_check` rides that terminal event (no longer in this response body). |
-| GET  | `/api/fs/datasets` | — | `{datasets:[{name, path}]}` (loadable `.zarr`/`.zarr.zip` found under the data roots + CWD; New Session picker) |
-| GET  | `/api/fs/browse?path=&include_files=` | — | `{path, parent, entries:[{name, path, kind:"dir"\|"dataset"\|"file"}]}` (folder navigation for raw-data import) |
+| GET  | `/api/fs/datasets` | — | `{datasets:[{name, path, mtime}]}` (saved checkpoints `*.sdata.zarr.zip` and the folders of saved versions, see [LAYER_FORMAT.md](LAYER_FORMAT.md), found under the data dir; New Session picker) |
+| GET  | `/api/fs/browse?path=&include_files=` | — | `{path, parent, entries:[{name, path, kind:"dir"\|"dataset"\|"file"}]}` (folder navigation for raw-data import; a saved version's folder is a `dataset`) |
 | GET  | `/api/sessions/{id}` | — | `SessionState` |
 | GET  | `/api/sessions/{id}/obs/{column}/values` | — | `{column, values:[{value,count}]}` (unique values of a categorical column, for Edit Annotations) |
 | GET  | `/api/sessions/{id}/var-names?q=&limit=` | — | `{names:[str]}` (server-side gene-name search, prefix matches first; keeps type-to-search responsive on datasets with tens of thousands of genes) |
@@ -176,7 +176,7 @@ for 20 s drops out and releases its lock. Full rules: DESIGN §16.5.
 
 ### Session source on create
 - read:  `{kind:"read", namespace:"read", function:"visium", params:{path:"..."}}` — any `path`/`input`/`image_path`/`alignment_file` param must resolve under `DATA_DIR`, else 400. `namespace` is **required** and must be `read` (squidpy) or `io` (spatialdata-io): several reader names exist in both, so there is no safe default. The same containment check applies to a reader re-run on an already-open session (`POST /jobs`, `/jobs/stage`, `/pending/{id}`, `/recipe/run`, and the MCP `run_function`/`create_session` tools), not only at create time. A relative filename param (`counts_file`/`meta_file`/… — see `registry/reader_paths.py`) is checked joined onto the primary path; a path param given as an object or array instead of a string (merscope's `vpt_outputs`) has every string inside it checked as a complete path under `DATA_DIR`, so those values must be absolute, else 400.
-- load:  `{kind:"load", path:"/data/visium_hne.zarr"}` — `path` must resolve under `DATA_DIR` (the same allowlist as `/api/fs/browse`), else 400. `POST /api/sessions/{id}/save`'s `path` (and `folder`) must also resolve under `DATA_DIR`, else 400.
+- load:  `{kind:"load", path:"/data/visium_hne.zarr"}` — `path` must resolve under `DATA_DIR` (the same allowlist as `/api/fs/browse`), else 400. `path` may also be a saved version's folder ([LAYER_FORMAT.md](LAYER_FORMAT.md#in-the-studio)); one whose stack can't be followed — a parent dataset that isn't attached, a malformed manifest, a folder outside `DATA_DIR` — is a 400 naming why. `POST /api/sessions/{id}/save`'s `path` (and `folder`) must also resolve under `DATA_DIR`, else 400.
 
 ### Save `include`
 `{"images": [], "shapes": ["cells"]}` — facet (`images|labels|points|shapes|tables`) to

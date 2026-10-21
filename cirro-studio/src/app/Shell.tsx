@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { lazy, Suspense, useState, type ReactNode } from 'react';
 import type { Project } from '@cirrobio/api-client';
 import { describeError, type CirroSession } from '../cirro/session';
 import { forgetTenant, openExamples, showLanding, showSignIn } from '../tenants';
@@ -8,6 +8,9 @@ import { navigate, useRoute } from './route';
 import { useOptionalStudio } from './studio';
 import { Popover } from './ui';
 import { countCirroDrafts } from '../workbench/workbench';
+
+// Only a signed-in project loads it, with the Cirro client its workspaces need.
+const Workspaces = lazy(() => import('../workspaces/Workspaces'));
 
 const Chevron = () => <svg className="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.6" /></svg>;
 
@@ -142,6 +145,7 @@ function AccountMenu({ session }: { session: CirroSession | null }) {
 export function Shell({ session, projects, children }: {
   session: CirroSession | null; projects: Project[] | null; children: ReactNode;
 }) {
+  const studio = useOptionalStudio();
   return (
     <div className="shell">
       <header className="shell-topbar">
@@ -152,6 +156,7 @@ export function Shell({ session, projects, children }: {
         </nav>
         <span className="shell-spacer" />
         <CatalogStatus />
+        {session && studio && <Suspense fallback={null}><Workspaces session={session} /></Suspense>}
         <AccountMenu session={session} />
       </header>
       <main className="shell-main">{children}</main>

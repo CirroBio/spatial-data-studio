@@ -56,9 +56,10 @@ import spatialdata as sd
 import xarray
 import zarr
 
-from ..config import _within_dir, config
+from ..config import _within_dir, config, within_data_dir
 from ..schemas import checkpoint as checkpoint_schemas
 from ..sessions import appstate
+from . import sds_layers
 
 _log = logging.getLogger(__name__)
 _log.setLevel(logging.INFO)
@@ -216,16 +217,60 @@ def _extraction_dir():
         raise
 
 
+def version_stack(path: str) -> sds_layers.Stack | None:
+    """The stack topped by the saved version (docs/LAYER_FORMAT.md) in the directory
+    `path` — one holding `layer.json` or `data/layer.json` — or None when `path` is not
+    one.
+
+    Parents are found through `config.CIRRO_DATASETS` in a Cirro workspace, and
+    otherwise in the folder named by their dataset ID, beside the version's own. A
+    manifest is downloaded data, so where it leads is checked like any client path:
+    every folder the stack reads must be under DATA_DIR."""
+    if not os.path.isdir(path) or sds_layers.find_manifest(Path(path)) is None:
+        return None
+    try:
+        stack = sds_layers.Stack.resolve(Path(path), folders=config.CIRRO_DATASETS)
+    except sds_layers.MissingDataset as e:
+        if config.CIRRO_DATASETS is None:
+            raise
+        raise FileNotFoundError(f"This version is built on dataset {e.dataset_id}, "
+                                "which isn't attached to this workspace") from None
+    except ValueError as e:
+        raise RuntimeError(f"{path} is not a version the Studio can open: {e}") from e
+    for folder in [stack.base, *(v.folder for v in stack.versions)]:
+        if not within_data_dir(folder.resolve()):
+            raise RuntimeError(f"the version at {path} reads {folder}, outside the data directory")
+    return stack
+
+
 def read_spatialdata_archive(path: str, progress=None):
-    """Read a SpatialData zarr store from a bare `.zarr` directory, a `.zarr.zip`,
-    or a `.zarr.tar.gz` archive. Returns (sdata, extract_dir, hash_check);
-    `extract_dir` is the temp directory an archive was unpacked into (None for a bare
-    directory) — zarr maps chunks from it lazily, so the caller owns cleanup for the
-    object's lifetime. `hash_check` is the embedded-content-hash verification result
-    (`_hash_result`), or None when the name carries no hash to verify. Shared by the
-    checkpoint load path and the SpatialData-zarr import reader. `progress(message,
-    pct)` (optional) reports extraction/read progress; see `create_from_load`."""
+    """Read a SpatialData zarr store from a bare `.zarr` directory, a `.zarr.zip`, a
+    `.zarr.tar.gz` archive, or a saved version's folder (`version_stack`). Returns
+    (sdata, extract_dir, hash_check); `extract_dir` is the temp directory an archive was
+    unpacked into, or a version flattened into (None for a bare directory) — zarr maps
+    chunks from it lazily, so the caller owns cleanup for the object's lifetime.
+    `hash_check` is the embedded-content-hash verification result (`_hash_result`), or
+    None when the name carries no hash to verify. Shared by the checkpoint load path and
+    the SpatialData-zarr import reader. `progress(message, pct)` (optional) reports
+    extraction/read progress; see `create_from_load`."""
     report = progress or (lambda *a, **k: None)
+    if (stack := version_stack(path)) is not None:
+        with _extraction_dir() as extract_dir:
+            report("Assembling the version…")
+            # Copied, not linked, so the extract dir is the session's own writable store
+            # exactly as an unzipped checkpoint is. Links into the base (a read-only,
+            # possibly slow mount in a workspace) would leave each in-place write there —
+            # `update_checkpoint`, the sidecar refresh — one plain `open()` away from
+            # writing through into the base. And they 404 every chunk of an image already
+            # tile-chunked (any store the Studio wrote): `rasters.normalize_rasters` serves
+            # such an image in place from under WORK_DIR, and the raster route refuses a
+            # file whose real path leaves the store (`routers/imaging._raster_file`). The
+            # copy costs the base's size in WORK_DIR (RAM in the image), what opening the
+            # same store as a `.zarr.zip` costs; a `.zarr.zip` base, the usual kind, is
+            # extracted anyway.
+            sds_layers.flatten(stack, Path(extract_dir), link=False)
+            report("Reading data tables…")
+            return sd.read_zarr(extract_dir), extract_dir, None
     if path.endswith((".zarr.tar.gz", ".zarr.tgz")):
         with _extraction_dir() as extract_dir:
             report("Extracting checkpoint…")
@@ -297,7 +342,8 @@ def _extract_zip_verifying(path: str, extract_dir: str, expected: str,
 
 def load_spatialdata(path: str, progress=None):
     """Returns (sdata, app_state, newer, extract_dir, hash_check). `extract_dir` is
-    the temp directory an archive checkpoint was unpacked into — zarr maps chunks
+    the temp directory an archive checkpoint was unpacked into, or a saved version
+    flattened into (see `read_spatialdata_archive`) — zarr maps chunks
     from it lazily for the object's lifetime, so the caller owns cleanup on session
     close. `hash_check` is the embedded-content-hash verification result, verified
     during extraction (see `read_spatialdata_archive`), or None when the name carries
@@ -630,6 +676,11 @@ def _save_dir(sdata, path: str, logs: dict[str, str],
               figures: dict[str, dict[str, bytes]] | None = None) -> str:
     p = Path(path)
     if p.exists():
+        if sds_layers.find_manifest(p) is not None:
+            # A session opened from a version has it as its store path, so a save back
+            # (close with save) lands here and would swap the version for a flat store.
+            raise RuntimeError(f"{path} is a saved version, which a save can't overwrite; "
+                               "save the session as a new checkpoint instead")
         # spatialdata refuses to overwrite its own backing store; write a temp
         # sibling then swap.
         tmp = p.with_name(p.name + ".tmp")
@@ -1681,13 +1732,22 @@ def element_size_mb(sdata, facet: str, name: str,
 
 def estimate_resident_mb(path: str) -> float:
     """Best-effort resident-cost estimate (DESIGN §11.3). Tables load eagerly and
-    dominate; images/labels are lazy/dask. Conservative decompression factor."""
+    dominate; images/labels are lazy/dask. Conservative decompression factor.
+
+    A saved version has no `tables/` of its own. It is flattened into WORK_DIR whole
+    when it opens, as an archive is unpacked there, so it is sized as an archive of its
+    base and its versions' overlay objects would be."""
     p = Path(path)
     DECOMP = 4.0
-    if p.is_dir():
+    if (stack := version_stack(path)) is not None:
+        nbytes = _dir_bytes(stack.base) if stack.base.is_dir() else stack.base.stat().st_size
+        nbytes += sum((v.folder / key).stat().st_size for v in stack.versions for key in v.keys)
+    elif p.is_dir():
         tdir = p / "tables"
         base = tdir if tdir.exists() else p
         factor = 1.0 if tdir.exists() else 0.3
         nbytes = sum(f.stat().st_size for f in base.rglob("*") if f.is_file())
         return round(nbytes * DECOMP * factor / 1e6, 1)
-    return round(p.stat().st_size * DECOMP * 0.3 / 1e6, 1)
+    else:
+        nbytes = p.stat().st_size
+    return round(nbytes * DECOMP * 0.3 / 1e6, 1)

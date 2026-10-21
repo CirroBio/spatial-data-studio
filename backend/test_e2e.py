@@ -564,6 +564,195 @@ def run_zarr_import_flow(client):
     print("[ok] SpatialData-zarr import flow passed")
 
 
+def run_version_flow(client):
+    """A version saved by the Cirro app (docs/LAYER_FORMAT.md), opened as in a Cirro
+    workspace: the base store and the version each sit in a read-only dataset folder named
+    for the dataset, and the parent is found through the workspace's folder map
+    (`config.CIRRO_DATASETS`, from SDS_CIRRO_DATASETS). The version is written here by
+    hand to the format, over the Visium fixture: it replaces the `cluster` obs column (a
+    whiteout of the node plus the new column's objects) and adds `margin_score`.
+
+    Checks that the open dialog's list and the folder browser offer the version, that
+    opening it yields both columns from a private copy (no links into the base), that a
+    save writes a new checkpoint while refusing to write over the version, that neither
+    dataset folder changes, and that a parent which isn't attached fails with a plain
+    message."""
+    import zipfile
+
+    import anndata as ad
+    import numpy as np
+    import pandas as pd
+    import zarr
+
+    from app import datasets
+    from app.deps import MANAGER
+    from app.persistence import store
+    from app.persistence.sds_layers import LAYER_FORMAT, LAYER_FORMAT_VERSION, LAYER_MANIFEST
+
+    # Resolved: the data dir may be reached through a link, and the listings report
+    # resolved paths.
+    staging = pathlib.Path(tempfile.mkdtemp(dir=str(config.DATA_DIR))).resolve()
+    mounts = staging / "datasets"
+    base_dir = mounts / "Visium base store"
+    version_dir = mounts / "Tumor margin regions"
+    orphan_dir = mounts / "Orphan version"
+    base_store = base_dir / "data" / "visium_hne.zarr"  # one dataset with a data/ level...
+    overlay = version_dir / "overlay"                    # ...and one without
+    obs_path = "tables/adata/obs"
+    replaced = f"{obs_path}/cluster/"
+    folders = {"base-0001": base_dir.name, "ver-0002": version_dir.name}
+    workspace_map = config.CIRRO_DATASETS
+    sids = []
+    try:
+        shutil.copytree(DATA, base_store)
+
+        # Edit a hard-linked copy of the base with anndata, then take every object that
+        # differs from the base as the overlay. zarr writes by replacing a file, never in
+        # place, so the links leave the base alone (asserted below).
+        scratch = staging / "scratch.zarr"
+        shutil.copytree(base_store, scratch, copy_function=os.link)
+        obs = zarr.open_group(str(scratch / obs_path), mode="r+")
+        n = obs["_index"].shape[0]
+        is_margin = np.arange(n) % 3 == 0
+        score = np.arange(n, dtype="float64") / n
+        ad.io.write_elem(obs, "cluster", pd.Categorical(np.where(is_margin, "margin", "core")))
+        ad.io.write_elem(obs, "margin_score", score)
+        obs.attrs["column-order"] = [*obs.attrs["column-order"], "margin_score"]
+        store._consolidate(str(scratch))
+
+        def objects(root):
+            return {p.relative_to(root).as_posix(): p for p in root.rglob("*") if p.is_file()}
+        before, after = objects(base_store), objects(scratch)
+        # A whiteout hides the node in the layers below, so the version must carry every
+        # object of the column it replaces, changed or not.
+        keys = sorted(k for k, p in after.items()
+                      if k.startswith(replaced) or k not in before
+                      or p.stat().st_ino != before[k].stat().st_ino)
+        gone = sorted(k for k in before if k not in after and not k.startswith(replaced))
+        for key in keys:
+            (overlay / key).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(after[key], overlay / key)
+        shutil.rmtree(scratch)
+        base_obs = zarr.open_group(str(base_store / obs_path), mode="r")
+        assert "margin_score" not in base_obs.attrs["column-order"], "building the version wrote into the base"
+        assert "margin" not in set(ad.io.read_elem(base_obs["cluster"]).categories)
+        assert f"{obs_path}/margin_score/zarr.json" in keys and "zarr.json" in keys, keys
+
+        ref = "cirro:::dataset:base-0001/visium_hne.zarr"
+        manifest = {
+            "format": LAYER_FORMAT, "format_version": LAYER_FORMAT_VERSION,
+            "parent": ref, "base": ref, "depth": 1,
+            "title": "Margin labels", "message": "", "created_at": "2026-10-21T00:00:00.000Z",
+            "created_by": "test", "app": {"id": "spatial-data-studio", "version": "test"},
+            "overlay": "overlay",
+            "files": [{"key": k, "size": (overlay / k).stat().st_size} for k in keys],
+            "deleted": [replaced, *gone],
+            "changes": [{"op": "set-obs", "table": "adata", "column": "cluster", "kind": "categorical"},
+                        {"op": "set-obs", "table": "adata", "column": "margin_score", "kind": "numeric"}],
+        }
+        (version_dir / LAYER_MANIFEST).write_text(json.dumps(manifest))
+        orphan_dir.mkdir()
+        (orphan_dir / LAYER_MANIFEST).write_text(json.dumps({
+            **manifest, "parent": "cirro:::dataset:gone-9999/layer.json", "title": "Orphan",
+            "files": [], "deleted": []}))
+        print(f"[ok] wrote a version of {len(keys)} objects and {len(manifest['deleted'])} "
+              f"whiteouts over the Visium store")
+
+        # Mounted read-only, as a workspace mounts every attached dataset.
+        for p in [mounts, *mounts.rglob("*")]:
+            p.chmod(0o555 if p.is_dir() else 0o444)
+
+        def snapshot():
+            return {p.relative_to(mounts).as_posix(): (p.stat().st_size, p.stat().st_mtime_ns)
+                    for p in mounts.rglob("*")}
+        untouched = snapshot()
+        config.CIRRO_DATASETS = folders
+
+        datasets.invalidate()
+        listed = [d for d in client.get("/api/fs/datasets").json()["datasets"]
+                  if d["path"].startswith(str(mounts))]
+        assert {d["path"] for d in listed} == {str(version_dir), str(orphan_dir)}, listed
+        entry = next(d for d in listed if d["path"] == str(version_dir))
+        assert entry["name"] == f"{staging.name}/datasets/Tumor margin regions — Margin labels", entry
+        kinds = {e["name"]: e["kind"] for e in
+                 client.get("/api/fs/browse", params={"path": str(mounts)}).json()["entries"]}
+        assert kinds == {"Orphan version": "dataset", "Tumor margin regions": "dataset",
+                         "Visium base store": "dir"}, kinds
+        print(f"[ok] the open dialog lists the version as {entry['name']!r}; browse offers it as a dataset")
+
+        # Sized by its base, as an archive of the same bytes is, not by its overlay alone.
+        estimate = store.estimate_resident_mb(str(version_dir))
+        assert estimate >= round(store._dir_bytes(base_store) * 4.0 * 0.3 / 1e6, 1), estimate
+        print(f"[ok] admission sizes the version at {estimate} MB, by its base")
+
+        r = client.post("/api/sessions", json={"source": {"kind": "load", "path": str(version_dir)}})
+        assert r.status_code == 200, r.text
+        sid = r.json()["id"]
+        sids.append(sid)
+        st = poll(client, sid, lambda s: s["summary"]["status"] in ("ready", "errored"))
+        assert st["summary"]["status"] == "ready", st["summary"]
+        sess = MANAGER.get(sid)
+        assert sess.name == version_dir.name, sess.name
+        links = [p for p in pathlib.Path(sess.extract_dir).rglob("*") if p.is_symlink()]
+        assert not links, f"the flattened version links into the base: {links[:3]}"
+        counts = {v["value"]: v["count"] for v in
+                  client.get(f"/api/sessions/{sid}/obs/cluster/values").json()["values"]}
+        assert counts == {"margin": int(is_margin.sum()), "core": int((~is_margin).sum())}, counts
+        got = fetch_arrow(client, sid, "obs:margin_score").column("value").to_pylist()
+        assert np.allclose(got, score), "margin_score differs from the version's"
+        print(f"[ok] opened the version: cluster replaced ({counts}), margin_score added")
+
+        try:
+            store.save_spatialdata(sess.sdata, str(version_dir), sess.app_state)
+        except RuntimeError as e:
+            assert "saved version" in str(e), e
+        else:
+            raise AssertionError("a save over the version's folder went through")
+        sv = client.post(f"/api/sessions/{sid}/save",
+                         json={"folder": f"{staging.name}/saved", "prefix": "margins"}).json()
+        assert wait_job(client, sid, sv["job_id"])["status"] == "completed"
+        with zipfile.ZipFile(sess.store_path) as zf:
+            assert f"{obs_path}/margin_score/zarr.json" in zf.namelist()
+        print(f"[ok] saved as a new checkpoint {os.path.basename(sess.store_path)}; "
+              "a save over the version is refused")
+
+        assert snapshot() == untouched, "a dataset folder changed"
+        print("[ok] the read-only base and version are as they were")
+
+        attached = "This version is built on dataset gone-9999, which isn't attached to this workspace"
+        r = client.post("/api/sessions", json={"source": {"kind": "load", "path": str(orphan_dir)}})
+        assert r.status_code == 400 and r.json()["detail"] == attached, r.text
+        r = client.post("/api/sessions", json={"source": {
+            "kind": "read", "namespace": "io", "function": "read_zarr", "params": {"store": str(orphan_dir)}}})
+        sids.append(r.json()["id"])
+        st = poll(client, sids[-1], lambda s: s["summary"]["status"] in ("ready", "errored"))
+        assert st["summary"]["status"] == "errored" and attached in st["summary"]["error"], st["summary"]
+        config.CIRRO_DATASETS = None
+        r = client.post("/api/sessions", json={"source": {"kind": "load", "path": str(orphan_dir)}})
+        assert r.status_code == 400 and "dataset gone-9999 is not at" in r.json()["detail"], r.text
+        config.CIRRO_DATASETS = {**folders, "base-0001": "../saved"}
+        r = client.post("/api/sessions", json={"source": {"kind": "load", "path": str(version_dir)}})
+        assert r.status_code == 400 and "not a version the Studio can open" in r.json()["detail"], r.text
+        print("[ok] a parent that isn't attached, or a map leading out of the datasets "
+              "folder, fails with a plain 400")
+
+        extract_dir = sess.extract_dir
+        for s in sids:
+            assert client.delete(f"/api/sessions/{s}").status_code == 200
+        sids.clear()
+        assert not os.path.exists(extract_dir), "closing the session left its flattened copy"
+    finally:
+        config.CIRRO_DATASETS = workspace_map
+        for s in sids:
+            client.delete(f"/api/sessions/{s}")
+        if mounts.exists():
+            for p in [mounts, *mounts.rglob("*")]:
+                p.chmod(0o755 if p.is_dir() else 0o644)
+        shutil.rmtree(staging, ignore_errors=True)
+        datasets.invalidate()
+    print("[ok] version flow passed")
+
+
 def new_session(client, path=DATA):
     """Open a saved checkpoint (`.zarr.zip`/`.sdata.zarr.zip`) via `load`, or bootstrap
     a raw `.zarr` dataset via the `read_zarr` reader. Both live under the single
@@ -3396,6 +3585,7 @@ def main():
             run_pseudobulk_acceptance_flow(client)
         if have_fixture(XENIUM_TMA, "zarr-import flow"):
             run_zarr_import_flow(client)
+        run_version_flow(client)
         run_subset_coordinate_space_flow(client)
         run_cosmx_multiregion_flow(client)
         if have_fixture(XENIUM, "subset coordinate-space flow"):

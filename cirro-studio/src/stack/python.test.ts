@@ -1,6 +1,7 @@
 // A version written by the browser code, read back by anndata and spatialdata through
-// python/sds_layers.py. Needs the repo's Python environment (`.venv-introspect`, see
-// DEVELOPMENT.md); without it there is nothing to run the Python half with.
+// backend/app/persistence/sds_layers.py. Needs the repo's Python environment
+// (`.venv-introspect`, see DEVELOPMENT.md); without it there is nothing to run the Python
+// half with.
 import { execFileSync, spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -16,7 +17,7 @@ import { versionFiles } from './version';
 const REPO = resolve(__dirname, '../../..');
 const PYTHON = join(REPO, '.venv-introspect/bin/python');
 const DEMO = join(REPO, 'docs-site/viewer-data/visium-human-colon.sdata.zarr.zip');
-const READER = resolve(__dirname, '../../python/sds_layers.py');
+const READER = join(REPO, 'backend/app/persistence/sds_layers.py');
 
 const CHECK = `
 import json, sys

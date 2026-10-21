@@ -36,7 +36,8 @@ npm run build:studio                    # cirro-studio/dist
 ```
 
 One test (`src/stack/python.test.ts`) writes a two-version stack with the browser code
-and reads it back with anndata and spatialdata through `python/sds_layers.py`. It needs
+and reads it back with anndata and spatialdata through
+`backend/app/persistence/sds_layers.py`. It needs
 the repo's Python environment (`.venv-introspect`, see
 [`DEVELOPMENT.md`](../DEVELOPMENT.md#local-dev-environment)) and skips itself without it,
 as in CI.
@@ -79,11 +80,19 @@ src/analysis/       the analyses, run in a Web Worker (ops.ts is the table of op
 src/charts/         SVG charts (volcano, heatmap, dot plot, bar list, histogram, scree) and
                     the tissue thumbnails reports draw
 src/figures/        figure specs in uns, and SVG/PNG/PDF export
-python/sds_layers.py  reading a version stack from Python (open in place, or flatten)
+src/workspaces/     Cirro workspaces running the full Studio on chosen items: Cirro's
+                    side (cirro.ts: the environment, mounts, sizes, the per-user limit),
+                    the top-bar button and sheet (Workspaces.tsx, loaded only for a
+                    signed-in project), the form (NewWorkspace.tsx), and what an item
+                    asks for (request.ts)
 examples/           the raw-counts example store (scripts/prepare_studio_example.py)
 deploy/tenants.json the tenants the published site serves
 cirro-permissions.json  what the registration grants, and why
 ```
+
+The Python reader for versions, `backend/app/persistence/sds_layers.py`, lives in the
+Studio's backend, which opens versions through it; it also runs on its own (open a
+stack in place, or flatten it).
 
 `@cirrobio/spatial-viewer` (`packages/viewer`) draws the canvases and reads the stores. It
 resolves to its sources, as it does for the Studio frontend, and is given the composed
@@ -139,6 +148,32 @@ the login in localStorage, shared by every tab, once the tenant's admins have sh
 the refresh-token lifetime on the app's client; the registration has no field for it.
 GitHub Pages can't send a `frame-ancestors` header, so `main.tsx` refuses to run inside
 another page's frame.
+
+## Workspaces
+
+**Open in the full Studio** and the top bar's **Workspaces** start Cirro workspaces from
+Cirro's Spatial Data Studio environment (`cirro-spatial-data-studio`, found by name,
+`Cirro/spatial-data-studio`, where the ID differs), which runs this repo's Docker image.
+Each item brings its datasets, a saved version every dataset beneath it, mounted
+read-only at `$HOME/datasets/<folder>` with the folder named for the dataset (`mountsFor`
+in `src/workspaces/cirro.ts`). A version names its parent by dataset ID, so the
+workspace also gets `SDS_CIRRO_DATASETS`, a JSON map from each dataset ID to its folder,
+which the Studio's backend reads (`backend/app/config.py`) to assemble the stack
+([docs/LAYER_FORMAT.md](../docs/LAYER_FORMAT.md#in-the-studio)).
+
+The rest follows the app kit's workspace guide:
+- **Naming.** Workspaces carry no tags, so the app names its own
+  `spatial-data-studio / …` and leaves a provenance note on each.
+- **Lifecycle.** Auto-stop is two hours, with Extend to postpone it. Each workspace opens
+  in a new tab, with a fresh connection URL every click.
+- **Limits and changes.** Cirro's per-user limit is read from its refusal, with an offer
+  to delete a workspace. A stopped workspace's datasets change in place: `updateWorkspace`,
+  then start.
+- **Sizes.** Machine sizes are the environment's default CPU and memory times 1, 2 or 4.
+- **Loading.** The code loads only for a signed-in project (`Shell.tsx` lazy-loads
+  `Workspaces.tsx`), so the examples never download the Cirro client for it.
+- **Permissions.** The workspace permissions are optional in `cirro-permissions.json`.
+  A registration without them gets Cirro's refusal, worded by `describeError`.
 
 ## Deploying
 
