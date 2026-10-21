@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as Tabs from '@radix-ui/react-tabs';
-import PanelTabs, { type PanelTab } from './PanelTabs';
+import { PanelTabs, type PanelTab } from '@cirrobio/studio-ui';
 import { useAppStore } from '../store/sessionStore';
 import { checkpointUrlFromLocation } from '../data/checkpointIndex';
 import { deleteHistoryEntry, getRecipe, importRecipe, runAllPending } from '../api';

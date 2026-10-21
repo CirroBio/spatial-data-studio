@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, type RefObject } from 'react';
 import type { OrthographicViewState, OrbitViewState } from '@deck.gl/core';
 import type { ScatterPositions } from './useArrowPositions';
-import { ZOOM_LIMITS, fitBounds, finiteMidpoint, measuredCanvasSize, useCanvasSize } from './viewFit';
+import { ZOOM_LIMITS, fitBounds, finiteMidpoint, measuredCanvasSize, useCanvasSize, type FitInset } from './viewFit';
 
 const DEFAULT_ROTATION_X = 25;
 // Let the orbit camera tilt through the full pitch circle (deck defaults to +/-90,
@@ -14,6 +14,8 @@ export type EmbeddingViewState = OrthographicViewState | OrbitViewState;
 interface Params {
   positions: ScatterPositions | null;
   is3d: boolean;
+  // The host's panels over the canvas edges; a fit frames the data between them.
+  inset?: FitInset;
 }
 
 // 2D-or-3D view state for the embeddings scatter: an OrthographicView (pan/zoom)
@@ -21,7 +23,7 @@ interface Params {
 // useCanvasViewState — the view-state shape and view class genuinely differ, and
 // there's no image layer/bounds to union in here.
 export function useEmbeddingViewState(
-  { positions, is3d }: Params,
+  { positions, is3d, inset }: Params,
 ): {
   containerRef: RefObject<HTMLDivElement | null>;
   canvasSize: { width: number; height: number } | null;
@@ -41,7 +43,7 @@ export function useEmbeddingViewState(
   const fitToData = useCallback((): EmbeddingViewState | null => {
     if (!positions) return null;
     const { width, height } = measuredCanvasSize(canvasSize, containerRef);
-    const fit = fitBounds(positions.bounds, width, height);
+    const fit = fitBounds(positions.bounds, width, height, inset);
     if (!fit) return null;
     if (is3d) {
       const { d2min, d2max } = positions.bounds;
@@ -49,7 +51,7 @@ export function useEmbeddingViewState(
       return { target: [fit.centerX, fit.centerY, centerZ], zoom: fit.zoom, rotationX: DEFAULT_ROTATION_X, rotationOrbit: 0, ...ROTATION_LIMITS, ...ZOOM_LIMITS };
     }
     return { target: [fit.centerX, fit.centerY, 0], zoom: fit.zoom, ...ZOOM_LIMITS };
-  }, [positions, is3d, canvasSize, containerRef]);
+  }, [positions, is3d, canvasSize, containerRef, inset]);
 
   // Frames the data on first load, and re-frames whenever the data occupies a different
   // extent — the camera IS in the plotted coordinate space, so one framed for a UMAP's

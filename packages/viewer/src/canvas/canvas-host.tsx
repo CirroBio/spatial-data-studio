@@ -54,6 +54,13 @@ export interface SnapshotHost {
   readonly setSnapshotHandler: (fn: (() => void) | null) => void;
 }
 
+/** Pixels of a canvas' edges a host covers with panels of its own (CanvasHost.overlayInset). */
+export interface OverlayInset {
+  left: number;
+  right: number;
+  top?: number;
+}
+
 export interface CanvasHost {
   /** Label used for snapshot filenames (today: session summary name). */
   readonly viewName: string;
@@ -87,6 +94,18 @@ export interface CanvasHost {
    *  transform through the REST layer), so the canvas only raises the intent and the
    *  host renders the modal. */
   readonly onEditTransform?: () => void;
+  /** Told how many world units one screen (CSS) pixel spans whenever the spatial
+   * canvas' zoom changes, accounting for the image's pixel->world transform: what a
+   * host needs to draw a scale bar. */
+  readonly onView?: (view: { worldPerScreenPixel: number }) => void;
+  /** The banner over a canvas while cells are being selected, given the gesture ("click
+   *  to add points", "drag out a circle"). Without it the banner names the Studio's own
+   *  annotation and subset controls. */
+  readonly drawHint?: (gesture: string) => string;
+  /** Pixels of the canvas' left and right edges (and, optionally, its top) the host
+   *  covers with panels of its own; the legends, minimap and hints keep clear of them.
+   *  The canvas still fills its box. */
+  readonly overlayInset?: OverlayInset;
 }
 
 const CanvasHostContext = createContext<CanvasHost | null>(null);

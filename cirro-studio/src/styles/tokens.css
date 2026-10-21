@@ -1,0 +1,200 @@
+/*
+ * Design tokens: plain CSS custom properties for type, space, color and charts.
+ *
+ * Every token is prefixed --sds- so it can't collide with the viewer library's own
+ * properties. Values are hex; for alpha use
+ * color-mix(in srgb, var(--sds-color-accent) 20%, transparent).
+ *
+ * Dark theme applies with prefers-color-scheme unless the app sets
+ * data-theme="light" on <html>; data-theme="dark" forces it. What sits on the tissue (its
+ * overlays, the views bar over it) takes the canvas backdrop's set instead, whatever the
+ * page's theme: StorePage marks it with data-backdrop.
+ */
+
+:root, [data-backdrop="light"] {
+  /* Type */
+  --sds-font-sans: "Geist Variable", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --sds-font-mono: "Geist Mono Variable", ui-monospace, "SF Mono", Menlo, monospace;
+  --sds-text-xs: 0.75rem;
+  --sds-text-sm: 0.8125rem;
+  --sds-text-md: 0.875rem;   /* body: dense, data-heavy UIs */
+  --sds-text-lg: 1rem;
+  --sds-text-xl: 1.25rem;
+  --sds-text-2xl: 1.5rem;
+  --sds-weight-regular: 400;
+  --sds-weight-medium: 500;
+  --sds-weight-semibold: 600;
+  --sds-leading-tight: 1.25;
+  --sds-leading-normal: 1.5;
+
+  /* Space (4px grid) and shape */
+  --sds-space-1: 4px;
+  --sds-space-2: 8px;
+  --sds-space-3: 12px;
+  --sds-space-4: 16px;
+  --sds-space-6: 24px;
+  --sds-space-8: 32px;
+  --sds-radius-sm: 4px;
+  --sds-radius-md: 6px;
+  --sds-radius-lg: 10px;
+  --sds-topbar-height: 48px;
+
+  /* Surfaces and text (light): the Studio's light theme, Cirro's palette as the portal uses it */
+  --sds-color-bg: #fafbfc;
+  --sds-color-surface: #f2f7f8;
+  --sds-color-surface-raised: #ffffff;
+  --sds-color-border: #e0e0e0;
+  --sds-color-text: #050b26;
+  --sds-color-text-muted: #6b6b6b;
+  --sds-color-accent: #0e7ca0;
+  --sds-color-accent-contrast: #ffffff;
+  --sds-color-focus: #0e7ca0;
+
+  /* Status */
+  --sds-color-success: #2e7d55;
+  --sds-color-warning: #a35b00;
+  --sds-color-danger: #c43d3d;
+  --sds-color-running: #6b46c1;
+  --sds-color-draft: #b4540a;
+
+  /*
+   * Stage tints: what kind of item something is, never data. Images borrow eosin,
+   * runs are the raw grey of an instrument's output, spatial data is the accent, and
+   * figures the ochre of interpretation.
+   */
+  --sds-stage-image: #b0457a;
+  --sds-stage-run: #5f6b7a;
+  --sds-stage-store: #0e7ca0;
+  --sds-stage-figure: #8a6a14;
+
+  --sds-shadow-raised: 0 1px 2px rgb(0 0 0 / 0.06), 0 2px 8px rgb(0 0 0 / 0.06);
+
+  /*
+   * Data palettes. Categorical: Okabe & Ito (2008), colorblind-safe, in this order.
+   * Sequential: viridis. Diverging: blue-white-red, centered on zero.
+   */
+  --sds-cat-1: #0072b2;
+  --sds-cat-2: #e69f00;
+  --sds-cat-3: #009e73;
+  --sds-cat-4: #cc79a7;
+  --sds-cat-5: #56b4e9;
+  --sds-cat-6: #d55e00;
+  --sds-cat-7: #f0e442;
+  --sds-cat-8: #000000;
+  --sds-seq-0: #440154;
+  --sds-seq-25: #3b528b;
+  --sds-seq-50: #21918c;
+  --sds-seq-75: #5ec962;
+  --sds-seq-100: #fde725;
+  --sds-div-neg: #2166ac;
+  --sds-div-mid: #f7f7f7;
+  --sds-div-pos: #b2182b;
+
+  /* Figures exported for publication */
+  --sds-figure-font: "Arial", "Helvetica", sans-serif;
+  --sds-figure-font-size: 7pt;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --sds-color-bg: #070b24;
+    --sds-color-surface: #0b142c;
+    --sds-color-surface-raised: #0f1a30;
+    --sds-color-border: #1e3049;
+    --sds-color-text: #e8eef3;
+    --sds-color-text-muted: #8da0b0;
+    --sds-color-accent: #24bfd3;
+    --sds-color-accent-contrast: #050b26;
+    --sds-color-focus: #24bfd3;
+    --sds-color-success: #4b8f6d;
+    --sds-color-warning: #e3a33b;
+    --sds-color-danger: #da5858;
+    --sds-color-running: #a98bf0;
+    --sds-color-draft: #f0a050;
+    --sds-stage-image: #e58bb5;
+    --sds-stage-run: #a3adba;
+    --sds-stage-store: #24bfd3;
+    --sds-stage-figure: #d9b85c;
+    --sds-shadow-raised: 0 1px 2px rgb(0 0 0 / 0.4), 0 2px 8px rgb(0 0 0 / 0.3);
+    --sds-cat-8: #e6edf1;
+    --sds-div-neg: #6ea6dc;
+    --sds-div-mid: #1e3049;
+    --sds-div-pos: #e8636f;
+  }
+}
+
+:root[data-theme="dark"], [data-backdrop="dark"] {
+  --sds-color-bg: #070b24;
+  --sds-color-surface: #0b142c;
+  --sds-color-surface-raised: #0f1a30;
+  --sds-color-border: #1e3049;
+  --sds-color-text: #e8eef3;
+  --sds-color-text-muted: #8da0b0;
+  --sds-color-accent: #24bfd3;
+  --sds-color-accent-contrast: #050b26;
+  --sds-color-focus: #24bfd3;
+  --sds-color-success: #4b8f6d;
+  --sds-color-warning: #e3a33b;
+  --sds-color-danger: #da5858;
+  --sds-color-running: #a98bf0;
+  --sds-color-draft: #f0a050;
+  --sds-stage-image: #e58bb5;
+  --sds-stage-run: #a3adba;
+  --sds-stage-store: #24bfd3;
+  --sds-stage-figure: #d9b85c;
+  --sds-shadow-raised: 0 1px 2px rgb(0 0 0 / 0.4), 0 2px 8px rgb(0 0 0 / 0.3);
+  --sds-cat-8: #e6edf1;
+  --sds-div-neg: #6ea6dc;
+  --sds-div-mid: #1e3049;
+  --sds-div-pos: #e8636f;
+}
+
+/*
+ * The Studio's own theme tokens (frontend/src/index.css), as RGB channels. The viewer's
+ * on-image overlays (legends, overview, hints) and the cell map's field read them, so
+ * they look here as they do in the Studio. The same palette as the --sds- tokens above.
+ * As above, what sits on the tissue takes its backdrop's set.
+ */
+:root, [data-backdrop="light"] {
+  --color-bg: 250 251 252;
+  --color-surface: 255 255 255;
+  --color-border: 224 224 224;
+  --color-text: 5 11 38;
+  --color-muted: 107 107 107;
+  --color-accent: 14 124 160;
+  --color-on-accent: 255 255 255;
+  --color-accent-lo: 215 232 239;
+  --color-success: 46 125 85;
+  --color-warn: 137 64 115;
+  --color-danger: 196 61 61;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-bg: 7 11 36;
+    --color-surface: 15 26 48;
+    --color-border: 30 48 73;
+    --color-text: 232 238 243;
+    --color-muted: 141 160 176;
+    --color-accent: 36 191 211;
+    --color-on-accent: 5 11 38;
+    --color-accent-lo: 18 58 77;
+    --color-success: 75 143 109;
+    --color-warn: 192 122 168;
+    --color-danger: 218 88 88;
+  }
+}
+
+:root[data-theme="dark"], [data-backdrop="dark"] {
+  --color-bg: 7 11 36;
+  --color-surface: 15 26 48;
+  --color-border: 30 48 73;
+  --color-text: 232 238 243;
+  --color-muted: 141 160 176;
+  --color-accent: 36 191 211;
+  --color-on-accent: 5 11 38;
+  --color-accent-lo: 18 58 77;
+  --color-success: 75 143 109;
+  --color-warn: 192 122 168;
+  --color-danger: 218 88 88;
+}

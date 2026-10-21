@@ -124,6 +124,7 @@ export default function Minimap({
         borderRadius: 4,
         overflow: 'hidden',
         cursor: 'crosshair',
+        pointerEvents: 'auto',
         userSelect: 'none',
         WebkitUserSelect: 'none',
       }}

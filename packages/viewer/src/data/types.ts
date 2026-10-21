@@ -33,6 +33,16 @@ export interface ElementInventory {
   labels: { name: string }[];
 }
 
+/** A table's `X` in CSC order: gene `g`'s nonzeros are `data[indptr[g]..indptr[g+1]]`
+ * at cells `indices[...]`. Cells follow `obs`, genes follow `genes` (`var`'s index). */
+export interface ExpressionMatrix {
+  nCells: number;
+  genes: string[];
+  indptr: Float64Array;
+  indices: Int32Array;
+  data: Float32Array;
+}
+
 export interface DataSource {
   readonly kind: 'live' | 'checkpoint';
   // Stable identity for cache keys. The session id, or the checkpoint's URL.
@@ -68,6 +78,11 @@ export interface DataSource {
   imageThumbnailUrl(element: string, channels: string | undefined, maxPx: number): string | null;
 
   searchVarNames(query: string, limit?: number): Promise<string[]>;
+
+  // The table's whole expression matrix, gene-major, for statistics over every gene
+  // (markers, spatially variable genes) without a request per gene. Optional: a live
+  // session computes those on its backend.
+  getExpressionMatrix?(): Promise<ExpressionMatrix>;
 
   // A drawn plot's rendered figure, as a blob typed for the format. The live session
   // serves it from the render (or the checkpoint it was loaded from); a checkpoint

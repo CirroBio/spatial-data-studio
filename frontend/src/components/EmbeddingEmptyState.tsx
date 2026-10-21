@@ -4,7 +4,7 @@ import { addDisplay as postDisplay } from '../api';
 import { useEditGate, useLocalEditsOnly } from '../hooks/usePresence';
 import { reportError } from '@cirrobio/spatial-viewer';
 import type { EmbeddingDisplaySpec, ObsField, ObsmField } from '@cirrobio/spatial-viewer';
-import ColorBySelect from './canvas/ColorBySelect';
+import { ColorBySelect } from '@cirrobio/studio-ui';
 
 // Authoring the session's embedding display, shown where the embedding canvas would be
 // when the session has none yet. App-level rather than part of the canvas: creating a

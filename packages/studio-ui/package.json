@@ -1,0 +1,17 @@
+{
+  "name": "@cirrobio/studio-ui",
+  "version": "1.4.0",
+  "private": true,
+  "description": "Spatial Data Studio's own controls (the canvas display settings and the pickers they use), shared by the Studio app and Spatial Data Studio for Cirro.",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./src/index.ts",
+  "peerDependencies": {
+    "@cirrobio/spatial-viewer": "*",
+    "@radix-ui/react-slider": "^1.4.5",
+    "@radix-ui/react-tabs": "^1.1.0",
+    "react": "^19",
+    "react-dom": "^19"
+  }
+}

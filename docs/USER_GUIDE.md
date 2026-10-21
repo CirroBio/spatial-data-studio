@@ -71,17 +71,18 @@ marking the part you're looking at; click or drag it to jump somewhere else.
 ![The display settings panel, organised into View, Cells, and Image icon tabs: layer visibility, color by, render mode, point size, plot orientation, zoom, minimap, image selection, plot backdrop, and per-channel image color/contrast.](./images/display.jpg)
 
 *Customize the display, organised into **View**, **Cells**, and **Image** icon tabs —
-choose what colors the cells, how they render, how the plot is oriented (flip the
-horizontal/vertical axes), the zoom level (buttons plus scroll/pinch), whether the
-minimap is shown, the plot's own light/dark backdrop (on the **Image** tab, set per
-plot and independent of the app theme), and how each tissue-image channel is colored
-and contrast-adjusted. A dataset that carries more than one image (say an H&E next to
-a morphology stain) picks which one is drawn under the cells at the top of the
-**Image** tab, or **None** for no image at all; each image brings its own channels.
-When cells are colored by a categorical value, each group's color can be overridden
-individually (and reset to the default palette) at the bottom of the **Cells** tab.
-(Text and shape annotations that persist with the dataset are drawn from the left
-panel's **Annotations** tab.)*
+choose what colors the cells (first on the **Cells** tab), how they render, how the
+plot is oriented (flip the horizontal/vertical axes), the zoom level (buttons plus
+scroll/pinch), whether the minimap is shown, the plot's own light/dark backdrop (on
+the **Image** tab, set per plot and independent of the app theme), and how each
+tissue-image channel is colored and contrast-adjusted. A dataset that carries more
+than one image (say an H&E next to a morphology stain) picks which one is drawn under
+the cells at the top of the **Image** tab, or **None** for no image at all; each image
+brings its own channels. When cells are colored by a categorical value, each group's
+color can be overridden individually (and reset to the default palette) at the bottom
+of the **Cells** tab, and the legend on the canvas lists every group, in columns when
+there are many. (Text and shape annotations that persist with the dataset are drawn
+from the left panel's **Annotations** tab.)*
 
 ![A Xenium section zoomed in, each cell drawn as its true segmentation outline and colored by its cellular neighborhood, over the morphology image.](./images/cell-outlines.jpg)
 
@@ -316,3 +317,204 @@ from a development server, which has no built viewer on disk, carry the checkpoi
 
 Your Cirro sign-in lives only in the running app's memory and is dropped after 8 hours
 of inactivity or when you disconnect.
+
+## Spatial Data Studio in your browser, on Cirro
+
+The Cirro app is Spatial Data Studio with no server: a web page that signs in with your
+Cirro account, reads your project's spatial data where it is stored, runs its analyses
+in your browser, and saves what you find back to the project. Open it at
+[cirrobio.github.io/spatial-data-studio/app/](https://cirrobio.github.io/spatial-data-studio/app/).
+**Explore example data** opens four example sections with no account, and anything you
+save there stays in your browser. **Log In with Cirro** opens your own projects, once
+your organization's Cirro is connected to the app. Signed in, the menu at the top right
+(your Cirro and your name) has **Log out** on every page, including when your account
+can't see any projects yet.
+
+### The map of a project
+
+A project opens as a map of four stages, each bubble one item sized by its files and
+named inside it when there is room:
+
+- **Images**: microscopy and histology images (OME-TIFF and other slide formats).
+- **Instrument runs**: raw output from Xenium, Visium, Visium HD, CosMx, MERSCOPE and
+  the other platforms Spatial Data Studio's workflow reads, recognized by their files.
+- **Spatial data**: SpatialData stores (`.zarr` folders and `.zarr.zip` files), whichever
+  pipeline wrote them: Spatial Data Studio's workflow, nf-core/sopa, or a segmentation
+  pipeline. A dataset holding several stores shows each one. Rings inside a bubble are
+  versions saved on that store.
+- **Figures**: figures saved with a version of a store.
+
+Dashed lines join a run or an image to the spatial data made from it. Click a stage to
+step inside it: its items are packed by Cirro folder, or regrouped by tag or by month,
+with a filter and a list beside them (shown from the start when a stage holds more than
+20 items). Click a group to step into it and a bubble to open it. **About** in the top
+bar says which version of the app this is and cites the methods it follows.
+
+Each bubble stays itself as you move: stepping into a stage brings its bubbles to the
+middle and sends the other stages' bubbles to their places in the rail on the left;
+regrouping or stepping into a folder moves them to their new places; a bubble you open
+grows into its page and shrinks back into the map when you return.
+
+The app finds these items by reading each dataset's file list once. It keeps what it
+found in a sheet in the project (*Spatial Data Studio catalog*), so the next visit, by
+anyone, reads only the datasets added since. Where the project can't have that sheet,
+the catalog stays in your browser and the top bar says so.
+
+### Open a spatial dataset
+
+A store opens across the whole page, read in place: no copy is downloaded, only the
+pieces on screen. Pan and zoom as you would on a map. As in the Studio, the color legend,
+the image's channels and an overview of the whole section are drawn on the image itself.
+The line above it starts with the way back to the map, names the store, its size and
+where it came from, counts its cells (spots, for Visium) and genes, and links the run or
+image it was made **from** and what it was **made into**.
+
+Tabs over the top of the view switch what is shown, like the Studio's switch between its
+spatial and embedding views:
+
+- **Tissue**: every cell over the image.
+- **Cell map**: the store's UMAP or other embedding.
+- **Composition**: cells per group of the current color. A color of values rather than
+  groups, or of more than 100 groups (too many to color), has nothing to count, and the
+  view says so.
+- **Versions**: the store's history, with the page to itself (it has nothing to set).
+- **Figures**: a menu of the figures saved with it, when there are any.
+
+At the other end of the tabs are a scale bar (when the store says its coordinates are
+microns), zoom out and in, and **Fit to data**, which stay in reach when the drawers are
+away. For a Visium store, whose observations are capture spots, the header, the map's tab
+and Composition say spots rather than cells.
+
+Two drawers float over the view. Pull one in with its tab at the edge of the view and
+push it away with its arrow, or press **[** for the left one, **]** for the right one
+and **\\** for both at once; the app remembers which you keep open. The left one holds
+the **tasks** (below). The right one, **Display**, holds the Studio's own display
+settings, the same panel with the same names: **View** (cells and image on or off,
+mirroring, zoom, the overview, fit), **Cells** (first what colors the cells, any
+annotation, gene or layer, with the color legend and its title; then render mode, point
+size and shape, the cell boundaries and their style, opacity, and each category's color)
+and **Image** (which image, a light or dark backdrop, and each channel's color, contrast
+and name). A store first opens with a light backdrop behind a stained (brightfield)
+slide and a dark one behind fluorescence, and the legends and overview take the
+backdrop's colors. It opens colored as it was saved, unless that color has a single
+group (a column every cell shares), in which case it opens colored by its first grouping
+with 2 to 50 groups. A store with no such grouping opens with its cells drawn as
+outlines (where it has cell boundaries), so the image shows through them. The tissue and
+the cell map share one color: choosing a color, its legend title or a group's color on
+one changes the other. On **Composition** the drawer holds just the color, which picks
+the groups counted.
+
+### Analyze in the browser
+
+The left drawer lists them. Each runs in your browser, on the data in view:
+
+- **Label cells**: draw around cells (lasso, circle, ellipse, square or rectangle) and
+  name them, into a new column or one you have.
+- **Find clusters**: Leiden clustering the way scanpy does it by default. Counts are
+  normalized and log-transformed, the most variable genes go into a PCA, and Leiden
+  works on the cells' nearest-neighbor graph. Resolution is yours to set. The report
+  shows each cluster's size and where it is, and how much of the variation the PCA's
+  components hold.
+- **Compare groups**: a Wilcoxon test of every gene between two groups. A group can be a
+  category of any column or the cells you selected on the tissue. The report shows the
+  volcano beside maps of where the two groups are, and each side's strongest genes.
+- **Marker genes**: each group of a column against all the others. The report shows
+  every group's strongest markers in one dot plot, then a card per group: its size,
+  where its cells are, and what marks it.
+- **Spatially variable genes**: Moran's I of every gene over each cell's six nearest
+  neighbors on the tissue. The report maps the strongest genes, and sorts the strongest
+  60 into spatial patterns: genes whose maps look alike.
+- **Neighborhood enrichment**: how often each pair of groups are neighbors, against
+  shuffled labels. The report shows the heatmap, the pairs that sit together and apart
+  most, and a card per group saying which groups it neighbors.
+- **Cellular niches**: each cell's mix of groups among its nearest neighbors, clustered
+  into niches and written as a new column. The report shows what each niche is made of
+  and where it is.
+- **Save as a figure**: keep the tissue as it is shown, with its colors and framing, as a
+  figure, or download it as SVG, PDF or a 300 dpi PNG of what is between the drawers,
+  one column (89 mm), two columns (183 mm) or a 16:9 slide wide. Downloads are of the
+  tissue, so open the **Tissue** view first. A long legend takes more columns before the
+  page grows, and a page stops at 240 mm: groups that still don't fit are left out of the
+  legend, and the task says how many. A color of more than 100 groups has no legend.
+
+Each analysis opens as a report across the view when it finishes, and is kept with the
+data: in the unsaved changes until you save a version, then in the version. A report
+starts with what was run, on which column, with which settings and by whom; then the
+numbers that sum it up, its charts, and a card for each group, with the full table
+folded at the end. The **Reports** menu over the view and the task drawer list every
+report kept here, and **Remove…** takes one out. A report draws only on what was kept
+and on data the app never changes, so it reads the same whenever it is opened. Picking a
+gene in a report maps it on a thumbnail of the tissue, and from there on the tissue
+itself; a report's chart can be saved as a figure.
+
+Where a report shows genes that go together (a group's markers, the genes higher on one
+side of a comparison, a spatial pattern), **Score** turns its top 25, or as many as pass
+the cutoffs, into one value per cell, as scanpy's `score_genes` does: each cell's mean
+expression of the genes, less that of genes expressed at similar levels. The score is a
+new column, and the tissue is colored by it.
+
+Gene tasks need the store's expression matrix. Stores saved without one (like three of the four examples) still
+offer labelling, neighborhoods, niches and figures, and the drawer names the tasks they
+can't run. Clustering is the slowest task:
+seconds for tens of thousands of cells, about half a minute for 200,000.
+
+The methods follow scanpy and squidpy and are tested against them, so a result agrees
+with what Python gives on the same data, with these differences:
+
+- The Wilcoxon test is always tie-corrected (scanpy's `tie_correct=True`), which gives
+  sparse genes somewhat smaller p-values than scanpy's default.
+- Cells with no group are left out of "the rest" when one group is compared with all
+  the others; scanpy counts them in.
+- Leiden partitions differ from scanpy's about as much as two scanpy runs with
+  different seeds differ from each other; the number of clusters is much the same.
+- The most variable genes are exactly the number asked for; scanpy also keeps genes
+  tied at the cutoff. The PCA takes at most 5,000 of them.
+- Permutation z-scores (neighborhood enrichment) and gene-set scores draw their random
+  samples differently from numpy, so they differ from squidpy's and scanpy's by
+  sampling noise.
+
+### Save a version
+
+What a task makes is not saved straight away. It goes into **unsaved changes**, shown in
+a bar at the bottom of the page with what they are and how big. **Save as a version**
+writes them as a new dataset in the project, holding only what changed: a new column of
+labels is kilobytes, beside a store of gigabytes that is not copied. The dataset is
+tagged as this app's, filed in the store's Cirro folder, and carries a note saying what
+was saved and by whom; the top bar says the catalog is updating while the project is
+read again to list it. **Discard** throws the changes away. Until you do one or the
+other they are kept in this browser, so a reload loses nothing. Logging out discards a
+project's unsaved changes (the app asks first), so the next person to log in on the same
+browser can't open them; the examples' changes stay.
+
+Every version names the one it was saved on, by dataset ID. A stack of versions
+therefore still opens after its datasets are shared into another project, whether they
+are shared together or one by one.
+
+### Versions and history
+
+**Versions** shows a store's history: the original store at the bottom and each version
+above the one it was saved on, with what it changed. Open any version to see the data
+exactly as it was saved. Saving from an older version starts a branch beside the newer
+ones rather than replacing them. Nothing is ever overwritten, so going back is always
+just opening an older version.
+
+A version is ordinary SpatialData underneath, so it can also be read from Python:
+[`docs/LAYER_FORMAT.md`](LAYER_FORMAT.md) explains how, and what the app keeps in `uns`.
+
+### Images and instrument runs
+
+An image opens across the page with its channels in the right drawer. A run opens with
+the metrics its instrument reported. Both list, in the left drawer, the pipelines in
+your Cirro that take them further: cell segmentation for an image (Cellpose, StarDist,
+nf-core/sopa), and Spatial Data Studio's workflow for a run. These open Cirro's own
+launch form for the dataset, so the pipeline's options, cost and permissions are Cirro's
+to show. Their output appears on the map as spatial data, linked back to what it was
+made from.
+
+### What it can see and do
+
+The app acts as you, with the permissions your project role gives you and the ones
+your organization granted the app; it never sees your password. It reads data by
+short-lived signed links straight from the project's storage, and nothing it reads
+leaves your browser. It writes only what you save: a version dataset, its note, and the
+project's catalog sheet.

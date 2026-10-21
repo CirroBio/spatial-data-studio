@@ -52,6 +52,14 @@ export interface FitBounds {
   d1max: number;
 }
 
+/** The canvas edges a host covers with panels of its own (CanvasHost.overlayInset), in
+ * pixels; `flipX` when the view mirrors x, which turns the camera's shift around. */
+export interface FitInset {
+  left: number;
+  right: number;
+  flipX?: boolean;
+}
+
 /** Where the camera sits and how far in, in the coordinate space the bounds are in. */
 export interface CanvasFit {
   centerX: number;
@@ -71,17 +79,24 @@ export interface CanvasFit {
  *    and since each hook only fits until one lands, that value would stick and blank
  *    every layer. Both hooks re-run when the observed size arrives.
  *  - the zoom is still non-finite (a degenerate extent against a degenerate viewport). */
-export function fitBounds(bounds: FitBounds, pxW: number, pxH: number): CanvasFit | null {
+export function fitBounds(bounds: FitBounds, pxW: number, pxH: number, inset?: FitInset): CanvasFit | null {
   if (!(pxW > 0 && pxH > 0)) return null;
+  const left = inset?.left ?? 0;
+  const right = inset?.right ?? 0;
+  // Framed in the strip the host's panels leave clear, but never one narrower than a
+  // third of the canvas: on a small screen open panels would leave nothing to fit to.
   const zoom = fitZoom(
     Math.max(1, bounds.d0max - bounds.d0min),
     Math.max(1, bounds.d1max - bounds.d1min),
-    pxW,
+    Math.max(pxW / 3, pxW - left - right),
     pxH,
   );
   if (!Number.isFinite(zoom)) return null;
+  // Moving the camera's centre by this many world units puts the data's centre in the
+  // middle of the clear strip.
+  const shift = (left - right) / 2 / 2 ** zoom;
   return {
-    centerX: finiteMidpoint(bounds.d0min, bounds.d0max),
+    centerX: finiteMidpoint(bounds.d0min, bounds.d0max) - (inset?.flipX ? -shift : shift),
     centerY: finiteMidpoint(bounds.d1min, bounds.d1max),
     zoom,
   };

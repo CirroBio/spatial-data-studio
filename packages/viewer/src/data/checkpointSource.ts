@@ -25,7 +25,7 @@ import { SHAPE_ANNOTATIONS_ELEMENT } from '../lib/shapeAnnotations';
 import type { ShapeAnnotation } from '../schemas/annotations';
 import type { FileMetaData } from 'hyparquet';
 import type { ShapeIndexEntry, ShapeReader } from './parquetShapes';
-import type { DataSource, ElementInventory, ImageLoader, LocalCategorical } from './types';
+import type { DataSource, ElementInventory, ExpressionMatrix, ImageLoader, LocalCategorical } from './types';
 import { type FolderAccess, HostSignedFolderStore } from './folderStore';
 import {
   autoDisplays, cellIndexOf, childrenOf, type Contents, deriveSidecar, UnrenderableStoreError,
@@ -48,15 +48,29 @@ export type CheckpointUrlRefresher = () => Promise<string>;
 // re-signs at most once per expiry and surfaces a second failure as-is.
 const EXPIRED_URL_STATUSES = new Set([401, 403]);
 
+// Coalescing limits for RangeGetReader: ranges at most this far apart join one GET, and
+// a joined GET is at most this long.
+const MAX_COALESCE_GAP = 64 * 1024;
+const MAX_COALESCED_BYTES = 16 * 1024 * 1024;
+
+interface PendingRead {
+  offset: number;
+  size: number;
+  resolve: (bytes: Uint8Array<ArrayBuffer>) => void;
+  reject: (err: unknown) => void;
+}
+
 // Range-GET reader for ZipFileStore. Unlike zarrita's built-in HTTPRangeReader it
 // never issues a HEAD: Cirro serves checkpoints as method-specific presigned S3 GET
 // URLs, which reject HEAD with 403 (SignatureDoesNotMatch), so getLength()'s HEAD
 // would abort the open before a single chunk was read. The total comes from the
 // `Content-Range` of a one-byte GET instead.
-class RangeGetReader {
+export class RangeGetReader {
   private length?: number;
   private url: string;
   private refreshing: Promise<string> | null = null;
+  private pending: PendingRead[] = [];
+  private flushScheduled = false;
 
   constructor(url: string, private readonly refreshUrl?: CheckpointUrlRefresher) {
     this.url = url;
@@ -100,8 +114,50 @@ class RangeGetReader {
     return this.length;
   }
 
-  async read(offset: number, size: number): Promise<Uint8Array<ArrayBuffer>> {
-    if (size === 0) return new Uint8Array(0);
+  /** Reads requested in the same tick, coalesced: a whole-array read asks for thousands
+   * of chunks that sit next to each other in a ZIP_STORED zip, and one GET per chunk
+   * makes such a read take minutes (or fail with ERR_INSUFFICIENT_RESOURCES). Nearby
+   * ranges become one GET of up to MAX_COALESCED_BYTES, sliced back to each caller. */
+  read(offset: number, size: number): Promise<Uint8Array<ArrayBuffer>> {
+    if (size === 0) return Promise.resolve(new Uint8Array(0));
+    return new Promise((resolve, reject) => {
+      this.pending.push({ offset, size, resolve, reject });
+      if (!this.flushScheduled) {
+        this.flushScheduled = true;
+        setTimeout(() => this.flush(), 0);
+      }
+    });
+  }
+
+  private flush(): void {
+    this.flushScheduled = false;
+    const batch = this.pending.splice(0).sort((a, b) => a.offset - b.offset);
+    let group: PendingRead[] = [];
+    let start = 0;
+    let end = 0;
+    const send = () => {
+      const members = group;
+      const groupStart = start;
+      this.readSpan(groupStart, end - groupStart).then(
+        (bytes) => members.forEach((m) => m.resolve(bytes.slice(m.offset - groupStart, m.offset - groupStart + m.size))),
+        (err: unknown) => members.forEach((m) => m.reject(err)),
+      );
+    };
+    for (const r of batch) {
+      const fits = group.length > 0 && r.offset <= end + MAX_COALESCE_GAP && r.offset + r.size - start <= MAX_COALESCED_BYTES;
+      if (!fits) {
+        if (group.length) send();
+        group = [];
+        start = r.offset;
+        end = r.offset;
+      }
+      group.push(r);
+      end = Math.max(end, r.offset + r.size);
+    }
+    if (group.length) send();
+  }
+
+  private async readSpan(offset: number, size: number): Promise<Uint8Array<ArrayBuffer>> {
     const res = await this.fetchRange(`bytes=${offset}-${offset + size - 1}`);
     if (!res.ok) {
       throw new Error(`range GET failed for ${this.url} at ${offset}+${size}: ${res.status} ${res.statusText}`);
@@ -172,17 +228,54 @@ async function readGroupAttrs(root: Root, path: string): Promise<Record<string, 
   }
 }
 
-// Whole numeric array as Float64Array, uniform regardless of the on-disk dtype.
-async function readNumeric(root: Root, path: string): Promise<Float64Array> {
+// Whole-array reads go through this queue: zarrita otherwise requests every chunk at
+// once, and an array of a few thousand chunks (a table's X) makes the browser fail them
+// with ERR_INSUFFICIENT_RESOURCES.
+const WHOLE_ARRAY_CONCURRENCY = 256;
+
+function limitedQueue(concurrency: number): { add(fn: () => Promise<void>): void; onIdle(): Promise<void[]> } {
+  const waiting: (() => Promise<void>)[] = [];
+  const started: Promise<void>[] = [];
+  let running = 0;
+  const pump = () => {
+    while (running < concurrency && waiting.length) {
+      const fn = waiting.shift()!;
+      running += 1;
+      started.push(fn().finally(() => { running -= 1; pump(); }));
+    }
+  };
+  return {
+    add(fn) { waiting.push(fn); pump(); },
+    // A finishing chunk starts the next before its own promise settles, so `started`
+    // is only empty here once nothing is waiting either.
+    async onIdle() {
+      const results: void[] = [];
+      while (started.length) results.push(...await Promise.all(started.splice(0)));
+      return results;
+    },
+  };
+}
+
+const WHOLE_ARRAY: zarr.GetOptions = { createQueue: () => limitedQueue(WHOLE_ARRAY_CONCURRENCY) };
+
+type NumericArray = Float64Array | Float32Array | Int32Array;
+
+interface NumericArrayType<T extends NumericArray> {
+  new (length: number): T;
+  from(values: ArrayLike<number>, map: (v: number) => number): T;
+}
+
+// Whole numeric array as an `ArrayType`, uniform regardless of the on-disk dtype.
+async function readTyped<T extends NumericArray>(root: Root, path: string, ArrayType: NumericArrayType<T>): Promise<T> {
   const arr = await zarr.open.v3(root.resolve(path), { kind: 'array' });
-  const chunk = await zarr.get(arr);
-  return Float64Array.from(chunk.data as ArrayLike<number>, Number);
+  const { data } = await zarr.get(arr, null, WHOLE_ARRAY);
+  return data instanceof ArrayType ? data : ArrayType.from(data as ArrayLike<number>, Number);
 }
 
 // True for a zarr array holding strings rather than numbers. AnnData writes an
 // object-dtype (plain string) obs column as such an ARRAY, while a pandas Categorical
 // becomes a group of `codes` + `categories` — so array-ness alone does not mean numeric,
-// and reading one of these through readNumeric yields an all-NaN column. The backend
+// and reading one of these through readTyped yields an all-NaN column. The backend
 // treats object dtype as categorical too (`arrow._is_categorical`), so this keeps the
 // serverless viewer and the live route agreeing on the same column.
 function isStringArray(arr: { dtype?: unknown }): boolean {
@@ -259,6 +352,9 @@ export interface CheckpointHandle {
   // lists it; empty when the store has none. Separate from the open so that a damaged
   // element costs the annotations, not the whole checkpoint.
   readShapeAnnotations(): Promise<ShapeAnnotation[]>;
+  // The `tables/<key>` the source reads, so a host can point another AnnData reader
+  // at the same table.
+  tableKey: string;
 }
 
 /** A URL whose path ends in `/` names a `.zarr/` folder rather than a `.zarr.zip`. */
@@ -266,7 +362,9 @@ export function isFolderUrl(url: string): boolean {
   return new URL(url, globalThis.location?.href).pathname.endsWith('/');
 }
 
-async function openRawStore(
+/** The zarrita store behind `openCheckpoint`, for a host that composes stores itself
+ * before handing the result to `openCheckpointStore`. Same targets as `openCheckpoint`. */
+export async function openZarrStore(
   target: string | File, refreshUrl?: CheckpointUrlRefresher, folder?: FolderAccess,
 ): Promise<Required<AsyncReadable>> {
   if (typeof target !== 'string') return ZipFileStore.fromBlob(target);
@@ -299,7 +397,15 @@ export async function openCheckpoint(
   folder?: FolderAccess,
 ): Promise<CheckpointHandle> {
   const url = typeof target === 'string' ? target : target.name;
-  const rawStore = await openRawStore(target, refreshUrl, folder);
+  return openCheckpointStore(await openZarrStore(target, refreshUrl, folder), url);
+}
+
+/** Open a SpatialData store from a zarrita store the host built itself — for example
+ * several stores layered over one another. `id` keys every field cache
+ * (`useArrowField`), so two stores whose contents differ must not share one. */
+export async function openCheckpointStore(
+  rawStore: Required<AsyncReadable>, id: string,
+): Promise<CheckpointHandle> {
   await requireZarrV3Root(rawStore);
   // Every open is pinned to v3 (`open.v3`) rather than letting zarrita auto-detect:
 // checkpoints are always Zarr v3, and the auto-detect path probes v2 first, which
@@ -425,7 +531,7 @@ export async function openCheckpoint(
 
   const source: DataSource = {
     kind: 'checkpoint',
-    id: url,
+    id,
 
     setLocalColumn(fieldPath, column) {
       localColumns.set(fieldPath, column);
@@ -523,6 +629,8 @@ export async function openCheckpoint(
       return new Blob([bytes], { type: FIGURE_MEDIA_TYPES[format] });
     },
 
+    getExpressionMatrix: async () => readExpressionMatrix(root, table, await varNamesOnce()),
+
     async searchVarNames(query: string, limit = 50): Promise<string[]> {
       // Same ranking as `GET /var-names`: prefix hits first, then substring hits.
       const names = await varNamesOnce();
@@ -562,7 +670,7 @@ export async function openCheckpoint(
     return decode(bytes);
   }
 
-  return { source, appState, figures: sidecar.figures ?? {}, fields, readShapeAnnotations };
+  return { source, appState, figures: sidecar.figures ?? {}, fields, readShapeAnnotations, tableKey: table };
 }
 
 // The inventory the Color By / obsm pickers read, in the shape `GET /api/sessions/{id}`
@@ -693,8 +801,8 @@ async function readObs(root: Root, table: string, key: string): Promise<Table> {
   const encoding = node.kind === 'group' ? String(((await node.attrs) as Record<string, unknown>)['encoding-type']) : '';
   if (encoding === NULLABLE_STRING || NULLABLE_NUMERIC.has(encoding)) {
     const [values, mask] = await Promise.all([
-      encoding === NULLABLE_STRING ? readStrings(root, `${path}/values`) : readNumeric(root, `${path}/values`),
-      readNumeric(root, `${path}/mask`),
+      encoding === NULLABLE_STRING ? readStrings(root, `${path}/values`) : readTyped(root, `${path}/values`, Float64Array),
+      readTyped(root, `${path}/mask`, Float64Array),
     ]);
     if (encoding === NULLABLE_STRING) {
       // A missing value reads as its own level, as the backend's categorical read shows NaN.
@@ -709,7 +817,7 @@ async function readObs(root: Root, table: string, key: string): Promise<Table> {
   }
   if (node.kind === 'group') {
     const categories = await readStrings(root, `${path}/categories`);
-    const codes = Int32Array.from(await readNumeric(root, `${path}/codes`));
+    const codes = await readTyped(root, `${path}/codes`, Int32Array);
     return withMetadata(makeTable({ code: codes }), new Map([
       ['kind', 'categorical'],
       ['categories', JSON.stringify(categories)],
@@ -722,7 +830,7 @@ async function readObs(root: Root, table: string, key: string): Promise<Table> {
       ['categories', JSON.stringify(categories)],
     ]));
   }
-  const values = await readNumeric(root, path);
+  const values = await readTyped(root, path, Float64Array);
   return withMetadata(makeTable({ value: values }), new Map([['kind', 'numeric']]));
 }
 
@@ -759,6 +867,74 @@ async function readGene(
     }
   }
   return makeTable({ value: await readGeneFromMatrix(root, `tables/${table}/${matrix}`, geneIndex) });
+}
+
+async function readCsc(root: Root, base: string, nCells: number, genes: string[]): Promise<ExpressionMatrix> {
+  const [indptr, indices, data] = await Promise.all([
+    readTyped(root, `${base}/indptr`, Float64Array),
+    readTyped(root, `${base}/indices`, Int32Array),
+    readTyped(root, `${base}/data`, Float32Array),
+  ]);
+  return { nCells, genes, indptr, indices, data };
+}
+
+/** Gene-major copy of a row-major matrix given as per-cell spans (CSR) — a counting
+ * sort by gene, so cells stay in order within each gene. */
+function cscFromCsr(
+  nCells: number, genes: string[], rowPtr: Float64Array, cols: Int32Array, values: Float32Array,
+): ExpressionMatrix {
+  const indptr = new Float64Array(genes.length + 1);
+  for (const g of cols) indptr[g + 1] += 1;
+  for (let g = 0; g < genes.length; g++) indptr[g + 1] += indptr[g];
+  const next = Float64Array.from(indptr.subarray(0, genes.length));
+  const indices = new Int32Array(cols.length);
+  const data = new Float32Array(cols.length);
+  for (let cell = 0; cell < nCells; cell++) {
+    for (let k = rowPtr[cell]; k < rowPtr[cell + 1]; k++) {
+      const at = next[cols[k]]++;
+      indices[at] = cell;
+      data[at] = values[k];
+    }
+  }
+  return { nCells, genes, indptr, indices, data };
+}
+
+async function readExpressionMatrix(root: Root, table: string, genes: string[]): Promise<ExpressionMatrix> {
+  const mirrorBase = `viewer/tables/${table}/X_csc`;
+  const mirrorAttrs = await readGroupAttrs(root, mirrorBase);
+  if (mirrorAttrs) return readCsc(root, mirrorBase, (mirrorAttrs.shape as [number, number])[0], genes);
+
+  const path = `tables/${table}/X`;
+  const node = await zarr.open.v3(root.resolve(path));
+  if (node.kind === 'array') {
+    const { data, shape } = await zarr.get(node, null, WHOLE_ARRAY);
+    const [nCells, nGenes] = shape as [number, number];
+    const dense = data as ArrayLike<number>;
+    // Row-major dense: walk it as CSR with every row nnz-filtered.
+    const rowPtr = new Float64Array(nCells + 1);
+    const cols: number[] = [];
+    const vals: number[] = [];
+    for (let cell = 0; cell < nCells; cell++) {
+      for (let g = 0; g < nGenes; g++) {
+        const v = Number(dense[cell * nGenes + g]);
+        if (v !== 0) { cols.push(g); vals.push(v); }
+      }
+      rowPtr[cell + 1] = cols.length;
+    }
+    return cscFromCsr(nCells, genes, rowPtr, Int32Array.from(cols), Float32Array.from(vals));
+  }
+  const attrs = (await node.attrs) as Record<string, unknown>;
+  const [nCells] = attrs.shape as [number, number];
+  if (attrs['encoding-type'] === 'csc_matrix') return readCsc(root, path, nCells, genes);
+  if (attrs['encoding-type'] !== 'csr_matrix') {
+    throw new Error(`cannot read "${path}" as a matrix: encoding-type ${JSON.stringify(attrs['encoding-type'] ?? null)}.`);
+  }
+  const [rowPtr, cols, values] = await Promise.all([
+    readTyped(root, `${path}/indptr`, Float64Array),
+    readTyped(root, `${path}/indices`, Int32Array),
+    readTyped(root, `${path}/data`, Float32Array),
+  ]);
+  return cscFromCsr(nCells, genes, rowPtr, cols, values);
 }
 
 // One gene's column out of a CSC group: `data`/`indices`/`indptr` plus a `shape` attr
@@ -805,9 +981,9 @@ async function readGeneFromMatrix(
   // CSR: scan every row's span for this gene. Reads the whole `data`/`indices` pair —
   // tens of megabytes on a real table.
   const [values, columns, offsets] = await Promise.all([
-    readNumeric(root, `${path}/data`),
-    readNumeric(root, `${path}/indices`),
-    readNumeric(root, `${path}/indptr`),
+    readTyped(root, `${path}/data`, Float64Array),
+    readTyped(root, `${path}/indices`, Float64Array),
+    readTyped(root, `${path}/indptr`, Float64Array),
   ]);
   const nCells = offsets.length - 1;
   const column = new Float32Array(nCells);

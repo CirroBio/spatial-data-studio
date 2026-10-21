@@ -16,12 +16,17 @@ instead of embedding the whole app in an iframe. **One source of truth for the c
   `.zarr.zip` over HTTP Range, or a `.zarr/` folder (`HostSignedFolderStore` when each
   object needs its own presigned URL). A store this app did not save is read as plain
   SpatialData, with its table, image manifests and default displays derived on open. `openCheckpoint` also returns the file's `app_state`, its field
-  inventory, and its `figures` index (which plots it carries a rendered figure for);
+  inventory, the table key it reads (`tableKey`), and its `figures` index (which plots it carries a rendered figure for);
   `DataSource.getPlotFigure(plotId, format)` reads one as a blob, so a host can show the
   saved SVG/PDF/PNG figures without a backend.
   `readShapeAnnotations()` on the same handle returns the store's drawn shape
   annotations as `ShapeAnnotation`s (empty without an `annotations` element), ready for
   the host's `annotations.shapeAnnotations`.
+  A host that assembles the zarrita store itself — the Cirro app stacks saved versions
+  over a base store — opens it with `openCheckpointStore(store, id)` instead;
+  `openZarrStore(target, refreshUrl, folder)` is the store `openCheckpoint` would have
+  opened for the same arguments, and `RangeGetReader` the coalescing Range reader behind a
+  `.zarr.zip`.
 - The display model (`DisplaySpec`, `DisplayEncoding`, `SessionFields`, `ImageInfo`, …)
   and `SPATIAL_ENCODING_DEFAULTS` / `EMBEDDING_ENCODING_DEFAULTS` — the fallbacks the
   canvases apply for absent encoding fields, so a host authoring a display agrees with
@@ -54,7 +59,18 @@ field inventory, the data versions, the theme, the edit gate, and `onDisplayChan
 the host decides what persisting a display edit means. Cell selection, shape
 annotations and snapshot export are optional groups; omit one and the canvas turns
 that feature off, affordances included, rather than offering a control that does
-nothing.
+nothing. An optional `onView` receives the spatial canvas' world units per screen
+pixel as the camera moves, which is what a host needs to draw a scale bar. An optional
+`drawHint` words the banner shown while cells are being selected; without it the banner
+names the Studio's own annotation and subset controls. An optional `overlayInset` says how
+much of the canvas' left and right edges (and, optionally, its top) the host covers with
+panels of its own; the legends, overview and hints then keep clear of them while the
+canvas still fills its box.
+
+A `DataSource` may also offer `getExpressionMatrix()`: the whole expression matrix,
+gene-major (CSC), for host-side statistics over every gene. The checkpoint source reads
+the store's `X_csc` mirror when there is one and transposes `X` otherwise; reads of a
+`.zarr.zip` coalesce nearby chunk ranges into single GETs.
 
 ### No stylesheet
 

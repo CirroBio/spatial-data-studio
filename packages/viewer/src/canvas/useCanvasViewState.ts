@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, type RefObject } from 'react'
 import type { OrthographicViewState } from '@deck.gl/core';
 import type { SpatialDisplaySpec, ImageInfo } from '../types';
 import type { ScatterPositions } from './useArrowPositions';
-import { ZOOM_LIMITS, fitBounds, measuredCanvasSize, useCanvasSize } from './viewFit';
+import { ZOOM_LIMITS, fitBounds, measuredCanvasSize, useCanvasSize, type FitInset } from './viewFit';
 
 // Zoom at which a cell of characteristic world diameter d reaches SHAPES_MIN_CELL_PX
 // on screen (d * 2**zoom px = px ⇒ zoom = log2(px / d)). Below this the cells are too
@@ -22,10 +22,12 @@ interface Params {
   imageInfoFailed: boolean;
   showImage: boolean;
   display: SpatialDisplaySpec;
+  // The host's panels over the canvas edges; the first fit frames the data between them.
+  inset?: FitInset;
 }
 
 export function useCanvasViewState(
-  { positions, imageInfo, imageInfoFailed, showImage, display }: Params,
+  { positions, imageInfo, imageInfoFailed, showImage, display, inset }: Params,
 ): {
   containerRef: RefObject<HTMLDivElement | null>;
   canvasSize: { width: number; height: number } | null;
@@ -50,7 +52,7 @@ export function useCanvasViewState(
     // positions — and a store with an image but no cells has none to wait for.
     if (display.encoding.image_layer && imageInfo?.pixel_to_world && imageInfo.levels.length) {
       const { width: W, height: H } = imageInfo.levels[0];
-      const fit = fitBounds({ d0min: 0, d0max: W, d1min: 0, d1max: H }, width, height);
+      const fit = fitBounds({ d0min: 0, d0max: W, d1min: 0, d1max: H }, width, height, inset);
       if (!fit) return null;
       return { target: [fit.centerX, fit.centerY, 0], zoom: fit.zoom, ...ZOOM_LIMITS };
     }
@@ -65,10 +67,10 @@ export function useCanvasViewState(
       d1min = Math.min(d1min, iy0, iy1);
       d1max = Math.max(d1max, iy0, iy1);
     }
-    const fit = fitBounds({ d0min, d0max, d1min, d1max }, width, height);
+    const fit = fitBounds({ d0min, d0max, d1min, d1max }, width, height, inset);
     if (!fit) return null;
     return { target: [fit.centerX, fit.centerY, 0], zoom: fit.zoom, ...ZOOM_LIMITS };
-  }, [positions, showImage, imageInfo, canvasSize, containerRef, display.encoding.image_layer]);
+  }, [positions, showImage, imageInfo, canvasSize, containerRef, display.encoding.image_layer, inset]);
 
   // A freshly loaded session always frames its data (the persisted display viewport
   // is not restored here — it only seeds a snapshot's viewport server-side). The

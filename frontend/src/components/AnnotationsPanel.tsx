@@ -1,5 +1,5 @@
 import { useAppStore } from '../store/sessionStore';
-import ColorSwatchPicker from './ColorSwatchPicker';
+import { ColorSwatchPicker } from '@cirrobio/studio-ui';
 import ShapeToolbar from './ShapeToolbar';
 import { defaultFill, polygonFromClicks, type FillStyle, type ShapeAnnotation, type StrokeStyle } from '@cirrobio/spatial-viewer';
 

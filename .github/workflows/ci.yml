@@ -118,7 +118,9 @@ jobs:
           cache-dependency-path: package-lock.json
 
       - name: Install, lint, typecheck, build
-        # One npm workspace: packages/viewer (@cirrobio/spatial-viewer) then frontend.
+        # One npm workspace: packages/viewer (@cirrobio/spatial-viewer), frontend, and
+        # the Cirro app (cirro-studio), whose tests include reading a version it wrote
+        # back with anndata — skipped here, where the repo's Python environment isn't.
         #
         # `npm run lint` is the React hooks rules only (eslint.config.mjs).
         # rules-of-hooks is an error and the tree is clean of it, so a new violation
@@ -133,3 +135,6 @@ jobs:
           npx tsc --noEmit -p frontend/tsconfig.app.json
           npm run test -w spatial-data-studio-frontend
           npm run build
+          npx tsc --noEmit -p cirro-studio
+          npm run test:studio
+          npm run build:studio

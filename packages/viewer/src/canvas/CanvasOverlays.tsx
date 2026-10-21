@@ -1,12 +1,20 @@
+import type { ReactNode } from 'react';
 import { VIRIDIS_CSS_GRADIENT } from './colorUtils';
 import {
   CELL_LEGEND, CHANNEL_LEGEND, DRAW_HINT, LEGEND_ROW, LOADING_CUE, SWATCH, TILE_STATUS,
-  TRUNCATE, themeColor,
+  TRUNCATE, overlayFrame, themeColor,
 } from './overlayStyles';
 import type { Channel } from './useImageChannels';
 import type { ColorLegend } from './useSpotColors';
 import type { TileLoadProgress } from './useTileLoadProgress';
 import type { SelectionTool } from '../lib/selectionShapes';
+import type { OverlayInset } from './canvas-host';
+
+/** The overlays' box: the whole canvas, or the part the host leaves clear of its own
+ *  panels (CanvasHost.overlayInset). */
+export function OverlayFrame({ inset, children }: { inset?: OverlayInset; children: ReactNode }) {
+  return inset ? <div style={overlayFrame(inset)}>{children}</div> : <>{children}</>;
+}
 
 /* Recalculation cue — top left. Visible while the cell layer's own data (spatial
    coordinates, per-cell colors, or cell-boundary polygons) for the current view is
@@ -88,6 +96,16 @@ export function ChannelLegend({
 }
 
 /* Cell-color legend — bottom right. Colorbar for numeric, swatches for categorical. */
+// A long category list wraps into balanced columns of at most this many rows, up to
+// LEGEND_COLUMNS of them; only a list longer than that scrolls, and then says so. A list
+// cut off at the panel's edge with no sign of the rest makes a wrong figure.
+const LEGEND_ROWS = 12;
+const LEGEND_COLUMNS = 4;
+// Wider than this, a category's name is cut short (its full name is its tooltip).
+const LEGEND_LABEL_PX = 140;
+// The title and notes stay within one column's width however many columns there are.
+const LEGEND_MAX_PX = 200;
+
 export function CellColorLegend({
   visible,
   legend,
@@ -103,22 +121,15 @@ export function CellColorLegend({
   return (
     <div style={{ ...CELL_LEGEND, transform: `scale(${scale})`, transformOrigin: 'bottom right' }}>
       <div
-        style={{ ...TRUNCATE, fontSize: 11, fontWeight: 500, color: themeColor('text'), marginBottom: 4 }}
+        style={{ ...TRUNCATE, maxWidth: LEGEND_MAX_PX, fontSize: 11, fontWeight: 500, color: themeColor('text'), marginBottom: 4 }}
         title={title}
       >
         {title}
       </div>
       {legend.kind === 'categorical' ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 220, overflowY: 'auto' }}>
-          {legend.items.map((it) => (
-            <div key={it.label} style={LEGEND_ROW}>
-              <span style={{ ...SWATCH, background: `rgb(${it.color[0]},${it.color[1]},${it.color[2]})` }} />
-              <span style={TRUNCATE}>{it.label}</span>
-            </div>
-          ))}
-        </div>
+        <CategoryRows items={legend.items} />
       ) : legend.kind === 'too-many-categories' ? (
-        <div style={{ fontSize: 11, color: themeColor('muted') }}>
+        <div style={{ maxWidth: LEGEND_MAX_PX, fontSize: 11, color: themeColor('muted') }}>
           {legend.count.toLocaleString()} categories — too many to color (limit {legend.limit}).
         </div>
       ) : (
@@ -140,6 +151,32 @@ export function CellColorLegend({
   );
 }
 
+function CategoryRows({ items }: { items: { label: string; color: number[] }[] }) {
+  const columns = Math.min(LEGEND_COLUMNS, Math.ceil(items.length / LEGEND_ROWS));
+  const rows = Math.ceil(items.length / columns);
+  const overflows = rows > LEGEND_ROWS;
+  return (
+    <>
+      <div style={{
+        display: 'grid', gridAutoFlow: 'column', gridTemplateRows: `repeat(${rows}, auto)`,
+        gap: '4px 12px', ...(overflows && { maxHeight: LEGEND_ROWS * 19, overflowY: 'auto' }),
+      }}>
+        {items.map((it) => (
+          <div key={it.label} style={LEGEND_ROW} title={it.label}>
+            <span style={{ ...SWATCH, background: `rgb(${it.color[0]},${it.color[1]},${it.color[2]})` }} />
+            <span style={{ ...TRUNCATE, maxWidth: LEGEND_LABEL_PX }}>{it.label}</span>
+          </div>
+        ))}
+      </div>
+      {overflows && (
+        <div style={{ fontSize: 10, color: themeColor('muted'), marginTop: 4 }}>
+          {items.length.toLocaleString()} groups; scroll for the rest
+        </div>
+      )}
+    </>
+  );
+}
+
 /* Draw-mode hint — top center. All actions live in the active tab's panel. */
 export function DrawHint({
   drawMode,
@@ -147,12 +184,14 @@ export function DrawHint({
   annotationTarget,
   selectionTool,
   shapePlaced,
+  hint,
 }: {
   drawMode: boolean;
   canvasMode: 'regions' | 'shapes' | 'subset' | null;
   annotationTarget: { regionSetId: string; category: string; color: string } | null;
   selectionTool: SelectionTool;
   shapePlaced: boolean;
+  hint?: (gesture: string) => string;
 }) {
   // The shape-annotation editor (canvasMode === 'shapes') shows its own toolbar
   // hints in the AnnotationsPanel; this hint is only for the cell-selection modes.
@@ -165,7 +204,8 @@ export function DrawHint({
     : `drag out ${selectionTool === 'ellipse' ? 'an' : 'a'} ${selectionTool}`;
   return (
     <div style={{ ...DRAW_HINT, borderColor: themeColor(tone, 0.7), color: themeColor(tone) }}>
-      {canvasMode === 'regions'
+      {hint ? hint(gesture)
+        : canvasMode === 'regions'
         ? annotationTarget
           ? `Annotating ${annotationTarget.regionSetId} / ${annotationTarget.category} — ${gesture}, then Apply on the left`
           : `Annotating — set a region set and category on the left, then ${gesture}`

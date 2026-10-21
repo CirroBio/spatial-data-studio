@@ -21,7 +21,7 @@ export type ColorLegend =
   | { kind: 'numeric'; min: number; max: number };
 
 // Adapt a color-by Arrow field (schema metadata 'kind'/'categories' + a 'code' or
-// 'value' column) into a ColorSource. Used at the two live call sites.
+// 'value' column) into a ColorSource.
 export function arrowToColorSource(table: arrow.Table | null): ColorSource | null {
   if (!table) return null;
   const meta = table.schema.metadata;
@@ -147,32 +147,41 @@ export function useSpotColors(
     return result;
   }, [colorSource, positions, opacity, isolatedCategory, categoryColors, hiddenCells]);
 
-  // Legend for the current cell coloring: category swatches (categorical) or a
-  // colorbar with the value range (numeric). Mirrors the palette/ramp used above.
-  const colorLegend = useMemo((): ColorLegend | null => {
-    if (!colorSource) return null;
-    if (colorSource.kind === 'categorical') {
-      const { categories } = colorSource;
-      if (categories.length > MAX_CATEGORICAL_LEVELS) {
-        return { kind: 'too-many-categories' as const, count: categories.length, limit: MAX_CATEGORICAL_LEVELS };
-      }
-      const resolved = resolveCategoryColors(categories, categoryColors);
-      return {
-        kind: 'categorical' as const,
-        items: categories.map((c, i) => ({ label: c, color: resolved[i] })),
-      };
-    }
-    let min = Infinity;
-    let max = -Infinity;
-    for (const v of colorSource.values) {
-      if (!Number.isNaN(v)) {
-        if (v < min) min = v;
-        if (v > max) max = v;
-      }
-    }
-    if (!Number.isFinite(min)) return null;
-    return { kind: 'numeric' as const, min, max };
-  }, [colorSource, categoryColors]);
+  const colorLegend = useMemo(
+    () => colorSource && buildColorLegend(colorSource, categoryColors),
+    [colorSource, categoryColors],
+  );
 
   return { colors, colorLegend };
+}
+
+// Legend for a cell coloring: category swatches (categorical) or a colorbar with the
+// value range (numeric). Mirrors the palette/ramp useSpotColors draws with, cap
+// included, so a legend drawn outside the canvas keys exactly what the canvas shows.
+// Null for a numeric field with no values.
+export function buildColorLegend(
+  colorSource: ColorSource,
+  categoryColors: Record<string, string> | undefined,
+): ColorLegend | null {
+  if (colorSource.kind === 'categorical') {
+    const { categories } = colorSource;
+    if (categories.length > MAX_CATEGORICAL_LEVELS) {
+      return { kind: 'too-many-categories' as const, count: categories.length, limit: MAX_CATEGORICAL_LEVELS };
+    }
+    const resolved = resolveCategoryColors(categories, categoryColors);
+    return {
+      kind: 'categorical' as const,
+      items: categories.map((c, i) => ({ label: c, color: resolved[i] })),
+    };
+  }
+  let min = Infinity;
+  let max = -Infinity;
+  for (const v of colorSource.values) {
+    if (!Number.isNaN(v)) {
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+  }
+  if (!Number.isFinite(min)) return null;
+  return { kind: 'numeric' as const, min, max };
 }

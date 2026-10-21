@@ -48,6 +48,15 @@ core, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
   with a world-labeled grid and a pixel→world affine, so the agent can act (annotate/
   subset) on exactly what it saw (DESIGN §29).
 
+- **The Cirro app** (`cirro-studio/`) is the same canvas and reader with no server: a
+  static page that signs in with Cirro (OAuth, PKCE), reads a project's SpatialData
+  stores in place by signed range requests, runs its analyses in a Web Worker, and saves
+  each result as a *version* — a dataset holding only the changed Zarr objects, layered
+  over the store it was made from ([`docs/LAYER_FORMAT.md`](docs/LAYER_FORMAT.md)). It
+  shares `packages/viewer` (the canvas) and `packages/studio-ui` (the display settings)
+  with the frontend, and nothing else: no backend, no API routes.
+  [`cirro-studio/README.md`](cirro-studio/README.md) is its guide.
+
 **Foundational principle — zero hardcoded library functions.** No part of the app
 names a specific library function. Operations are discovered by reflection at
 startup: `squidpy` is wholesale-introspected, while `scanpy` and `spatialdata-io`
@@ -132,14 +141,24 @@ packages/viewer/  @cirrobio/spatial-viewer — the deck.gl canvases and the chec
   src/types.ts    the display model (DisplaySpec/DisplayEncoding/SessionFields/ImageInfo)
   src/defaults.ts the fallbacks the canvases apply for absent encoding fields, exported so
                   a host that authors a display agrees with what will actually render
+packages/studio-ui/  @cirrobio/studio-ui — the Studio's display settings (the canvas'
+                  View / Cells / Image panel) and the pickers it uses, Tailwind-styled,
+                  shared by frontend/ and cirro-studio/; tailwind.preset.js is the
+                  Studio's Tailwind theme. See packages/studio-ui/README.md
 frontend/   React + TS + Vite + Tailwind SPA around that canvas (an npm workspace
             sibling of packages/viewer; one `npm install` at the repo root covers both)
   src/data/       apiSource (the live-session DataSource over HTTP) + checkpointIndex
                   (the index.json deployment manifest, §14.3) + embedBridge (embed mode)
-  src/components/canvas/  what stays app-side: the Tailwind-styled in-canvas settings
-                  panels (CanvasControls / EmbeddingControls and their fields), and the
-                  StudioSpatialCanvas / StudioEmbeddingCanvas adapters that drop them
-                  into the library canvas' `controls` slot
+  src/components/canvas/  the StudioSpatialCanvas / StudioEmbeddingCanvas adapters that
+                  drop the shared settings panel (packages/studio-ui) into the library
+                  canvas' `controls` slot
+cirro-studio/  the Cirro app: a front-end-only OAuth app over the same viewer library
+            (an npm workspace too). See cirro-studio/README.md for its layout
+  src/stack/      the version format — the Zarr v3 writer, the layered store, the AnnData
+                  editor, layer.json (docs/LAYER_FORMAT.md)
+  src/analysis/   the in-browser analyses (Wilcoxon, PCA/kNN/Leiden, Moran's I,
+                  neighborhood enrichment, niches, gene scores), run in a Web Worker
+  python/sds_layers.py  reading a version stack from Python
 nextflow/   The workflow (one entrypoint), wrapping backend/cli.py; uv installs deps at
             runtime, so there is no image build
   main.nf           discover datasets under an input -> per-type recipes -> mirrored
@@ -162,7 +181,8 @@ docs-site/  VitePress documentation site published to GitHub Pages. Renders the 
             pages — and viewer-data/ the committed demo checkpoints they embed
 scripts/    test-data prep: prepare_test_data.py (Visium H&E), prepare_xenium_data.py (Xenium),
             prepare_xenium_tma.py (Xenium TMA grid for the Identify TMAs detector);
-            fetch_example_checkpoints.py (the docs site's demo checkpoints, from Cirro)
+            fetch_example_checkpoints.py (the docs site's demo checkpoints, from Cirro);
+            prepare_studio_example.py (the Cirro app's raw-counts example store)
 sds-governance/  governance bundle: RULES.md + AGENTS.md + skills/ + checks/ executable gate
                  (`make check`) + license allowlist
 ```
@@ -204,16 +224,22 @@ Component-level notes: [`backend/README.md`](backend/README.md),
 | Change the docs site's landing page | `docs-site/index.md` + `.vitepress/theme/components/LandingPage.vue`, and the repo doc that owns whatever fact moved | below |
 | Change the docs site's live demos | `docs-site/demo/*.md` + `.vitepress/theme/components/ViewerEmbed.vue`; the catalog, `index.json` and the data itself in `scripts/fetch_example_checkpoints.py` | below |
 | Give the canvas something new from the app (store state, an action, a way to persist) | `packages/viewer/src/canvas/canvas-host.tsx` (the `CanvasHost` contract), then `frontend/src/components/StudioCanvasHost.tsx` (the app's implementation of it) — the canvas never reaches for the store or `api.ts` itself | below |
-| Change an in-canvas settings panel, or what the canvas hands one | `frontend/src/components/canvas/CanvasControls.tsx` / `EmbeddingControls.tsx` (Tailwind app UI), and `SpatialCanvasControls` / `EmbeddingCanvasControls` in `packages/viewer/src/canvas/` for the slot payload | below |
+| Change an in-canvas settings panel, or what the canvas hands one | `packages/studio-ui/src/canvas/` (`CanvasControls.tsx` / `EmbeddingControls.tsx` and their fields; `Settings.tsx` maps the slot payload to them), which changes the Studio and the Cirro app together; `SpatialCanvasControls` / `EmbeddingCanvasControls` in `packages/viewer/src/canvas/` for the slot payload | [packages/studio-ui/README.md](packages/studio-ui/README.md) |
 | Publish or version the canvas library | `packages/viewer/package.json` + [packages/viewer/README.md](packages/viewer/README.md) ("Releasing") | — |
 | Change how a display setting is persisted (the debounced PUT, the edit gate, the refetch flush) | `frontend/src/hooks/useDisplayPersistence.ts` | below |
-| Retune the palette, theme tokens, fonts, or the Cirro mark | `frontend/src/index.css` (tokens) + `frontend/tailwind.config.js` (names) + `packages/viewer/src/canvas/overlayStyles.ts` (the library overlays' fallbacks) + `frontend/src/components/CirroMark.tsx` / `public/favicon.svg` (logo) + `docs-site/.vitepress/theme/style.css` and the `CIRRO_MARK` in `docs-site/.vitepress/config.mts` (the docs site's copy of the same palette and mark) | [frontend/README.md](frontend/README.md) |
+| Retune the palette, theme tokens, fonts, or the Cirro mark | `frontend/src/index.css` (tokens) + `packages/studio-ui/tailwind.preset.js` (names) + `packages/viewer/src/canvas/overlayStyles.ts` (the library overlays' fallbacks) + `frontend/src/components/CirroMark.tsx` / `public/favicon.svg` (logo) + `docs-site/.vitepress/theme/style.css` and the `CIRRO_MARK` in `docs-site/.vitepress/config.mts` (the docs site's copy of the same palette and mark) | [frontend/README.md](frontend/README.md) |
 | Change the canvas minimap (overview inset) | `packages/viewer/src/canvas/Minimap.tsx` (overlay + navigation) + `SpatialCanvas.tsx` (extent/thumbnail wiring) + `backend/app/snapshots.py` `_draw_minimap` (figure inset) | [DESIGN.md](DESIGN.md) §9.11 |
 | Change how the browser reads raw image data (client-side Viv compositing) | `backend/app/routers/imaging.py` raster route + `/image/{element}/info` fields; `rasters.py` `raster_stores` map | [docs/CONTRACT.md](docs/CONTRACT.md) |
 | Change the parameter-form UI | `frontend/src/components/forms/` (`FunctionFields` renders the widgets incl. the `FsPicker` filesystem picker; `FunctionForm` adds the submit footer; the New Session dialog reuses `FunctionFields` as the reader's input form) | — |
 | Change how a reader param is classified as a folder/file/value input | `backend/app/registry/reader_paths.py` (`path_kind` + the absolute/relative path sets, shared with `sessions/manager.py` validation) | [docs/CONTRACT.md](docs/CONTRACT.md) |
 | Change how a snapshot figure renders or what it embeds | `backend/app/snapshots.py` (render + metadata) + `frontend/src/components/SnapshotExportModal.tsx` (framing/output) + `frontend/src/components/SnapshotBrowser.tsx` (gallery) | [DESIGN.md](DESIGN.md) §14 |
 | Change Cirro upload | `backend/app/cirro.py` (client + bundle + `UploadQueue`) + `backend/app/routers/cirro.py` (routes) + `frontend/src/components/CirroUploadDialog.tsx` | [DESIGN.md](DESIGN.md) §15 |
+| Change the Cirro app's version format (layer.json, the overlay, how a stack is read) | `cirro-studio/src/stack/` (`manifest.ts`, `layeredStore.ts`, `editor.ts`, `zarrWrite.ts`) + `cirro-studio/python/sds_layers.py` (the Python reader) + [docs/LAYER_FORMAT.md](docs/LAYER_FORMAT.md) in the same commit; `src/stack/python.test.ts` reads a written stack back with anndata | [docs/LAYER_FORMAT.md](docs/LAYER_FORMAT.md) |
+| Change an analysis the Cirro app runs in the browser | `cirro-studio/src/analysis/` (the method + its test), `ops.ts` (the worker's operation table) and `defaults.ts` (the parameters a panel records in a version's provenance); its panel in `cirro-studio/src/tasks/`, listed in `TASKS` in `TaskList.tsx` (with the kind of report it keeps) | [cirro-studio/README.md](cirro-studio/README.md) |
+| Change what an analysis's report shows in the Cirro app | `cirro-studio/src/reports/<Kind>Report.tsx` (registered by kind in `ReportView.tsx`), drawn from what the task keeps with `keepResult` (`reports/store.ts`: the tables and `meta.summary`); shared parts (stat tiles, sections, the gene-set action, tissue thumbnails) in `reports/parts.tsx` and `src/charts/` | [docs/LAYER_FORMAT.md](docs/LAYER_FORMAT.md) |
+| Change which datasets the Cirro app recognizes, or what it finds in them | `cirro-studio/src/data/discover.ts` (stores, images, versions; runs come from `nextflow/data_types.json`) + `cirro-studio/src/cirro/cirroCollection.ts` (`worthScanning`) + `catalogSheet.ts` (the project catalog's columns) | [cirro-studio/README.md](cirro-studio/README.md) |
+| Change how the Cirro app lays out an opened item, or its look | `cirro-studio/src/item/ViewFrame.tsx` (the view edge to edge, the drawers, `[` / `]` / `\`, the bar over the view) + `ViewTabs.tsx` (the views) + `ViewTools.tsx` (scale bar, zoom and fit on the canvas) + `StorePage.tsx`; how a store first looks (its color or else outlined cells, its backdrop, the color the views share) in `displayState.ts`; the docked display settings in `LensCanvas.tsx`, styled by `src/styles/studio-ui.css`; the palette in `cirro-studio/src/styles/tokens.css`, which mirrors `frontend/src/index.css` (change both) | [cirro-studio/README.md](cirro-studio/README.md) |
+| Change the Cirro app's sign-in, tenants or permissions | `cirro-studio/src/auth.ts` + `signInState.ts` + `tenants.ts` + `public/tenants.json` / `deploy/tenants.json` + `cirro-permissions.json` | [cirro-studio/README.md](cirro-studio/README.md) |
 | Change Cirro login (device code, credential scoping, expiry) | `backend/app/cirro.py` (`CredentialStore`, `start_login`) + `backend/app/routers/cirro.py` (`/api/cirro/auth`) + `frontend/src/components/CirroConnectDialog.tsx` + the token helpers in `frontend/src/api.ts` | [DESIGN.md](DESIGN.md) §15 |
 
 ### The canvas host seam
@@ -227,12 +253,14 @@ of the app's CSS in the page.
 
 Two things it deliberately does *not* own:
 
-- **The in-canvas settings panel.** `CanvasControls` / `EmbeddingControls` are
-  Tailwind-styled app UI and stay in `frontend/`. Both canvases take an optional
-  `controls` slot that hands a panel the canvas-internal state it needs (the resolved
-  channel list, the live camera, the legend's categorical levels); the app passes one
-  in through `components/canvas/StudioSpatialCanvas.tsx` /
-  `StudioEmbeddingCanvas.tsx`, and a dashboard passes nothing and gets a bare canvas.
+- **The in-canvas settings panel.** `SpatialSettings` / `EmbeddingSettings` are
+  Tailwind-styled app UI in `packages/studio-ui`, which the Studio and the Cirro app
+  share. Both canvases take an optional `controls` slot that hands a panel the
+  canvas-internal state it needs (the resolved channel list, the live camera, the
+  legend's categorical levels); the Studio passes one in through
+  `components/canvas/StudioSpatialCanvas.tsx` / `StudioEmbeddingCanvas.tsx`, the Cirro
+  app docks it in its Display drawer (`cirro-studio/src/item/LensCanvas.tsx`), and a
+  dashboard passes nothing and gets a bare canvas.
 - **Whether the camera follows the display.** `followDisplayViewport` is off by
   default — a live session must not let another viewer's display PUT yank this one's
   camera. The app turns it on in embed mode; a dashboard tile that owns the viewport
@@ -424,12 +452,17 @@ frontend (`npm run dev`; Vite proxies `/api` to :8000) together.
 Stop with Ctrl-C or, from another shell, `./stop.sh` (it reads `.run.pids` and
 kills each process group).
 
-The repo is one npm workspace (`frontend` + `packages/viewer`), so dependencies
-install once at the root into `./node_modules` — there is no `frontend/node_modules`,
-and `run.sh` runs `npm install` at the root when it is missing. Vite aliases
-`@cirrobio/spatial-viewer` to `packages/viewer/src`, so the dev server hot-reloads
-canvas edits without a library build; `npm run build` at the root builds the library
-(`dist/`, ESM + CJS + types) and then the app.
+The repo is one npm workspace (`frontend` + `packages/viewer` + `packages/studio-ui` +
+`cirro-studio` + `docs-site`), so dependencies install once at the root into
+`./node_modules` — there is no `frontend/node_modules`, and `run.sh` runs `npm install`
+at the root when it is missing. Vite aliases `@cirrobio/spatial-viewer` and
+`@cirrobio/studio-ui` to their `src/`, so the dev server hot-reloads canvas and panel
+edits without a library build; `npm run build` at the root
+builds the library (`dist/`, ESM + CJS + types) and then the app.
+
+The Cirro app needs no backend and is not part of `run.sh`: `npm run dev:studio` serves
+it on `http://localhost:5171`, the redirect URI Cirro's development registration lists
+for it ([`cirro-studio/README.md`](cirro-studio/README.md#run-it)).
 
 `SDS_DATA_DIR` is the single read-write data folder — inputs, saved checkpoints,
 and snapshots all live there; `run.sh` sets it to `data/` (or `test-data/` with
@@ -745,9 +778,21 @@ re-running the script — the reader rejects a stale `VIEWER_SIDECAR_VERSION`.
 Actions**. The workflow builds the SPA and the site, then assembles them so
 `/viewer/` is itself a valid standalone deployment (DESIGN §14.3) — `index.html` +
 `assets/` + `index.json` + the `.zarr.zip` files — which is what makes it browsable as a
-collection as well as embeddable per page. Pull requests build but do not publish.
+collection as well as embeddable per page. The same job publishes the Cirro app at
+`/app/`, with its `examples/` beside it (whose `index.json` names the demo checkpoints at
+`../../viewer/`, so they are not copied twice) and `cirro-studio/deploy/tenants.json` as
+its `tenants.json` (see [`cirro-studio/README.md`](cirro-studio/README.md#deploying)).
+Pull requests build but do not publish.
 
 ## Tests
+
+- `npm run test:studio` — the Cirro app's unit tests (vitest): the version stack (writing
+  AnnData columns, embeddings and `uns` into a draft over a real checkpoint, and the
+  viewer reading the result), the draft's change list, the in-browser analyses against
+  reference values, and figure export. `src/stack/python.test.ts` also reads a written
+  two-version stack back with anndata and spatialdata through `python/sds_layers.py`,
+  and checks that `flatten` refuses a stack whose manifests reach outside their folders;
+  it runs where `.venv-introspect` exists and skips itself elsewhere (CI).
 
 - `cd backend && ./check-contribution.sh` — the contribution gate: builds the
   registry, runs the custom-function self-check (closed widget/`effect_class`/`role`
@@ -850,7 +895,7 @@ collection as well as embeddable per page. Pull requests build but do not publis
 - `cd frontend && npx tsc --noEmit -p tsconfig.app.json && npm run build` — typecheck
   + build.
 - `cd frontend && npm run check:tours` — static guard that every guided-tour anchor
-  reaches the DOM: as a `data-tour="…"` attribute placed directly, or as the prop a
+  reaches the DOM (it reads `frontend/src` and `packages/studio-ui/src`): as a `data-tour="…"` attribute placed directly, or as the prop a
   shared component renders that attribute from (`dataTour` in `PanelTabs`) — the check
   resolves those forwarding props itself. A component that instead re-spreads props
   onto `data-tour` hides the anchor from it, so name the prop.

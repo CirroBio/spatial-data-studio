@@ -53,6 +53,7 @@ interface CanvasControlsProps {
   maxVisibleReached: boolean;
   panelCollapsed: boolean;
   setPanelCollapsed: (v: boolean) => void;
+  docked?: boolean;
   zoom: number;
   onZoom: (delta: number) => void;
   onFit: () => void;
@@ -156,6 +157,7 @@ export default function CanvasControls({
   maxVisibleReached,
   panelCollapsed,
   setPanelCollapsed,
+  docked,
   zoom,
   onZoom,
   onFit,
@@ -211,7 +213,7 @@ export default function CanvasControls({
   ];
 
   return (
-    <CanvasSettingsShell collapsed={panelCollapsed} onToggleCollapsed={setPanelCollapsed}>
+    <CanvasSettingsShell collapsed={panelCollapsed} onToggleCollapsed={setPanelCollapsed} docked={docked}>
       <Tabs.Root
         value={tab}
         onValueChange={(v) => setTab(v as DisplayTab)}
@@ -303,6 +305,25 @@ export default function CanvasControls({
 
         {/* ---- Tab 2: Cells ---- */}
         <Tabs.Content value="cells" className="flex flex-col gap-2 pt-2 focus:outline-none">
+          {/* What colors the cells comes first: it is the setting changed most. */}
+          <div className="flex flex-col gap-1">
+            <label className={FIELD_LABEL}>Color by</label>
+            <ColorBySelect
+              value={display.encoding.color_by ?? ''}
+              obsFields={obsFields}
+              layers={layers}
+              hasX={hasX}
+              onChange={(color_by) => updateEncoding({ color_by })}
+            />
+          </div>
+
+          <LegendControls
+            legendVisible={legendVisible}
+            legendTitle={display.encoding.legend_title ?? ''}
+            colorByName={colorByName}
+            onChange={updateEncoding}
+          />
+
           {/* Points + Shapes mode is only offered when polygon element(s) exist. */}
           {shapeSets.length > 0 && (
             <div className="flex flex-col gap-1">
@@ -373,24 +394,6 @@ export default function CanvasControls({
               )}
             </>
           )}
-
-          <div className="flex flex-col gap-1">
-            <label className={FIELD_LABEL}>Color by</label>
-            <ColorBySelect
-              value={display.encoding.color_by ?? ''}
-              obsFields={obsFields}
-              layers={layers}
-              hasX={hasX}
-              onChange={(color_by) => updateEncoding({ color_by })}
-            />
-          </div>
-
-          <LegendControls
-            legendVisible={legendVisible}
-            legendTitle={display.encoding.legend_title ?? ''}
-            colorByName={colorByName}
-            onChange={updateEncoding}
-          />
 
           <RangeField label="Opacity" value={display.encoding.opacity} min={0.1} max={1} step={0.05} digits={2}
             onChange={(v) => updateEncoding({ opacity: v })} />
@@ -486,17 +489,19 @@ export default function CanvasControls({
 
           <div className="flex flex-col gap-1">
             <label className={FIELD_LABEL}>Backdrop</label>
-            <div className="flex items-center gap-1.5">
-              <IconToggle
-                active={background === 'light'}
-                onClick={() => setBackground(background === 'dark' ? 'light' : 'dark')}
-                title={`Switch to ${background === 'dark' ? 'light' : 'dark'} background`}
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="12" cy="12" r="10" />
-                  <path d="M12 2a10 10 0 0 1 0 20z" fill="currentColor" stroke="none" />
-                </svg>
-              </IconToggle>
+            {/* Named choices rather than one toggle, so which backdrop is on reads at a glance. */}
+            <div className="flex w-fit rounded-md border border-border overflow-hidden text-xs" role="group" aria-label="Backdrop">
+              {(['light', 'dark'] as const).map((b) => (
+                <button
+                  key={b}
+                  type="button"
+                  aria-pressed={background === b}
+                  onClick={() => setBackground(b)}
+                  className={`px-3 py-1 font-medium transition-colors ${background === b ? 'bg-accent text-on-accent' : 'text-muted hover:text-text'}`}
+                >
+                  {b === 'light' ? 'Light' : 'Dark'}
+                </button>
+              ))}
             </div>
           </div>
 

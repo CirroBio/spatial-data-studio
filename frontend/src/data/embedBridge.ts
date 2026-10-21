@@ -7,7 +7,7 @@
 import { useEffect, useRef } from 'react';
 import { useAppStore } from '../store/sessionStore';
 import {
-  SHAPE_ANNOTATIONS_ELEMENT,
+  boundarySets,
   isEmbeddingDisplay,
   isSpatialDisplay,
   type DisplayEncoding,
@@ -279,10 +279,7 @@ export function useEmbedBridge(enabled: boolean, checkpoint: CheckpointSession):
       );
       // The boundary sets the canvas can draw, picked the way its own overlay picks them.
       const elements = source.getElements ? await source.getElements().catch(() => null) : null;
-      const shapes = (elements?.shapes ?? [])
-        .filter((s) => s.name !== SHAPE_ANNOTATIONS_ELEMENT)
-        .filter((s) => s.geometry.some((g) => g === 'Polygon' || g === 'MultiPolygon'))
-        .map((s) => s.name);
+      const shapes = elements ? boundarySets(elements).map((s) => s.name) : [];
       if (cancelled) return;
       // Prime the echo guard so mounting the first display doesn't immediately
       // repeat what the inventory already carries.

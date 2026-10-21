@@ -1,0 +1,19 @@
+{
+  "app": "spatial-data-studio",
+  "scope": "project",
+  "required": [
+    { "permission": "VIEW_PROJECT", "reason": "List the projects the user can open and read their datasets" },
+    { "permission": "VIEW_DATASET", "reason": "List a project's datasets and read their file manifests to find SpatialData stores, instrument runs and images" },
+    { "permission": "VIEW_PROCESS", "reason": "Name the pipeline or data type that made each dataset, and find the pipelines that take a dataset further" },
+    { "permission": "GENERATE_DOWNLOAD_TOKEN", "reason": "Read SpatialData stores, images and saved versions in place in the browser, by range requests to signed URLs" }
+  ],
+  "optional": [
+    { "permission": "CREATE_DATASET", "feature": "Save a version of a SpatialData store: a new dataset holding only what changed" },
+    { "permission": "CREATE_DISCUSSION", "feature": "Leave a provenance note on each version the app saves and on the catalog sheet" },
+    { "permission": "VIEW_DISCUSSION", "feature": "Post the provenance note into the note thread it creates" },
+    { "permission": "VIEW_SHEET", "feature": "Find the project's catalog sheet, so a dataset's files are listed once for everyone" },
+    { "permission": "VIEW_SHEET_DATA", "feature": "Read the project's catalog sheet" },
+    { "permission": "CREATE_SHEET", "feature": "Create the project's catalog sheet the first time the app opens the project" },
+    { "permission": "EDIT_SHEET_DATA", "feature": "Add newly scanned datasets to the project's catalog sheet" }
+  ]
+}

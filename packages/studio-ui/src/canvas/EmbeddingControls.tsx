@@ -15,6 +15,7 @@ interface Props {
   updateEncoding: (patch: Partial<EmbeddingDisplaySpec['encoding']>) => void;
   panelCollapsed: boolean;
   setPanelCollapsed: (v: boolean) => void;
+  docked?: boolean;
   onFit: () => void;
 }
 
@@ -58,6 +59,7 @@ export default function EmbeddingControls({
   updateEncoding,
   panelCollapsed,
   setPanelCollapsed,
+  docked,
   onFit,
 }: Props) {
   const { obsm_key, x_component, y_component, z_component, is_3d } = display.encoding;
@@ -78,7 +80,26 @@ export default function EmbeddingControls({
   }
 
   return (
-    <CanvasSettingsShell collapsed={panelCollapsed} onToggleCollapsed={setPanelCollapsed}>
+    <CanvasSettingsShell collapsed={panelCollapsed} onToggleCollapsed={setPanelCollapsed} docked={docked}>
+      {/* What colors the cells comes first, as on the spatial panel's Cells tab. */}
+      <div className="flex flex-col gap-1">
+        <label className="text-[10px] text-muted font-mono uppercase tracking-wide">Color by</label>
+        <ColorBySelect
+          value={display.encoding.color_by ?? ''}
+          obsFields={obsFields}
+          layers={layers}
+          hasX={hasX}
+          onChange={(color_by) => updateEncoding({ color_by })}
+        />
+      </div>
+
+      <LegendControls
+        legendVisible={legendVisible}
+        legendTitle={display.encoding.legend_title ?? ''}
+        colorByName={colorByName}
+        onChange={updateEncoding}
+      />
+
       <div className="flex flex-col gap-1">
         <label className="text-[10px] text-muted font-mono uppercase tracking-wide">Embedding</label>
         <select
@@ -111,24 +132,6 @@ export default function EmbeddingControls({
           3D
         </label>
       )}
-
-      <div className="flex flex-col gap-1">
-        <label className="text-[10px] text-muted font-mono uppercase tracking-wide">Color by</label>
-        <ColorBySelect
-          value={display.encoding.color_by ?? ''}
-          obsFields={obsFields}
-          layers={layers}
-          hasX={hasX}
-          onChange={(color_by) => updateEncoding({ color_by })}
-        />
-      </div>
-
-      <LegendControls
-        legendVisible={legendVisible}
-        legendTitle={display.encoding.legend_title ?? ''}
-        colorByName={colorByName}
-        onChange={updateEncoding}
-      />
 
       <PointStyleControls
         pointSize={display.encoding.point_size}

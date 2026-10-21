@@ -30,7 +30,9 @@ Open `http://localhost:8080` and start a session on anything in that folder.
 [`docker/README.md`](docker/README.md) has the compose file, the memory limits and the
 full environment contract; [`DEVELOPMENT.md`](DEVELOPMENT.md#local-dev-environment) has
 how to run from a clone instead. Or try it with nothing installed at all — the
-[live demos][demos] are the real viewer running in your browser.
+[live demos][demos] are the real viewer running in your browser, and the
+[Cirro app][app] opens your Cirro projects' spatial data, analyzes it and saves versions
+of it, all in the browser.
 
 ## Documentation
 
@@ -39,11 +41,14 @@ same words read the same on GitHub and on the site.
 
 [docs]: https://cirrobio.github.io/spatial-data-studio/
 [demos]: https://cirrobio.github.io/spatial-data-studio/demo/
+[app]: https://cirrobio.github.io/spatial-data-studio/app/
 
 | | |
 | --- | --- |
 | [User guide](docs/USER_GUIDE.md) | what the app does — the source of truth for it |
 | [Run with Docker](docker/README.md) | the image, its memory limits and environment |
+| [The Cirro app](cirro-studio/README.md) | the browser-only app for Cirro projects, for developers |
+| [Version layer format](docs/LAYER_FORMAT.md) | how the Cirro app saves a version of a store, and reading one from Python |
 | [Analysis methods](backend/app/registry/custom/README.md) | what each bundled method does |
 | [Development guide](DEVELOPMENT.md) | architecture, repo layout, dev setup, tests |
 | [Design](DESIGN.md) | the full specification and the reasoning behind it |

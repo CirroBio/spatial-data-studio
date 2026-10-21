@@ -1,11 +1,12 @@
 import type { CSSProperties } from 'react';
+import type { OverlayInset } from './canvas-host';
 
 // Styling for the in-canvas overlays (legends, hints, the minimap, the loading cues).
 //
 // These are inline styles rather than Tailwind classes because the library ships no
 // stylesheet: a Cirro dashboard renders the canvas natively, with none of the Studio
-// app's CSS in the page. The app-side control panels (CanvasControls /
-// EmbeddingControls) keep their Tailwind — they never leave the app.
+// app's CSS in the page. The control panels (@cirrobio/studio-ui) keep their Tailwind:
+// a host that shows them brings the stylesheet with them.
 //
 // Colors resolve through the app's theme tokens when they are defined (index.css sets
 // them as space-separated RGB channels and swaps them per theme), so the overlays keep
@@ -119,9 +120,10 @@ export const CELL_LEGEND: CSSProperties = {
   bottom: 12,
   right: 12,
   zIndex: 10,
+  // Scrolls a long list, so it takes the pointer back inside a pass-through frame.
+  pointerEvents: 'auto',
   borderRadius: 4,
   padding: 8,
-  maxWidth: 200,
 };
 
 export const DRAW_HINT: CSSProperties = {
@@ -156,6 +158,15 @@ export const CANVAS_PLACEHOLDER: CSSProperties = {
   fontSize: 14,
   lineHeight: '20px',
 };
+
+/** The box the overlays are positioned in when the host insets them: it lets the pointer
+ *  through to the canvas, and moves with the host's panels. */
+export function overlayFrame(inset: OverlayInset): CSSProperties {
+  return {
+    position: 'absolute', top: inset.top ?? 0, bottom: 0, left: inset.left, right: inset.right,
+    pointerEvents: 'none', transition: 'left 0.2s ease, right 0.2s ease',
+  };
+}
 
 /** The canvas container the deck.gl surface and every overlay are positioned in. */
 export const CANVAS_ROOT: CSSProperties = {

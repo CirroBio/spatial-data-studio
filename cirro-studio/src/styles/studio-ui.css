@@ -1,0 +1,19 @@
+/* The Studio's shared controls (packages/studio-ui), styled by Tailwind as in the Studio. */
+
+/* The part of Tailwind's preflight the controls are drawn against, kept to the elements
+   that hold them (`.studio-ui`) so the rest of the app keeps its own base styles. Placed
+   before the utilities and no more specific than preflight, so the controls' own classes
+   still win. */
+:where(.studio-ui) *, :where(.studio-ui) ::before, :where(.studio-ui) ::after { border: 0 solid rgb(var(--color-border)); }
+:where(.studio-ui) :is(button, input, select, textarea) {
+  font: inherit; letter-spacing: inherit; color: inherit; margin: 0; padding: 0; background-color: transparent;
+}
+:where(.studio-ui) :where(button, [role="button"]) { cursor: pointer; }
+:where(.studio-ui) :is(h1, h2, h3, h4, h5, h6) { font-size: inherit; font-weight: inherit; }
+:where(.studio-ui) :is(h1, h2, h3, h4, h5, h6, p, ul, ol) { margin: 0; }
+:where(.studio-ui) :is(ul, ol) { padding: 0; list-style: none; }
+:where(.studio-ui) :is(svg, img) { display: block; vertical-align: middle; }
+:where(.studio-ui) ::placeholder { opacity: 1; color: rgb(var(--color-muted)); }
+
+@tailwind components;
+@tailwind utilities;

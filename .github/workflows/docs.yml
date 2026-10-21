@@ -1,10 +1,11 @@
 name: docs
 
-# Builds the documentation site (docs-site/, VitePress over the repo's own markdown) and
-# the serverless viewer, and publishes both to GitHub Pages. The demo checkpoints are
-# committed under docs-site/viewer-data/, so this job never downloads data and never
-# needs Cirro credentials — refresh them with scripts/fetch_example_checkpoints.py and
-# commit the result.
+# Builds the documentation site (docs-site/, VitePress over the repo's own markdown), the
+# serverless viewer and the Cirro app, and publishes all three to GitHub Pages. The demo
+# checkpoints are committed under docs-site/viewer-data/ (and the app's own example under
+# cirro-studio/examples/), so this job never downloads data and never needs Cirro
+# credentials — refresh them with scripts/fetch_example_checkpoints.py and
+# scripts/prepare_studio_example.py and commit the result.
 #
 # Pages must be enabled once by hand: Settings -> Pages -> Source = GitHub Actions.
 on:
@@ -44,6 +45,19 @@ jobs:
         # vite.config.ts sets base './', so the same build works under /viewer/.
         run: npm run build
 
+      - name: Build the Cirro app
+        run: npm run build:studio
+
+      - name: Check the Cirro app's tenants
+        # Every tenant needs an id, a client ID and an https origin; an empty list is a
+        # site that offers only the examples.
+        run: |
+          node -e '
+            const { tenants } = JSON.parse(require("fs").readFileSync("cirro-studio/deploy/tenants.json", "utf8"));
+            for (const t of tenants) {
+              if (!t.id || !t.clientId || !/^https:\/\/[^/]+$/.test(t.url)) throw new Error(`bad tenant ${JSON.stringify(t)}`);
+            }'
+
       - name: Build the docs site
         run: npm run docs:build
 
@@ -54,6 +68,12 @@ jobs:
         run: |
           cp -r frontend/dist docs-site/.vitepress/dist/viewer
           cp docs-site/viewer-data/* docs-site/.vitepress/dist/viewer/
+          # The Cirro app at /app/: its examples beside it (the index also names the
+          # demo checkpoints at ../../viewer/), and the deployed tenants in place of the
+          # development one.
+          cp -r cirro-studio/dist docs-site/.vitepress/dist/app
+          cp -r cirro-studio/examples docs-site/.vitepress/dist/app/examples
+          cp cirro-studio/deploy/tenants.json docs-site/.vitepress/dist/app/tenants.json
           mkdir -p docs-site/.vitepress/dist/docs
           cp -r docs/images docs-site/.vitepress/dist/docs/images
 

@@ -20,9 +20,9 @@ import tsParser from '@typescript-eslint/parser';
 
 export default [
   {
-    // The two trees that hold components and hooks. Build configs, frontend/scripts,
+    // The trees that hold components and hooks. Build configs, frontend/scripts,
     // frontend/e2e and docs-site have none, so they stay out of scope.
-    files: ['frontend/src/**/*.{ts,tsx}', 'packages/viewer/src/**/*.{ts,tsx}'],
+    files: ['frontend/src/**/*.{ts,tsx}', 'packages/viewer/src/**/*.{ts,tsx}', 'packages/studio-ui/src/**/*.{ts,tsx}', 'cirro-studio/src/**/*.{ts,tsx}'],
     languageOptions: {
       parser: tsParser,
       ecmaVersion: 'latest',

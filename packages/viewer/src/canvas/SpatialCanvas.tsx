@@ -12,7 +12,7 @@ import { isSpatialDisplay, type SpatialDisplaySpec, type ImageInfo, type ObsFiel
 import { useCanvasHost, useDisplayEditor } from './canvas-host';
 import type { ShapeAnnotation, ShapeGeometry, ShapeKind } from '../schemas/annotations';
 import { textGeometryAt } from '../schemas/annotations';
-import { SHAPE_ANNOTATIONS_ELEMENT, geometryFromDrag, applyHandleDrag, translateGeometry, shapeCentroid, shapeHandles } from '../lib/shapeAnnotations';
+import { boundarySets, geometryFromDrag, applyHandleDrag, translateGeometry, shapeCentroid, shapeHandles } from '../lib/shapeAnnotations';
 import { selectionShapeRing } from '../lib/selectionShapes';
 import { useSelectionShape } from './useSelectionShape';
 import { useArrowPositions } from './useArrowPositions';
@@ -34,7 +34,7 @@ import { useImageChannels, type Channel, type ChannelPatch } from './useImageCha
 import Minimap from './Minimap';
 import { FlipOrthographicView } from './FlipOrthographicView';
 import { colorByLabel } from './colorBy';
-import { LoadingCue, ChannelLegend, CellColorLegend, DrawHint, ImageTileStatus } from './CanvasOverlays';
+import { LoadingCue, ChannelLegend, CellColorLegend, DrawHint, ImageTileStatus, OverlayFrame } from './CanvasOverlays';
 import { CANVAS_PLACEHOLDER, CANVAS_ROOT } from './overlayStyles';
 import { SPATIAL_ENCODING_DEFAULTS, showImageDefault } from '../defaults';
 
@@ -263,12 +263,15 @@ export default function SpatialCanvas({
     setRegionCellIndices(null);
   }, [source, positions, polygons, currentRing, placedSelectionRing, regions]);
 
+  const overlayInset = host.overlayInset;
+  const fitInset = useMemo(() => overlayInset && { ...overlayInset, flipX: invertX }, [overlayInset, invertX]);
   const { containerRef, canvasSize, viewState, setViewState, fitToData } = useCanvasViewState({
     positions,
     imageInfo,
     imageInfoFailed,
     showImage,
     display,
+    inset: fitInset,
   });
 
   const { persistDisplay, currentSpec, updateEncoding } = useDisplayEditor(display, isSpatialDisplay);
@@ -590,12 +593,7 @@ export default function SpatialCanvas({
     source.getElements()
       .then((inv) => {
         if (stale) return;
-        setPolygonElements(
-          inv.shapes
-            .filter((s) => s.name !== SHAPE_ANNOTATIONS_ELEMENT)
-            .filter((s) => s.geometry.some((g) => g === 'Polygon' || g === 'MultiPolygon'))
-            .map((s) => ({ name: s.name, count: s.count })),
-        );
+        setPolygonElements(boundarySets(inv).map((s) => ({ name: s.name, count: s.count })));
       })
       .catch((err: unknown) => {
         if (stale) return;
@@ -619,6 +617,8 @@ export default function SpatialCanvas({
   // unit) to get world units per screen pixel — the conversion every world-space
   // overlay sized in pixels needs (arrowhead geometry, selection-handle grab radius).
   const worldPerScreenPixel = Math.pow(2, -zoom) / radiusScale;
+  const { onView } = host;
+  useEffect(() => { onView?.({ worldPerScreenPixel }); }, [onView, worldPerScreenPixel]);
 
   // Place / relocate / resize / rotate the geometric selection shape. Everything it
   // draws is world-space, so it works in the same coordinates the lasso does.
@@ -795,6 +795,7 @@ export default function SpatialCanvas({
         }
       />
 
+      <OverlayFrame inset={host.overlayInset}>
       {/* The inset draws a server-composited thumbnail or the cell scatter; a serverless
           image-only store has neither, and an empty box would only cover the image. */}
       {showMinimap && minimapExtent && canvasSize && (minimapImageUrl || positions) && (
@@ -823,7 +824,8 @@ export default function SpatialCanvas({
         scale={legendScale} />
 
       <DrawHint drawMode={drawMode} canvasMode={canvasMode} annotationTarget={annotationTarget}
-        selectionTool={selectionTool} shapePlaced={placedSelectionShape !== null} />
+        selectionTool={selectionTool} shapePlaced={placedSelectionShape !== null} hint={host.drawHint} />
+      </OverlayFrame>
 
       {controls?.({
         display,

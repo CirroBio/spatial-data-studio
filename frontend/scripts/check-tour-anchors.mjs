@@ -7,6 +7,8 @@ import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), '..', 'src');
+// The display settings the tour points at live in the shared package.
+const SHARED = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'packages', 'studio-ui', 'src');
 
 const anchorsFile = readFileSync(join(SRC, 'tours', 'anchors.ts'), 'utf8');
 const anchors = [...anchorsFile.matchAll(/(\w+):\s*'([^']+)'/g)].map((m) => ({
@@ -28,7 +30,7 @@ function walk(dir) {
   return out;
 }
 
-const sources = walk(SRC)
+const sources = [...walk(SRC), ...walk(SHARED)]
   .filter((p) => !p.includes(join('tours', 'anchors.ts')))
   .map((p) => readFileSync(p, 'utf8'))
   .join('\n');

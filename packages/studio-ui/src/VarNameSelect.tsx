@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { reportError, useDataSource } from '@cirrobio/spatial-viewer';
-import { useClickOutside } from '../hooks/useClickOutside';
+import { useClickOutside } from './useClickOutside';
 
 interface Props {
   value: string;

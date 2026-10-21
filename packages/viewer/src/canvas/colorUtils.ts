@@ -134,11 +134,13 @@ const VIRIDIS: [number, number, number][] = [
   [236,229,27],[239,229,28],[241,229,29],[244,230,30],[246,230,32],[248,230,33],[251,231,35],[253,231,37],
 ];
 
+// The viridis ramp used by buildNumericColormap as CSS colors, low to high, for a
+// colorbar drawn outside the canvas (an exported figure's legend).
+export const VIRIDIS_CSS_STOPS: string[] = VIRIDIS.map(([r, g, b]) => `rgb(${r},${g},${b})`);
+
 // CSS gradient mirroring the viridis ramp used by buildNumericColormap, for the
 // numeric color legend's colorbar.
-export const VIRIDIS_CSS_GRADIENT = `linear-gradient(to right, ${VIRIDIS.map(
-  ([r, g, b]) => `rgb(${r},${g},${b})`,
-).join(',')})`;
+export const VIRIDIS_CSS_GRADIENT = `linear-gradient(to right, ${VIRIDIS_CSS_STOPS.join(',')})`;
 
 /**
  * Build RGBA Uint8Array for N points, mapping normalized values to viridis colormap.

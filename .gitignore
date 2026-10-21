@@ -8,6 +8,7 @@ __pycache__/
 node_modules/
 frontend/dist/
 frontend/dist-viewer/
+cirro-studio/dist/
 packages/*/dist/
 docs-site/.vitepress/dist/
 docs-site/.vitepress/cache/
@@ -30,6 +31,8 @@ checkpoints/
 !docs-site/viewer-data/*.zarr.zip
 # ...and the e2e suite's small fixtures, each a case no demo checkpoint covers.
 !frontend/e2e/fixtures/*.zarr.zip
+# ...and the Cirro app's raw-counts example (scripts/prepare_studio_example.py).
+!cirro-studio/examples/*.zarr.zip
 
 # Local
 .DS_Store

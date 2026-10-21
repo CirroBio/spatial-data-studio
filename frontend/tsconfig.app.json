@@ -19,7 +19,8 @@
     // Mirrors the Vite alias: typecheck against the canvas library's sources, so a
     // build of packages/viewer isn't a prerequisite for typechecking the app.
     "paths": {
-      "@cirrobio/spatial-viewer": ["../packages/viewer/src/index.ts"]
+      "@cirrobio/spatial-viewer": ["../packages/viewer/src/index.ts"],
+      "@cirrobio/studio-ui": ["../packages/studio-ui/src/index.ts"]
     }
   },
   "include": ["src"]

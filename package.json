@@ -1,22 +1,27 @@
 {
   "name": "spatial-data-studio",
   "private": true,
-  "version": "1.3.0",
+  "version": "1.4.0",
   "workspaces": [
     "packages/viewer",
+    "packages/studio-ui",
     "frontend",
+    "cirro-studio",
     "docs-site"
   ],
   "scripts": {
     "build": "npm run build -w @cirrobio/spatial-viewer && npm run build -w spatial-data-studio-frontend",
     "build:viewer": "npm run build -w @cirrobio/spatial-viewer",
+    "build:studio": "npm run build -w spatial-data-studio-cirro",
     "dev": "npm run dev -w spatial-data-studio-frontend",
-    "lint": "eslint frontend/src packages/viewer/src",
+    "dev:studio": "npm run dev -w spatial-data-studio-cirro",
+    "lint": "eslint frontend/src packages/viewer/src packages/studio-ui/src cirro-studio/src",
     "check:tours": "npm run check:tours -w spatial-data-studio-frontend",
     "test:e2e": "npm run test:e2e -w spatial-data-studio-frontend",
     "docs:dev": "npm run docs:dev -w spatial-data-studio-docs",
     "docs:build": "npm run docs:build -w spatial-data-studio-docs",
-    "docs:preview": "npm run docs:preview -w spatial-data-studio-docs"
+    "docs:preview": "npm run docs:preview -w spatial-data-studio-docs",
+    "test:studio": "npm run test -w spatial-data-studio-cirro"
   },
   "devDependencies": {
     "@typescript-eslint/parser": "^8.67.0",

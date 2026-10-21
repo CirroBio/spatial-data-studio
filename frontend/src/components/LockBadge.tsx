@@ -3,7 +3,7 @@ import { useAppStore } from '../store/sessionStore';
 import { takeSessionLock, releaseSessionLock } from '../api';
 import { reportError } from '@cirrobio/spatial-viewer';
 import { lockStateOf, randomClientName } from '../lib/presence';
-import { useClickOutside } from '../hooks/useClickOutside';
+import { useClickOutside } from '@cirrobio/studio-ui';
 import { TourAnchors } from '../tours';
 
 // Header status control for the active session's edit lock: a closed padlock when it

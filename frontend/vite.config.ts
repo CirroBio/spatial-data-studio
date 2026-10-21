@@ -27,6 +27,8 @@ export default defineConfig({
       // the dev server nor `tsc -b` needs packages/viewer/dist to exist first. The
       // published artifact is still built and typechecked by the root `npm run build`.
       '@cirrobio/spatial-viewer': resolve(__dirname, '../packages/viewer/src/index.ts'),
+      // The display settings and pickers, shared with the Cirro app the same way.
+      '@cirrobio/studio-ui': resolve(__dirname, '../packages/studio-ui/src/index.ts'),
     },
   },
   optimizeDeps: {

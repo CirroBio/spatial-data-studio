@@ -84,7 +84,8 @@ the thing that ships it; the tag is.
 
 A change that alters what the built SPA does needs a new `v*` tag to take effect:
 
-- anything under `frontend/` or `packages/viewer/` that changes rendered behavior, and
+- anything under `frontend/`, `packages/viewer/` or `packages/studio-ui/` that changes
+  rendered behavior, and
 - anything that changes what the SPA reads out of a checkpoint — the `viewer/` sidecar
   layout, `VIEWER_SIDECAR_VERSION`, the GeoParquet/CSC mirror shape, or the checkpoint
   schemas in `backend/app/schemas/checkpoint/`, since a viewer that predates the change
@@ -99,8 +100,8 @@ git tag v1.2.3 && git push origin v1.2.3
 ```
 
 Two obligations that come with the tag. Bump the `version` in the root `package.json`,
-`frontend/package.json` and `packages/viewer/package.json` to match it in the same
-commit as the change — a tag whose name disagrees with the manifests makes the shipped
+`frontend/package.json`, `packages/viewer/package.json` and
+`packages/studio-ui/package.json` to match it in the same commit as the change — a tag whose name disagrees with the manifests makes the shipped
 bundle unidentifiable. And when a checkpoint-format change is what forced the tag, say
 so in the release notes: pinning `--viewer_dist` to an older asset is the documented
 escape hatch (`nextflow/README.md`), and it only works if the incompatibility is

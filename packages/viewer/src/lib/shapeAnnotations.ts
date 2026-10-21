@@ -4,6 +4,7 @@
 // flat outline for rendering (mirrors the polygon-approximation approach the
 // backend uses for its `sdata.shapes["annotations"]` geometry column).
 import type { ShapeGeometry, ShapeKind } from '../schemas/annotations';
+import type { ElementInventory } from '../data/types';
 
 type Point = [number, number];
 
@@ -13,6 +14,13 @@ type Point = [number, number];
 // polygonal?" test in the app; anything enumerating cell-boundary sets has to exclude
 // it by name or a user's own arrows and boxes get drawn as if they were cell outlines.
 export const SHAPE_ANNOTATIONS_ELEMENT = 'annotations';
+
+/** The shape sets a canvas can draw as cell boundaries: the polygonal ones, less the
+ * annotations element. */
+export function boundarySets(inventory: ElementInventory): ElementInventory['shapes'] {
+  return inventory.shapes.filter((s) => s.name !== SHAPE_ANNOTATIONS_ELEMENT
+    && s.geometry.some((g) => g === 'Polygon' || g === 'MultiPolygon'));
+}
 
 const ELLIPSE_SEGMENTS = 64;
 

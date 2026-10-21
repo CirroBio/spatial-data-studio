@@ -18,21 +18,25 @@ function timestampedName(label: string): string {
   return `${slug}-${stamp}.png`;
 }
 
-/** Save the plot canvas inside `container` as a PNG. Rejects if the container holds no
- * canvas or the browser refuses to encode it.
- *
- * Picks the LARGEST canvas rather than the first in DOM order: `SpatialCanvas` mounts the
- * Minimap's own canvas in the same container, so a JSX reorder would otherwise silently
- * export the 160 px inset instead of the plot. The deck canvas fills the viewport, so
- * "largest" identifies it without reaching into deck's internals. */
-export async function downloadCanvasPng(container: HTMLElement | null, label: string): Promise<void> {
+/** The plot's canvas inside `container`: the LARGEST one rather than the first in DOM
+ * order, because `SpatialCanvas` mounts the Minimap's own canvas in the same container, so
+ * a JSX reorder would otherwise silently capture the 160 px inset instead of the plot.
+ * The deck canvas fills the viewport, so "largest" identifies it without reaching into
+ * deck's internals. Throws if the container holds no canvas. */
+export function plotCanvas(container: HTMLElement | null): HTMLCanvasElement {
   const canvases = [...(container?.querySelectorAll('canvas') ?? [])];
   const canvas = canvases.reduce<HTMLCanvasElement | null>(
     (best, c) => (best && best.width * best.height >= c.width * c.height ? best : c),
     null,
   );
   if (!canvas) throw new Error('no canvas to capture');
+  return canvas;
+}
 
+/** Save the plot canvas inside `container` as a PNG. Rejects if the container holds no
+ * canvas or the browser refuses to encode it. */
+export async function downloadCanvasPng(container: HTMLElement | null, label: string): Promise<void> {
+  const canvas = plotCanvas(container);
   const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
   if (!blob) throw new Error('the browser could not encode the canvas as a PNG');
   downloadBlob(blob, timestampedName(label));

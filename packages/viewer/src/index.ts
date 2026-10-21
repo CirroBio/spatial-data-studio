@@ -7,13 +7,16 @@ export { default as EmbeddingCanvas, type EmbeddingCanvasControls } from './canv
 // ---- The host contract ------------------------------------------------------
 export {
   CanvasHostProvider, useCanvasHost, useDisplayEditor,
-  type CanvasHost, type RegionDrawHost, type ShapeAnnotationHost, type SnapshotHost,
+  type CanvasHost, type OverlayInset, type RegionDrawHost, type ShapeAnnotationHost, type SnapshotHost,
 } from './canvas/canvas-host';
 
 // ---- Where the data comes from ----------------------------------------------
 export { DataSourceProvider, useDataSource } from './data/context';
-export type { DataSource, ElementInventory, ImageLoader, LocalCategorical } from './data/types';
-export { isFolderUrl, openCheckpoint, type CheckpointHandle, type CheckpointUrlRefresher } from './data/checkpointSource';
+export type { DataSource, ElementInventory, ExpressionMatrix, ImageLoader, LocalCategorical } from './data/types';
+export {
+  isFolderUrl, openCheckpoint, openCheckpointStore, openZarrStore, RangeGetReader,
+  type CheckpointHandle, type CheckpointUrlRefresher,
+} from './data/checkpointSource';
 export { HostSignedFolderStore, type FolderAccess } from './data/folderStore';
 export { UnrenderableStoreError } from './data/plainSpatialData';
 export { useArrowField } from './data/useArrowField';
@@ -36,7 +39,7 @@ export {
   defaultFill, defaultStroke, textGeometryAt, type ShapeKind,
 } from './schemas/annotations';
 export {
-  ROTATE_HANDLE_ID, SHAPE_ANNOTATIONS_ELEMENT, applyHandleDrag, arrowheadTriangle,
+  ROTATE_HANDLE_ID, SHAPE_ANNOTATIONS_ELEMENT, applyHandleDrag, arrowheadTriangle, boundarySets,
   centeredRotateHandle, geometryFromDrag, polygonFromClicks, rotatePoint, shapeCentroid,
   shapeHandles, shapeOutline, translateGeometry, type ShapeHandle,
 } from './lib/shapeAnnotations';
@@ -50,8 +53,8 @@ export {
 // ---- Palettes and per-display styling ---------------------------------------
 export {
   CATEGORY_COLORS, CATEGORY_SWATCHES, CHANNEL_COLORS, PLOT_BACKGROUNDS, SELECTION_COLORS,
-  VIRIDIS_CSS_GRADIENT, buildCategoricalPalette, buildNumericColormap, defaultChannelColor,
-  hexToRgb, rgbToHex,
+  VIRIDIS_CSS_GRADIENT, VIRIDIS_CSS_STOPS, buildCategoricalPalette, buildNumericColormap,
+  defaultChannelColor, hexToRgb, rgbToHex,
 } from './canvas/colorUtils';
 export { colorByLabel, parseColorBy, type ColorBy, type ColorBySlot } from './canvas/colorBy';
 export { ZOOM_LIMITS, ZOOM_STEP } from './canvas/viewFit';
@@ -59,12 +62,12 @@ export {
   MAX_VISIBLE_CHANNELS, useImageChannels, type Channel, type ChannelPatch,
 } from './canvas/useImageChannels';
 export {
-  arrowToColorSource, useSpotColors, type ColorLegend,
+  arrowToColorSource, buildColorLegend, useSpotColors, type ColorLegend,
 } from './canvas/useSpotColors';
 export { useArrowPositions, type ScatterPositions } from './canvas/useArrowPositions';
 
 // ---- Snapshots (PNG capture + the saved-figure contract) ---------------------
-export { downloadCanvasPng } from './lib/canvasCapture';
+export { downloadCanvasPng, plotCanvas } from './lib/canvasCapture';
 export { downloadBlob } from './lib/download';
 export {
   formatCreated, type Snapshot, type SnapshotExportParams, type SnapshotFormat,

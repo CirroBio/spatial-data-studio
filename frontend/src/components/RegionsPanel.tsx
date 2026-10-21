@@ -4,9 +4,8 @@ import { annotateSession, createShapeAnnotation } from '../api';
 import { defaultFill, defaultStroke, reportError, useDataSource, type ShapeAnnotation } from '@cirrobio/spatial-viewer';
 import { resolveRegionSetColumn } from '../lib/regions';
 import { useDrawSelection } from '../hooks/useDrawSelection';
-import ColorSwatchPicker from './ColorSwatchPicker';
+import { ColorSwatchPicker, ObsFieldSelect } from '@cirrobio/studio-ui';
 import DrawControls from './DrawControls';
-import ObsFieldSelect from './ObsFieldSelect';
 import type { RegionSet } from '../types';
 
 const NEW_CAT_COLORS = [

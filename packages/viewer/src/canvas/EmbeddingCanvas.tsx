@@ -21,7 +21,7 @@ import { useSpotColors, arrowToColorSource } from './useSpotColors';
 import { buildSpotLayer } from './buildSpotLayer';
 import { colorByLabel } from './colorBy';
 import { SELECTION_COLORS } from './colorUtils';
-import { LoadingCue, CellColorLegend, DrawHint } from './CanvasOverlays';
+import { LoadingCue, CellColorLegend, DrawHint, OverlayFrame } from './CanvasOverlays';
 import { CANVAS_PLACEHOLDER, CANVAS_ROOT, MONO_FONT, themeColor } from './overlayStyles';
 
 // Stable empties for a host without region drawing, so the lasso memo and the
@@ -102,6 +102,7 @@ export default function EmbeddingCanvas({
   const { containerRef, viewState, setViewState, fitToData } = useEmbeddingViewState({
     positions,
     is3d: is_3d,
+    inset: host.overlayInset,
   });
 
   const colorSource = useMemo(() => arrowToColorSource(colorTable), [colorTable]);
@@ -395,13 +396,15 @@ export default function EmbeddingCanvas({
         </svg>
       )}
 
+      <OverlayFrame inset={host.overlayInset}>
       <DrawHint drawMode={lassoMode} canvasMode={canvasMode} annotationTarget={annotationTarget}
-        selectionTool={selectionTool} shapePlaced={placedSelectionShape !== null} />
+        selectionTool={selectionTool} shapePlaced={placedSelectionShape !== null} hint={host.drawHint} />
 
       <LoadingCue coordsLoading={coordsLoading} colorLoading={colorLoading} boundariesLoading={false} />
 
       <CellColorLegend visible={legendVisible} legend={colorLegend} title={legendTitle}
         scale={display.encoding.legend_scale ?? EMBEDDING_ENCODING_DEFAULTS.legend_scale} />
+      </OverlayFrame>
 
       {controls?.({
         display,

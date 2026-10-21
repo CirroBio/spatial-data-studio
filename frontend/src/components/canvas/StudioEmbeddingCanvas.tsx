@@ -2,7 +2,7 @@ import { useState } from 'react';
 import {
   EmbeddingCanvas, type EmbeddingDisplaySpec, type ObsField, type ObsmField,
 } from '@cirrobio/spatial-viewer';
-import EmbeddingControls from './EmbeddingControls';
+import { EmbeddingSettings } from '@cirrobio/studio-ui';
 
 // The Studio app's embedding canvas. Same slot arrangement as StudioSpatialCanvas.
 export default function StudioEmbeddingCanvas({
@@ -33,11 +33,7 @@ export default function StudioEmbeddingCanvas({
       annotationTarget={annotationTarget}
       followDisplayViewport={restoreViewport}
       controls={embedded ? undefined : (api) => (
-        <EmbeddingControls
-          {...api}
-          panelCollapsed={panelCollapsed}
-          setPanelCollapsed={setPanelCollapsed}
-        />
+        <EmbeddingSettings api={api} collapsed={panelCollapsed} onCollapse={setPanelCollapsed} />
       )}
     />
   );
