@@ -5,8 +5,9 @@ import { useEffect, useRef } from 'react';
 //
 // The pointer is a microscope's lens. Under it the section is magnified to
 // single cells, drawn as their segmentation outlines and colored by neighborhood the way
-// Xenium sections look in the app. The section is one of five tissues at a time, and
-// every few seconds it turns over, cell by cell, to the next: a pancreas (acinar lobules,
+// Xenium sections look in the app. The section is one of five tissues at a time: each
+// new look through the lens shows the next, and a long look turns over to it cell by
+// cell every few seconds. The five are a pancreas (acinar lobules,
 // islets ringed by another neighborhood, ducts around their lumens), a lymph node
 // (follicles with germinal centres in a T-cell zone, sinuses, medullary cords), a colon
 // (crypts cut across, in lamina propria, over muscle), a cortex (layers of neurons over
@@ -14,8 +15,8 @@ import { useEffect, useRef } from 'react';
 // immune cells at their margins, dead cores in the largest). The detail is a field over
 // the page, so moving the lens pans across the section. Moving the lens parts the dots
 // in its wake, and a click sends a ripple through them. Drawn with WebGL2; still under
-// reduced motion (one tissue, and the lens follows the pointer without easing); absent
-// without WebGL2, since it only decorates.
+// reduced motion (each look still shows the next tissue, but nothing turns, and the lens
+// follows the pointer without easing); absent without WebGL2, since it only decorates.
 
 const N = 5200;
 const TISSUES = 5;
@@ -582,6 +583,17 @@ export default function Backdrop() {
     let wakeFrom = { x: -1e4, y: -1e4 };
     const pulse = new Float32Array([0, 0, 0, 0]);
     let focusFrom = -Infinity;
+    // The tissue the section shows and when it began showing. Each time the lens appears
+    // it shows the next tissue (after the first), and a long look turns over to the next
+    // every TISSUE_MS, counted only while the lens is up.
+    let tissue = 0;
+    let tissueFrom = 0;
+    let lensUp = false;
+    let looks = 0;
+    const nextTissue = (at: number) => {
+      tissue = (tissue + 1) % TISSUES;
+      tissueFrom = at;
+    };
     let frame = 0;
     let last = performance.now();
     const start = last;
@@ -603,8 +615,15 @@ export default function Backdrop() {
       lensAt.x += (pointer.x - lensAt.x) * follow;
       lensAt.y += (pointer.y - lensAt.y) * follow;
       const wanted = now - pointer.at < IDLE_MS ? 1 : 0;
-      // A lens that was gone comes into focus afresh.
-      if (lensAt.shown < 0.02 && wanted) focusFrom = now;
+      // A lens that was gone comes into focus afresh, on the next tissue.
+      if (wanted && !lensUp) {
+        lensUp = true;
+        focusFrom = now;
+        if (looks++) nextTissue(now);
+        else tissueFrom = now;
+      }
+      if (!wanted && lensAt.shown < 0.02) lensUp = false;
+      if (!still && lensUp && now - tissueFrom >= TISSUE_MS + TURN_MS) nextTissue(now);
       lensAt.shown = still ? wanted : lensAt.shown + (wanted - lensAt.shown) * (1 - Math.exp(-dt * 4));
       if (!still) {
         const moved = Math.hypot(lensAt.x - wakeFrom.x, lensAt.y - wakeFrom.y);
@@ -646,12 +665,9 @@ export default function Backdrop() {
         gl.uniform1f(at(lens, 'uLensR'), lensR);
         gl.uniform1f(at(lens, 'uScale'), scale);
         gl.uniform1f(at(lens, 'uTime'), seconds);
-        // One tissue after another, each turning over to the next at the end of its turn.
-        const turns = still ? 0 : (now - start) / (TISSUE_MS + TURN_MS);
-        const within = (turns % 1) * (TISSUE_MS + TURN_MS);
-        gl.uniform1i(at(lens, 'uTissue'), Math.floor(turns) % TISSUES);
-        gl.uniform1i(at(lens, 'uNext'), (Math.floor(turns) + 1) % TISSUES);
-        gl.uniform1f(at(lens, 'uTurn'), Math.max(0, (within - TISSUE_MS) / TURN_MS));
+        gl.uniform1i(at(lens, 'uTissue'), tissue);
+        gl.uniform1i(at(lens, 'uNext'), (tissue + 1) % TISSUES);
+        gl.uniform1f(at(lens, 'uTurn'), still ? 0 : Math.max(0, (now - tissueFrom - TISSUE_MS) / TURN_MS));
         gl.uniform1f(at(lens, 'uFocus'), still ? 1 : Math.min(1, (now - focusFrom) / FOCUS_MS));
         gl.uniform1f(at(lens, 'uDpr'), dpr);
         gl.uniform4f(at(lens, 'uHush'), ...hush);
