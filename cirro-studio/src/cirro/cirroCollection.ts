@@ -4,7 +4,7 @@
 import { EntityType, ProjectAccessType, type Dataset, type DatasetDetail, type Process } from '@cirrobio/api-client';
 import { ProjectFileAccessContext, uploadFile } from '@cirrobio/sdk';
 import { openZarrStore, type FolderAccess } from '@cirrobio/spatial-viewer';
-import { APP_ID, APP_TAG } from '../app/appInfo';
+import { APP_TAG } from '../app/appInfo';
 import type { Collection, NewVersion, PipelineLink, PipelinePurpose } from '../data/collection';
 import { datasetContents, type ListedFile } from '../data/discover';
 import { FOLDER_PREFIX, foldersOf, type DatasetRecord } from '../data/model';
@@ -15,9 +15,6 @@ import { browserFallback, openCatalog, type CatalogCache } from './catalogSheet'
 import { addProvenanceNote, withAppTag } from './provenance';
 import { refusedPermission, retryRateLimited, type CirroSession } from './session';
 
-// Tags on what the app writes, besides `cirro-app`.
-export const KIND_TAG = `${APP_ID}.kind`;
-export const PARENT_TAG = `${APP_ID}.parent`;
 const FILES_PROCESS = 'custom_dataset';
 // A store stays open for as long as someone looks at it; its reader re-signs on expiry.
 const STORE_URL_MINUTES = 60;
@@ -39,7 +36,8 @@ const SPATIAL_PROCESS = /spatial|xenium|visium|cosmx|merscope|sopa|proseg|space 
  * app; not another app's saved figure or table, and finished. */
 function worthScanning(d: Pick<DatasetRecord, 'processId' | 'processName' | 'tags' | 'status'>): boolean {
   if (d.status !== 'COMPLETED') return false;
-  const ours = d.tags.some((t) => t.key === APP_TAG.key && t.value === APP_TAG.value);
+  // By value: the app once wrote it as { key: 'cirro-app', value: APP_ID }, which this finds too.
+  const ours = d.tags.some((t) => t.value === APP_TAG.value);
   const othersAsset = d.tags.some((t) => t.key === 'asset') && !ours;
   return !othersAsset && (ours || SPATIAL_PROCESS.test(`${d.processId} ${d.processName}`));
 }
@@ -298,7 +296,7 @@ export class CirroCollection implements Collection {
         description: version.description,
         processId: FILES_PROCESS,
         expectedFiles: version.files.map((f) => f.name),
-        tags: withAppTag([{ key: KIND_TAG, value: 'version' }, ...(parent ? [{ key: PARENT_TAG, value: parent }] : []), ...folders]),
+        tags: withAppTag(folders),
       },
     });
     const detail = await this.cirro.data.datasets.getDataset({ projectId: this.id, datasetId: created.id });

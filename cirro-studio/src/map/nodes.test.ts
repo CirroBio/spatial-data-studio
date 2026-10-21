@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { labelLines } from './nodes';
+import type { DatasetRecord } from '../data/model';
+import { labelLines, userTags } from './nodes';
 
 describe('labelLines', () => {
   it('keeps the words that tell two names apart', () => {
@@ -15,5 +16,23 @@ describe('labelLines', () => {
   });
   it('leaves a name that fits', () => {
     expect(labelLines('Xenium human pancreas', 22, 3)).toEqual(['Xenium human pancreas']);
+  });
+});
+
+describe('userTags', () => {
+  const record = (tags: DatasetRecord['tags']): DatasetRecord => ({
+    id: 'd', name: 'd', description: '', processId: '', processName: '', status: 'COMPLETED', createdAt: '', createdBy: '',
+    tags, folders: [], sourceIds: [], share: null,
+  });
+
+  it('leaves out the app\'s own tags, as it writes them now and as it once did, and folders', () => {
+    expect(userTags(record([
+      { key: '', value: 'spatial-data-studio' },
+      { key: 'cirro-app', value: 'spatial-data-studio' },
+      { key: 'spatial-data-studio.kind', value: 'version' },
+      { key: '', value: 'folder://lung/2026' },
+      { key: '', value: 'tumor' },
+      { key: 'site', value: 'Seattle' },
+    ]))).toEqual(['tumor', 'site: Seattle']);
   });
 });

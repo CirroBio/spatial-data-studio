@@ -1,11 +1,13 @@
-// APP_ID is written to Cirro as the `cirro-app` tag and never changes once used.
+// APP_ID is written to Cirro as a tag on everything the app creates, and never changes
+// once used.
 export const APP_ID = 'spatial-data-studio';
 export const APP_NAME = 'Spatial Data Studio';
 export const APP_VERSION: string = __APP_VERSION__;
 export const REPO_URL = 'https://github.com/CirroBio/spatial-data-studio';
 export const DOCS_URL = 'https://cirrobio.github.io/spatial-data-studio/';
 export const CIRRO_URL = 'https://cirro.bio';
-export const APP_TAG = { key: 'cirro-app', value: APP_ID };
+// A tag is a plain text label: Cirro deprecated its key, and its web app shows only the value.
+export const APP_TAG = { value: APP_ID };
 // Sheets live in a namespace named after the app, `-` replaced by `_`.
 export const SHEET_NAMESPACE = APP_ID.replace(/-/g, '_');
 // App-specific URL parameters and browser keys carry the app's ID, so other Cirro apps

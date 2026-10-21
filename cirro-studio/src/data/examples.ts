@@ -76,7 +76,7 @@ export class ExampleCollection implements Collection {
       status: 'COMPLETED',
       createdAt: d.createdAt,
       createdBy: 'you',
-      tags: [APP_TAG],
+      tags: [{ key: '', ...APP_TAG }],
       folders: [BROWSER_FOLDER],
       sourceIds: d.sourceIds,
       share: null,
