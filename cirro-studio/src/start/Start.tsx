@@ -81,7 +81,10 @@ function SignIn({ tenants, unknownFromUrl, onBack }: { tenants: Tenant[]; unknow
   const [active, setActive] = useState(-1);
   const choice = tenantNamed(text, tenants);
   const typed = text.trim().length >= SUGGEST_AFTER;
-  const suggestions = open ? suggestTenants(text, tenants) : [];
+  // Nothing to suggest once the box already names the one tenant the list would show; it
+  // would only cover the button below.
+  const matches = open ? suggestTenants(text, tenants) : [];
+  const suggestions = matches.length === 1 && matches[0] === choice ? [] : matches;
   const pick = (t: Tenant) => {
     setText(t.name);
     setOpen(false);
@@ -162,10 +165,7 @@ function SignIn({ tenants, unknownFromUrl, onBack }: { tenants: Tenant[]; unknow
         )}
       </div>
       {typed && !choice && !suggestions.length && <p className="muted">Pick a suggestion, or type the address you use for Cirro, such as cirro.example.org.</p>}
-      <p className="muted">
-        You'll sign in on Cirro's own page, which shows what this app may do. If you aren't signed in to Cirro already,
-        it may stop at "Invalid authorize link" once you are; log in here again and it goes through.
-      </p>
+      <p className="muted">You'll sign in on Cirro's own page, which shows what this app may do.</p>
       <button type="submit" className="button button-primary" disabled={!choice}>{choice ? `Log in to ${choice.name}` : 'Log in'}</button>
       <button type="button" className="link-button" onClick={onBack}>← Back</button>
     </form>

@@ -3,8 +3,8 @@ import ReactDOM from 'react-dom/client';
 import type { SystemInfoResponse } from '@cirrobio/api-client';
 import '@fontsource-variable/geist';
 import '@fontsource-variable/geist-mono';
-import { REDIRECT_URI, signInError } from './signInState';
-import { EXAMPLES_TENANT, chooseTenant, forgetTenant, loadTenants, showSignIn, startOf, takeSignInNow, type Tenant } from './tenants';
+import { REDIRECT_URI, forgetStoredUsers, isSignInReturn, signInError } from './signInState';
+import { EXAMPLES_TENANT, chooseTenant, forgetTenant, loadTenants, showSignIn, startOf, startUrl, takeSignInNow, type Tenant } from './tenants';
 import { FatalError, SignInPage, StartPages } from './start/Start';
 import { App } from './app/App';
 import { APP_NAME } from './app/appInfo';
@@ -39,13 +39,21 @@ const tryAgain = <button type="button" className="button button-primary" onClick
 // the app with an API client whose token comes from the sign-in library on every call.
 async function startTenant(tenant: Tenant) {
   const signInNow = takeSignInNow();
-  // A tenant that fails can be retried, or left for another; the saved choice would reopen it.
+  // Leaving a tenant forgets it and its stored logins, either of which would reopen it.
+  const leaveTenant = () => {
+    forgetTenant();
+    forgetStoredUsers(tenant.url);
+  };
+  // A tenant that fails can be retried, or left for another.
   const tenantActions = (
     <div className="button-row">
       <button type="button" className="button button-primary" onClick={() => chooseTenant(tenant)}>Try again</button>
-      <button type="button" className="button" onClick={() => { forgetTenant(); showSignIn(); }}>Log in to another Cirro</button>
+      <button type="button" className="button" onClick={() => { leaveTenant(); showSignIn(); }}>Log in to another Cirro</button>
     </div>
   );
+  // Opened only because a login was stored here, not by a link, a choice or a sign-in return.
+  const params = new URLSearchParams(window.location.search);
+  const fromStoredLogin = !signInNow && !params.has('tenant') && !isSignInReturn(params);
   root.render(<main className="centered-page"><p className="muted">Connecting to {tenant.name}…</p></main>);
   const res = await fetch(`${tenant.url}/api/info/system`).catch(() => null);
   if (!res?.ok) {
@@ -69,10 +77,24 @@ async function startTenant(tenant: Tenant) {
   const didntFinish = (e: unknown): undefined => {
     render(<FatalError title={`Logging in to ${tenantName} didn't finish`} message={describeError(e)} action={tenantActions} />);
   };
-  const signIn = await createSignIn(tenant.url, tenant.clientId).catch(didntFinish);
+  // A sign-in that can't start (no registration the tenant will name) is an error for someone
+  // who asked for this tenant; anyone else just starts on the landing page.
+  const signIn = await createSignIn(tenant.url, tenant.clientId).catch((e: unknown) => {
+    if (!fromStoredLogin) return didntFinish(e);
+    console.warn(e);
+    leaveTenant();
+    window.location.replace(startUrl('landing'));
+  });
   if (!signIn) return;
   const user = await currentUser(signIn).catch(didntFinish);
   if (user === undefined) return;
+  if (!user && fromStoredLogin) {
+    // The stored login no longer works, or was made under a registration since replaced:
+    // forget it, and the visitor starts on the landing page like anyone not logged in.
+    leaveTenant();
+    window.location.replace(startUrl('landing'));
+    return;
+  }
   if (!user) {
     const redirect = () => startSignIn(signIn, tenant.id).catch(didntFinish);
     if (signInNow) await redirect();
