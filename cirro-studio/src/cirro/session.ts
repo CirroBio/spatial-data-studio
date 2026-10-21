@@ -24,7 +24,7 @@ export interface CirroSession {
 // The SDK's ApiError, recognized by its shape: every page uses this module, and importing
 // the class would load the whole Cirro client for visitors who never sign in.
 interface ApiError extends Error { errorCode: number; errors: string[] }
-const isApiError = (e: unknown): e is ApiError => e instanceof Error && typeof (e as Partial<ApiError>).errorCode === 'number';
+export const isApiError = (e: unknown): e is ApiError => e instanceof Error && typeof (e as Partial<ApiError>).errorCode === 'number';
 
 const RATE_LIMIT_WAITS_MS = [2000, 5000, 10000];
 const isRateLimited = (e: unknown) => isApiError(e) && e.errorCode === 429;

@@ -5,8 +5,9 @@ A **version** of a SpatialData store is saved as only what changed. The Cirro ap
 column, an embedding, an analysis result, a figure, or a deletion. The store itself is
 never copied. A version names the version (or store) it sits on, so a chain of them —
 a *stack* — reads as one store whose top is the newest version. This file specifies the
-format; the writer is `cirro-studio/src/stack/`, and `cirro-studio/python/sds_layers.py`
-reads it from Python.
+format; the writer is `cirro-studio/src/stack/`, and `backend/app/persistence/sds_layers.py`
+reads it from Python. The Studio opens a version through that reader (see
+[In the Studio](#in-the-studio)).
 
 The design borrows from container image layers. Each layer holds the objects it adds or
 replaces, plus *whiteouts* for what it deletes, and a reader answers each key from the
@@ -150,11 +151,21 @@ spec = json.loads(adata.uns["spatial_data_studio"]["figures"]["fig_…"])
 store `open_stack` returns. For it, write the stack out as one store first:
 
 ```bash
-python cirro-studio/python/sds_layers.py flatten downloads/<top version id> out.zarr
+python backend/app/persistence/sds_layers.py flatten downloads/<top version id> out.zarr
 ```
 
 Over a folder base, `flatten` links the base's objects instead of copying them; a
 `.zarr.zip` base is extracted. `describe` lists a stack's versions.
+
+Where a dataset's folder is not named by its ID, as in a Cirro workspace, give the map
+from ID to folder name: `folders=` to `open_stack` and `Stack.resolve`, or `--folders`
+with a JSON object to either command. In a workspace that object is the
+`SDS_CIRRO_DATASETS` variable:
+
+```bash
+python backend/app/persistence/sds_layers.py flatten --folders "$SDS_CIRRO_DATASETS" \
+  ~/datasets/<version folder> out.zarr
+```
 
 A manifest arrives with downloaded data, so `sds_layers.py` checks it before following
 it: keys, the `overlay` folder, reference paths and the member names of a `.zarr.zip`
@@ -163,4 +174,37 @@ IDs may hold only letters, digits and hyphens, and anything else is an error. So
 chain of `parent` references that comes back to a version already in it, or that runs
 more than 500 versions deep. `flatten` also refuses to read a version's object from
 outside its overlay folder or to write outside the output folder, even through a
-symbolic link.
+symbolic link. A folder the folder map names must meet the same rules as a path and lead
+to a folder inside the datasets folder.
+
+## In the Studio
+
+The Studio opens a version the way it opens a saved checkpoint. A folder holding a
+version's `layer.json`, at its top or under `data/`, is listed under **Open Checkpoint**
+in the New Session dialog, by its path under the data directory followed by the
+version's title when that differs from the folder's name, and Import Data's SpatialData
+reader accepts one too. Opening it follows the stack down to the base, writes the whole
+stack out as one store in the session's working directory (`SDS_WORK_DIR`), and reads
+that. The store is a copy, not links into the base, so it costs what opening the same
+store as a `.zarr.zip` costs, and the session's later saves never touch the version or
+anything below it. A save writes a new `.sdata.zarr.zip` checkpoint; saving over the
+version's own folder is refused.
+
+A parent is looked up in the folder that holds the opened version's folder: in the
+folder the folder map names for its dataset ID, or else in the one named by the ID
+itself, which is how a download is laid out. Every folder the stack reads must be under
+the Studio's data directory, like any other input.
+
+In a Cirro workspace every attached dataset is mounted read-only at
+`$HOME/datasets/<folder name>` (also `/mnt/datasets/<folder name>`), and the folder is
+named for the dataset, not by its ID. The Cirro app sets the workspace's
+`SDS_CIRRO_DATASETS` variable to the folder map, a JSON object with an entry for every
+mounted dataset:
+
+```json
+{ "5f1c…": "Tumor margin regions", "0d13…": "Pancreas results" }
+```
+
+When it starts a workspace on a saved version, the Cirro app attaches every dataset of
+its stack: the base store's and each version's. A version whose parent isn't attached
+does not open; the message names the missing dataset's ID.

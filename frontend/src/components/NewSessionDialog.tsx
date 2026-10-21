@@ -292,7 +292,7 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
                     <div className="shrink-0 border-b border-border px-3 py-2 flex flex-col gap-2">
                       <div className="flex items-baseline gap-2">
                         <span className="text-xs font-semibold text-text">Checkpoints</span>
-                        <span className="text-[11px] text-muted/70 truncate">saved .sdata.zarr.zip checkpoints in the data folder</span>
+                        <span className="text-[11px] text-muted/70 truncate">saved .sdata.zarr.zip checkpoints and Cirro app versions in the data folder</span>
                       </div>
                       <input
                         type="text"

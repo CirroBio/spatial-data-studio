@@ -28,6 +28,13 @@ streams live while it works. Datasets stay resident in memory for the session. O
 also carries the store's recorded compute history into the new session, so the functions
 that produced the data stay visible in the Compute tab.
 
+A version saved in the Cirro app opens the same way. In a workspace started on it, its
+folder is in the **Open Checkpoint** list under `datasets/` (with the version's title
+when that differs), and the Studio assembles it with the store and every version beneath
+it. Saving writes a new checkpoint; the version itself is never changed. If a dataset the
+version was saved over isn't attached to the workspace, it doesn't open, and the message
+names that dataset.
+
 ### Run analyses without writing code
 
 Every `squidpy` and (curated) `scanpy` function appears in a searchable picker with a
@@ -515,10 +522,44 @@ launch form for the dataset, so the pipeline's options, cost and permissions are
 to show. Their output appears on the map as spatial data, linked back to what it was
 made from.
 
+### Open it in the full Studio
+
+The browser runs the analyses above; the full Spatial Data Studio runs every squidpy and
+scanpy function, on a machine in your project. **Open in the full Studio**, at the top of
+any item, starts a Cirro workspace running it with that item attached. **Workspaces**, in
+the top bar, lists the workspaces you have in the project and starts one with several
+items at once.
+
+- **What it opens.** **+ Add from this project** adds spatial datasets, runs and images.
+  A saved version brings the store and every version beneath it, so the Studio opens it
+  with all the changes you saved. Changes you haven't saved as a version stay in your
+  browser, and the form says so.
+- **The machine.** Standard is Cirro's default for the Studio; Large and Extra large
+  double and quadruple its CPU and memory, for sections too big for the default.
+- **Starting.** A workspace takes a few minutes to start. Keep working meanwhile: the top
+  bar shows it starting, and a notice with **Open** appears when it's ready. It opens in
+  a new tab, with the items you attached under `datasets/` in the Studio's data folder:
+  saved versions and checkpoints in its **Open Checkpoint** list, other stores and
+  instrument runs through **Import Data**.
+- **Running.** It stops by itself after two hours unless you **Extend** it, and leaving
+  this page doesn't stop it. **Stop** keeps its files, and **Start** runs it again.
+  **Change datasets** gives a stopped workspace different items or a different machine;
+  it restarts with its files kept. **Delete** removes it, with any files in it that
+  weren't saved to the project.
+- **The limit.** Cirro limits how many workspaces you may have in a project, stopped ones
+  included. At the limit, the form lists yours so you can delete one to make room.
+- **Results.** What you save in the Studio stays in the workspace until you upload it to
+  Cirro from there ([Publish what you found](#publish-what-you-found)); it then appears on
+  the map.
+
+A workspace needs your organization's Cirro to offer the Studio's workspace environment;
+where it doesn't, the Workspaces sheet says so. The examples don't offer workspaces.
+
 ### What it can see and do
 
 The app acts as you, with the permissions your project role gives you and the ones
 your organization granted the app; it never sees your password. It reads data by
 short-lived signed links straight from the project's storage, and nothing it reads
 leaves your browser. It writes only what you save: a version dataset, its note, and the
-project's catalog sheet.
+project's catalog sheet, and the workspaces you start, each with a note of what it
+opened.

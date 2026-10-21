@@ -6,13 +6,16 @@ import { stageOf, type Library, type StageId } from '../app/library';
 import { backToMap, openItem, STAGE_PARAM, useRoute } from '../app/route';
 import { useStudio } from '../app/studio';
 import { formatBytes, formatDate, Popover, tint } from '../app/ui';
+import { openWorkspaces, requestFor } from '../workspaces/request';
 
 export interface Kin { item: CatalogItem; label: string; color: string }
 
-export function Facts({ title, item, kind, stage, from, into, extra }: {
+export function Facts({ title, item, kind, stage, from, into, extra, unsaved = false }: {
   title: string; item: CatalogItem; kind: string; stage: StageId; from: Kin[]; into: Kin[]; extra?: ReactNode;
+  // Changes not saved as a version, which a workspace opening the item can't see.
+  unsaved?: boolean;
 }) {
-  const { catalog, collection } = useStudio();
+  const { catalog, collection, library } = useStudio();
   const fromStage = useRoute().params.has(STAGE_PARAM);
   const dataset = catalog.byId.get(item.datasetId);
   const url = collection.datasetUrl(item.datasetId);
@@ -32,6 +35,12 @@ export function Facts({ title, item, kind, stage, from, into, extra }: {
       {into.length > 0 && <span className="facts-kin">made into {into.slice(0, 3).map((k) => <KinChip key={k.item.key} kin={k} />)}{into.length > 3 && <span className="muted"> +{into.length - 3}</span>}</span>}
       {extra}
       <span className="facts-spacer" />
+      {collection.kind === 'cirro' && (
+        <button type="button" className="button button-small" title="A workspace running the full Spatial Data Studio on it, in a new tab"
+          onClick={() => openWorkspaces(requestFor(item, title, library, unsaved))}>
+          Open in the full Studio
+        </button>
+      )}
       <Popover align="right" label={<>Details ▾</>} className="facts-details">
         {() => (
           <dl className="details">

@@ -37,12 +37,13 @@ app/
     tables.py            data-inspector element inventory + paginated dataframe JSON
     sse.py               single multiplexed SSE bus with Last-Event-ID resume (§14.2)
   persistence/
-    store.py             save/load .zarr (dir) and .zarr.zip (incremental re-save)
+    store.py             save/load .zarr (dir) and .zarr.zip (incremental re-save); opens a saved version
+    sds_layers.py        reads a version stack (docs/LAYER_FORMAT.md); stdlib + zarr only, also a CLI
   recipes/               curated analysis recipes (JSON, discovered at startup) + catalog/apply
   imaging.py             tiled image pyramid + channel compositing + coordinate reconciliation (§9.2)
   rasters.py             ingest-time re-tiling into a tile-chunked pyramid
   snapshots.py           matplotlib figure render (vector PDF / raster PNG) + gallery list/delete (§14)
-  datasets.py            saved-checkpoint scan for the load/upload pickers (prewarmed cache)
+  datasets.py            saved-checkpoint and saved-version scan for the load/upload pickers (prewarmed cache)
   prewarm.py             background queue that warms slow first-open menu lists off the event loop
   cirro.py               Cirro dataset upload (client-credentials auth, symlink bundle)
   acknowledgements.py    third-party Python license catalog from the SBOM

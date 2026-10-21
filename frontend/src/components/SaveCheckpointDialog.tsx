@@ -102,7 +102,7 @@ const formatDims = (l: ImageLevel) => `${l.width.toLocaleString()} × ${l.height
 
 // The extension every checkpoint carries, between the stem's content hash and the end
 // of the name (backend: persistence/store.CHECKPOINT_EXT). Shown in the filename preview.
-const CHECKPOINT_EXT = '.sdata.zarr.zip';
+export const CHECKPOINT_EXT = '.sdata.zarr.zip';
 
 /** A session name turned into the filename stem it suggests. Only characters that make
  * a filename awkward to handle are folded away — the backend rejects a prefix with a

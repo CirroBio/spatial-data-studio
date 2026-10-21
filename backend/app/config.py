@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -151,6 +152,23 @@ def _container_mem_mb() -> tuple[int, str]:
     return 8192, "default (no cgroup limit, host RAM unknown)"
 
 
+def _cirro_datasets() -> dict[str, str] | None:
+    """SDS_CIRRO_DATASETS, the Cirro workspace's map from each attached dataset's ID to
+    the folder it is mounted in, or None when the variable is unset (not a workspace)."""
+    raw = os.environ.get("SDS_CIRRO_DATASETS")
+    if not raw:
+        return None
+    try:
+        folders = json.loads(raw)
+    except ValueError as e:
+        raise ValueError(f"SDS_CIRRO_DATASETS is not JSON: {e}") from e
+    if not (isinstance(folders, dict)
+            and all(isinstance(k, str) and isinstance(v, str) for k, v in folders.items())):
+        raise ValueError("SDS_CIRRO_DATASETS must be a JSON object mapping dataset IDs to "
+                         f"folder names, got {raw!r}")
+    return folders
+
+
 class Config:
     # Single data directory (DESIGN §19.9). User-facing artifacts live here,
     # read-write: raw inputs the user imports, saved checkpoints
@@ -164,6 +182,13 @@ class Config:
     # Defaults to the invoking user's home ($HOME), where the deployment environment
     # mounts datasets (e.g. $HOME/datasets); override with SDS_DATA_DIR.
     DATA_DIR = Path(os.environ.get("SDS_DATA_DIR") or Path.home())
+
+    # In a Cirro workspace every attached dataset is mounted read-only at
+    # DATA_DIR/datasets/<folder name>, the folder named for the dataset rather than by its
+    # ID. A saved version names its parent by dataset ID (docs/LAYER_FORMAT.md), so the
+    # Cirro app sets this map from ID to folder for the parent to be found. None outside a
+    # workspace, where a parent is looked up in the folder named by its ID.
+    CIRRO_DATASETS = _cirro_datasets()
 
     # Working directory for the live session working set: the unpacked `.zarr.zip`
     # extract dir (persistence/store.py) and the per-session normalized raster cache

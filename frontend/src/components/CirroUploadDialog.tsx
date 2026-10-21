@@ -6,6 +6,7 @@ import {
 } from '../api';
 import { formatError, reportError } from '@cirrobio/spatial-viewer';
 import { ModalOverlay, ModalHeader } from './DetailModal';
+import { CHECKPOINT_EXT } from './SaveCheckpointDialog';
 
 interface Props {
   onClose: () => void;
@@ -41,7 +42,8 @@ export default function CirroUploadDialog({ onClose }: Props) {
     Promise.all([getCirroProjects(), getDatasets()])
       .then(([p, d]) => {
         setProjects(p.projects);
-        setSessions(d.datasets);
+        // The list also holds saved versions' folders, which an upload can't carry.
+        setSessions(d.datasets.filter((s) => s.path.endsWith(CHECKPOINT_EXT)));
       })
       .catch((err) => setError(formatError(err)));
   }, []);

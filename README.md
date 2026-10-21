@@ -48,7 +48,7 @@ same words read the same on GitHub and on the site.
 | [User guide](docs/USER_GUIDE.md) | what the app does — the source of truth for it |
 | [Run with Docker](docker/README.md) | the image, its memory limits and environment |
 | [The Cirro app](cirro-studio/README.md) | the browser-only app for Cirro projects, for developers |
-| [Version layer format](docs/LAYER_FORMAT.md) | how the Cirro app saves a version of a store, and reading one from Python |
+| [Version layer format](docs/LAYER_FORMAT.md) | how the Cirro app saves a version of a store, opening one in the Studio, and reading one from Python |
 | [Analysis methods](backend/app/registry/custom/README.md) | what each bundled method does |
 | [Development guide](DEVELOPMENT.md) | architecture, repo layout, dev setup, tests |
 | [Design](DESIGN.md) | the full specification and the reasoning behind it |

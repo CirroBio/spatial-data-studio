@@ -9,11 +9,16 @@
   ],
   "optional": [
     { "permission": "CREATE_DATASET", "feature": "Save a version of a SpatialData store: a new dataset holding only what changed" },
-    { "permission": "CREATE_DISCUSSION", "feature": "Leave a provenance note on each version the app saves and on the catalog sheet" },
+    { "permission": "CREATE_DISCUSSION", "feature": "Leave a provenance note on each version the app saves, on the catalog sheet and on each workspace it starts" },
     { "permission": "VIEW_DISCUSSION", "feature": "Post the provenance note into the note thread it creates" },
     { "permission": "VIEW_SHEET", "feature": "Find the project's catalog sheet, so a dataset's files are listed once for everyone" },
     { "permission": "VIEW_SHEET_DATA", "feature": "Read the project's catalog sheet" },
     { "permission": "CREATE_SHEET", "feature": "Create the project's catalog sheet the first time the app opens the project" },
-    { "permission": "EDIT_SHEET_DATA", "feature": "Add newly scanned datasets to the project's catalog sheet" }
+    { "permission": "EDIT_SHEET_DATA", "feature": "Add newly scanned datasets to the project's catalog sheet" },
+    { "permission": "VIEW_WORKSPACE_ENVIRONMENTS", "feature": "Find Cirro's Spatial Data Studio environment to start a workspace from" },
+    { "permission": "CREATE_WORKSPACE", "feature": "Start a workspace running the full Spatial Data Studio, with the chosen datasets attached" },
+    { "permission": "CONTROL_WORKSPACE", "feature": "Start, stop, extend and change the datasets of the user's Studio workspaces" },
+    { "permission": "OPEN_WORKSPACE", "feature": "Open a running Studio workspace in a new tab" },
+    { "permission": "DELETE_WORKSPACE", "feature": "Delete a Studio workspace the user picks, to make room under Cirro's per-user limit" }
   ]
 }

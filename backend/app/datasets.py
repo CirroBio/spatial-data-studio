@@ -1,9 +1,11 @@
 """Enumerate the app's saved checkpoints (`.sdata.zarr.zip`, the only thing save
 writes) under DATA_DIR for the New Session load picker and the Cirro upload source
-picker (`GET /api/fs/datasets`). Raw `.zarr` stores and foreign `.zarr.zip` bundles
-are deliberately excluded — those are opened via Import Data's SpatialData reader,
-not loaded as a session. Snapshot figure artifacts (`.figure.*`) and internal working
-stores (`.rasters` caches, `.save-` staging) sharing DATA_DIR are skipped too.
+picker (`GET /api/fs/datasets`), along with the folders of versions the Cirro app saved
+(docs/LAYER_FORMAT.md), which open as a session the same way. Raw `.zarr` stores and
+foreign `.zarr.zip` bundles are deliberately excluded — those are opened via Import
+Data's SpatialData reader, not loaded as a session. Snapshot figure artifacts
+(`.figure.*`) and internal working stores (`.rasters` caches, `.save-` staging) sharing
+DATA_DIR are skipped too.
 
 The full recursive scan is cached and prewarmed at startup (see `prewarm.py`) so
 the picker is instant on first open even on a large/slow mount. The cache is
@@ -15,10 +17,12 @@ Also home to `browse`, the one-level raw-input-mount listing behind the
 """
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
 from .config import within_data_dir
+from .persistence import sds_layers
 
 # Dirs never worth walking for datasets (vendored/build/staging; `_`-prefixed dirs
 # like a reader's raw-bundle staging folder are skipped so their internal zarrs
@@ -38,8 +42,25 @@ def _mtime(p: Path) -> float:
         return 0.0
 
 
+def _version_manifest(folder: Path) -> dict | None:
+    """The manifest of the saved version in `folder`, or None when it holds none.
+    `layer.json` is a common name, so a file under it that isn't a Spatial Data Studio
+    version, or can't be read as one, doesn't make the folder one."""
+    path = sds_layers.find_manifest(folder)
+    if path is None:
+        return None
+    try:
+        manifest = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(manifest, dict) or manifest.get("format") != sds_layers.LAYER_FORMAT:
+        return None
+    return manifest
+
+
 def _scan(roots: list[Path]) -> list[dict]:
-    """Recursively find the app's saved checkpoints under the roots (flat list)."""
+    """Recursively find the app's saved checkpoints and saved versions under the roots
+    (flat list)."""
     # Local import: keep this module free of the heavy spatialdata import store pulls
     # in, while still sourcing the checkpoint extension from one place.
     from .persistence.store import CHECKPOINT_EXT
@@ -72,6 +93,16 @@ def _scan(roots: list[Path]) -> list[dict]:
                     continue
                 keep.append(name)
             dirnames[:] = keep
+            if here != root and (manifest := _version_manifest(here)) is not None:
+                # A version opens whole, so nothing inside it is listed on its own. Its
+                # folder is the Cirro dataset's name, which the title adds to if it differs.
+                dirnames[:] = []
+                title = manifest.get("title")
+                label = rel(here)
+                if isinstance(title, str) and title and title != here.name:
+                    label = f"{label} — {title}"
+                found.setdefault(str(here.resolve()),
+                                 {"name": label, "path": str(here), "mtime": _mtime(here)})
             for name in filenames:
                 if name.endswith(CHECKPOINT_EXT):
                     full = here / name
@@ -93,11 +124,11 @@ def list_datasets(roots: list[Path]) -> list[dict]:
 def browse(roots: list[Path], path: str | None = None, include_files: bool = False) -> dict:
     """Navigate the raw-input data mount (DATA_DIR only) one level at a time for the
     New Session import flow and the MCP browse_data_dir tool — never the checkpoint
-    mount or the whole filesystem. A `.zarr`/`.zarr.zip` entry is a loadable dataset;
-    other directories are navigable. With `include_files` (raw-data import, where the
-    reader's input may be any file type), regular files are listed too. Raises
-    ValueError (unresolvable path), PermissionError (outside the data dir), or
-    NotADirectoryError; the route boundary in main.py maps these to 400/403/404."""
+    mount or the whole filesystem. A `.zarr`/`.zarr.zip` entry is a loadable dataset, and
+    so is a saved version's folder; other directories are navigable. With `include_files`
+    (raw-data import, where the reader's input may be any file type), regular files are
+    listed too. Raises ValueError (unresolvable path), PermissionError (outside the data
+    dir), or NotADirectoryError; the route boundary in main.py maps these to 400/403/404."""
     # Local import for the same reason as _scan's: keep this module free of the heavy
     # spatialdata import that persistence.store pulls in at module scope.
     from .persistence.store import READ_EXTS
@@ -119,7 +150,7 @@ def browse(roots: list[Path], path: str | None = None, include_files: bool = Fal
             continue
         # store.READ_EXTS, not a local copy: a hand-kept tuple here meant the loader
         # could accept an extension the picker refused to list (or vice versa).
-        if child.name.endswith(READ_EXTS):
+        if child.name.endswith(READ_EXTS) or (child.is_dir() and _version_manifest(child) is not None):
             entries.append({"name": child.name, "path": str(child), "kind": "dataset"})
         elif child.is_dir():
             entries.append({"name": child.name, "path": str(child), "kind": "dir"})

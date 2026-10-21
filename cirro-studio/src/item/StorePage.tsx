@@ -186,7 +186,7 @@ export function StorePage({ item, entity }: { item: StoreItem | VersionItem; ent
   return (
     <div className="picture" style={tint('--sds-stage-store')}>
       <Facts title={title} item={item} kind={item.kind === 'version' ? `Version ${wb.levels.length - 1 || ''}`.trim() : 'Spatial data'}
-        stage="spatial" from={from} into={into}
+        stage="spatial" from={from} into={into} unsaved={wb.changes.length > 0}
         extra={(
           <>
             {fields && <span className="facts-summary">{summary(fields, unit)}</span>}

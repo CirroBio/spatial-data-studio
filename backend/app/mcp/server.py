@@ -267,8 +267,9 @@ async def get_session(session_id: str | None = None, history_limit: int = 25) ->
 async def create_session(checkpoint_path: str | None = None, reader: dict | None = None,
                          name: str | None = None, wait: bool = True,
                          timeout_s: float = 900) -> dict:
-    """Create a session from a saved checkpoint (checkpoint_path: a .zarr/.zarr.zip
-    under the data dir — see list_datasets) OR by importing raw data with a reader
+    """Create a session from a saved checkpoint (checkpoint_path: a .zarr/.zarr.zip, or
+    the folder of a version the Cirro app saved, under the data dir — see list_datasets)
+    OR by importing raw data with a reader
     (reader: {"namespace": "io"|"read", "function": e.g. "xenium", "params": {...}} —
     namespace is required, since several reader names exist in both; see
     list_readers/browse_data_dir). Waits until the load finishes by default and
@@ -364,9 +365,9 @@ async def close_session(session_id: str, save: bool = False) -> dict:
 
 @mcp_server.tool()
 async def list_datasets() -> dict:
-    """Saved checkpoints (.zarr / .zarr.zip) found under the data roots — the inputs
-    create_session(checkpoint_path=...) accepts. Raw (unconverted) data folders are
-    found with browse_data_dir instead."""
+    """Saved checkpoints (.zarr / .zarr.zip) and the folders of versions the Cirro app
+    saved, found under the data roots — the inputs create_session(checkpoint_path=...)
+    accepts. Raw (unconverted) data folders are found with browse_data_dir instead."""
     agent.bind_agent()
     found = await _in_executor(datasets.list_datasets, data_roots())
     return {"datasets": found}
@@ -375,8 +376,9 @@ async def list_datasets() -> dict:
 @mcp_server.tool()
 async def browse_data_dir(path: str | None = None, include_files: bool = False) -> dict:
     """Navigate the data directory (the only filesystem the backend may read).
-    Entries are dirs, loadable datasets (.zarr/.zarr.zip), and — with include_files —
-    plain files. Use to locate a raw vendor bundle for a reader import."""
+    Entries are dirs, loadable datasets (.zarr/.zarr.zip, saved versions' folders), and
+    — with include_files — plain files. Use to locate a raw vendor bundle for a reader
+    import."""
     agent.bind_agent()
     return await _in_executor(datasets.browse, data_roots(), path, include_files)
 
