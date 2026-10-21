@@ -30,15 +30,25 @@ export function signInError(): string | null {
   return params.get('error_description') ?? params.get('error');
 }
 
-/** Signed in to this tenant in this tab: oidc-client-ts keeps the user under
- * oidc.user:<authority>:<client id>, and the authority is the tenant's URL. The client ID
- * may only be known once the tenant is asked, so any one counts. */
-export function hasSignedInUser(tenantUrl: string): boolean {
+// The logins stored for a tenant in this tab: oidc-client-ts keeps the user under
+// oidc.user:<authority>:<client id>, and the authority is the tenant's URL. The client ID
+// may only be known once the tenant is asked, so any one counts.
+function storedUserKeys(tenantUrl: string): string[] {
   const prefix = `oidc.user:${tenantUrl}:`;
+  const store = window.sessionStorage;
+  return Array.from({ length: store.length }, (_, i) => store.key(i)).filter((k): k is string => !!k?.startsWith(prefix));
+}
+
+export function hasSignedInUser(tenantUrl: string): boolean {
   try {
-    const store = window.sessionStorage;
-    return Array.from({ length: store.length }, (_, i) => store.key(i)).some((k) => k?.startsWith(prefix));
+    return storedUserKeys(tenantUrl).length > 0;
   } catch {
     return false;
   }
+}
+
+/** Forgets every login stored for this tenant, whichever registration it was made under:
+ * one from a registration since replaced would otherwise keep reopening the tenant. */
+export function forgetStoredUsers(tenantUrl: string) {
+  for (const k of storedUserKeys(tenantUrl)) window.sessionStorage.removeItem(k);
 }

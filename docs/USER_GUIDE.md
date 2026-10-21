@@ -328,13 +328,11 @@ in your browser, and saves what you find back to the project. Open it at
 save there stays in your browser. **Log In with Cirro** opens your own projects: it asks
 which Cirro you use, suggesting the ones it knows as you type their name, and taking the
 address you use for any other (such as cirro.example.org). It remembers your choice for
-next time. Logging in works once your organization's Cirro has registered the app. If you
-weren't signed in to Cirro already, Cirro may stop at "Invalid authorize link" after you
-sign in there; log in again and it goes through. When a Cirro can't be reached or the
-log-in doesn't finish, the page says why and offers **Try again** or **Log in to another
-Cirro**. Signed in, the menu at the top right (your Cirro and your name) has **Log out**
-and **Log in to another Cirro** on every page, including when your account can't see any
-projects yet.
+next time. Logging in works once your organization's Cirro has registered the app. When a
+Cirro can't be reached or the log-in doesn't finish, the page says why and offers **Try
+again** or **Log in to another Cirro**. Signed in, the menu at the top right (your Cirro
+and your name) has **Log out** and **Log in to another Cirro** on every page, including
+when your account can't see any projects yet.
 
 ### The map of a project
 

@@ -21,7 +21,7 @@ vi.stubGlobal('localStorage', localStorage);
 vi.stubGlobal('window', { location, localStorage, sessionStorage });
 
 const { chooseTenant, lastTenant, loadTenants, startOf, suggestTenants, tenantNamed } = await import('./tenants');
-const { signInError } = await import('./signInState');
+const { forgetStoredUsers, hasSignedInUser, signInError } = await import('./signInState');
 
 const tenant = (id: string): Tenant => ({ id, name: id, url: `https://${id}.cirro.bio` });
 const tenants = [tenant('a'), tenant('b')];
@@ -75,6 +75,17 @@ describe('signInError', () => {
     // oidc-client-ts keeps its pending state in localStorage, whatever store holds the user.
     localStorage.setItem('oidc.s1', '{}');
     expect(signInError()).toBe('Not registered');
+  });
+});
+
+describe('forgetStoredUsers', () => {
+  it('forgets every login stored for a tenant, under any registration, and no other tenant\'s', () => {
+    signedIn(tenants[0]);
+    sessionStorage.setItem('oidc.user:https://a.cirro.bio:an-older-client', '{}');
+    signedIn(tenants[1]);
+    forgetStoredUsers(tenants[0].url);
+    expect(hasSignedInUser(tenants[0].url)).toBe(false);
+    expect(hasSignedInUser(tenants[1].url)).toBe(true);
   });
 });
 
