@@ -54,5 +54,5 @@ Each has its own page — [Xenium human pancreas](/demo/xenium-pancreas),
 [human colon](/demo/visium-colon), [mouse brain](/demo/visium-mouse-brain) — with what
 to try on it.
 
-You can also open [the whole collection](/viewer/) in the viewer's own gallery, which is
-what a deployed folder of checkpoints looks like.
+You can also open [the whole collection](../viewer/){target="_self"} in the viewer's own
+gallery, which is what a deployed folder of checkpoints looks like.
