@@ -1529,6 +1529,81 @@ def run_save_destination_flow(client):
     print("[ok] save rejects an escaping folder, a bad prefix, a blank name, path+prefix")
 
 
+def run_close_save_failure_flow(client):
+    """A close-with-save whose save fails leaves the session open rather than half
+    closed: the DELETE answers 409 with the reason, the session stays listed with its
+    unpacked checkpoint, raster cache and edit lock, and no `session.removed` goes out.
+    Its worker still runs jobs, so it can be saved somewhere writable — after which the
+    same close-with-save succeeds and removes all of it."""
+    from app.deps import MANAGER
+    from app.sessions.presence import PRESENCE
+    from app.transport.sse import BUS
+    folder = "close-save-failure"
+    viewer_id = "close-save-viewer"
+    viewer = {"X-SDS-Client-Id": viewer_id}
+
+    src = new_session(client)
+    sv = client.post(f"/api/sessions/{src}/save", json={"folder": folder}).json()
+    assert wait_job(client, src, sv["job_id"])["status"] == "completed"
+    checkpoint = MANAGER.get(src).store_path
+    assert client.delete(f"/api/sessions/{src}").status_code == 200
+
+    sid = new_session(client, checkpoint)
+    sess = MANAGER.get(sid)
+    # A loaded checkpoint is always unpacked into extract_dir; a raster cache exists only
+    # when an image needed re-tiling (this Visium H&E doesn't), and close removes both alike.
+    assert sess.extract_dir and os.path.isdir(sess.extract_dir), sess.extract_dir
+    temp_dirs = [d for d in (sess.extract_dir, sess.raster_cache_dir) if d]
+
+    def attach():
+        client.post("/api/presence", json={"client_id": viewer_id, "name": "close tester",
+                                           "session_id": sid})
+
+    def close_with_save():
+        removed = []
+        orig_publish = BUS.publish
+        def _spy(event_type, data, _orig=orig_publish):
+            if event_type == "session.removed":
+                removed.append(data)
+            return _orig(event_type, data)
+        BUS.publish = _spy
+        try:
+            r = client.request("DELETE", f"/api/sessions/{sid}", json={"save": True}, headers=viewer)
+        finally:
+            BUS.publish = orig_publish
+        return r, removed
+
+    # A regular file where the checkpoint's folder was fails the save with a real
+    # OSError under any uid (root writes through a chmod'ed read-only folder).
+    folder_path = config.DATA_DIR / folder
+    shutil.rmtree(folder_path)
+    folder_path.write_text("")
+    attach()
+    r, removed = close_with_save()
+    assert r.status_code == 409, f"{r.status_code}: {r.text}"
+    assert "still open" in r.json()["detail"], r.json()
+    assert not removed, f"session.removed sent for a session left open: {removed}"
+    assert MANAGER.get(sid) is sess
+    assert sid in [s["id"] for s in client.get("/api/sessions").json()["sessions"]]
+    assert all(os.path.isdir(d) for d in temp_dirs), "a failed close removed the session's temp dirs"
+    assert PRESENCE.view()["sessions"][sid]["lock"]["client_id"] == viewer_id
+    print(f"[ok] failed close-with-save answered 409 and left the session open: {r.json()['detail']}")
+
+    os.remove(folder_path)
+    sv = client.post(f"/api/sessions/{sid}/save", json={"folder": folder}, headers=viewer).json()
+    assert wait_job(client, sid, sv["job_id"])["status"] == "completed"
+    print("[ok] the reopened session's worker ran a save to a writable folder")
+
+    attach()
+    r, removed = close_with_save()
+    assert r.status_code == 200, f"{r.status_code}: {r.text}"
+    assert removed == [{"session_id": sid, "reason": "closed"}], removed
+    assert MANAGER.get(sid) is None
+    assert not any(os.path.exists(d) for d in temp_dirs), "close left temp dirs behind"
+    assert sid not in PRESENCE.view()["sessions"], "close left a presence entry behind"
+    print("[ok] close-with-save then succeeded and removed temp dirs, presence and the session")
+
+
 def run_invalidation_flow(client):
     """data_versions bump + plot invalidation + redraw, and reload turning a drawn
     plot into invalidated (recent invalidation wiring)."""
@@ -3303,6 +3378,7 @@ def main():
         run_selective_save_flow(client, out)
         run_content_hash_flow(client)
         run_save_destination_flow(client)
+        run_close_save_failure_flow(client)
         run_invalidation_flow(client)
         run_encoding_persistence_flow(client)
         run_encoding_defaults_parity()

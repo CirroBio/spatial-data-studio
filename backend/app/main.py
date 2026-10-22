@@ -221,7 +221,10 @@ async def close_session(sid: str, body: dict | None = None):
         _writable_session(sid)  # closing read-only is fine; overwriting its checkpoint is not
     else:
         _claim_lock(sid)  # ...but never close a session another viewer holds the lock on
-    await _in_executor(_mgr().close, sid, save)
+    try:
+        await _in_executor(_mgr().close, sid, save)
+    except RuntimeError as e:  # the save failed and close() left the session open
+        raise HTTPException(409, str(e))
     return {"ok": True}
 
 

@@ -352,28 +352,37 @@ class SessionManager:
         # write (a genuine job on this session's own worker thread), so it needs the
         # write lock.
         sess.shutdown()
-        with sess.lock.writing():
-            # A session whose load is still in flight or errored has no object in
-            # memory (sess.sdata is None) even though store_path is set; there is
-            # nothing to save and the on-disk checkpoint is already its latest
-            # state, so skip the save — the temp-dir/presence/session.removed
-            # cleanup below must still run.
-            if save and sess.store_path and sess.sdata is not None:
-                # Re-derive the content hash when the file's own name carries one:
-                # rewriting those bytes under the old digest makes the next load report
-                # "may have been modified" for a file this app itself wrote. The rename
-                # gives back a new path, which becomes this session's store_path for the
-                # cleanup and events below.
-                hash_name = carries_content_hash(sess.store_path)
-                sess.store_path = save_spatialdata(
-                    sess.sdata, sess.store_path, sess.app_state, hash_name=hash_name,
-                    figures=sess.figures_to_persist())
-            # Evict this object's image caches before releasing it — they key on
-            # id(sdata), which a later session's object could reuse (imaging.py).
-            if sess.sdata is not None:
-                from .. import imaging
-                imaging.evict_caches(sess.sdata)
-            sess.sdata = None
+        try:
+            with sess.lock.writing():
+                # A session whose load is still in flight or errored has no object in
+                # memory (sess.sdata is None) even though store_path is set; there is
+                # nothing to save and the on-disk checkpoint is already its latest
+                # state, so skip the save — the temp-dir/presence/session.removed
+                # cleanup below must still run.
+                if save and sess.store_path and sess.sdata is not None:
+                    # Re-derive the content hash when the file's own name carries one:
+                    # rewriting those bytes under the old digest makes the next load report
+                    # "may have been modified" for a file this app itself wrote. The rename
+                    # gives back a new path, which becomes this session's store_path for the
+                    # cleanup and events below.
+                    hash_name = carries_content_hash(sess.store_path)
+                    sess.store_path = save_spatialdata(
+                        sess.sdata, sess.store_path, sess.app_state, hash_name=hash_name,
+                        figures=sess.figures_to_persist())
+                # Evict this object's image caches before releasing it — they key on
+                # id(sdata), which a later session's object could reuse (imaging.py).
+                if sess.sdata is not None:
+                    from .. import imaging
+                    imaging.evict_caches(sess.sdata)
+                sess.sdata = None
+        except Exception as e:
+            # The save failed (read-only or unwritable store path, ...) before anything
+            # was torn down: the object is still in memory and the session still owns
+            # its temp dirs and presence entry. Reopen it as it was so the user can
+            # save it somewhere else, and say so in the error the caller reports.
+            sess.resume()
+            self.sessions[sid] = sess
+            raise RuntimeError(f"save failed, so the session is still open: {e}") from e
         import shutil
         for d in (sess.extract_dir, sess.raster_cache_dir):  # unpacked .zarr.zip + tiled-raster temps (DESIGN §13)
             if d:

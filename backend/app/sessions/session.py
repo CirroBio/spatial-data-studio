@@ -1203,3 +1203,13 @@ class Session:
 
     def shutdown(self):
         self._stop.set()
+
+    def resume(self):
+        """Undo shutdown(): restart the worker loop so queued and future jobs run again
+        (a close whose save failed leaves the session open). Must not be called holding
+        `lock` — the old worker may be blocked on it mid-job, and is joined first so two
+        workers never dequeue at once (strict seriality, DESIGN §6.2)."""
+        self._worker.join()
+        self._stop.clear()
+        self._worker = threading.Thread(target=self._run, name=f"worker-{self.id}", daemon=True)
+        self._worker.start()

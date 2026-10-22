@@ -356,9 +356,11 @@ async def close_session(session_id: str, save: bool = False) -> dict:
             deps._claim_lock(session_id)
         except HTTPException as e:
             raise RuntimeError(str(e.detail))
+    # A failed save raises here with the session still open, and the assistant stays
+    # attached to it.
+    await _in_executor(_mgr().close, session_id, save)
     if agent.active_session_id() == session_id:
         agent.release()
-    await _in_executor(_mgr().close, session_id, save)
     return {"ok": True}
 
 

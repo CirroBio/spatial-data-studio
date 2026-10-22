@@ -58,7 +58,7 @@ ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_cate
 | GET  | `/api/sessions/{id}` | — | `SessionState` |
 | GET  | `/api/sessions/{id}/obs/{column}/values` | — | `{column, values:[{value,count}]}` (unique values of a categorical column, for Edit Annotations) |
 | GET  | `/api/sessions/{id}/var-names?q=&limit=` | — | `{names:[str]}` (server-side gene-name search, prefix matches first; keeps type-to-search responsive on datasets with tens of thousands of genes) |
-| DELETE | `/api/sessions/{id}` | `{save?:bool}` | `{ok:true}` |
+| DELETE | `/api/sessions/{id}` | `{save?:bool}` | `{ok:true}`. `save:true` writes the session back to its checkpoint first; when that save fails the session is left open — still listed, its edit lock kept, no `session.removed` — and the call answers **409** with the reason, so it can be saved somewhere else |
 | POST | `/api/presence` | `{client_id, name, session_id\|null}` | `PresenceView` — viewer heartbeat (every ~5 s); also the rename call and the client's initial fetch. Attaching to an unlocked session takes its lock; leaving one releases it. A `session_id` that no longer exists is treated as null |
 | POST | `/api/sessions/{id}/lock` | — | `{ok:true}` — take the edit lock; **409** while another viewer holds it; 400 without `X-SDS-Client-Id` |
 | DELETE | `/api/sessions/{id}/lock` | — | `{ok:true}` — release it; **403** if you don't hold it |

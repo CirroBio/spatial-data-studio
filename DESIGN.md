@@ -1911,7 +1911,7 @@ Arrow IPC (binary). See `docs/CONTRACT.md` for the full contract.
 | `GET` | `/api/sessions` | List sessions + per-session resident memory + lineage |
 | `POST` | `/api/sessions` | Start session via a `read` call (folder + read descriptor) |
 | `GET` | `/api/sessions/{id}` | Session state: history, plots, displays, regions, status |
-| `DELETE` | `/api/sessions/{id}` | Close session (flush if needed, evict) |
+| `DELETE` | `/api/sessions/{id}` | Close session (flush if needed, evict; a failed flush leaves it open and answers 409) |
 | `POST` | `/api/presence` | Viewer heartbeat: id + display name + session being viewed → the presence/lock view (§16.5) |
 | `POST`/`DELETE` | `/api/sessions/{id}/lock` | Take / release the session's edit lock (409 if held by another; 403 releasing one you don't hold) |
 | `POST` | `/api/sessions/{id}/jobs` | Enqueue a call descriptor (run or stage) |

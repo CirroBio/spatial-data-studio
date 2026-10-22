@@ -810,7 +810,10 @@ Pull requests build but do not publish.
   structure the schema doesn't allow fails the job rather than writing a
   non-conformant file. Also covers staged/pending recipe steps + preflight, region annotate and
   its persistence, the shape-annotation editor, the editable points-transform,
-  content-hashed checkpoint naming, plot invalidation/redraw, the data-inspector
+  content-hashed checkpoint naming, a close-with-save whose save fails leaving the
+  session open with its temp dirs and edit lock (409, no `session.removed`) and the
+  same close cleaning all of it up once a save elsewhere lets it succeed
+  (`run_close_save_failure_flow`), plot invalidation/redraw, the data-inspector
   endpoints, cross-session isolation, saving a session that ran
   `filter_rank_genes_groups` (whose `uns` record arrays carry NaN gene names), the
   eight spatial/multi-sample custom methods on `xenium_tma.zarr`, the
