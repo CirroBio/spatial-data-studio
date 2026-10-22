@@ -5,7 +5,7 @@ import { appKey } from './app/appInfo';
 // Sign-in returns here. The tenant finds the app's registration by it, so it is unique to
 // the app, and the registration must list it character for character: the bare origin
 // when the app is served at a site's root (http://localhost:5171), the folder it is
-// served from otherwise (https://cirrobio.github.io/spatial-data-studio/app/).
+// served from otherwise (https://cirrobio.github.io/spatial-data-studio/).
 const APP_PATH = window.location.pathname.replace(/index\.html$/, '');
 export const REDIRECT_URI = APP_PATH === '/' ? window.location.origin : window.location.origin + APP_PATH;
 

@@ -7,17 +7,17 @@
       "description": "11,898 cells x 289 genes as the instrument counted them, with cell boundaries over the morphology image, and no analysis yet: find clusters, compare groups, look for spatial patterns."
     },
     {
-      "path": "../../viewer/xenium-human-pancreas.sdata.zarr.zip",
+      "path": "../viewer/xenium-human-pancreas.sdata.zarr.zip",
       "label": "Xenium human pancreas",
       "description": "122,678 cells with their segmentation boundaries over an H&E image, already clustered. Saved without its expression matrix, to stay small."
     },
     {
-      "path": "../../viewer/visium-human-colon.sdata.zarr.zip",
+      "path": "../viewer/visium-human-colon.sdata.zarr.zip",
       "label": "Visium CytAssist human colon",
       "description": "6,356 spots over the CytAssist image, with Leiden clusters, cellular neighborhoods and a UMAP. Saved without its expression matrix."
     },
     {
-      "path": "../../viewer/visium-mouse-brain.sdata.zarr.zip",
+      "path": "../viewer/visium-mouse-brain.sdata.zarr.zip",
       "label": "Visium CytAssist mouse brain",
       "description": "4,881 spots over the CytAssist image, with Leiden clusters, cellular neighborhoods and a UMAP. Saved without its expression matrix."
     }

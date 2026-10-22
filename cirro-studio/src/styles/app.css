@@ -105,7 +105,7 @@ input[type="checkbox"], input[type="radio"], input[type="range"] { accent-color:
 .start-title { font-size: clamp(2.25rem, 5vw, 3.5rem); letter-spacing: -0.02em; }
 .start-lede { max-width: 36rem; font-size: var(--sds-text-lg); color: var(--sds-color-text-muted); text-wrap: balance; }
 /* The words stay readable where the lens passes under them. */
-.start-title, .start-lede { text-shadow: 0 0 10px var(--sds-color-bg), 0 0 3px var(--sds-color-bg); }
+.start-title, .start-lede, .start-about { text-shadow: 0 0 10px var(--sds-color-bg), 0 0 3px var(--sds-color-bg); }
 .start-choices { display: grid; grid-template-columns: repeat(2, minmax(0, 260px)); gap: var(--sds-space-4); margin-top: var(--sds-space-4); }
 .start-choice {
   display: grid; justify-items: start; align-content: start; gap: var(--sds-space-2); padding: var(--sds-space-6); text-align: left; font: inherit; color: var(--sds-color-text);
@@ -116,6 +116,9 @@ input[type="checkbox"], input[type="radio"], input[type="range"] { accent-color:
 .start-choice-icon { width: 36px; height: 36px; color: var(--sds-color-accent); }
 .start-choice-title { font-size: var(--sds-text-lg); font-weight: var(--sds-weight-semibold); }
 .start-choice-text { font-size: var(--sds-text-sm); color: var(--sds-color-text-muted); }
+/* The way into the About section: a plain link in the accent color. */
+.start-about { font-weight: var(--sds-weight-semibold); text-decoration: none; }
+.start-about:hover { text-decoration: underline; }
 .start-card { width: 440px; max-width: calc(100vw - 48px); text-align: left; display: grid; gap: var(--sds-space-3); justify-items: start; }
 .start-tenant { width: 100%; }
 .start-tenant-options { list-style: none; margin: 0; right: 0; }

@@ -163,23 +163,23 @@ export default function Workspaces({ session }: { session: CirroSession }) {
 
       {sheet.open && (
         <div className="ws-backdrop" onClick={(e) => { if (e.target === e.currentTarget) close(); }}>
-          <aside className="ws-sheet" role="dialog" aria-modal="true" aria-label="Studio workspaces">
+          <aside className="ws-sheet" role="dialog" aria-modal="true" aria-label="Analysis Workspaces">
             <header className="ws-head">
-              <h2>Studio workspaces</h2>
+              <h2>Analysis Workspaces</h2>
               <span className="muted">{collection.name}</span>
               <span className="facts-spacer" />
               <button type="button" className="icon-button" aria-label="Close" onClick={close}>×</button>
             </header>
             <p className="muted">
-              A workspace runs the full Spatial Data Studio on a machine in this project, with the datasets you choose
+              An Analysis Workspace runs every squidpy and scanpy analysis on a machine in this project, with the datasets you choose
               under <code>{MOUNT_FOLDER}/</code> in its data folder: saved versions and checkpoints in its Open Checkpoint
               list, other stores and instrument runs through Import Data. It opens in a new tab.
             </p>
 
-            {env === undefined && <p className="muted">Looking for the Studio in this Cirro…</p>}
+            {env === undefined && <p className="muted">Looking for Analysis Workspaces in this Cirro…</p>}
             {env === null && (
               <p className="notice notice-warning">
-                {envError ?? 'This Cirro doesn\'t offer the Spatial Data Studio workspace environment (Cirro/spatial-data-studio). A Cirro admin can make it available.'}
+                {envError ?? 'This Cirro doesn\'t offer Analysis Workspaces (the Spatial Data Studio workspace environment, Cirro/spatial-data-studio). A Cirro admin can make it available.'}
               </p>
             )}
             {notice && <p className="notice notice-info">{notice}</p>}
@@ -195,7 +195,7 @@ export default function Workspaces({ session }: { session: CirroSession }) {
 
             {error && <p className="notice notice-danger">{error}</p>}
             {list === null && !error && <p className="muted">Reading this project's workspaces…</p>}
-            {list && !ours.length && <p className="muted">You have no Studio workspaces in this project yet.</p>}
+            {list && !ours.length && <p className="muted">You have no Analysis Workspaces in this project yet.</p>}
 
             <ul className="ws-list">
               {ours.map((w) => (
@@ -238,7 +238,7 @@ export default function Workspaces({ session }: { session: CirroSession }) {
             </ul>
             <p className="muted">
               A workspace keeps running when you leave this page, until it stops by itself. Stopping keeps its files;
-              what you save in the Studio stays in the workspace until you upload it to Cirro from there.
+              what you save in an Analysis Workspace stays in it until you upload it to Cirro from there.
             </p>
 
             {others.length > 0 && (

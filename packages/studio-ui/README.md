@@ -27,7 +27,7 @@ const [collapsed, setCollapsed] = useState(false);
   controls={(api) => <SpatialSettings api={api} collapsed={collapsed} onCollapse={setCollapsed} />} />
 ```
 
-Docked in a host's own panel, as the Cirro app does in its Display drawer
+Docked in a host's own panel, as the web app does in its Display drawer
 (`cirro-studio/src/item/LensCanvas.tsx`):
 
 ```tsx
@@ -47,8 +47,8 @@ look as they do in the Studio:
   `surface`, `border`, `text`, `muted`, `accent`, `on-accent`, `accent-lo`, `success`,
   `warn`, `danger`) that the host defines for each of its themes, so the panel follows
   the host's light and dark themes. The Studio sets them in `frontend/src/index.css`, the
-  Cirro app in `cirro-studio/src/styles/tokens.css`.
-- **Tailwind's base styles (preflight).** The Studio uses them across the page. The Cirro
+  web app in `cirro-studio/src/styles/tokens.css`.
+- **Tailwind's base styles (preflight).** The Studio uses them across the page. The web
   app has base styles of its own, so it turns preflight off and applies the part these
   controls need only inside elements with the `studio-ui` class
   (`cirro-studio/src/styles/studio-ui.css`).

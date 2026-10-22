@@ -1,7 +1,7 @@
 # Developing Spatial Data Studio
 
-The developer's entry point. [`README.md`](README.md) orients newcomers and
-[`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) documents the app for users; this file is
+The developer's entry point. [`README.md`](README.md) orients newcomers and the
+[guide](docs/guide/README.md) documents the app for users; this file is
 the source of truth for **how the code is organized, how to
 run it locally, how to test it, and where to make a change**. For the deep design
 rationale see [`DESIGN.md`](DESIGN.md); for the wire protocol see
@@ -9,6 +9,13 @@ rationale see [`DESIGN.md`](DESIGN.md); for the wire protocol see
 core, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Architecture at a glance
+
+Spatial Data Studio ships as three parts, named in the [guide](docs/guide/README.md) as
+users meet them: **the web app** (`cirro-studio/`, the Pages site's root), **the
+Analysis Workspace** (`backend/` + `frontend/`, one Docker image, which Cirro runs as a
+workspace; the code calls it the Studio), and **the viewer** (the frontend's no-backend
+mode over a saved checkpoint, drawn by `packages/viewer`). The bullets below start with
+the Analysis Workspace.
 
 - **Backend** — FastAPI + uvicorn (`backend/app`). Holds one in-memory
   `SpatialData` object per session, runs compute/plot jobs on a per-session FIFO
@@ -48,8 +55,9 @@ core, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
   with a world-labeled grid and a pixel→world affine, so the agent can act (annotate/
   subset) on exactly what it saw (DESIGN §29).
 
-- **The Cirro app** (`cirro-studio/`) is the same canvas and reader with no server: a
-  static page that signs in with Cirro (OAuth, PKCE), reads a project's SpatialData
+- **The web app** (`cirro-studio/`) is the same canvas and reader with no server: a
+  static page that opens public examples with no account, or signs in with Cirro
+  (OAuth, PKCE), reads a project's SpatialData
   stores in place by signed range requests, runs its analyses in a Web Worker, and saves
   each result as a *version* — a dataset holding only the changed Zarr objects, layered
   over the store it was made from ([`docs/LAYER_FORMAT.md`](docs/LAYER_FORMAT.md)). It
@@ -103,7 +111,7 @@ backend/    FastAPI app
   app/recipes/    curated analysis recipes — JSON bundle files, discovered at startup
   app/persistence/ store (.zarr / .zarr.zip; also the raster sharding + `viewer/` sidecar
                   that make a checkpoint readable by the serverless viewer); sds_layers.py
-                  reads a Cirro app version stack (docs/LAYER_FORMAT.md): the backend opens
+                  reads a web app version stack (docs/LAYER_FORMAT.md): the backend opens
                   versions through it, and it runs standalone as a CLI
   app/imaging.py  tiled image pyramid + channel compositing + coordinate reconciliation;
                   the /image/{element}/info manifest also advertises the client-compositing
@@ -154,7 +162,7 @@ frontend/   React + TS + Vite + Tailwind SPA around that canvas (an npm workspac
   src/components/canvas/  the StudioSpatialCanvas / StudioEmbeddingCanvas adapters that
                   drop the shared settings panel (packages/studio-ui) into the library
                   canvas' `controls` slot
-cirro-studio/  the Cirro app: a front-end-only OAuth app over the same viewer library
+cirro-studio/  the web app: a front-end-only OAuth app over the same viewer library
             (an npm workspace too). See cirro-studio/README.md for its layout
   src/stack/      the version format — the Zarr v3 writer, the layered store, the AnnData
                   editor, layer.json (docs/LAYER_FORMAT.md)
@@ -174,8 +182,8 @@ nextflow/   The workflow (one entrypoint), wrapping backend/cli.py; uv installs 
   tests/            check_catalog.py (catalog <-> schema <-> params <-> recipes) and the
                     discovery harness it drives
 docker/     single-image build (multi-stage), nginx edge, supervisor
-docs/       USER_GUIDE.md (the user-facing docs), CONTRACT.md (REST/SSE/Arrow API),
-            images/ (doc screenshots)
+docs/       guide/ (the user-facing docs, a page per part of the app), CONTRACT.md
+            (REST/SSE/Arrow API), images/ (doc screenshots)
 docs-site/  VitePress documentation site published to GitHub Pages. Renders the repo's own
             markdown in place (srcDir is the repo root); index.md + theme/components/
             LandingPage.vue is the landing page and demo/ the live demos — the only new
@@ -183,7 +191,7 @@ docs-site/  VitePress documentation site published to GitHub Pages. Renders the 
 scripts/    test-data prep: prepare_test_data.py (Visium H&E), prepare_xenium_data.py (Xenium),
             prepare_xenium_tma.py (Xenium TMA grid for the Identify TMAs detector);
             fetch_example_checkpoints.py (the docs site's demo checkpoints, from Cirro);
-            prepare_studio_example.py (the Cirro app's raw-counts example store)
+            prepare_studio_example.py (the web app's raw-counts example store)
 sds-governance/  governance bundle: RULES.md + AGENTS.md + skills/ + checks/ executable gate
                  (`make check`) + license allowlist
 ```
@@ -225,7 +233,7 @@ Component-level notes: [`backend/README.md`](backend/README.md),
 | Change the docs site's landing page | `docs-site/index.md` + `.vitepress/theme/components/LandingPage.vue`, and the repo doc that owns whatever fact moved | below |
 | Change the docs site's live demos | `docs-site/demo/*.md` + `.vitepress/theme/components/ViewerEmbed.vue`; the catalog, `index.json` and the data itself in `scripts/fetch_example_checkpoints.py` | below |
 | Give the canvas something new from the app (store state, an action, a way to persist) | `packages/viewer/src/canvas/canvas-host.tsx` (the `CanvasHost` contract), then `frontend/src/components/StudioCanvasHost.tsx` (the app's implementation of it) — the canvas never reaches for the store or `api.ts` itself | below |
-| Change an in-canvas settings panel, or what the canvas hands one | `packages/studio-ui/src/canvas/` (`CanvasControls.tsx` / `EmbeddingControls.tsx` and their fields; `Settings.tsx` maps the slot payload to them), which changes the Studio and the Cirro app together; `SpatialCanvasControls` / `EmbeddingCanvasControls` in `packages/viewer/src/canvas/` for the slot payload | [packages/studio-ui/README.md](packages/studio-ui/README.md) |
+| Change an in-canvas settings panel, or what the canvas hands one | `packages/studio-ui/src/canvas/` (`CanvasControls.tsx` / `EmbeddingControls.tsx` and their fields; `Settings.tsx` maps the slot payload to them), which changes the Studio and the web app together; `SpatialCanvasControls` / `EmbeddingCanvasControls` in `packages/viewer/src/canvas/` for the slot payload | [packages/studio-ui/README.md](packages/studio-ui/README.md) |
 | Publish or version the canvas library | `packages/viewer/package.json` + [packages/viewer/README.md](packages/viewer/README.md) ("Releasing") | — |
 | Change how a display setting is persisted (the debounced PUT, the edit gate, the refetch flush) | `frontend/src/hooks/useDisplayPersistence.ts` | below |
 | Retune the palette, theme tokens, fonts, or the Cirro mark | `frontend/src/index.css` (tokens) + `packages/studio-ui/tailwind.preset.js` (names) + `packages/viewer/src/canvas/overlayStyles.ts` (the library overlays' fallbacks) + `frontend/src/components/CirroMark.tsx` / `public/favicon.svg` (logo) + `docs-site/.vitepress/theme/style.css` and the `CIRRO_MARK` in `docs-site/.vitepress/config.mts` (the docs site's copy of the same palette and mark) | [frontend/README.md](frontend/README.md) |
@@ -235,13 +243,13 @@ Component-level notes: [`backend/README.md`](backend/README.md),
 | Change how a reader param is classified as a folder/file/value input | `backend/app/registry/reader_paths.py` (`path_kind` + the absolute/relative path sets, shared with `sessions/manager.py` validation) | [docs/CONTRACT.md](docs/CONTRACT.md) |
 | Change how a snapshot figure renders or what it embeds | `backend/app/snapshots.py` (render + metadata) + `frontend/src/components/SnapshotExportModal.tsx` (framing/output) + `frontend/src/components/SnapshotBrowser.tsx` (gallery) | [DESIGN.md](DESIGN.md) §14 |
 | Change Cirro upload | `backend/app/cirro.py` (client + bundle + `UploadQueue`) + `backend/app/routers/cirro.py` (routes) + `frontend/src/components/CirroUploadDialog.tsx` | [DESIGN.md](DESIGN.md) §15 |
-| Change the Cirro app's version format (layer.json, the overlay, how a stack is read) | `cirro-studio/src/stack/` (`manifest.ts`, `layeredStore.ts`, `editor.ts`, `zarrWrite.ts`) + `backend/app/persistence/sds_layers.py` (the Python reader, which the Studio also opens versions through) + [docs/LAYER_FORMAT.md](docs/LAYER_FORMAT.md) in the same commit; `src/stack/python.test.ts` reads a written stack back with anndata, and `test_e2e.run_version_flow` opens a hand-written one in the Studio | [docs/LAYER_FORMAT.md](docs/LAYER_FORMAT.md) |
-| Change an analysis the Cirro app runs in the browser | `cirro-studio/src/analysis/` (the method + its test), `ops.ts` (the worker's operation table) and `defaults.ts` (the parameters a panel records in a version's provenance); its panel in `cirro-studio/src/tasks/`, listed in `TASKS` in `TaskList.tsx` (with the kind of report it keeps) | [cirro-studio/README.md](cirro-studio/README.md) |
-| Change what an analysis's report shows in the Cirro app | `cirro-studio/src/reports/<Kind>Report.tsx` (registered by kind in `ReportView.tsx`), drawn from what the task keeps with `keepResult` (`reports/store.ts`: the tables and `meta.summary`); shared parts (stat tiles, sections, the gene-set action, tissue thumbnails) in `reports/parts.tsx` and `src/charts/` | [docs/LAYER_FORMAT.md](docs/LAYER_FORMAT.md) |
-| Change which datasets the Cirro app recognizes, or what it finds in them | `cirro-studio/src/data/discover.ts` (stores, images, versions; runs come from `nextflow/data_types.json`) + `cirro-studio/src/cirro/cirroCollection.ts` (`worthScanning`) + `catalogSheet.ts` (the project catalog's columns) | [cirro-studio/README.md](cirro-studio/README.md) |
-| Change how the Cirro app lays out an opened item, or its look | `cirro-studio/src/item/ViewFrame.tsx` (the view edge to edge, the drawers, `[` / `]` / `\`, the bar over the view) + `ViewTabs.tsx` (the views) + `ViewTools.tsx` (scale bar, zoom and fit on the canvas) + `StorePage.tsx`; how a store first looks (its color or else outlined cells, its backdrop, the color the views share) in `displayState.ts`; the docked display settings in `LensCanvas.tsx`, styled by `src/styles/studio-ui.css`; the palette in `cirro-studio/src/styles/tokens.css`, which mirrors `frontend/src/index.css` (change both) | [cirro-studio/README.md](cirro-studio/README.md) |
-| Change the Cirro app's sign-in, tenants or permissions | `cirro-studio/src/auth.ts` + `signInState.ts` + `tenants.ts` + `public/tenants.json` / `deploy/tenants.json` + `cirro-permissions.json` | [cirro-studio/README.md](cirro-studio/README.md) |
-| Change how the Cirro app starts and manages workspaces running the full Studio | `cirro-studio/src/workspaces/` (`cirro.ts`: the environment, folder names, sizes, the per-user limit, Cirro's lifecycle; `Workspaces.tsx`: the top-bar button and sheet; `NewWorkspace.tsx`: the form; `request.ts`: what an item asks for) + `cirro-permissions.json`; the Studio reads the folder map (`SDS_CIRRO_DATASETS`) in `backend/app/config.py` | [cirro-studio/README.md](cirro-studio/README.md#workspaces) |
+| Change the web app's version format (layer.json, the overlay, how a stack is read) | `cirro-studio/src/stack/` (`manifest.ts`, `layeredStore.ts`, `editor.ts`, `zarrWrite.ts`) + `backend/app/persistence/sds_layers.py` (the Python reader, which the Studio also opens versions through) + [docs/LAYER_FORMAT.md](docs/LAYER_FORMAT.md) in the same commit; `src/stack/python.test.ts` reads a written stack back with anndata, and `test_e2e.run_version_flow` opens a hand-written one in the Studio | [docs/LAYER_FORMAT.md](docs/LAYER_FORMAT.md) |
+| Change an analysis the web app runs in the browser | `cirro-studio/src/analysis/` (the method + its test), `ops.ts` (the worker's operation table) and `defaults.ts` (the parameters a panel records in a version's provenance); its panel in `cirro-studio/src/tasks/`, listed in `TASKS` in `TaskList.tsx` (with the kind of report it keeps) | [cirro-studio/README.md](cirro-studio/README.md) |
+| Change what an analysis's report shows in the web app | `cirro-studio/src/reports/<Kind>Report.tsx` (registered by kind in `ReportView.tsx`), drawn from what the task keeps with `keepResult` (`reports/store.ts`: the tables and `meta.summary`); shared parts (stat tiles, sections, the gene-set action, tissue thumbnails) in `reports/parts.tsx` and `src/charts/` | [docs/LAYER_FORMAT.md](docs/LAYER_FORMAT.md) |
+| Change which datasets the web app recognizes, or what it finds in them | `cirro-studio/src/data/discover.ts` (stores, images, versions; runs come from `nextflow/data_types.json`) + `cirro-studio/src/cirro/cirroCollection.ts` (`worthScanning`) + `catalogSheet.ts` (the project catalog's columns) | [cirro-studio/README.md](cirro-studio/README.md) |
+| Change how the web app lays out an opened item, or its look | `cirro-studio/src/item/ViewFrame.tsx` (the view edge to edge, the drawers, `[` / `]` / `\`, the bar over the view) + `ViewTabs.tsx` (the views) + `ViewTools.tsx` (scale bar, zoom and fit on the canvas) + `StorePage.tsx`; how a store first looks (its color or else outlined cells, its backdrop, the color the views share) in `displayState.ts`; the docked display settings in `LensCanvas.tsx`, styled by `src/styles/studio-ui.css`; the palette in `cirro-studio/src/styles/tokens.css`, which mirrors `frontend/src/index.css` (change both) | [cirro-studio/README.md](cirro-studio/README.md) |
+| Change the web app's sign-in, tenants or permissions | `cirro-studio/src/auth.ts` + `signInState.ts` + `tenants.ts` + `public/tenants.json` / `deploy/tenants.json` + `cirro-permissions.json` | [cirro-studio/README.md](cirro-studio/README.md) |
+| Change how the web app starts and manages Analysis Workspaces | `cirro-studio/src/workspaces/` (`cirro.ts`: the environment, folder names, sizes, the per-user limit, Cirro's lifecycle; `Workspaces.tsx`: the top-bar button and sheet; `NewWorkspace.tsx`: the form; `request.ts`: what an item asks for) + `cirro-permissions.json`; the Studio reads the folder map (`SDS_CIRRO_DATASETS`) in `backend/app/config.py` | [cirro-studio/README.md](cirro-studio/README.md#workspaces) |
 | Change Cirro login (device code, credential scoping, expiry) | `backend/app/cirro.py` (`CredentialStore`, `start_login`) + `backend/app/routers/cirro.py` (`/api/cirro/auth`) + `frontend/src/components/CirroConnectDialog.tsx` + the token helpers in `frontend/src/api.ts` | [DESIGN.md](DESIGN.md) §15 |
 
 ### The canvas host seam
@@ -256,7 +264,7 @@ of the app's CSS in the page.
 Two things it deliberately does *not* own:
 
 - **The in-canvas settings panel.** `SpatialSettings` / `EmbeddingSettings` are
-  Tailwind-styled app UI in `packages/studio-ui`, which the Studio and the Cirro app
+  Tailwind-styled app UI in `packages/studio-ui`, which the Studio and the web app
   share. Both canvases take an optional `controls` slot that hands a panel the
   canvas-internal state it needs (the resolved channel list, the live camera, the
   legend's categorical levels); the Studio passes one in through
@@ -462,7 +470,7 @@ at the root when it is missing. Vite aliases `@cirrobio/spatial-viewer` and
 edits without a library build; `npm run build` at the root
 builds the library (`dist/`, ESM + CJS + types) and then the app.
 
-The Cirro app needs no backend and is not part of `run.sh`: `npm run dev:studio` serves
+The web app needs no backend and is not part of `run.sh`: `npm run dev:studio` serves
 it on `http://localhost:5171`, the redirect URI Cirro's development registration lists
 for it ([`cirro-studio/README.md`](cirro-studio/README.md#run-it)).
 
@@ -473,9 +481,9 @@ defaults to `$HOME` (the container image relies on this, running from `$HOME`
 where the deployment environment mounts datasets, e.g. `$HOME/datasets`).
 
 In a Cirro workspace the attached datasets are mounted read-only under
-`$HOME/datasets/<folder name>`, and the Cirro app sets `SDS_CIRRO_DATASETS` to a JSON
+`$HOME/datasets/<folder name>`, and the web app sets `SDS_CIRRO_DATASETS` to a JSON
 object mapping each dataset ID to its folder. That map is how a saved version's parent
-is found ([docs/LAYER_FORMAT.md](docs/LAYER_FORMAT.md#in-the-studio)). `run.sh` leaves it
+is found ([docs/LAYER_FORMAT.md](docs/LAYER_FORMAT.md#in-an-analysis-workspace)). `run.sh` leaves it
 unset.
 
 `SDS_APP_URL` is the URL a *person* opens the app at; the MCP assistant quotes it
@@ -639,8 +647,8 @@ picked up live by Vite. To run the backend alone (or hit it with `curl`), see
 ## Deploying with Docker
 
 The single-image build (SPA + backend, `tini` → `work-tmpfs.sh` → `supervisord` →
-{`nginx` edge, `uvicorn`}) is the recommended production form and the researcher
-quickstart in the [README](README.md#run-it). The build stages, the two-tier memory limit
+{`nginx` edge, `uvicorn`}) is the Analysis Workspace's production form, what a Cirro
+workspace runs, and the quickstart in [Run it with Docker](docs/guide/docker.md). The build stages, the two-tier memory limit
 (`mem_limit` / `SDS_CONTAINER_MEM_MB` / `SDS_ADMISSION_PCT`), the render-concurrency
 cap, the manual `docker run` form, and the full environment contract are documented
 in [`docker/README.md`](docker/README.md). The `work-tmpfs.sh` entrypoint sizes the
@@ -722,16 +730,20 @@ npm run docs:build    # production build + dead-link check
 tree *is* the route tree (`DEVELOPMENT.md` → `/DEVELOPMENT`, `docs/CONTRACT.md` →
 `/docs/CONTRACT`) and the relative links these docs already use between each other keep
 working. Nothing is copied, so nothing can drift — which is the whole point, and why
-CLAUDE.md forbids forking any of it into `docs-site/`. Two consequences:
+CLAUDE.md forbids forking any of it into `docs-site/`. Three consequences:
 
 - `srcExclude` in `.vitepress/config.mts` has to stay tight, or every stray markdown
   file in the repo becomes a page. Agent instructions (`CLAUDE.md`, `AGENTS.md`,
   `sds-governance/skills/`, `backend/app/mcp/guides/`) are excluded deliberately — they
   are written for tools, not readers.
 - The build **fails on a dead link**, which is what keeps the cross-doc links honest.
-  `ignoreDeadLinks` carries only two kinds of exemption: `/viewer/`, which the deploy
-  job assembles rather than VitePress rendering it, and links to the excluded agent
+  `ignoreDeadLinks` carries one kind of exemption only: links to the excluded agent
   files.
+- A link from the markdown to the published site itself (the web app at its root, or
+  one of the site's pages) has to be the absolute address to work on GitHub. The
+  build's `relative_site_links` rule (`config.mts`) rewrites every link starting with
+  `PUBLISHED_AT` into one relative to its page, so the built site works from whatever
+  domain serves it. Moving the site changes `PUBLISHED_AT` and `base` there.
 
 **It wears the app's skin.** `.vitepress/theme/style.css` restates Cirro's typefaces
 (Geist / Geist Mono, self-hosted through `@fontsource-variable`) and the palette from
@@ -741,7 +753,7 @@ and the application are the same product on sight. The brand mark in the nav bar
 a data URI because VitePress only serves a public directory at `<srcDir>/public`, which
 here is the repo root. A change to the app's palette, typefaces or mark moves both.
 
-**The landing page** at `/` is the one presentation-first page on the site:
+**The landing page** at the site's root is the one presentation-first page on it:
 `docs-site/index.md` (a `layout: page` with no sidebar) rendering
 `.vitepress/theme/components/LandingPage.vue`. It orients a first-time reader and routes
 into the docs, and every fact it states is owned by a repo markdown file it links to — so
@@ -783,18 +795,22 @@ this repo builds, a checkpoint-format change means re-exporting them upstream, n
 re-running the script — the reader rejects a stale `VIEWER_SIDECAR_VERSION`.
 
 **Deploying** needs one manual step, once: **Settings → Pages → Source = GitHub
-Actions**. The workflow builds the SPA and the site, then assembles them so
-`/viewer/` is itself a valid standalone deployment (DESIGN §14.3) — `index.html` +
-`assets/` + `index.json` + the `.zarr.zip` files — which is what makes it browsable as a
-collection as well as embeddable per page. The same job publishes the Cirro app at
-`/app/`, with its `examples/` beside it (whose `index.json` names the demo checkpoints at
-`../../viewer/`, so they are not copied twice) and `cirro-studio/deploy/tenants.json` as
-its `tenants.json` (see [`cirro-studio/README.md`](cirro-studio/README.md#deploying)).
-Pull requests build but do not publish.
+Actions**. The web app is the Pages site's root, with its `examples/` beside it and
+`cirro-studio/deploy/tenants.json` as its `tenants.json` (see
+[`cirro-studio/README.md`](cirro-studio/README.md#deploying)); its front page links to
+the docs site, which is the About section, under `/about/` — the `base` in
+`.vitepress/config.mts` — so every route above sits under it (`docs/CONTRACT.md` →
+`/about/docs/CONTRACT`). The workflow builds the SPA, the app and the site, then
+assembles them so `/viewer/`, at the root beside the other two, is itself a valid
+standalone deployment (DESIGN §14.3) — `index.html` + `assets/` + `index.json` + the
+`.zarr.zip` files — which is what makes it browsable as a collection as well as
+embeddable per page. The docs reach the viewer and the app above their base as
+`/../viewer/` and `/../`, and the app's example `index.json` names the demo checkpoints
+at `../viewer/`, so they are not copied twice. Pull requests build but do not publish.
 
 ## Tests
 
-- `npm run test:studio` — the Cirro app's unit tests (vitest): the version stack (writing
+- `npm run test:studio` — the web app's unit tests (vitest): the version stack (writing
   AnnData columns, embeddings and `uns` into a draft over a real checkpoint, and the
   viewer reading the result), the draft's change list, the in-browser analyses against
   reference values, figure export, where a page load starts and what the log-in box

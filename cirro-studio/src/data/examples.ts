@@ -1,7 +1,7 @@
 // The example collection, open to anyone: the stores `examples/index.json` lists. That is
 // this app's own folder (cirro-studio/examples, served as `examples/`), whose index also
 // names the docs site's demo stores where they are published beside the app
-// (`../../viewer/…`, from docs-site/viewer-data). Versions saved on them stay in this
+// (`../viewer/…`, from docs-site/viewer-data). Versions saved on them stay in this
 // browser (browserStore.ts) — the same files a Cirro dataset would hold.
 import { openZarrStore } from '@cirrobio/spatial-viewer';
 import { APP_TAG } from '../app/appInfo';
@@ -36,7 +36,7 @@ async function sizeOf(url: string): Promise<number> {
 export class ExampleCollection implements Collection {
   readonly kind = 'examples' as const;
   readonly id = EXAMPLES_ID;
-  readonly name = 'Example data';
+  readonly name = 'Public data';
   readonly saveTarget = 'this browser (log in to Cirro to save to a project)';
   readonly catalogNote = null;
 

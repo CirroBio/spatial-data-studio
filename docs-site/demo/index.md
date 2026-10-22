@@ -5,7 +5,7 @@ a saved checkpoint. There is no server: the page fetches byte ranges out of a
 `.sdata.zarr.zip` as you pan, zoom and change what you are looking at.
 
 That is the same thing that happens when you
-[open a checkpoint without the app running](/DEVELOPMENT#driving-the-serverless-viewer-locally) —
+[open a checkpoint without the app running](/docs/guide/viewer#open-a-checkpoint-without-the-app-running) —
 these pages just point the viewer at files hosted alongside the documentation.
 
 All three are public 10x demo runs, imported and analyzed by the
@@ -54,5 +54,5 @@ Each has its own page — [Xenium human pancreas](/demo/xenium-pancreas),
 [human colon](/demo/visium-colon), [mouse brain](/demo/visium-mouse-brain) — with what
 to try on it.
 
-You can also open [the whole collection](../viewer/){target="_self"} in the viewer's own
+You can also open [the whole collection](../../viewer/){target="_self"} in the viewer's own
 gallery, which is what a deployed folder of checkpoints looks like.

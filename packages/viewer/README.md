@@ -22,7 +22,7 @@ instead of embedding the whole app in an iframe. **One source of truth for the c
   `readShapeAnnotations()` on the same handle returns the store's drawn shape
   annotations as `ShapeAnnotation`s (empty without an `annotations` element), ready for
   the host's `annotations.shapeAnnotations`.
-  A host that assembles the zarrita store itself — the Cirro app stacks saved versions
+  A host that assembles the zarrita store itself — the web app stacks saved versions
   over a base store — opens it with `openCheckpointStore(store, id)` instead;
   `openZarrStore(target, refreshUrl, folder)` is the store `openCheckpoint` would have
   opened for the same arguments, and `RangeGetReader` the coalescing Range reader behind a

@@ -2,7 +2,7 @@ import { defineConfig } from 'vitepress';
 
 // The site publishes the repo's own markdown, unmodified, by pointing `srcDir` at the
 // repo root: the file tree *is* the route tree, so the relative links the docs already
-// use between each other (README -> USER_GUIDE -> DEVELOPMENT -> DESIGN -> docs/CONTRACT ->
+// use between each other (README -> docs/guide -> DEVELOPMENT -> DESIGN -> docs/CONTRACT ->
 // backend/README) keep working and are dead-link-checked on every build. Nothing here
 // may fork or paraphrase those files — see the docs-site rule in CLAUDE.md. Pages under
 // docs-site/ are the only new prose, and the only place <ViewerEmbed> may appear. The
@@ -24,9 +24,19 @@ const CIRRO_MARK = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-103.9 -134
   <path d="M 17.66 -36.53 A 38.71 38.71 0 0 0 73.12 -68.69 A 40.57 40.57 0 1 1 95.94 -29.34 A 38.71 38.71 0 0 0 40.47 2.82 A 40.57 40.57 0 1 1 17.66 -36.53 Z" fill="#24bfd3"/>
 </svg>`;
 
+// Where Pages publishes the site. Repo markdown links the web app (the site's root) and the
+// site's pages by this address, the one form that also works on GitHub; the build turns
+// each such link into one relative to the page it is on, so the published site works from
+// whatever domain serves it. `target` keeps the docs router from taking the result for one
+// of its own pages (the web app is outside `base`).
+const PUBLISHED_AT = 'https://cirrobio.github.io/spatial-data-studio/';
+
 export default defineConfig({
   srcDir: '..',
-  base: '/spatial-data-studio/',
+  // The docs are the Pages site's About section: the Cirro app is the site's root, and the
+  // viewer sits beside them at /viewer/ (docs.yml). A path from the site's root is written
+  // here as `/../<path>`, which withBase makes one the browser resolves to the root.
+  base: '/spatial-data-studio/about/',
   title: 'Spatial Data Studio',
   description: 'Interactive analysis and visualization for spatial transcriptomics.',
   cleanUrls: true,
@@ -56,11 +66,9 @@ export default defineConfig({
   ],
 
   // The dead-link check is the guard that keeps published markdown honest, so these are
-  // the only exemptions: `/viewer/` is the built SPA the deploy job copies in beside the
-  // site (a real path, just not a VitePress page), and the agent-instruction files are
-  // real repo files that srcExclude deliberately keeps off a reader-facing site.
+  // the only exemptions: the agent-instruction files are real repo files that srcExclude
+  // deliberately keeps off a reader-facing site.
   ignoreDeadLinks: [
-    /^\/viewer\//,
     /(^|\/)CLAUDE$/,
     /(^|\/)AGENTS$/,
   ],
@@ -77,6 +85,28 @@ export default defineConfig({
     'docs-site/demo/visium-mouse-brain.md': 'demo/visium-mouse-brain.md',
   },
 
+  markdown: {
+    config: (md) => {
+      md.core.ruler.push('relative_site_links', (state) => {
+        // Only a page's own render carries its path; the others (titles, headers) are not
+        // where a reader follows its links.
+        const page: string | undefined = state.env?.relativePath;
+        if (!page) return;
+        // A page's URL is its path under `base` (rewrites applied), one level below the
+        // site's root; an index page's URL ends in `/`, so the count is the same.
+        const toRoot = '../'.repeat(page.split('/').length);
+        for (const block of state.tokens) {
+          for (const token of block.children ?? []) {
+            const href = token.type === 'link_open' ? token.attrGet('href') : null;
+            if (!href?.startsWith(PUBLISHED_AT)) continue;
+            token.attrSet('href', toRoot + href.slice(PUBLISHED_AT.length));
+            token.attrSet('target', '_self');
+          }
+        }
+      });
+    },
+  },
+
   themeConfig: {
     // The header lockup is theme/components/SiteBrand.vue, filled into the nav bar's
     // title slot by theme/components/Layout.vue — the same Cirro-wordmark-plus-product
@@ -85,24 +115,40 @@ export default defineConfig({
     siteTitle: false,
     outline: [2, 3],
     nav: [
-      { text: 'Use', link: '/overview' },
-      { text: 'Guide', link: '/docs/USER_GUIDE' },
+      { text: 'Guide', link: '/docs/guide/README' },
       { text: 'Demos', link: '/demo/' },
       { text: 'Develop', link: '/DEVELOPMENT' },
       { text: 'Reference', link: '/DESIGN' },
-      // The Cirro app, which the deploy job publishes beside the site. `_self` keeps the
-      // router from taking it for a docs page and showing its 404.
-      { text: 'Open the app', link: '/app/', target: '_self' },
+      // The Cirro app, at the Pages site's root. `_self` keeps the router from taking it for
+      // a docs page and showing its 404.
+      { text: 'Open the app', link: '/../', target: '_self' },
     ],
-    // Mirrors the audience split CLAUDE.md draws: README orients and routes,
-    // docs/USER_GUIDE is the user-facing source of truth, DEVELOPMENT the
-    // developer-facing one, and the rest is reference.
+    // Mirrors the audience split CLAUDE.md draws: docs/guide is the user-facing source
+    // of truth, in the order a new user needs it (the web app, then the Analysis
+    // Workspace, then the viewer on its own as the advanced case); DEVELOPMENT is the
+    // developer-facing one, README orients from GitHub, and the rest is reference.
     sidebar: [
       {
-        text: 'Use',
+        text: 'Guide',
         items: [
-          { text: 'Overview', link: '/overview' },
-          { text: 'User guide', link: '/docs/USER_GUIDE' },
+          { text: 'Introduction', link: '/docs/guide/README' },
+          { text: 'Explore public data', link: '/docs/guide/public-data' },
+          { text: 'Your data in Cirro', link: '/docs/guide/cirro' },
+          { text: 'Analyze in the browser', link: '/docs/guide/analyze' },
+          {
+            text: 'Analysis Workspaces',
+            link: '/docs/guide/analysis-workspaces',
+            items: [
+              { text: 'Analysis methods', link: '/backend/app/registry/custom/README' },
+            ],
+          },
+          { text: 'Run it with Docker', link: '/docs/guide/docker' },
+        ],
+      },
+      {
+        text: 'Advanced',
+        items: [
+          { text: 'Share and embed the viewer', link: '/docs/guide/viewer' },
           {
             text: 'Live demos',
             link: '/demo/',
@@ -112,21 +158,21 @@ export default defineConfig({
               { text: 'Visium mouse brain', link: '/demo/visium-mouse-brain' },
             ],
           },
-          { text: 'Run with Docker', link: '/docker/README' },
-          { text: 'Analysis methods', link: '/backend/app/registry/custom/README' },
         ],
       },
       {
         text: 'Develop',
         items: [
+          { text: 'Repository overview', link: '/overview' },
           { text: 'Development guide', link: '/DEVELOPMENT' },
           { text: 'Contributing analyses', link: '/CONTRIBUTING' },
           { text: 'Backend', link: '/backend/README' },
           { text: 'Frontend', link: '/frontend/README' },
           { text: 'Viewer library', link: '/packages/viewer/README' },
           { text: 'Studio controls', link: '/packages/studio-ui/README' },
-          { text: 'Cirro app', link: '/cirro-studio/README' },
+          { text: 'Web app', link: '/cirro-studio/README' },
           { text: 'Nextflow', link: '/nextflow/README' },
+          { text: 'Docker image', link: '/docker/README' },
         ],
       },
       {

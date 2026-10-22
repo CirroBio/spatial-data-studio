@@ -51,7 +51,8 @@ const src = computed(() => {
   params.set('theme', props.theme);
   params.set('background', props.background);
   const query = params.toString();
-  return withBase('/viewer/index.html') + (query ? `?${query}` : '');
+  // The viewer is at the Pages site's root, beside the docs (config.mts `base`).
+  return withBase('/../viewer/index.html') + (query ? `?${query}` : '');
 });
 
 const title = computed(() => props.label ?? props.checkpoint?.split('/').pop() ?? 'Spatial Data Studio');

@@ -1,7 +1,8 @@
 name: docs
 
-# Builds the documentation site (docs-site/, VitePress over the repo's own markdown), the
-# serverless viewer and the Cirro app, and publishes all three to GitHub Pages. The demo
+# Builds the Cirro app, the documentation site (docs-site/, VitePress over the repo's own
+# markdown) and the serverless viewer, and publishes all three to GitHub Pages: the app at
+# the site's root, the docs as its About section at /about/, the viewer at /viewer/. The demo
 # checkpoints are committed under docs-site/viewer-data/ (and the app's own example under
 # cirro-studio/examples/), so this job never downloads data and never needs Cirro
 # credentials — refresh them with scripts/fetch_example_checkpoints.py and
@@ -62,25 +63,27 @@ jobs:
         run: npm run docs:build
 
       - name: Assemble the Pages tree
-        # /viewer/ ends up a valid standalone deployment in its own right (DESIGN §14.3):
-        # index.html + assets + index.json + the .zarr.zip files in one directory, which
-        # is what makes it browsable as a collection as well as embeddable per page.
+        # The Cirro app is the site's root, with its examples beside it and the deployed
+        # tenants in place of the development one. The docs site is the About section,
+        # under /about/. /viewer/ ends up a valid standalone deployment in its own right
+        # (DESIGN §14.3): index.html + assets + index.json + the .zarr.zip files in one
+        # directory, which is what makes it browsable as a collection as well as
+        # embeddable per page; the app's example index names those demo checkpoints at
+        # ../viewer/ rather than copying them.
         run: |
-          cp -r frontend/dist docs-site/.vitepress/dist/viewer
-          cp docs-site/viewer-data/* docs-site/.vitepress/dist/viewer/
-          # The Cirro app at /app/: its examples beside it (the index also names the
-          # demo checkpoints at ../../viewer/), and the deployed tenants in place of the
-          # development one.
-          cp -r cirro-studio/dist docs-site/.vitepress/dist/app
-          cp -r cirro-studio/examples docs-site/.vitepress/dist/app/examples
-          cp cirro-studio/deploy/tenants.json docs-site/.vitepress/dist/app/tenants.json
-          mkdir -p docs-site/.vitepress/dist/docs
-          cp -r docs/images docs-site/.vitepress/dist/docs/images
+          cp -r cirro-studio/dist site
+          cp -r cirro-studio/examples site/examples
+          cp cirro-studio/deploy/tenants.json site/tenants.json
+          cp -r docs-site/.vitepress/dist site/about
+          mkdir -p site/about/docs
+          cp -r docs/images site/about/docs/images
+          cp -r frontend/dist site/viewer
+          cp docs-site/viewer-data/* site/viewer/
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: docs-site/.vitepress/dist
+          path: site
 
   deploy:
     # PRs build (so a broken site fails review) but only main publishes.
