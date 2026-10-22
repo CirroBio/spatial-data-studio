@@ -1,13 +1,13 @@
 # Version layer format
 
-A **version** of a SpatialData store is saved as only what changed. The Cirro app
+A **version** of a SpatialData store is saved as only what changed. The web app
 (`cirro-studio/`) writes one whenever someone saves their work on a store: a new obs
 column, an embedding, an analysis result, a figure, or a deletion. The store itself is
 never copied. A version names the version (or store) it sits on, so a chain of them —
 a *stack* — reads as one store whose top is the newest version. This file specifies the
 format; the writer is `cirro-studio/src/stack/`, and `backend/app/persistence/sds_layers.py`
-reads it from Python. The Studio opens a version through that reader (see
-[In the Studio](#in-the-studio)).
+reads it from Python. An Analysis Workspace opens a version through that reader (see
+[In an Analysis Workspace](#in-an-analysis-workspace)).
 
 The design borrows from container image layers. Each layer holds the objects it adds or
 replaces, plus *whiteouts* for what it deletes, and a reader answers each key from the
@@ -177,9 +177,9 @@ outside its overlay folder or to write outside the output folder, even through a
 symbolic link. A folder the folder map names must meet the same rules as a path and lead
 to a folder inside the datasets folder.
 
-## In the Studio
+## In an Analysis Workspace
 
-The Studio opens a version the way it opens a saved checkpoint. A folder holding a
+An Analysis Workspace opens a version the way it opens a saved checkpoint. A folder holding a
 version's `layer.json`, at its top or under `data/`, is listed under **Open Checkpoint**
 in the New Session dialog, by its path under the data directory followed by the
 version's title when that differs from the folder's name, and Import Data's SpatialData
@@ -193,11 +193,11 @@ version's own folder is refused.
 A parent is looked up in the folder that holds the opened version's folder: in the
 folder the folder map names for its dataset ID, or else in the one named by the ID
 itself, which is how a download is laid out. Every folder the stack reads must be under
-the Studio's data directory, like any other input.
+the workspace's data directory, like any other input.
 
 In a Cirro workspace every attached dataset is mounted read-only at
 `$HOME/datasets/<folder name>` (also `/mnt/datasets/<folder name>`), and the folder is
-named for the dataset, not by its ID. The Cirro app sets the workspace's
+named for the dataset, not by its ID. The web app sets the workspace's
 `SDS_CIRRO_DATASETS` variable to the folder map, a JSON object with an entry for every
 mounted dataset:
 
@@ -205,6 +205,6 @@ mounted dataset:
 { "5f1c…": "Tumor margin regions", "0d13…": "Pancreas results" }
 ```
 
-When it starts a workspace on a saved version, the Cirro app attaches every dataset of
+When it starts a workspace on a saved version, the web app attaches every dataset of
 its stack: the base store's and each version's. A version whose parent isn't attached
 does not open; the message names the missing dataset's ID.

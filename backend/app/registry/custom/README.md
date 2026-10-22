@@ -171,7 +171,7 @@ within one section, so its p-values describe this sample — use *Pseudobulk DE
 
 `io.read_zarr` (read). Opens an existing SpatialData store as a new session for
 the "Import Data" flow. Accepts a `.zarr` directory, a compressed archive of one
-(`.zarr.zip` or `.zarr.tar.gz`), or the folder of a version saved in the Cirro app
+(`.zarr.zip` or `.zarr.tar.gz`), or the folder of a version saved in the web app
 ([docs/LAYER_FORMAT.md](../../../../docs/LAYER_FORMAT.md)), which holds only what it
 changed over the store below it. An archive is unpacked, and a version assembled with
 everything below it, into a temporary directory the session owns and removes on

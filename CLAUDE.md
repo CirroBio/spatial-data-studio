@@ -6,15 +6,19 @@ Documentation is split by audience, and **every change keeps the relevant file
 accurate in the same commit** — a PR/commit that changes behavior but leaves a doc
 stale is incomplete.
 
-- `README.md` is a **short orientation only**: the pitch, how a user runs the app (the
-  Docker quickstart), and links into the rest of the documentation. A change to the run
-  command updates it; a feature change does not belong here. Keep it brief — do not grow
-  it back into a feature manual.
-- `docs/USER_GUIDE.md` is the source of truth for the **user-facing** app: what it does,
-  panel by panel and flow by flow. A change that adds, removes, or alters a user-facing
-  capability or a user-facing panel/flow updates the user guide. If a UI change
-  materially alters a panel shown in one of its screenshots (`docs/images/*`), refresh
-  that screenshot too.
+- `README.md` is a **short orientation only**: the pitch, where to use the app (the web
+  app's address), the Docker command for running an Analysis Workspace yourself, and
+  links into the rest of the documentation. A change to the run command updates it; a
+  feature change does not belong here. Keep it brief — do not grow it back into a
+  feature manual.
+- `docs/guide/` is the source of truth for the **user-facing** app: what it does, panel
+  by panel and flow by flow, one page per part, in the order a new user needs them —
+  `README.md` (what it is and which part you need), `public-data.md`, `cirro.md` and
+  `analyze.md` (the web app), `analysis-workspaces.md` and `docker.md` (the Analysis
+  Workspace), and `viewer.md` (the viewer on its own, the advanced case). A change that
+  adds, removes, or alters a user-facing capability or a user-facing panel/flow updates
+  the page that covers it. If a UI change materially alters a panel shown in one of its
+  screenshots (`docs/images/*`), refresh that screenshot too.
 - `DEVELOPMENT.md` is the source of truth for the **developer-facing** detail:
   architecture, repo layout / where-to-change-what, the local dev environment, and the
   test suite / offline CLI. A change to any of those updates `DEVELOPMENT.md` (and
@@ -22,15 +26,22 @@ stale is incomplete.
   the same commit.
 
 When in doubt, skim all three before committing and fix anything they now misstate. Do
-not fold developer detail into `docs/USER_GUIDE.md`, and do not leave user-facing feature
+not fold developer detail into `docs/guide/`, and do not leave user-facing feature
 changes out of it.
+
+The three parts have one name each, in the docs and in the UI alike: **the web app**
+(`cirro-studio/`), **the Analysis Workspace** (the server app, `backend/` + `frontend/`,
+whether Cirro runs it as a workspace or someone runs it with Docker; "the Studio" is
+its name in the code only), and **the viewer** (a saved checkpoint opened with no
+backend, or embedded in another page). The web app comes first wherever the docs
+introduce the product.
 
 The documentation site (`docs-site/`) publishes the files above **unmodified** — it
 points VitePress at the repo root, so the markdown in the repo *is* the site. Never
-copy or paraphrase `README.md`, `docs/USER_GUIDE.md`, `DEVELOPMENT.md`, `DESIGN.md` or
+copy or paraphrase `README.md`, `docs/guide/`, `DEVELOPMENT.md`, `DESIGN.md` or
 any component README into `docs-site/`; pages there may only add site-specific material (navigation, the
 landing page, the live-viewer demos). The landing page
-(`docs-site/index.md` → `.vitepress/theme/components/LandingPage.vue`, served at `/`)
+(`docs-site/index.md` → `.vitepress/theme/components/LandingPage.vue`, served at the docs site's root, the About section at `/about/` on Pages)
 is presentation: it orients a reader and routes into the docs, and every fact it states
 must already be stated — and stay stated — in the repo markdown it links to. A change
 that makes the landing page wrong is fixed on the landing page *and* in whichever doc

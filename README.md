@@ -1,24 +1,34 @@
 # Spatial Data Studio
 
-**Interactive analysis and visualization for spatial omics data — in the browser,
-no code required.**
+**Look at and analyze spatial omics data in your browser — no code required.**
 
-Open a spatial transcriptomics dataset (Xenium, Visium, Visium HD, CosMx, MERSCOPE, or
-anything else [SpatialData](https://spatialdata.scverse.org/) can read), run
-[`squidpy`](https://squidpy.readthedocs.io/) and
-[`scanpy`](https://scanpy.readthedocs.io/) analyses on it through point-and-click forms,
-and explore the result on a fast WebGL canvas that draws every cell over the tissue
-image. It runs as a single local server you open in your browser.
+Spatial Data Studio is a web application for spatial transcriptomics and imaging. Open a
+section (Xenium, Visium, Visium HD, CosMx, MERSCOPE, or anything else
+[SpatialData](https://spatialdata.scverse.org/) can read), see every cell over the tissue
+image, find clusters, compare groups and the genes that set them apart, and keep what you
+find. Explore public data with no account, or open your own projects in
+[Cirro](https://cirro.bio/), save results back to them, and work on them with your team.
 
-![The spatial canvas showing a Xenium ovarian-cancer section, each cell colored by its cellular neighborhood, over the morphology image, with the left panel open on the Compute (history) tab.](./docs/images/hero.jpg)
+![A Xenium pancreas section open in the web app: every cell drawn over the H&E image and colored by its cellular neighborhood, with the analysis tasks in a drawer on the left and the display settings in a drawer on the right.](./docs/images/web-app.jpg)
 
-*A whole Xenium ovarian-cancer section (~400,000 cells), colored by cellular
-neighborhood.*
+## Use it
 
-## Run it
+Open **[cirrobio.github.io/spatial-data-studio][app]** and choose:
 
-Everything ships as one Docker image, so the published build needs nothing but Docker
-and a folder of your own data:
+- **Public Data**: public sections, ready to open, with no account. Nothing leaves your
+  browser.
+- **Private Data (Cirro)**: your own Cirro projects, read where they are stored, with
+  each result saved back to the project as a version.
+
+For work beyond the browser, the web app starts an **Analysis Workspace** in your Cirro
+project: the server version of Spatial Data Studio, with every
+[`squidpy`](https://squidpy.readthedocs.io/) and [`scanpy`](https://scanpy.readthedocs.io/)
+function behind point-and-click forms.
+
+## Run it on your own computer
+
+An Analysis Workspace is also one Docker image, which needs nothing but Docker and a
+folder of your own data:
 
 ```bash
 docker run -d -p 8080:8888 \
@@ -27,30 +37,28 @@ docker run -d -p 8080:8888 \
 ```
 
 Open `http://localhost:8080` and start a session on anything in that folder.
-[`docker/README.md`](docker/README.md) has the compose file, the memory limits and the
-full environment contract; [`DEVELOPMENT.md`](DEVELOPMENT.md#local-dev-environment) has
-how to run from a clone instead. Or try it with nothing installed at all — the
-[live demos][demos] are the real viewer running in your browser, and the
-[Cirro app][app] opens your Cirro projects' spatial data, analyzes it and saves versions
-of it, all in the browser.
+[Run it with Docker](docs/guide/docker.md) has the rest, including connecting an AI
+assistant; [`docker/README.md`](docker/README.md) has the compose file, the memory limits
+and the full environment contract; [`DEVELOPMENT.md`](DEVELOPMENT.md#local-dev-environment)
+has how to run from a clone instead.
 
 ## Documentation
 
-**[cirrobio.github.io/spatial-data-studio][docs]** renders every file below, so the
+**[cirrobio.github.io/spatial-data-studio/about][docs]** renders every file below, so the
 same words read the same on GitHub and on the site.
 
-[docs]: https://cirrobio.github.io/spatial-data-studio/
-[demos]: https://cirrobio.github.io/spatial-data-studio/demo/
-[app]: https://cirrobio.github.io/spatial-data-studio/app/
+[docs]: https://cirrobio.github.io/spatial-data-studio/about/
+[app]: https://cirrobio.github.io/spatial-data-studio/
 
 | | |
 | --- | --- |
-| [User guide](docs/USER_GUIDE.md) | what the app does — the source of truth for it |
-| [Run with Docker](docker/README.md) | the image, its memory limits and environment |
-| [The Cirro app](cirro-studio/README.md) | the browser-only app for Cirro projects, for developers |
-| [Version layer format](docs/LAYER_FORMAT.md) | how the Cirro app saves a version of a store, opening one in the Studio, and reading one from Python |
+| [Guide](docs/guide/README.md) | what the app does and how to use it — the source of truth for it |
+| [Share and embed the viewer](docs/guide/viewer.md) | saved sections on your own site or dashboard |
 | [Analysis methods](backend/app/registry/custom/README.md) | what each bundled method does |
+| [Version layer format](docs/LAYER_FORMAT.md) | how the web app saves a version of a store, opening one in an Analysis Workspace, and reading one from Python |
+| [Docker image](docker/README.md) | the image, its memory limits and environment |
 | [Development guide](DEVELOPMENT.md) | architecture, repo layout, dev setup, tests |
+| [The web app](cirro-studio/README.md) | the browser-only app, for developers |
 | [Design](DESIGN.md) | the full specification and the reasoning behind it |
 | [API contract](docs/CONTRACT.md) | the REST / SSE / Arrow contract |
 | [Contributing](CONTRIBUTING.md) | adding a recipe or an analysis function |
@@ -59,10 +67,10 @@ same words read the same on GitHub and on the site.
 The default licence grant covers evaluation, review, and preparing contributions; any
 other use, including production use, needs a written authorization from Cirro Bio, Inc.
 
-> **Maintenance rule:** this README stays a short orientation — the pitch, how to run
-> the app, and where the docs are. [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) is the
-> source of truth for **what the app does**, and [`DEVELOPMENT.md`](DEVELOPMENT.md) for
-> the developer-facing detail. Any change that adds, removes, or alters a user-facing
-> capability updates the user guide in the same commit (and refreshes a screenshot if it
-> materially changes a pictured panel); a change to the run command updates this README.
-> See [`CLAUDE.md`](CLAUDE.md).
+> **Maintenance rule:** this README stays a short orientation — the pitch, where to use
+> the app, the Docker command, and where the docs are. The [guide](docs/guide/README.md)
+> is the source of truth for **what the app does**, and [`DEVELOPMENT.md`](DEVELOPMENT.md)
+> for the developer-facing detail. Any change that adds, removes, or alters a user-facing
+> capability updates the guide page that covers it in the same commit (and refreshes a
+> screenshot if it materially changes a pictured panel); a change to the run command
+> updates this README. See [`CLAUDE.md`](CLAUDE.md).

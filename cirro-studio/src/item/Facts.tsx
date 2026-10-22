@@ -36,9 +36,9 @@ export function Facts({ title, item, kind, stage, from, into, extra, unsaved = f
       {extra}
       <span className="facts-spacer" />
       {collection.kind === 'cirro' && (
-        <button type="button" className="button button-small" title="A workspace running the full Spatial Data Studio on it, in a new tab"
+        <button type="button" className="button button-small" title="Every squidpy and scanpy analysis, on a machine in this project, in a new tab"
           onClick={() => openWorkspaces(requestFor(item, title, library, unsaved))}>
-          Open in the full Studio
+          Open in an Analysis Workspace
         </button>
       )}
       <Popover align="right" label={<>Details ▾</>} className="facts-details">

@@ -1,57 +1,25 @@
 <script setup lang="ts">
-import { ref } from 'vue';
 import { withBase } from 'vitepress';
 
-// The site's landing page. It is the one page here that is presentation rather than
-// documentation: it orients a first-time reader and routes into the repo's own markdown,
-// which stays the source of truth for everything it says — see the docs-site rule in
-// CLAUDE.md. Nothing below may become the only place a fact is written down.
+// The About section's landing page. It is the one page here that is presentation rather
+// than documentation: it orients a first-time reader and routes into the repo's own
+// markdown, which stays the source of truth for everything it says — see the docs-site
+// rule in CLAUDE.md. Nothing below may become the only place a fact is written down.
 //
-// `docs/images/hero.jpg` is referenced by path rather than imported: the Pages job copies
+// The screenshot is referenced by path rather than imported: the Pages job copies
 // `docs/images` into the built site beside the pages (docs.yml), which is also what makes
 // the same picture work in README.md on GitHub.
-const hero = withBase('/docs/images/hero.jpg');
+const shot = withBase('/docs/images/web-app.jpg');
 
-// A panel is either a few shell lines — prompt, command, trailing comment, with `\n`
-// inside a command where it wraps onto its own row — or numbered steps, for the one way
-// of running it that is not a command at all.
-const ways = [
-  {
-    id: 'docker',
-    label: 'Docker',
-    lines: [
-      ['$ ', 'docker run -d -p 8080:8888 \\\n    -v "$(pwd)/data":/data \\\n    -e SDS_DATA_DIR=/data \\\n    public.ecr.aws/cirrobio/spatial-data-studio:v1', ''],
-      ['$ ', 'open http://localhost:8080', '  # your data, under /data'],
-    ],
-  },
-  {
-    id: 'source',
-    label: 'From source',
-    lines: [
-      ['$ ', 'npm install', '  # at the repo root'],
-      ['$ ', './run.sh --test', '  # :8000 and :5173'],
-      ['$ ', './stop.sh', '  # stops both'],
-    ],
-  },
-  {
-    id: 'cirro',
-    label: 'In Cirro',
-    steps: [
-      'In your Cirro project, create a workspace.',
-      'Pick Spatial Data Studio as the workspace image.',
-      'Open it — the project\'s datasets are already there, and so is everyone else in the lab.',
-    ],
-  },
-];
+// The web app is the Pages site's root, one level above this section (config.mts `base`).
+// Public Data and the log-in box are the start page's two choices, opened directly; the
+// links carry `target="_self"` so the docs router doesn't take them for its own pages.
+const app = withBase('/../');
+const publicData = withBase('/../?tenant=examples&project=examples');
+const privateData = withBase('/../?sign-in');
 
-const active = ref(ways[0].id);
-
-function step(from: string, delta: number) {
-  const index = ways.findIndex((way) => way.id === from);
-  active.value = ways[(index + delta + ways.length) % ways.length].id;
-  const next = document.getElementById(`tab-${active.value}`);
-  next?.focus();
-}
+// A string rather than template text, so its line breaks survive Vue's whitespace handling.
+const embedSnippet = '<iframe src="viewer/index.html\n    ?checkpoint=my-run.sdata.zarr.zip\n    &embed=1"></iframe>';
 </script>
 
 <template>
@@ -60,317 +28,99 @@ function step(from: string, delta: number) {
       <header class="masthead">
         <div class="masthead-grid">
           <div>
-            <h1>Analyze a spatial section without writing code</h1>
-            <p class="lede">Open a Xenium, Visium or CosMx run, put <code>squidpy</code> and
-            <code>scanpy</code> through point-and-click forms, and watch every cell redraw over
-            the tissue image. Each step is recorded as it happens, and the whole session saves
-            to one file that reopens in a browser with nothing running behind it.</p>
+            <h1>Look at and analyze spatial omics data in your browser</h1>
+            <p class="lede">Open a Xenium, Visium or CosMx section and see every cell over the
+            tissue image. Find clusters, compare groups and the genes that set them apart, and
+            keep what you find as a version of the data, with nothing to install and no code to
+            write.</p>
+            <div class="actions">
+              <a class="action action-primary" :href="app" target="_self">Open the app</a>
+              <a class="action" :href="withBase('/docs/guide/README')">Read the guide</a>
+            </div>
           </div>
 
-          <div>
-            <div class="installer">
-              <div class="tabs" role="tablist" aria-label="Ways to run it">
-                <button
-                  v-for="way in ways"
-                  :key="way.id"
-                  :id="`tab-${way.id}`"
-                  class="tab"
-                  role="tab"
-                  type="button"
-                  :aria-controls="`panel-${way.id}`"
-                  :aria-selected="active === way.id"
-                  @click="active = way.id"
-                  @keydown.right.prevent="step(way.id, 1)"
-                  @keydown.left.prevent="step(way.id, -1)"
-                >{{ way.label }}</button>
-              </div>
-
-              <div
-                v-for="way in ways"
-                :key="way.id"
-                role="tabpanel"
-                :id="`panel-${way.id}`"
-                :aria-labelledby="`tab-${way.id}`"
-                :hidden="active !== way.id"
-              >
-                <div v-if="way.lines" class="cmds">
-                  <code v-for="(line, i) in way.lines" :key="i" class="cmd"><span class="p">{{ line[0] }}</span>{{ line[1] }}<span class="c">{{ line[2] }}</span></code>
-                </div>
-                <ol v-else class="steps">
-                  <li v-for="(step, i) in way.steps" :key="i">{{ step }}</li>
-                </ol>
-              </div>
-            </div>
-
-            <p class="note">One image holds the SPA and the backend, and the folder you mount
-            holds inputs, checkpoints and snapshots together — so the published build is the
-            whole install, with nothing to clone and nothing to compile. Memory limits and the
-            rest of the environment are in
-            <a :href="withBase('/docker/README')">Run with Docker</a>; running from a clone is
-            in <a :href="withBase('/DEVELOPMENT')">the development guide</a>; the workspace is
-            <a href="#run-it-where-the-data-is">further down this page</a>. To see it with
-            nothing installed at all, the <a :href="withBase('/demo/')">live demos</a> are the
-            real viewer running in your browser.</p>
+          <div class="ways">
+            <a class="way" :href="publicData" target="_self">
+              <span class="way-title">Public Data</span>
+              <span class="way-text">Public sections, ready to open, with no account. The
+              analyses run in your browser, and nothing leaves it.</span>
+            </a>
+            <a class="way" :href="privateData" target="_self">
+              <span class="way-title">Private Data (Cirro)</span>
+              <span class="way-text">Your own Cirro projects, read where they are stored, with
+              each result saved back to the project for your team.</span>
+            </a>
           </div>
         </div>
       </header>
 
       <section>
         <figure>
-          <img class="shot" :src="hero" width="2400" height="1350"
-               alt="The spatial canvas showing a Xenium ovarian-cancer section, each cell colored by its cellular neighborhood, over the morphology image, with the left panel open on the Compute history tab." />
-          <figcaption>A whole Xenium ovarian-cancer section — about 400,000 cells — colored by
-          cellular neighborhood, over the morphology image. The left panel is on the Compute
-          tab, which is the history of everything that produced what you are looking at.
-          <a :href="withBase('/docs/USER_GUIDE')">The user guide</a> walks through each panel.</figcaption>
+          <img class="shot" :src="shot" width="2400" height="1350"
+               alt="A Xenium pancreas section open in the web app: every cell drawn over the H&amp;E image and colored by its cellular neighborhood, with the analysis tasks in a drawer on the left and the display settings in a drawer on the right." />
+          <figcaption>A Xenium human pancreas section from Public Data, each cell colored by its
+          cellular neighborhood over the H&amp;E image. The analyses are in the drawer on the left and the
+          display settings in the drawer on the right.
+          <a :href="withBase('/docs/guide/public-data')">Explore public data</a> walks through
+          it.</figcaption>
         </figure>
       </section>
 
       <section>
-        <p class="eyebrow">The unit of work</p>
-        <h2>How an analysis moves</h2>
-        <p class="narrow">You pick a function, fill in a form built from that function's own
-        signature, and it runs against the object in memory. Nothing is copied and nothing is
-        versioned away: the analysis adds its columns, embeddings and graphs to the object you
-        already have, and appends one entry to the session's history. What the canvas can color
-        by grows as you go.</p>
+        <p class="eyebrow">How it organizes your data</p>
+        <h2>From the instrument to the figure</h2>
+        <p class="narrow">The web app sorts a project's data into four stages and shows them as
+        a map. An item moves on to the next stage when a pipeline or an analysis makes it.</p>
 
-        <figure class="wide">
-          <div class="diagram">
-            <svg viewBox="0 0 1080 500" role="img"
-                 aria-label="Diagram in two rows. The top row: your dataset, read by spatialdata-io, feeds a function you pick from a searchable list whose form comes from the function signature; running it adds columns, embeddings and graphs to the object in memory and appends one history entry; the canvas redraws every cell. The bottom row: saving picks what to keep from a checklist with sizes, writes one .sdata.zarr.zip, and that file reopens either in the app or in a browser with no backend, and can be shared as a link to an exact view.">
-              <defs>
-                <marker id="sds-ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
-                  <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--rule-strong)" />
-                </marker>
-                <marker id="sds-ah-obj" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
-                  <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--sds-obj)" />
-                </marker>
-              </defs>
-
-              <text class="d-lane" x="20" y="18">Running a function</text>
-
-              <rect class="b-data" x="20" y="34" width="180" height="180" rx="7" />
-              <text class="d-eyebrow t-data" x="36" y="58">Your data</text>
-              <rect class="bar" x="36" y="72" width="148" height="7" rx="3.5" />
-              <rect class="bar" x="36" y="86" width="126" height="7" rx="3.5" />
-              <rect class="bar-soft" x="36" y="100" width="142" height="7" rx="3.5" />
-              <text class="d-arrow" x="36" y="132">a run folder, or a</text>
-              <text class="d-arrow" x="36" y="146">.zarr the app saved</text>
-              <text class="d-arrow t-data" x="36" y="176">spatialdata-io</text>
-              <text class="d-arrow" x="36" y="190">reads it, live log</text>
-
-              <path class="flow" d="M 206 124 L 250 124" marker-end="url(#sds-ah)" />
-              <text class="d-arrow" x="228" y="114" text-anchor="middle">you pick</text>
-
-              <rect class="b-run" x="256" y="34" width="280" height="180" rx="7" />
-              <text class="d-eyebrow t-run" x="272" y="58">Cellular neighborhoods</text>
-              <text class="d-code" x="272" y="80">n_neighbors</text>
-              <rect class="bar" x="420" y="72" width="100" height="10" rx="3" />
-              <text class="d-code" x="272" y="100">n_clusters</text>
-              <rect class="bar" x="420" y="92" width="100" height="10" rx="3" />
-              <text class="d-code" x="272" y="120">key_added</text>
-              <rect class="bar-soft" x="420" y="112" width="100" height="10" rx="3" />
-              <line class="stroke" x1="272" y1="136" x2="520" y2="136" />
-              <text class="d-arrow" x="272" y="156">the form is the function's own signature</text>
-              <text class="d-arrow t-run" x="272" y="176">citation</text>
-              <text class="d-arrow" x="322" y="176">·</text>
-              <text class="d-arrow t-run" x="334" y="176">documentation</text>
-              <text class="d-arrow" x="272" y="196">every function says where it came from</text>
-
-              <path class="flow" d="M 542 124 L 586 124" marker-end="url(#sds-ah)" />
-              <text class="d-arrow" x="564" y="114" text-anchor="middle">runs</text>
-
-              <rect class="b-obj" x="592" y="34" width="230" height="180" rx="7" />
-              <text class="d-eyebrow t-obj" x="608" y="58">The object, in place</text>
-              <text class="d-code" x="608" y="80">obs["neighborhood"]</text>
-              <text class="d-code" x="608" y="100">obsm["X_umap"]</text>
-              <text class="d-code" x="608" y="120">obsp["spatial"]</text>
-              <line class="stroke" x1="608" y1="136" x2="806" y2="136" />
-              <text class="d-arrow" x="608" y="156">history += one entry</text>
-              <text class="d-arrow" x="608" y="176">no undo, no copies:</text>
-              <text class="d-arrow" x="608" y="190">the log is the record</text>
-
-              <path class="flow" d="M 828 124 L 872 124" marker-end="url(#sds-ah)" />
-              <text class="d-arrow" x="850" y="114" text-anchor="middle">draws</text>
-
-              <rect class="b-see" x="878" y="34" width="182" height="180" rx="7" />
-              <text class="d-eyebrow t-see" x="894" y="58">The canvas</text>
-              <rect class="bar-soft" x="894" y="70" width="150" height="96" rx="4" />
-              <g>
-                <circle cx="914" cy="150" r="3" fill="var(--sds-see)" />
-                <circle cx="932" cy="140" r="3" fill="var(--sds-see)" />
-                <circle cx="950" cy="146" r="3" fill="var(--sds-obj)" />
-                <circle cx="968" cy="128" r="3" fill="var(--sds-obj)" />
-                <circle cx="986" cy="136" r="3" fill="var(--sds-data)" />
-                <circle cx="1004" cy="118" r="3" fill="var(--sds-data)" />
-                <circle cx="1022" cy="130" r="3" fill="var(--sds-run)" />
-                <circle cx="924" cy="122" r="3" fill="var(--sds-obj)" />
-                <circle cx="960" cy="108" r="3" fill="var(--sds-run)" />
-                <circle cx="996" cy="98" r="3" fill="var(--sds-see)" />
-                <circle cx="942" cy="92" r="3" fill="var(--sds-data)" />
-                <circle cx="1014" cy="86" r="3" fill="var(--sds-obj)" />
-              </g>
-              <text class="d-arrow" x="894" y="188">every cell, over the image</text>
-              <text class="d-arrow" x="894" y="202">color by any column or gene</text>
-
-              <path class="flow-dash s-obj" d="M 707 220 L 707 268" marker-end="url(#sds-ah-obj)" />
-              <text class="d-arrow t-obj" x="720" y="248">what you keep is chosen from what is there</text>
-
-              <text class="d-lane" x="20" y="268">Saving what you did</text>
-
-              <rect class="b-data" x="20" y="284" width="180" height="180" rx="7" />
-              <text class="d-eyebrow t-data" x="36" y="308">What to keep</text>
-              <rect class="stroke" x="36" y="320" width="10" height="10" rx="2" />
-              <text class="d-arrow" x="54" y="329">image · 2 levels</text>
-              <rect class="stroke" x="36" y="340" width="10" height="10" rx="2" />
-              <text class="d-arrow" x="54" y="349">cells · annotations</text>
-              <rect class="stroke" x="36" y="360" width="10" height="10" rx="2" />
-              <text class="d-arrow" x="54" y="369">embeddings</text>
-              <rect class="b-plain" x="36" y="380" width="10" height="10" rx="2" />
-              <text class="d-arrow" x="54" y="389">expression · 1.1 GB</text>
-              <text class="d-arrow" x="36" y="418">each part priced,</text>
-              <text class="d-arrow" x="36" y="432">each one optional</text>
-
-              <path class="flow" d="M 206 374 L 250 374" marker-end="url(#sds-ah)" />
-              <text class="d-arrow" x="228" y="364" text-anchor="middle">writes</text>
-
-              <rect class="b-run" x="256" y="284" width="280" height="180" rx="7" />
-              <text class="d-eyebrow t-run" x="272" y="308">One file</text>
-              <text class="d-code" x="272" y="332">ovary-neighborhoods.sdata.zarr.zip</text>
-              <line class="stroke" x1="272" y1="348" x2="520" y2="348" />
-              <text class="d-arrow" x="272" y="368">the cells, the image pyramid, the shapes,</text>
-              <text class="d-arrow" x="272" y="386">the figures you drew, the display settings,</text>
-              <text class="d-arrow" x="272" y="404">and the history that produced all of it</text>
-              <text class="d-arrow t-run" x="272" y="432">read by HTTP range requests</text>
-
-              <path class="flow" d="M 542 374 L 586 374" marker-end="url(#sds-ah)" />
-              <text class="d-arrow" x="564" y="364" text-anchor="middle">opens</text>
-
-              <rect class="b-obj" x="592" y="284" width="230" height="180" rx="7" />
-              <text class="d-eyebrow t-obj" x="608" y="308">Two ways back in</text>
-              <text class="d-arrow" x="608" y="332">in the app — history intact,</text>
-              <text class="d-arrow" x="608" y="346">and you can keep going</text>
-              <line class="stroke" x1="608" y1="362" x2="806" y2="362" />
-              <text class="d-arrow" x="608" y="384">in a browser, from a URL,</text>
-              <text class="d-arrow" x="608" y="398">with no backend at all</text>
-              <text class="d-arrow t-obj" x="608" y="428">streams what the view needs</text>
-
-              <path class="flow" d="M 828 374 L 872 374" marker-end="url(#sds-ah)" />
-              <text class="d-arrow" x="850" y="364" text-anchor="middle">share</text>
-
-              <rect class="b-see" x="878" y="284" width="182" height="180" rx="7" />
-              <text class="d-eyebrow t-see" x="894" y="308">A link to a view</text>
-              <rect class="bar" x="894" y="322" width="150" height="9" rx="4.5" />
-              <rect class="bar-soft" x="894" y="338" width="122" height="9" rx="4.5" />
-              <text class="d-arrow" x="894" y="372">only what you changed</text>
-              <text class="d-arrow" x="894" y="386">travels, so it stays short</text>
-              <text class="d-arrow" x="894" y="414">a colleague lands on</text>
-              <text class="d-arrow" x="894" y="428">your view, not the saved one</text>
-            </svg>
-          </div>
-          <figcaption><strong>One function, then the file it all ends up in.</strong> The top row
-          is the loop you spend the day in; the bottom row is what leaves the machine. The
-          checkpoint is one file rather than a folder because that is what a browser can read a
-          few kilobytes out of — opening a 438 MB checkpoint and coloring by a gene costs under a
-          megabyte. <a :href="withBase('/docs/CHECKPOINT_FORMAT')">The checkpoint format</a> has
-          the layout; <a :href="withBase('/DESIGN')">DESIGN.md</a> has the reasoning.</figcaption>
-        </figure>
+        <ol class="stages">
+          <li class="stage stage-data">
+            <span class="stage-name">Images</span>
+            <p>Microscopy and histology images on their own, before any cells are found in
+            them.</p>
+          </li>
+          <li class="stage stage-run">
+            <span class="stage-name">Instrument runs</span>
+            <p>An instrument's raw output as it wrote it: transcripts, its own cell
+            segmentation, images and metrics.</p>
+          </li>
+          <li class="stage stage-obj">
+            <span class="stage-name">Spatial data</span>
+            <p>Each cell with its position, expression and annotations, with the images and cell
+            boundaries, and every version you save on it.</p>
+          </li>
+          <li class="stage stage-see">
+            <span class="stage-name">Figures</span>
+            <p>A view kept as a figure, saved inside the version it was made in.</p>
+          </li>
+        </ol>
+        <p class="note"><a :href="withBase('/docs/guide/public-data#four-stages-of-data')">Four
+        stages of data</a> has which Cirro datasets and files each stage reads, and what you can
+        do at each.</p>
 
         <div class="cols">
           <div>
-            <h3>Every step is on the record</h3>
-            <p>The Compute tab is the session's history: each function that ran, with its
-            parameters and timing. It travels inside a saved file, so reopening one shows how
-            the data got that way — including in the no-backend viewer.</p>
+            <h3>Analyses with reports</h3>
+            <p>Find clusters, compare groups, find marker genes and spatially variable genes,
+            measure neighborhood enrichment and find cellular niches, all in your browser. Each
+            opens as a report, and each follows scanpy and squidpy and is tested against them.
+            <a :href="withBase('/docs/guide/analyze')">Analyze in the browser</a>.</p>
           </div>
           <div>
-            <h3>Recipes for the usual path</h3>
-            <p>Curated multi-step workflows — preprocess, cluster, annotate, neighborhood
-            analysis — run in one click, or stage step by step so you can edit the parameters
-            before each one goes.</p>
+            <h3>Versions, not copies</h3>
+            <p>What you make is saved as a version holding only what changed: a new column of
+            labels is kilobytes, beside a store of gigabytes that is not copied. Nothing is ever
+            overwritten, so going back is just opening an older version.</p>
           </div>
           <div>
-            <h3>Annotate and subset</h3>
-            <p>Draw regions on the canvas, label the cells inside them, and carry a selection
-            into a subset that becomes the object the next analysis runs on. Labels are obs
-            columns like any other, so everything else can color by them.</p>
+            <h3>Work as a team</h3>
+            <p>In Cirro, each version is a dataset in the project, with a note of what was saved
+            and by whom. Anyone on the project can open it and save their own version on top.
+            <a :href="withBase('/docs/guide/cirro')">Your data in Cirro</a>.</p>
           </div>
           <div>
             <h3>Figures you can publish</h3>
-            <p>Every plot the session drew is collected in a grid and downloads as SVG, PDF or
-            PNG. A snapshot renders the current canvas as a vector PDF — points as vectors, image
-            as raster — with the provenance embedded in the file.</p>
-          </div>
-        </div>
-      </section>
-
-      <section>
-        <p class="eyebrow">Loading data</p>
-        <h2>Point it at the folder the instrument wrote</h2>
-
-        <div class="split">
-          <div>
-            <p>A reader's own options are its own fields: whether Xenium reads transcripts, cell
-            boundaries or the morphology image is a set of toggles, so you load exactly what you
-            are going to use and leave the rest on disk. Large sections take a while to read, and
-            the reader's log streams while it works.</p>
-            <p>Anything <a href="https://spatialdata.scverse.org/">SpatialData</a> can read is
-            available, because the app does not hardcode a list of functions or formats — it
-            reflects the installed libraries and builds the forms from what it finds. Adding a
-            library means one catalog entry, not one entry per function.</p>
-            <p><a :href="withBase('/docs/USER_GUIDE')">User guide → Load your data</a></p>
-          </div>
-
-          <div>
-            <div class="standalone">
-              <div class="cmds">
-                <code class="cmd">Xenium<span class="c">   10x · imaging-based</span></code>
-                <code class="cmd">Visium, Visium HD<span class="c">   10x · sequencing-based</span></code>
-                <code class="cmd">CosMx<span class="c">   NanoString</span></code>
-                <code class="cmd">MERSCOPE<span class="c">   Vizgen</span></code>
-                <code class="cmd">*.zarr, *.zarr.zip<span class="c">   a store this app saved</span></code>
-              </div>
-            </div>
-            <p class="note">Functions come from the libraries themselves: <code>squidpy</code>
-            wholesale, <code>scanpy</code> and <code>spatialdata-io</code> through a curated
-            catalog, plus the methods written for this app. Each one carries a citation and a
-            link to its own documentation, and the picker refuses an entry that has neither.
-            <a :href="withBase('/backend/app/registry/custom/README')">What the bundled methods
-            do</a>.</p>
-          </div>
-        </div>
-      </section>
-
-      <section>
-        <p class="eyebrow">The AI assistant</p>
-        <h2>An agent can drive the studio you are looking at</h2>
-
-        <div class="split">
-          <div>
-            <p>The backend speaks the
-            <a href="https://modelcontextprotocol.io/">Model Context Protocol</a>, so an agent can
-            load data, run analyses and recipes, restyle the display, label regions, subset and
-            save — and can <em class="emph">look at</em> what it drew, since renders come back
-            with a world-coordinate grid and an exact pixel-to-coordinate mapping.</p>
-            <p>It is not a second copy of the app. The agent joins the same per-session edit lock
-            a person takes, shows up on the padlock as <em class="emph">Claude (assistant)</em>
-            while it works, and hands control back when it is done. Every change it makes appears
-            in your browser as it happens.</p>
-          </div>
-
-          <div>
-            <div class="standalone">
-              <div class="cmds">
-                <code class="cmd"><span class="p">$ </span>claude mcp add --transport http \</code>
-                <code class="cmd">    spatial-data-studio \</code>
-                <code class="cmd">    http://127.0.0.1:8000/api/mcp</code>
-              </div>
-            </div>
-            <p class="note">From a clone, <code>claude</code> finds it on its own through
-            <code>.mcp.json</code>. The endpoint is unauthenticated like the rest of the API, so
-            expose the port only to people and processes you would let edit your sessions.
-            <a :href="withBase('/docs/USER_GUIDE')">User guide → Work with an AI assistant</a>.</p>
+            <p>Keep the tissue as it is shown as a figure, or download it as SVG, PDF or a 300 dpi
+            PNG, one or two columns or a slide wide.</p>
           </div>
         </div>
       </section>
@@ -379,35 +129,174 @@ function step(from: string, delta: number) {
     <div class="band">
       <div class="page">
         <section>
-          <p class="eyebrow">The data backend</p>
-          <h2 id="run-it-where-the-data-is">Run it where the data is</h2>
+          <p class="eyebrow">Analysis Workspaces</p>
+          <h2 id="analysis-workspaces">When the browser isn't enough</h2>
 
-          <p class="narrow">Spatial data is big in a way that decides the architecture. One Xenium
-          run is a few hundred thousand cells under a morphology image measured in gigabytes, and
-          a project holds several of them. Downloading a section to look at it is the slow part of
-          the work, and the laptop it lands on is usually the wrong machine to run the analysis
-          on anyway.</p>
+          <p class="narrow">An Analysis Workspace is the server version of Spatial Data Studio:
+          every squidpy and scanpy function through point-and-click forms, curated recipes of
+          several steps, and the memory of a whole machine for sections too big for a browser.
+          The web app starts one in your Cirro project with the datasets you choose, attached in
+          place, so nothing is downloaded and a section too big for a laptop only needs a bigger
+          machine.</p>
 
-          <p class="narrow" style="margin-top: 1.05em">So the app is built to be brought to the
-          data instead. <a href="https://cirro.bio/">Cirro</a> is the data platform it is built
-          alongside: a workspace there runs a container image inside a project with that project's
-          datasets already mounted, and this app ships as exactly one image. It opens on data
-          nobody downloaded, with the workspace's CPU and memory doing the work, so a section too
-          big for a laptop is only a bigger workspace.</p>
+          <p class="narrow" style="margin-top: 1.05em">You pick a function, fill in a form built
+          from that function's own signature, and it runs against the object in memory. The
+          analysis adds its columns, embeddings and graphs to the object you already have, and
+          appends one entry to the session's history. What the canvas can color by grows as you
+          go.</p>
 
-          <p class="narrow" style="margin-top: 1.05em">A workspace is <em class="emph">one running
-          app</em>, and that turns out to matter more than the machine size. Everyone in the lab
-          opens the same URL. Whoever opens a session holds its edit lock; everyone else watches,
-          and each analysis appears on their screens as it finishes rather than on a reload. What
-          you are looking at stays yours — your gene, your channels, your corner of the section —
-          while someone else drives. Cirro is the first backend built rather than the only shape
-          allowed: the app holds no platform credential of its own, and each person signs in as
-          themselves.</p>
+          <figure class="wide">
+            <div class="diagram">
+              <svg viewBox="0 0 1080 500" role="img"
+                   aria-label="Diagram in two rows. The top row: your dataset, read by spatialdata-io, feeds a function you pick from a searchable list whose form comes from the function signature; running it adds columns, embeddings and graphs to the object in memory and appends one history entry; the canvas redraws every cell. The bottom row: saving picks what to keep from a checklist with sizes, writes one .sdata.zarr.zip, and that file reopens either in the app or in a browser with no backend, and can be shared as a link to an exact view.">
+                <defs>
+                  <marker id="sds-ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+                    <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--rule-strong)" />
+                  </marker>
+                  <marker id="sds-ah-obj" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+                    <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--sds-obj)" />
+                  </marker>
+                </defs>
+
+                <text class="d-lane" x="20" y="18">Running a function</text>
+
+                <rect class="b-data" x="20" y="34" width="180" height="180" rx="7" />
+                <text class="d-eyebrow t-data" x="36" y="58">Your data</text>
+                <rect class="bar" x="36" y="72" width="148" height="7" rx="3.5" />
+                <rect class="bar" x="36" y="86" width="126" height="7" rx="3.5" />
+                <rect class="bar-soft" x="36" y="100" width="142" height="7" rx="3.5" />
+                <text class="d-arrow" x="36" y="132">a run folder, or a</text>
+                <text class="d-arrow" x="36" y="146">.zarr the app saved</text>
+                <text class="d-arrow t-data" x="36" y="176">spatialdata-io</text>
+                <text class="d-arrow" x="36" y="190">reads it, live log</text>
+
+                <path class="flow" d="M 206 124 L 250 124" marker-end="url(#sds-ah)" />
+                <text class="d-arrow" x="228" y="114" text-anchor="middle">you pick</text>
+
+                <rect class="b-run" x="256" y="34" width="280" height="180" rx="7" />
+                <text class="d-eyebrow t-run" x="272" y="58">Cellular neighborhoods</text>
+                <text class="d-code" x="272" y="80">n_neighbors</text>
+                <rect class="bar" x="420" y="72" width="100" height="10" rx="3" />
+                <text class="d-code" x="272" y="100">n_clusters</text>
+                <rect class="bar" x="420" y="92" width="100" height="10" rx="3" />
+                <text class="d-code" x="272" y="120">key_added</text>
+                <rect class="bar-soft" x="420" y="112" width="100" height="10" rx="3" />
+                <line class="stroke" x1="272" y1="136" x2="520" y2="136" />
+                <text class="d-arrow" x="272" y="156">the form is the function's own signature</text>
+                <text class="d-arrow t-run" x="272" y="176">citation</text>
+                <text class="d-arrow" x="322" y="176">·</text>
+                <text class="d-arrow t-run" x="334" y="176">documentation</text>
+                <text class="d-arrow" x="272" y="196">every function says where it came from</text>
+
+                <path class="flow" d="M 542 124 L 586 124" marker-end="url(#sds-ah)" />
+                <text class="d-arrow" x="564" y="114" text-anchor="middle">runs</text>
+
+                <rect class="b-obj" x="592" y="34" width="230" height="180" rx="7" />
+                <text class="d-eyebrow t-obj" x="608" y="58">The object, in place</text>
+                <text class="d-code" x="608" y="80">obs["neighborhood"]</text>
+                <text class="d-code" x="608" y="100">obsm["X_umap"]</text>
+                <text class="d-code" x="608" y="120">obsp["spatial"]</text>
+                <line class="stroke" x1="608" y1="136" x2="806" y2="136" />
+                <text class="d-arrow" x="608" y="156">history += one entry</text>
+                <text class="d-arrow" x="608" y="176">no undo, no copies:</text>
+                <text class="d-arrow" x="608" y="190">the log is the record</text>
+
+                <path class="flow" d="M 828 124 L 872 124" marker-end="url(#sds-ah)" />
+                <text class="d-arrow" x="850" y="114" text-anchor="middle">draws</text>
+
+                <rect class="b-see" x="878" y="34" width="182" height="180" rx="7" />
+                <text class="d-eyebrow t-see" x="894" y="58">The canvas</text>
+                <rect class="bar-soft" x="894" y="70" width="150" height="96" rx="4" />
+                <g>
+                  <circle cx="914" cy="150" r="3" fill="var(--sds-see)" />
+                  <circle cx="932" cy="140" r="3" fill="var(--sds-see)" />
+                  <circle cx="950" cy="146" r="3" fill="var(--sds-obj)" />
+                  <circle cx="968" cy="128" r="3" fill="var(--sds-obj)" />
+                  <circle cx="986" cy="136" r="3" fill="var(--sds-data)" />
+                  <circle cx="1004" cy="118" r="3" fill="var(--sds-data)" />
+                  <circle cx="1022" cy="130" r="3" fill="var(--sds-run)" />
+                  <circle cx="924" cy="122" r="3" fill="var(--sds-obj)" />
+                  <circle cx="960" cy="108" r="3" fill="var(--sds-run)" />
+                  <circle cx="996" cy="98" r="3" fill="var(--sds-see)" />
+                  <circle cx="942" cy="92" r="3" fill="var(--sds-data)" />
+                  <circle cx="1014" cy="86" r="3" fill="var(--sds-obj)" />
+                </g>
+                <text class="d-arrow" x="894" y="188">every cell, over the image</text>
+                <text class="d-arrow" x="894" y="202">color by any column or gene</text>
+
+                <path class="flow-dash s-obj" d="M 707 220 L 707 268" marker-end="url(#sds-ah-obj)" />
+                <text class="d-arrow t-obj" x="720" y="248">what you keep is chosen from what is there</text>
+
+                <text class="d-lane" x="20" y="268">Saving what you did</text>
+
+                <rect class="b-data" x="20" y="284" width="180" height="180" rx="7" />
+                <text class="d-eyebrow t-data" x="36" y="308">What to keep</text>
+                <rect class="stroke" x="36" y="320" width="10" height="10" rx="2" />
+                <text class="d-arrow" x="54" y="329">image · 2 levels</text>
+                <rect class="stroke" x="36" y="340" width="10" height="10" rx="2" />
+                <text class="d-arrow" x="54" y="349">cells · annotations</text>
+                <rect class="stroke" x="36" y="360" width="10" height="10" rx="2" />
+                <text class="d-arrow" x="54" y="369">embeddings</text>
+                <rect class="b-plain" x="36" y="380" width="10" height="10" rx="2" />
+                <text class="d-arrow" x="54" y="389">expression · 1.1 GB</text>
+                <text class="d-arrow" x="36" y="418">each part priced,</text>
+                <text class="d-arrow" x="36" y="432">each one optional</text>
+
+                <path class="flow" d="M 206 374 L 250 374" marker-end="url(#sds-ah)" />
+                <text class="d-arrow" x="228" y="364" text-anchor="middle">writes</text>
+
+                <rect class="b-run" x="256" y="284" width="280" height="180" rx="7" />
+                <text class="d-eyebrow t-run" x="272" y="308">One file</text>
+                <text class="d-code" x="272" y="332">ovary-neighborhoods.sdata.zarr.zip</text>
+                <line class="stroke" x1="272" y1="348" x2="520" y2="348" />
+                <text class="d-arrow" x="272" y="368">the cells, the image pyramid, the shapes,</text>
+                <text class="d-arrow" x="272" y="386">the figures you drew, the display settings,</text>
+                <text class="d-arrow" x="272" y="404">and the history that produced all of it</text>
+                <text class="d-arrow t-run" x="272" y="432">read by HTTP range requests</text>
+
+                <path class="flow" d="M 542 374 L 586 374" marker-end="url(#sds-ah)" />
+                <text class="d-arrow" x="564" y="364" text-anchor="middle">opens</text>
+
+                <rect class="b-obj" x="592" y="284" width="230" height="180" rx="7" />
+                <text class="d-eyebrow t-obj" x="608" y="308">Two ways back in</text>
+                <text class="d-arrow" x="608" y="332">in the app — history intact,</text>
+                <text class="d-arrow" x="608" y="346">and you can keep going</text>
+                <line class="stroke" x1="608" y1="362" x2="806" y2="362" />
+                <text class="d-arrow" x="608" y="384">in a browser, from a URL,</text>
+                <text class="d-arrow" x="608" y="398">with no backend at all</text>
+                <text class="d-arrow t-obj" x="608" y="428">streams what the view needs</text>
+
+                <path class="flow" d="M 828 374 L 872 374" marker-end="url(#sds-ah)" />
+                <text class="d-arrow" x="850" y="364" text-anchor="middle">share</text>
+
+                <rect class="b-see" x="878" y="284" width="182" height="180" rx="7" />
+                <text class="d-eyebrow t-see" x="894" y="308">A link to a view</text>
+                <rect class="bar" x="894" y="322" width="150" height="9" rx="4.5" />
+                <rect class="bar-soft" x="894" y="338" width="122" height="9" rx="4.5" />
+                <text class="d-arrow" x="894" y="372">only what you changed</text>
+                <text class="d-arrow" x="894" y="386">travels, so it stays short</text>
+                <text class="d-arrow" x="894" y="414">a colleague lands on</text>
+                <text class="d-arrow" x="894" y="428">your view, not the saved one</text>
+              </svg>
+            </div>
+            <figcaption><strong>One function, then the file it all ends up in.</strong> The top row
+            is the loop you spend the day in; the bottom row is what leaves the machine. The
+            checkpoint is one file rather than a folder because that is what a browser can read a
+            few kilobytes out of — opening a 438 MB checkpoint and coloring by a gene costs under a
+            megabyte. <a :href="withBase('/docs/CHECKPOINT_FORMAT')">The checkpoint format</a> has
+            the layout; <a :href="withBase('/DESIGN')">DESIGN.md</a> has the reasoning.</figcaption>
+          </figure>
+
+          <p class="narrow" style="margin-top: 38px">An Analysis Workspace is <em class="emph">one
+          running app</em>, and colleagues can join it once you share it. Whoever opens a session
+          holds its edit lock; everyone else watches, and each analysis appears on their screens
+          as it finishes rather than on a reload. What you are looking at stays yours — your gene,
+          your channels, your corner of the section — while someone else drives.</p>
 
           <figure class="wide" style="margin-top: 38px">
             <div class="diagram">
               <svg viewBox="0 0 1080 700" role="img"
-                   aria-label="Diagram of a lab sharing one Cirro project. The project holds read-only datasets and a separate area of published results, and everyone signs in as themselves. One Spatial Data Studio workspace runs inside the project, reading the datasets but never writing them, and holds two independent sessions. Three people's browsers connect to that one workspace: one holds a session's edit lock, one watches the same session live, and one works in her own session. The workspace publishes a finished checkpoint back into the project, which a fourth person opens in a plain browser with no app running.">
+                   aria-label="Diagram of a lab sharing one Cirro project. The project holds read-only datasets and a separate area of published results, and everyone signs in as themselves. One Spatial Data Studio workspace runs inside the project, reading the datasets but never writing them, and holds two independent sessions. Three people's browsers connect to that one workspace: one holds a session's edit lock, one watches the same session live, and one works in their own session. The workspace publishes a finished checkpoint back into the project, which a fourth person opens in a plain browser with no app running.">
                 <defs>
                   <marker id="sds-ch" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
                     <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--sds-run)" />
@@ -571,17 +460,43 @@ function step(from: string, delta: number) {
             </div>
           </div>
 
-          <p class="note">None of this is required to use the app — it runs perfectly well as a
-          local Docker container over a folder on your own disk, and the checkpoint it writes is a
-          plain file you can put anywhere that serves HTTP range requests.
-          <a :href="withBase('/docs/USER_GUIDE')">User guide → Work in Cirro</a> has the workspace
-          image, the session-sharing rules and the upload flow;
+          <p class="note">An Analysis Workspace also runs on your own computer, from one Docker
+          command: <a :href="withBase('/docs/guide/docker')">Run it with Docker</a>, which also
+          connects an AI assistant to it.
+          <a :href="withBase('/docs/guide/analysis-workspaces')">Analysis Workspaces</a> has
+          starting one, sharing it and publishing from it;
           <a :href="withBase('/DESIGN')">DESIGN.md</a> §15 has the auth and credential scoping.</p>
         </section>
       </div>
     </div>
 
     <div class="page">
+      <section>
+        <p class="eyebrow">Advanced</p>
+        <h2>The viewer on its own</h2>
+
+        <div class="split">
+          <div>
+            <p>A saved checkpoint opens in any browser with nothing running behind it. The viewer
+            reads only what the current view needs, so opening a 438 MB checkpoint and coloring
+            by a gene costs under a megabyte.</p>
+            <p>Copy a link to the exact view you are looking at, put a folder of checkpoints on
+            any web server that answers range requests, or show the viewer in a frame on your
+            own page or dashboard.</p>
+            <p><a :href="withBase('/docs/guide/viewer')">Share and embed the viewer</a> ·
+            <a :href="withBase('/demo/')">Live demos</a></p>
+          </div>
+
+          <div>
+            <div class="standalone">
+              <div class="cmds">
+                <code class="cmd">{{ embedSnippet }}</code>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <footer>
         <span>Spatial Data Studio</span>
         <a href="https://github.com/CirroBio/spatial-data-studio">github.com/CirroBio/spatial-data-studio</a>
@@ -707,8 +622,7 @@ function step(from: string, delta: number) {
 
 .landing a:hover { color: var(--sds-run); }
 
-.landing a:focus-visible,
-.tab:focus-visible {
+.landing a:focus-visible {
   outline: 2px solid var(--sds-run);
   outline-offset: 3px;
   border-radius: 3px;
@@ -746,9 +660,55 @@ em.emph { font-style: normal; font-weight: 600; color: var(--ink); }
   .masthead-grid { grid-template-columns: 1fr; gap: 34px; }
 }
 
-/* the way-to-run toggle */
+/* the two calls to action, and the start page's two ways in */
 
-.installer,
+.actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 26px; }
+
+.landing a.action {
+  display: inline-block;
+  padding: 10px 20px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 15.5px;
+  text-decoration: none;
+  color: var(--ink);
+  background: var(--surface);
+}
+
+.landing a.action:hover { border-color: var(--sds-run); color: var(--ink); }
+
+/* VitePress's own brand-button colors, so it matches the site's buttons in both themes. */
+.landing a.action-primary {
+  background: var(--vp-button-brand-bg);
+  border-color: var(--vp-button-brand-border);
+  color: var(--vp-button-brand-text);
+}
+
+.landing a.action-primary:hover {
+  background: var(--vp-button-brand-hover-bg);
+  border-color: var(--vp-button-brand-hover-border);
+  color: var(--vp-button-brand-hover-text);
+}
+
+.ways { display: grid; gap: 14px; }
+
+.landing a.way {
+  display: block;
+  padding: 18px 20px;
+  border: 1px solid var(--rule);
+  border-radius: 9px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  text-decoration: none;
+  color: var(--ink);
+}
+
+.landing a.way:hover { border-color: var(--sds-run); color: var(--ink); }
+
+.way-title { display: block; font-weight: 700; font-size: 18px; margin-bottom: 4px; }
+.way-text { display: block; font-size: 15px; line-height: 1.5; color: var(--ink-2); }
+
 .standalone {
   border: 1px solid var(--rule);
   border-radius: 9px;
@@ -756,51 +716,7 @@ em.emph { font-style: normal; font-weight: 600; color: var(--ink); }
   overflow: hidden;
 }
 
-.tabs {
-  display: flex;
-  border-bottom: 1px solid var(--rule);
-  background: var(--surface-sunk);
-}
-
-.tab {
-  appearance: none;
-  border: 0;
-  border-right: 1px solid var(--rule);
-  background: transparent;
-  font-family: var(--vp-font-family-mono);
-  font-size: 12px;
-  letter-spacing: .1em;
-  text-transform: uppercase;
-  color: var(--ink-3);
-  padding: 10px 17px;
-  cursor: pointer;
-}
-
-.tab:last-child { border-right: 0; }
-
-.tab[aria-selected="true"] {
-  background: var(--surface);
-  color: var(--ink);
-  box-shadow: inset 0 -2px 0 var(--sds-run);
-}
-
 .cmds { display: flex; flex-direction: column; }
-/* `.cmds` would otherwise out-specify the UA's `[hidden]` rule and show every panel. */
-.cmds[hidden] { display: none; }
-
-.steps {
-  /* VitePress's reset drops list markers; this list wants them. */
-  list-style: decimal;
-  margin: 0;
-  padding: 14px 18px 16px 38px;
-  font-size: 14.5px;
-  line-height: 1.5;
-  color: var(--ink-2);
-}
-
-.steps li { margin-bottom: 8px; }
-.steps li:last-child { margin-bottom: 0; }
-.steps li::marker { font-family: var(--vp-font-family-mono); font-size: 12px; color: var(--ink-3); }
 
 .cmd {
   display: block;
@@ -818,11 +734,6 @@ em.emph { font-style: normal; font-weight: 600; color: var(--ink); }
 
 .cmd:first-child { border-top: 0; }
 
-/* The masthead's column is narrower than the ones in the sections below, and the image
-   reference is long enough that a point of size decides whether it wraps. */
-.installer .cmd { font-size: 12.5px; }
-.cmd .c { color: var(--ink-3); }
-.cmd .p { color: var(--accent-ink); user-select: none; }
 
 /* sections */
 
@@ -904,6 +815,46 @@ em.emph { font-style: normal; font-weight: 600; color: var(--ink); }
 
 .wide { margin-top: 34px; }
 
+/* the four stages, in the map's order */
+
+.stages {
+  list-style: none;
+  margin: 30px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 14px;
+}
+
+.stage {
+  margin: 0;
+  padding: 16px 18px;
+  border-radius: 9px;
+  border-top: 3px solid;
+  background: var(--surface-sunk);
+}
+
+.stage-data { border-color: var(--sds-data); }
+.stage-run { border-color: var(--sds-run); }
+.stage-obj { border-color: var(--sds-obj); }
+.stage-see { border-color: var(--sds-see); }
+
+.stage-name {
+  display: block;
+  font-family: var(--vp-font-family-mono);
+  font-size: 11.5px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.stage-data .stage-name { color: var(--sds-data); }
+.stage-run .stage-name { color: var(--sds-run); }
+.stage-obj .stage-name { color: var(--sds-obj); }
+.stage-see .stage-name { color: var(--sds-see); }
+
+.stage p { font-size: 14.5px; line-height: 1.5; color: var(--ink-2); }
+
 /* prose columns */
 
 .cols {
@@ -945,6 +896,8 @@ em.emph { font-style: normal; font-weight: 600; color: var(--ink); }
 }
 
 .split .note { margin-top: 18px; }
+.stages + .note,
+.cards + .note { margin-top: 26px; }
 
 /* the three Cirro cards */
 

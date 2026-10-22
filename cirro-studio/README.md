@@ -1,9 +1,10 @@
-# Spatial Data Studio for Cirro (`cirro-studio/`)
+# The web app (`cirro-studio/`)
 
-A front-end-only Cirro OAuth app: Spatial Data Studio as a static site that signs users
-in with Cirro, reads their projects' SpatialData stores in place, runs analyses in the
-browser, and saves each result as a light version on top of the store. What it does for
-users is in [`docs/USER_GUIDE.md`](../docs/USER_GUIDE.md#spatial-data-studio-in-your-browser-on-cirro);
+Spatial Data Studio's web app: a static site, and a front-end-only Cirro OAuth app, that
+opens public examples with no account or signs users in with Cirro, reads their
+projects' SpatialData stores in place, runs analyses in the browser, and saves each
+result as a light version on top of the store. What it does for users is in the guide,
+from [Explore public data](../docs/guide/public-data.md) on;
 the version format is [`docs/LAYER_FORMAT.md`](../docs/LAYER_FORMAT.md). This file is
 for working on it.
 
@@ -11,7 +12,8 @@ It follows the [Cirro app kit](https://github.com/CirroBio/Cirro-app-kit) (sign-
 calls, permissions, deployment, `tools/scan.py` and its review skill). Its map of a
 project borrows from Expression Studio, the bulk RNA-seq app built on the same kit; an
 opened item looks like Spatial Data Studio itself, the tissue edge to edge with its
-controls in drawers over it, and its display settings are the Studio's own panel.
+controls in drawers over it, and its display settings are the Studio's own panel (the
+Studio being the Analysis Workspace's code: `frontend/` and `backend/`).
 
 ## Run it
 
@@ -23,11 +25,12 @@ npm run dev:studio   # http://localhost:5171
 The port is fixed because Cirro's development registration on dev.cirro.bio
 (`public/tenants.json`) lists `http://localhost:5171` as this app's redirect URI. That
 registration isn't discoverable, so its entry carries its `clientId`.
-**Explore example data** needs no sign-in. The examples are `examples/` (this app's own
+**Public Data** needs no sign-in. The examples are `examples/` (this app's own
 raw-counts Xenium store and its `index.json`) and the docs site's demo checkpoints
 (`docs-site/viewer-data/`), which the dev server serves at `/examples/` and `/viewer/`,
-the way the Pages site lays them out. `npx vite --port <other>` runs it elsewhere for the
-examples alone; sign-in only returns to 5171.
+the way the Pages site lays them out. The About links go to `about/` beside the app,
+which only the assembled site has (`.github/workflows/docs.yml`). `npx vite --port <other>`
+runs it elsewhere for the examples alone; sign-in only returns to 5171.
 
 ```bash
 npm run test:studio                     # vitest
@@ -80,7 +83,7 @@ src/analysis/       the analyses, run in a Web Worker (ops.ts is the table of op
 src/charts/         SVG charts (volcano, heatmap, dot plot, bar list, histogram, scree) and
                     the tissue thumbnails reports draw
 src/figures/        figure specs in uns, and SVG/PNG/PDF export
-src/workspaces/     Cirro workspaces running the full Studio on chosen items: Cirro's
+src/workspaces/     Analysis Workspaces on chosen items: Cirro's
                     side (cirro.ts: the environment, mounts, sizes, the per-user limit),
                     the top-bar button and sheet (Workspaces.tsx, loaded only for a
                     signed-in project), the form (NewWorkspace.tsx), and what an item
@@ -118,7 +121,7 @@ registration, `src/auth.ts`), so the published site needs nothing built in for a
 To connect one:
 
 1. A tenant admin registers a **Public App** with redirect URI
-   `https://cirrobio.github.io/spatial-data-studio/app/` (exactly, trailing slash
+   `https://cirrobio.github.io/spatial-data-studio/` (exactly, trailing slash
    included), **discovery enabled**, and the permissions in `cirro-permissions.json` as
    project permissions, and approves it. A registration without discovery works only
    with its `clientId` in the tenant's `deploy/tenants.json` entry.
@@ -151,7 +154,7 @@ another page's frame.
 
 ## Workspaces
 
-**Open in the full Studio** and the top bar's **Workspaces** start Cirro workspaces from
+**Open in an Analysis Workspace** and the top bar's **Workspaces** start Cirro workspaces from
 Cirro's Spatial Data Studio environment (`cirro-spatial-data-studio`, found by name,
 `Cirro/spatial-data-studio`, where the ID differs), which runs this repo's Docker image.
 Each item brings its datasets, a saved version every dataset beneath it, mounted
@@ -159,7 +162,7 @@ read-only at `$HOME/datasets/<folder>` with the folder named for the dataset (`m
 in `src/workspaces/cirro.ts`). A version names its parent by dataset ID, so the
 workspace also gets `SDS_CIRRO_DATASETS`, a JSON map from each dataset ID to its folder,
 which the Studio's backend reads (`backend/app/config.py`) to assemble the stack
-([docs/LAYER_FORMAT.md](../docs/LAYER_FORMAT.md#in-the-studio)).
+([docs/LAYER_FORMAT.md](../docs/LAYER_FORMAT.md#in-an-analysis-workspace)).
 
 The rest follows the app kit's workspace guide:
 - **Naming.** Workspaces carry no tags, so the app names its own
@@ -177,7 +180,8 @@ The rest follows the app kit's workspace guide:
 
 ## Deploying
 
-`.github/workflows/docs.yml` builds the app with the docs site and publishes it at
-`/app/`, with `examples/` beside it and `deploy/tenants.json` as its `tenants.json`.
+`.github/workflows/docs.yml` builds the app with the docs site and publishes it at the
+site's root, with `examples/` beside it and `deploy/tenants.json` as its `tenants.json`;
+the docs are its About section, under `/about/`.
 Merging to `main` deploys it. No release tag is involved: the app doesn't ship in the
 Nextflow workflow's viewer bundle.

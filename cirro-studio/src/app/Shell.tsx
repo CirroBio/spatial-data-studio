@@ -103,7 +103,7 @@ function AccountMenu({ session }: { session: CirroSession | null }) {
       <Popover align="right" label={<>{session.tenantName} · {session.displayName} <Chevron /></>}>
         {(close) => (
           <div className="menu" role="menu">
-            <button type="button" className="menu-item" onClick={() => { close(); openExamples(); }}>Explore example data</button>
+            <button type="button" className="menu-item" onClick={() => { close(); openExamples(); }}>Public data</button>
             <button type="button" className="menu-item" onClick={() => { close(); void askToLogOut(showSignIn); }}>Log in to another Cirro</button>
             <button type="button" className="menu-item" onClick={() => { close(); setAbout(true); }}>About {APP_NAME}</button>
             <button type="button" className="menu-item" onClick={() => { close(); void askToLogOut(showLanding); }}>Log out</button>
@@ -151,7 +151,7 @@ export function Shell({ session, projects, children }: {
       <header className="shell-topbar">
         <button type="button" className="shell-appname" onClick={() => navigate({ section: 'home' })}>{APP_NAME}</button>
         <nav className="shell-breadcrumb" aria-label="Project">
-          {!session && <span className="shell-crumb">Example data · nothing leaves this browser</span>}
+          {!session && <span className="shell-crumb">Public data · nothing leaves this browser</span>}
           {projects && projects.length > 0 && <ProjectPicker projects={projects} />}
         </nav>
         <span className="shell-spacer" />

@@ -36,9 +36,9 @@ This is the image a hosted deployment runs, including a
 [Cirro](https://cirro.bio/) workspace: `SDS_DATA_DIR` defaults to the image's `$HOME`,
 which is where such an environment mounts the project's datasets, so the container needs
 no volume configuration of its own to open data that is already there. That includes a
-version saved in the Cirro app, which opens from the same list as a checkpoint once the
+version saved in the web app, which opens from the same list as a checkpoint once the
 datasets of its stack are attached; the workspace's `SDS_CIRRO_DATASETS` tells the app
-which folder holds each one ([docs/LAYER_FORMAT.md](../docs/LAYER_FORMAT.md#in-the-studio)).
+which folder holds each one ([docs/LAYER_FORMAT.md](../docs/LAYER_FORMAT.md#in-an-analysis-workspace)).
 
 It is also the shortest way to run the app on your own machine — nothing to clone and
 nothing to build, just a folder to point it at:
@@ -130,7 +130,7 @@ read. The example above passes it just to illustrate the override.
 | Variable                 | Default   | Purpose |
 |--------------------------|-----------|---------|
 | `SDS_DATA_DIR`           | `$HOME` (`/home/cirro`) | Single read-write data folder: input datasets, saved checkpoints (`*.sdata.zarr.zip`), and snapshots (`*.sview.json`) all live here. Defaults to the image's `$HOME`, where a deployment environment mounts datasets (e.g. `$HOME/datasets`); the compose and manual-run examples override it to `/data` and mount there. |
-| `SDS_CIRRO_DATASETS`     | _(unset)_ | Set by the Cirro app on a Cirro workspace: a JSON object mapping the ID of every attached dataset to the folder it is mounted in (`$HOME/datasets/<folder name>`), e.g. `{"5f1c…": "Tumor margin regions"}`. A saved version names its parent by dataset ID, so this is how the app finds the parent when the version is opened. Unset, a parent is looked up in the folder named by its ID, next to the version's own. The app does not start if it is set to anything but such an object. See [docs/LAYER_FORMAT.md](../docs/LAYER_FORMAT.md#in-the-studio). |
+| `SDS_CIRRO_DATASETS`     | _(unset)_ | Set by the web app on a Cirro workspace: a JSON object mapping the ID of every attached dataset to the folder it is mounted in (`$HOME/datasets/<folder name>`), e.g. `{"5f1c…": "Tumor margin regions"}`. A saved version names its parent by dataset ID, so this is how the app finds the parent when the version is opened. Unset, a parent is looked up in the folder named by its ID, next to the version's own. The app does not start if it is set to anything but such an object. See [docs/LAYER_FORMAT.md](../docs/LAYER_FORMAT.md#in-an-analysis-workspace). |
 | `SDS_WORK_DIR`           | `/work` (image) / system temp | Working dir for the live session working set: the unpacked `.zarr.zip` extract dir, the flattened copy of an opened version, and per-session normalized raster caches. Kept out of `SDS_DATA_DIR` so a transient `*.zarr` extract never surfaces in the dataset picker. Point it at a tmpfs mount (compose mounts `/work`) to hold the working set in RAM. |
 | `SDS_WORK_DIR_IN_RAM`    | `0` (compose: `1`) | Only consulted **outside** a memory-limited container, where the tmpfs working set is estimated by `os.statvfs`: set it to `1` when `SDS_WORK_DIR` is a **dedicated** tmpfs mount so that usage is added to RSS in the admission/boundary math, and leave `0` when `WORK_DIR` is on disk. In a container the same figure is read from the cgroup (`shmem`) regardless of this flag. |
 | `SDS_WORK_TMPFS_PCT`     | `85`      | Percentage of the detected memory limit that the `work-tmpfs.sh` entrypoint sizes the `/work` tmpfs to on startup (so the tmpfs autoscales with the container's allocation). Needs `CAP_SYS_ADMIN` (compose `cap_add`); without it the entrypoint fails open and the tmpfs keeps its mount-time `size=`. Keep it **above** `SDS_ADMISSION_PCT` so the soft 503 trips before the tmpfs ENOSPCs. |
@@ -152,7 +152,7 @@ read. The example above passes it just to illustrate the override.
 | `SDS_LONG_RUNNING_S`     | `120`     | Long-running-job watchdog threshold (seconds). |
 | `SDS_APP_URL`            | _(unset; compose: `http://localhost:8080`)_ | The URL a *person* opens the app at, quoted by the MCP assistant (`POST /api/mcp`) when it directs the user to a session. Set it to the published host/port of this deployment; unset, the assistant asks the user for the URL instead. |
 | `SDS_MCP_IDLE_RELEASE_S` | `900`     | How long the MCP assistant's presence (and any session edit lock it holds) survives without a tool call before its heartbeat stops and the lock releases via the normal presence expiry. |
-| `CIRRO_BASE_URL`         | `app.cirro.bio` | The Cirro domain the **Connect to Cirro** dialog prefills; a person can type any other there. Each person signs in to Cirro with their own account from the browser, so the server holds no Cirro credential and needs no other Cirro setting ([docs/USER_GUIDE.md](../docs/USER_GUIDE.md#publish-what-you-found)). |
+| `CIRRO_BASE_URL`         | `app.cirro.bio` | The Cirro domain the **Connect to Cirro** dialog prefills; a person can type any other there. Each person signs in to Cirro with their own account from the browser, so the server holds no Cirro credential and needs no other Cirro setting ([Publish to Cirro](../docs/guide/analysis-workspaces.md#publish-to-cirro)). |
 
 ## Volumes
 

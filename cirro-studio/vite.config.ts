@@ -14,7 +14,7 @@ const DEDUPE = ['@deck.gl/core', '@luma.gl/core', '@luma.gl/engine', '@luma.gl/w
 
 // The examples are this app's own (cirro-studio/examples, with its index) plus the docs
 // site's demo checkpoints, which the index names at their published place beside the
-// app (`../../viewer/`). The Pages build lays the site out that way; in development both
+// app (`../viewer/`). The Pages build lays the site out that way; in development both
 // folders are served from where they live.
 const MOUNTS: Record<string, string> = {
   '/examples/': resolve(__dirname, 'examples'),

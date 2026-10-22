@@ -149,7 +149,7 @@ export function NewWorkspace({ session, projectId, env, form, mine, onDone, onCa
         ))}
       </fieldset>
       <p className="muted">
-        It runs the full Spatial Data Studio, with every squidpy and scanpy analysis, billed to the project while it
+        It runs every squidpy and scanpy analysis, billed to the project while it
         runs, and stops after {AUTO_STOP_HOURS} hours unless you extend it. Starting takes a few minutes; you can keep
         working here meanwhile.{form.changing && ' Changing it restarts it; the files in its home folder stay.'}
       </p>

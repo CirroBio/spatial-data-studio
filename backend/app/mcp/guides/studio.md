@@ -33,7 +33,7 @@ A session holds one in-memory **SpatialData** object:
 
 - A session = one loaded dataset + its analysis state, held in memory with a
   dedicated worker. Create one from a saved **checkpoint** (`.zarr.zip`, or the folder
-  of a version the Cirro app saved, via `create_session(checkpoint_path=…)` — see
+  of a version the web app saved, via `create_session(checkpoint_path=…)` — see
   `list_datasets`) or by importing a raw
   vendor bundle with a **reader** (`create_session(reader=…)` — see `list_readers`,
   `browse_data_dir`).

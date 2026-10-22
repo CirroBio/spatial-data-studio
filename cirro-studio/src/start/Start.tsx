@@ -13,7 +13,7 @@ import Backdrop from './Backdrop';
 function Footer() {
   return (
     <footer className="start-footer">
-      <a href={DOCS_URL} target="_blank" rel="noreferrer">How it works</a>
+      <a href={DOCS_URL}>About</a>
       <span aria-hidden="true">·</span>
       <a href={REPO_URL} target="_blank" rel="noreferrer">Source</a>
       <span aria-hidden="true">·</span>
@@ -59,15 +59,16 @@ function Landing({ onSignIn }: { onSignIn: () => void }) {
       <div className="start-choices">
         <button type="button" className="start-choice" onClick={openExamples}>
           <ExamplesIcon />
-          <span className="start-choice-title">Explore example data</span>
+          <span className="start-choice-title">Public Data</span>
           <span className="start-choice-text">Xenium and Visium sections, ready to open. No account needed.</span>
         </button>
         <button type="button" className="start-choice" onClick={onSignIn}>
           <SignInIcon />
-          <span className="start-choice-title">Log In with Cirro</span>
+          <span className="start-choice-title">Private Data (Cirro)</span>
           <span className="start-choice-text">Your projects: images, instrument runs and SpatialData, with versions saved back to Cirro.</span>
         </button>
       </div>
+      <a className="start-about" href={DOCS_URL}>About {APP_NAME} <span aria-hidden="true">→</span></a>
     </>
   );
 }
