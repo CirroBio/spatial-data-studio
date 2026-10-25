@@ -4,22 +4,58 @@
     {
       "path": "xenium-human-lung.sdata.zarr.zip",
       "label": "Xenium human lung (raw counts)",
-      "description": "11,898 cells x 289 genes as the instrument counted them, with cell boundaries over the morphology image, and no analysis yet: find clusters, compare groups, look for spatial patterns."
+      "description": "11,898 cells x 289 genes as the instrument counted them, with cell boundaries over the morphology image, and no analysis yet: find clusters, compare groups, look for spatial patterns.",
+      "folder": "Xenium",
+      "credit": {
+        "source": "Xenium Human Lung Gene Expression",
+        "url": "https://www.10xgenomics.com/support/software/xenium-onboard-analysis/latest/resources/xenium-example-data#test-data-v2-0",
+        "by": "10x Genomics",
+        "license": "CC BY 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "changes": "Read with spatialdata-io and saved with its raw counts, its cell boundaries and the morphology image from half resolution down; the transcripts were left out."
+      }
     },
     {
       "path": "../viewer/xenium-human-pancreas.sdata.zarr.zip",
       "label": "Xenium human pancreas",
-      "description": "122,678 cells with their segmentation boundaries over an H&E image, already clustered. Saved without its expression matrix, to stay small."
+      "description": "122,678 cells with their segmentation boundaries over an H&E image, already clustered. Saved without its expression matrix, to stay small.",
+      "folder": "Xenium",
+      "credit": {
+        "source": "FFPE Human Pancreas with Xenium Multimodal Cell Segmentation",
+        "url": "https://www.10xgenomics.com/datasets/ffpe-human-pancreas-with-xenium-multimodal-cell-segmentation-1-standard",
+        "by": "10x Genomics",
+        "license": "CC BY 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "changes": "Analyzed by Spatial Data Studio's workflow (quality control, normalization, PCA, UMAP, Leiden clusters, cellular neighborhoods); the image was reduced and the expression matrix left out."
+      }
     },
     {
       "path": "../viewer/visium-human-colon.sdata.zarr.zip",
       "label": "Visium CytAssist human colon",
-      "description": "6,356 spots over the CytAssist image, with Leiden clusters, cellular neighborhoods and a UMAP. Saved without its expression matrix."
+      "description": "6,356 spots over the CytAssist image, with Leiden clusters, cellular neighborhoods and a UMAP. Saved without its expression matrix.",
+      "folder": "Visium",
+      "credit": {
+        "source": "Visium CytAssist Gene Expression Libraries of Post-Xenium Human Colon Cancer (FFPE), Post-Xenium Replicate 1",
+        "url": "https://www.10xgenomics.com/datasets/visium-cytassist-gene-expression-libraries-of-post-xenium-human-colon-cancer-ffpe-using-the-human-whole-transcriptome-probe-set-2-standard",
+        "by": "10x Genomics",
+        "license": "CC BY 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "changes": "Analyzed by Spatial Data Studio's workflow (quality control, normalization, PCA, UMAP, Leiden clusters, cellular neighborhoods); the image was reduced and the expression matrix left out."
+      }
     },
     {
       "path": "../viewer/visium-mouse-brain.sdata.zarr.zip",
       "label": "Visium CytAssist mouse brain",
-      "description": "4,881 spots over the CytAssist image, with Leiden clusters, cellular neighborhoods and a UMAP. Saved without its expression matrix."
+      "description": "4,881 spots over the CytAssist image, with Leiden clusters, cellular neighborhoods and a UMAP. Saved without its expression matrix.",
+      "folder": "Visium",
+      "credit": {
+        "source": "Visium CytAssist Gene Expression Libraries of Post-Xenium Mouse Brain (FF), Post-Xenium Replicate 1",
+        "url": "https://www.10xgenomics.com/datasets/visium-cytassist-gene-expression-libraries-of-post-xenium-mouse-brain-ff-using-the-mouse-whole-transcriptome-probe-set-2-standard",
+        "by": "10x Genomics",
+        "license": "CC BY 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "changes": "Analyzed by Spatial Data Studio's workflow (quality control, normalization, PCA, UMAP, Leiden clusters, cellular neighborhoods); the image was reduced and the expression matrix left out."
+      }
     }
   ]
 }

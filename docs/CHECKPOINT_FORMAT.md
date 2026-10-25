@@ -610,7 +610,15 @@ Schema file: [`backend/app/schemas/checkpoint/checkpoint_index.schema.json`](../
   "checkpoints": [
     { "path": "sessions/foo.sdata.zarr.zip",   // required; resolved relative to this index.json's own URL
       "label": "Foo",                          // optional; falls back to the file's basename
-      "description": "…" }                     // optional
+      "description": "…",                      // optional
+      "folder": "Xenium",                      // optional; the web app's map files it here
+      "credit": {                              // optional; the web app shows it with the checkpoint
+        "source": "FFPE Human Pancreas with Xenium Multimodal Cell Segmentation",
+        "url": "https://www.10xgenomics.com/datasets/…",
+        "by": "10x Genomics",
+        "license": "CC BY 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "changes": "…" } }                    // what was done to the data to make the checkpoint
   ]
 }
 ```
@@ -619,7 +627,11 @@ Schema file: [`backend/app/schemas/checkpoint/checkpoint_index.schema.json`](../
 relative to the page. This app's own writer (`backend/app/cirro.py`,
 `_write_viewer_index`) only ever emits `path` and `label` — `title` and
 `description` are reader-side conveniences a hand-authored manifest can add,
-not something this app currently produces. Its `label` is each file's stem (§7),
+not something this app currently produces. So are `folder` and `credit`, which only the
+web app reads (`cirro-studio/src/data/examples.ts`): its public data is a hand-authored
+index naming checkpoints published elsewhere by URL, and `credit` is the attribution a
+Creative Commons license asks of a copy — the source, its publisher, the license, and what
+was changed. Its `label` is each file's stem (§7),
 derived without opening the file; the session name recorded *inside* the file
 (§3) is what a reader shows once it has actually opened it.
 

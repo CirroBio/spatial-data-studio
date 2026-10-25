@@ -20,7 +20,25 @@
             "description": "Resolved relative to this index.json's own URL."
           },
           "label": { "type": "string" },
-          "description": { "type": "string" }
+          "description": { "type": "string" },
+          "folder": {
+            "type": "string",
+            "description": "The folder the web app files the checkpoint under on its map."
+          },
+          "credit": {
+            "type": "object",
+            "description": "Whose data the checkpoint is made from, under what license, and what was done to it; the web app shows it with the checkpoint.",
+            "required": ["source", "url", "by", "license", "licenseUrl", "changes"],
+            "additionalProperties": false,
+            "properties": {
+              "source": { "type": "string", "description": "The dataset as its publisher titles it." },
+              "url": { "type": "string", "description": "The dataset's page." },
+              "by": { "type": "string", "description": "Who published it." },
+              "license": { "type": "string" },
+              "licenseUrl": { "type": "string" },
+              "changes": { "type": "string", "description": "What was done to the data to make the checkpoint." }
+            }
+          }
         }
       }
     }

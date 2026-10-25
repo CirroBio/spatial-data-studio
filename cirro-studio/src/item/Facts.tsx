@@ -1,5 +1,5 @@
 // The line above a picture: its name, what it is, how big, where it came from and what
-// it was made into, and a way to its page in Cirro.
+// it was made into, whose data it is (for public data), and a way to its page in Cirro.
 import type { ReactNode } from 'react';
 import type { CatalogItem } from '../data/model';
 import { stageOf, type Library, type StageId } from '../app/library';
@@ -18,6 +18,7 @@ export function Facts({ title, item, kind, stage, from, into, extra, unsaved = f
   const { catalog, collection, library } = useStudio();
   const fromStage = useRoute().params.has(STAGE_PARAM);
   const dataset = catalog.byId.get(item.datasetId);
+  const credit = dataset?.credit;
   const url = collection.datasetUrl(item.datasetId);
   const { color, label } = stageOf(stage);
   return (
@@ -31,6 +32,12 @@ export function Facts({ title, item, kind, stage, from, into, extra, unsaved = f
       {item.size > 0 && <span>{formatBytes(item.size)}</span>}
       {dataset && <span className="muted">{dataset.processName}</span>}
       {dataset?.createdAt && <span className="muted">{formatDate(dataset.createdAt)}</span>}
+      {credit && (
+        <span className="muted">
+          data from <a href={credit.url} target="_blank" rel="noreferrer">{credit.source}</a> by {credit.by},{' '}
+          <a href={credit.licenseUrl} target="_blank" rel="noreferrer">{credit.license}</a>
+        </span>
+      )}
       {from.length > 0 && <span className="facts-kin">from {from.map((k) => <KinChip key={k.item.key} kin={k} />)}</span>}
       {into.length > 0 && <span className="facts-kin">made into {into.slice(0, 3).map((k) => <KinChip key={k.item.key} kin={k} />)}{into.length > 3 && <span className="muted"> +{into.length - 3}</span>}</span>}
       {extra}
@@ -45,6 +52,8 @@ export function Facts({ title, item, kind, stage, from, into, extra, unsaved = f
         {() => (
           <dl className="details">
             <dt>Dataset</dt><dd>{dataset?.name ?? item.datasetId}</dd>
+            {dataset?.description && <><dt>About</dt><dd>{dataset.description}</dd></>}
+            {credit && <><dt>Changes</dt><dd>{credit.changes}</dd></>}
             <dt>Path</dt><dd className="mono">{item.path || '(whole dataset)'}</dd>
             {dataset?.createdBy && <><dt>Made by</dt><dd>{dataset.createdBy}</dd></>}
             {dataset?.folders.length ? <><dt>Folder</dt><dd>{dataset.folders.join(', ')}</dd></> : null}

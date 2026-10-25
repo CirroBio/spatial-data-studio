@@ -22,6 +22,19 @@ export interface DatasetRecord {
   sourceIds: string[];
   // Set when the dataset reached the project through a share.
   share: string | null;
+  // Whose data a public dataset is made from, under what license, and what was done to
+  // it: what a Creative Commons license asks a copy to say.
+  credit?: Credit;
+}
+
+export interface Credit {
+  // The dataset as its publisher titles it, and its page.
+  source: string;
+  url: string;
+  by: string;
+  license: string;
+  licenseUrl: string;
+  changes: string;
 }
 
 export type ItemKind = 'image' | 'run' | 'store' | 'version';

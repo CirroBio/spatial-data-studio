@@ -25,8 +25,13 @@ npm run dev:studio   # http://localhost:5171
 The port is fixed because Cirro's development registration on dev.cirro.bio
 (`public/tenants.json`) lists `http://localhost:5171` as this app's redirect URI. That
 registration isn't discoverable, so its entry carries its `clientId`.
-**Public Data** needs no sign-in. The examples are `examples/` (this app's own
-raw-counts Xenium store and its `index.json`) and the docs site's demo checkpoints
+**Public Data** needs no sign-in. Its catalog is `examples/index.json`
+([`CHECKPOINT_FORMAT.md` §8](../docs/CHECKPOINT_FORMAT.md#8-indexjson--a-collection-of-checkpoints)):
+each path is resolved against the index, so an entry can name a store anywhere that
+answers range requests (and allows this app's origin, for another host) by its URL; its
+`folder` files it on the map, and its `credit` (source, publisher, license, what was
+changed) is shown with it, as a Creative Commons license asks. Today it lists this app's
+own raw-counts Xenium store and the docs site's demo checkpoints
 (`docs-site/viewer-data/`), which the dev server serves at `/examples/` and `/viewer/`,
 the way the Pages site lays them out. The About links go to `about/` beside the app,
 which only the assembled site has (`.github/workflows/docs.yml`). `npx vite --port <other>`

@@ -1,20 +1,21 @@
 // The example collection, open to anyone: the stores `examples/index.json` lists. That is
-// this app's own folder (cirro-studio/examples, served as `examples/`), whose index also
-// names the docs site's demo stores where they are published beside the app
-// (`../viewer/…`, from docs-site/viewer-data). Versions saved on them stay in this
-// browser (browserStore.ts) — the same files a Cirro dataset would hold.
+// this app's own folder (cirro-studio/examples, served as `examples/`), and its paths are
+// resolved against it (docs/CHECKPOINT_FORMAT.md §8), so it can name a store published
+// anywhere that answers range requests, such as the public data bucket, by its URL.
+// Versions saved on them stay in this browser (browserStore.ts) — the same files a Cirro
+// dataset would hold.
 import { openZarrStore } from '@cirrobio/spatial-viewer';
 import { APP_TAG } from '../app/appInfo';
 import { parseManifest } from '../stack/manifest';
 import { getBrowserDataset, listBrowserDatasets, putBrowserDataset } from './browserStore';
 import type { Collection, NewVersion, PipelineLink } from './collection';
 import { datasetContents, storeName } from './discover';
-import type { DatasetRecord } from './model';
+import type { Credit, DatasetRecord } from './model';
 import { summarizeVersion, type ScanRecord } from './scan';
 
 interface ExampleIndex {
   title?: string;
-  checkpoints: { path: string; label?: string; description?: string }[];
+  checkpoints: { path: string; label?: string; description?: string; folder?: string; credit?: Credit }[];
 }
 
 export const EXAMPLES_ID = 'examples';
@@ -22,7 +23,8 @@ const EXAMPLE_PREFIX = 'example-';
 const EXAMPLE_FOLDER = 'Examples';
 const BROWSER_FOLDER = 'Saved in this browser';
 
-const examplesUrl = (path: string) => new URL(`examples/${path}`, document.baseURI).toString();
+const indexUrl = () => new URL('examples/index.json', document.baseURI);
+const exampleUrl = (path: string) => new URL(path, indexUrl()).toString();
 
 // The total size of a static file, from the Content-Range of a one-byte read: what
 // the zip reader asks for first anyway, and what both Pages and the dev server answer.
@@ -44,7 +46,7 @@ export class ExampleCollection implements Collection {
   private readonly scans = new Map<string, Promise<ScanRecord>>();
 
   private examples(): Promise<ExampleIndex> {
-    this.index ??= fetch(examplesUrl('index.json')).then(async (res) => {
+    this.index ??= fetch(indexUrl()).then(async (res) => {
       if (!res.ok) throw new Error(`The example index answered HTTP ${res.status}.`);
       return (await res.json()) as ExampleIndex;
     });
@@ -63,9 +65,10 @@ export class ExampleCollection implements Collection {
       createdAt: '',
       createdBy: '',
       tags: [],
-      folders: [EXAMPLE_FOLDER],
+      folders: [c.folder ?? EXAMPLE_FOLDER],
       sourceIds: [],
       share: null,
+      credit: c.credit,
     }));
     const saved = (await listBrowserDatasets()).map((d): DatasetRecord => ({
       id: d.id,
@@ -94,7 +97,7 @@ export class ExampleCollection implements Collection {
       pending = (async () => {
         const example = await this.examplePath(dataset.id);
         const contents = example
-          ? datasetContents([{ path: example, size: await sizeOf(examplesUrl(example)) }])
+          ? datasetContents([{ path: example.slice(example.lastIndexOf('/') + 1), size: await sizeOf(exampleUrl(example)) }])
           : datasetContents((await this.browserDataset(dataset.id)).files.map((f) => ({ path: f.name, size: f.bytes.length })));
         const version = contents.version ? summarizeVersion(await this.manifest(dataset.id, contents.version)) : null;
         return { datasetId: dataset.id, contents, version, scannedAt: new Date().toISOString() };
@@ -109,6 +112,13 @@ export class ExampleCollection implements Collection {
     if (!datasetId.startsWith(EXAMPLE_PREFIX)) return null;
     const index = await this.examples();
     return index.checkpoints.find((c) => `${EXAMPLE_PREFIX}${storeName(c.path)}` === datasetId)?.path ?? null;
+  }
+
+  // An example's dataset is the folder its store is published in, holding that one store
+  // under its file name.
+  private async exampleRoot(datasetId: string): Promise<string | null> {
+    const path = await this.examplePath(datasetId);
+    return path === null ? null : new URL('.', exampleUrl(path)).toString();
   }
 
   private async browserDataset(datasetId: string) {
@@ -126,13 +136,15 @@ export class ExampleCollection implements Collection {
   }
 
   async openStore(datasetId: string, path: string, isFolder: boolean) {
-    if (isFolder || !(await this.examplePath(datasetId))) throw new Error(`No example store at ${datasetId}/${path}.`);
-    return openZarrStore(examplesUrl(path));
+    const root = await this.exampleRoot(datasetId);
+    if (isFolder || !root) throw new Error(`No example store at ${datasetId}/${path}.`);
+    return openZarrStore(new URL(path, root).toString());
   }
 
   async readFile(datasetId: string, path: string): Promise<Uint8Array> {
-    if (await this.examplePath(datasetId)) {
-      const res = await fetch(examplesUrl(path));
+    const root = await this.exampleRoot(datasetId);
+    if (root) {
+      const res = await fetch(new URL(path, root));
       if (!res.ok) throw new Error(`${path} answered HTTP ${res.status}.`);
       return new Uint8Array(await res.arrayBuffer());
     }
@@ -141,8 +153,10 @@ export class ExampleCollection implements Collection {
     return file.bytes;
   }
 
-  async fileUrl(_datasetId: string, path: string) {
-    const url = examplesUrl(path);
+  async fileUrl(datasetId: string, path: string) {
+    const root = await this.exampleRoot(datasetId);
+    if (!root) throw new Error(`No example file at ${datasetId}/${path}.`);
+    const url = new URL(path, root).toString();
     return { url, refresh: async () => url };
   }
 

@@ -8,8 +8,14 @@ That is the same thing that happens when you
 [open a checkpoint without the app running](/docs/guide/viewer#open-a-checkpoint-without-the-app-running) —
 these pages just point the viewer at files hosted alongside the documentation.
 
-All three are public 10x demo runs, imported and analyzed by the
-[Nextflow workflow](/nextflow/README) and saved as checkpoints. They are **downsampled
+All three are public datasets from 10x Genomics, shared under the
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) license: the
+[Xenium human pancreas](https://www.10xgenomics.com/datasets/ffpe-human-pancreas-with-xenium-multimodal-cell-segmentation-1-standard)
+and the Post-Xenium replicate 1 sections of the
+[Visium human colon](https://www.10xgenomics.com/datasets/visium-cytassist-gene-expression-libraries-of-post-xenium-human-colon-cancer-ffpe-using-the-human-whole-transcriptome-probe-set-2-standard)
+and [Visium mouse brain](https://www.10xgenomics.com/datasets/visium-cytassist-gene-expression-libraries-of-post-xenium-mouse-brain-ff-using-the-mouse-whole-transcriptome-probe-set-2-standard).
+They were imported and analyzed by the [Nextflow workflow](/nextflow/README) and saved
+as checkpoints. They are **downsampled
 for the web**: the image is stored at reduced resolution — a two-level pyramid, at most
 about 2,000 px on the long edge — and the expression matrix is dropped entirely, which
 is what gets a whole section into tens of megabytes. So there is no color-by-gene here.

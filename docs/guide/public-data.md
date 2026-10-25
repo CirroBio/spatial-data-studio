@@ -21,6 +21,12 @@ analyzed by Spatial Data Studio's workflow, with clusters and cellular neighborh
 They were saved without their expression matrix to keep them small, so the analyses that
 need gene expression can't run on them, and the task drawer says which those are.
 
+All four are public datasets from 10x Genomics, shared under the
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) license. The map files them by
+platform (Xenium, Visium). The line above an open section names the 10x dataset it was
+made from, linked to its page, with its license, and **Details** says what was done to
+the data to make the section.
+
 ## Four stages of data
 
 The web app works with data in four stages: from what a microscope or an instrument
