@@ -80,7 +80,8 @@ input[type="checkbox"], input[type="radio"], input[type="range"] { accent-color:
 .popover-left { left: 0; }
 .popover-right { right: 0; }
 .topbar-button { font: inherit; color: var(--sds-color-text); background: none; border: 0; padding: 4px var(--sds-space-2); border-radius: var(--sds-radius-md); cursor: pointer; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
-.topbar-button:hover { background: var(--sds-color-surface); }
+.topbar-button:hover:not(:disabled) { background: var(--sds-color-surface); }
+.topbar-button:disabled { color: var(--sds-color-text-muted); cursor: not-allowed; }
 .menu { display: grid; }
 .menu-item { font: inherit; text-align: left; background: none; border: 0; color: var(--sds-color-text); padding: 6px var(--sds-space-3); border-radius: var(--sds-radius-sm); cursor: pointer; }
 .menu-item:hover, .menu-item[aria-checked="true"] { background: var(--sds-color-surface); }
@@ -137,7 +138,12 @@ input[type="checkbox"], input[type="radio"], input[type="range"] { accent-color:
 .shell-breadcrumb { display: flex; align-items: center; gap: var(--sds-space-2); min-width: 0; }
 .shell-crumb { color: var(--sds-color-text-muted); font-size: var(--sds-text-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .shell-spacer { flex: 1 1 var(--sds-space-4); }
-.shell-status { font-size: var(--sds-text-sm); color: var(--sds-color-text-muted); white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; }
+.shell-status { font-size: var(--sds-text-sm); color: var(--sds-color-text-muted); white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; flex-shrink: 4; }
+/* On a narrow window the catalog's status gives way first, then the project's name (ellipsis),
+   rather than either running under its neighbours. */
+.shell-breadcrumb .popover { min-width: 0; }
+.shell-breadcrumb .popover > .topbar-button { max-width: 100%; }
+.shell-project { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .shell-status-warn { color: var(--sds-color-warning); cursor: help; }
 .shell-log-in { margin-left: var(--sds-space-1); }
 .shell-main { min-height: 0; overflow: hidden; position: relative; }
@@ -522,3 +528,23 @@ input[type="checkbox"], input[type="radio"], input[type="range"] { accent-color:
 .cluster-thumb:hover, .cluster-thumb:focus-visible { background: var(--sds-color-surface); }
 .cluster-thumb-label { display: flex; gap: var(--sds-space-1); align-items: center; font-weight: var(--sds-weight-semibold); font-size: var(--sds-text-sm); }
 .scree-bar:hover .bar-hit { fill: var(--sds-color-surface); }
+
+/* Add Data: a page of its own, scrolling inside the shell. Each stage is a card tinted with
+   its color, holding the two ways its data arrives side by side. */
+.add-data { height: 100%; overflow-y: auto; padding: var(--sds-space-6); display: grid; grid-template-columns: minmax(0, 1100px); justify-content: center; align-content: start; gap: var(--sds-space-4); }
+.add-head { display: grid; gap: var(--sds-space-2); justify-items: start; }
+.add-head h1 { margin: 0; font-size: var(--sds-text-xl); }
+.add-head p { margin: 0; max-width: 75ch; }
+.add-stage { display: grid; gap: var(--sds-space-3); padding: var(--sds-space-4); border: 1px solid var(--sds-color-border); border-top: 3px solid var(--c); border-radius: var(--sds-radius-lg); background: var(--sds-color-surface-raised); }
+.add-stage h2 { margin: 0; display: flex; align-items: center; gap: var(--sds-space-2); font-size: var(--sds-text-lg); }
+.add-stage > p { margin: 0; }
+.add-icon { display: inline-flex; width: 28px; height: 28px; color: var(--c); }
+.add-icon svg { width: 100%; height: 100%; }
+/* Side by side only where the upload command's longest line (the project ID) fits its column. */
+.add-ways { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: var(--sds-space-6); }
+.add-way { display: grid; gap: var(--sds-space-2); align-content: start; min-width: 0; }
+.add-way h3 { margin: 0; font-size: var(--sds-text-md); }
+.add-way p { margin: 0; }
+.add-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--sds-space-2); }
+.add-command { margin: 0; padding: var(--sds-space-3); overflow-x: auto; font-size: var(--sds-text-sm); background: var(--sds-color-surface); border: 1px solid var(--sds-color-border); border-radius: var(--sds-radius-md); }
+.add-note { font-size: var(--sds-text-sm); }

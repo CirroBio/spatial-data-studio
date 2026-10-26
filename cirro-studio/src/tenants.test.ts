@@ -106,6 +106,14 @@ describe('loadTenants', () => {
     }
   });
 
+  it('takes a client ID from the local settings for a tenant whose entry has none', async () => {
+    vi.stubEnv('VITE_TENANT_CLIENT_IDS', 'b:other,a:local-id');
+    expect((await listing({ url: 'https://a.cirro.bio' }))[0].clientId).toBe('local-id');
+    expect((await listing({ url: 'https://a.cirro.bio', clientId: 'listed' }))[0].clientId).toBe('listed');
+    vi.unstubAllEnvs();
+    expect((await listing({ url: 'https://a.cirro.bio' }))[0].clientId).toBeUndefined();
+  });
+
   it('keeps the examples\' id for the examples', async () => {
     await expect(listing({ id: 'examples', url: 'https://a.cirro.bio' })).rejects.toThrow('keeps it for its examples');
   });

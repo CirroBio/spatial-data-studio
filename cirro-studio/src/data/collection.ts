@@ -51,12 +51,21 @@ export interface Collection {
 
   /** The dataset's page in Cirro, when there is one. */
   datasetUrl(datasetId: string): string | null;
-  /** Pipelines that take this dataset as input and do `purpose`, each with the page in
-   * Cirro that launches it on the dataset (Cirro's own form). */
-  pipelines(datasetId: string, purpose: PipelinePurpose): Promise<PipelineLink[]>;
+  /** Pipelines that do `purpose`, each with the page in Cirro that launches it (Cirro's
+   * own form): on the dataset, those that take it as input; with no dataset, every one
+   * the project can run, its input chosen on that page. */
+  pipelines(datasetId: string | null, purpose: PipelinePurpose): Promise<PipelineLink[]>;
+  /** The data types a stage's data can be uploaded to the project as, most specific first. */
+  uploadTypes(stage: UploadStage): Promise<UploadType[]>;
 }
 
-// segment: find cells in an image or re-segment a run. encode: turn a run (or a
-// segmentation) into a SpatialData store.
-export type PipelinePurpose = 'segment' | 'encode';
-export interface PipelineLink { id: string; name: string; url: string }
+// The stages data arrives at from outside the app; a figure is only ever made in it.
+export type UploadStage = 'images' | 'runs' | 'spatial';
+
+// What a pipeline does to a dataset already open (segment: find cells in an image or
+// re-segment a run; encode: turn a run, or a segmentation, into a SpatialData store), or
+// the stage of the data it makes, which is how the Add Data page lists them.
+export type PipelinePurpose = 'segment' | 'encode' | UploadStage;
+export interface PipelineLink { id: string; name: string; description: string; url: string }
+// requirements: what the data type says its files must include, when it says.
+export interface UploadType { id: string; name: string; requirements: string | null }

@@ -29,6 +29,14 @@ export const SUGGEST_AFTER = 3;
 // The example collection, open without an account; it stands where a tenant would.
 export const EXAMPLES_TENANT = 'examples';
 
+// A registration that isn't discoverable (a development one, for localhost) needs its
+// client ID, and none is kept in the repo: the dev server reads them from the untracked
+// cirro-studio/.env.local, as VITE_TENANT_CLIENT_IDS=<tenant id>:<client id>[,...].
+function localClientIds(): Map<string, string> {
+  const pairs = (import.meta.env.VITE_TENANT_CLIENT_IDS ?? '').split(',').filter(Boolean);
+  return new Map(pairs.map((pair: string) => pair.split(':', 2) as [string, string]));
+}
+
 export async function loadTenants(): Promise<Tenant[]> {
   const res = await fetch(`${import.meta.env.BASE_URL}tenants.json`, { cache: 'no-cache' });
   if (!res.ok) throw new Error(`Could not load tenants.json (HTTP ${res.status}).`);
@@ -40,7 +48,8 @@ export async function loadTenants(): Promise<Tenant[]> {
     if (!TENANT_URL.test(t.url)) throw new Error(`tenants.json entry ${JSON.stringify(t.id)} has url ${t.url}; it must be an https address with no path.`);
     if (t.id === EXAMPLES_TENANT) throw new Error(`tenants.json can't use the id "${EXAMPLES_TENANT}"; the app keeps it for its examples.`);
   }
-  return tenants.map((t: Tenant) => ({ ...t, url: t.url.replace(/\/$/, '') }));
+  const clientIds = localClientIds();
+  return tenants.map((t: Tenant) => ({ ...t, url: t.url.replace(/\/$/, ''), clientId: t.clientId ?? clientIds.get(t.id) }));
 }
 
 function readSaved(): string | null {

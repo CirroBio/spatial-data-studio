@@ -22,9 +22,15 @@ npm install          # at the repo root: one workspace with packages/*, frontend
 npm run dev:studio   # http://localhost:5171
 ```
 
-The port is fixed because Cirro's development registration on dev.cirro.bio
-(`public/tenants.json`) lists `http://localhost:5171` as this app's redirect URI. That
-registration isn't discoverable, so its entry carries its `clientId`.
+The port is fixed because Cirro's development registration on dev.cirro.bio (the `dev`
+entry in `public/tenants.json`) lists `http://localhost:5171` as this app's redirect URI.
+That registration isn't discoverable, so the app needs its client ID, and no client ID is
+kept in the repo: put it in `cirro-studio/.env.local` (ignored by git), which the dev server
+reads.
+
+```bash
+echo 'VITE_TENANT_CLIENT_IDS=dev:<client id>' > cirro-studio/.env.local
+```
 **Public Data** needs no sign-in. Its catalog is `examples/index.json`
 ([`CHECKPOINT_FORMAT.md` §8](../docs/CHECKPOINT_FORMAT.md#8-indexjson--a-collection-of-checkpoints)):
 each path is resolved against the index, so an entry can name a store anywhere that
@@ -64,7 +70,8 @@ src/app/            shell, URL routing (route.ts), the catalog store (catalog.ts
                     lineage links), the studio context (studio.tsx)
 src/cirro/          everything that talks to Cirro: the project as a Collection
                     (cirroCollection.ts: datasets, manifests, signed range reads, version
-                    uploads, pipeline links), the catalog sheet (catalogSheet.ts),
+                    uploads, pipeline links and upload data types, both matched by name),
+                    the catalog sheet (catalogSheet.ts),
                     provenance notes, error wording
 src/data/           the Collection interface both sources implement, discovery of stores,
                     runs and images from a file listing (discover.ts, which applies the
@@ -93,6 +100,9 @@ src/workspaces/     Analysis Workspaces on chosen items: Cirro's
                     the top-bar button and sheet (Workspaces.tsx, loaded only for a
                     signed-in project), the form (NewWorkspace.tsx), and what an item
                     asks for (request.ts)
+src/add/            the Add Data page: per stage, the `cirro upload` command for this
+                    Cirro and project (uploadCommand.ts) and the pipelines that make that
+                    stage's data, each linking to Cirro's launch form
 examples/           the raw-counts example store (scripts/prepare_studio_example.py)
 deploy/tenants.json the tenants the published site serves
 cirro-permissions.json  what the registration grants, and why

@@ -11,6 +11,7 @@ import { collectionFor, StudioProvider } from './studio';
 // The map and the item pages carry the WebGL and Zarr code; the shell paints first.
 const MapView = lazy(() => import('../map/MapView'));
 const ItemPage = lazy(() => import('../item/ItemPage'));
+const AddData = lazy(() => import('../add/AddData'));
 
 const lastProjectKey = (tenantId: string) => appKey(`last-project.${tenantId}`);
 
@@ -68,7 +69,7 @@ export function App({ session }: { session: CirroSession | null }) {
     <StudioProvider session={session} collection={collection}>
       <Shell session={session} projects={projects}>
         <Suspense fallback={<p className="page-message muted">Loading…</p>}>
-          {route.section === 'item' || route.section === 'task' ? <ItemPage /> : <MapView />}
+          {route.section === 'add' ? <AddData /> : route.section === 'item' || route.section === 'task' ? <ItemPage /> : <MapView />}
         </Suspense>
       </Shell>
     </StudioProvider>

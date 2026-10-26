@@ -5,7 +5,8 @@ import { appKey } from './appInfo';
 
 // home: the map of the project's stages. stage: one stage opened. item: one item (a
 // store, a version, an image, a run) opened as its picture. task: a task beside it.
-export const SECTIONS = ['home', 'stage', 'item', 'task'] as const;
+// add: how to add data to the project.
+export const SECTIONS = ['home', 'stage', 'item', 'task', 'add'] as const;
 export type Section = (typeof SECTIONS)[number];
 
 export const STAGE_PARAM = appKey('stage');

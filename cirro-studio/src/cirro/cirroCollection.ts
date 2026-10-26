@@ -5,7 +5,7 @@ import { EntityType, ProjectAccessType, type Dataset, type DatasetDetail, type P
 import { ProjectFileAccessContext, uploadFile } from '@cirrobio/sdk';
 import { openZarrStore, type FolderAccess } from '@cirrobio/spatial-viewer';
 import { APP_TAG } from '../app/appInfo';
-import type { Collection, NewVersion, PipelineLink, PipelinePurpose } from '../data/collection';
+import type { Collection, NewVersion, PipelineLink, PipelinePurpose, UploadStage, UploadType } from '../data/collection';
 import { datasetContents, type ListedFile } from '../data/discover';
 import { FOLDER_PREFIX, foldersOf, type DatasetRecord } from '../data/model';
 import { summarizeVersion, type ScanRecord } from '../data/scan';
@@ -25,6 +25,17 @@ const COMPLETION_WAIT_MS = 60_000;
 const PURPOSE: Record<PipelinePurpose, RegExp> = {
   segment: /segment|cellpose|stardist|sopa|proseg|baysor|mcmicro/i,
   encode: /spatial data studio|encode spatial|sopa|space ?ranger/i,
+  images: /ome-?tiff|convert image/i,
+  runs: /space ?ranger|xenium ?ranger|mcmicro/i,
+  spatial: /spatial data studio|encode spatial|sopa|proseg|baysor|cellpose|stardist/i,
+};
+// Pipelines whose names match a purpose but which build a reference rather than process data.
+const REFERENCE_BUILDER = /reference|mkref/i;
+// The data types each stage's data is uploaded as, read the same way. Anything can also be
+// uploaded as plain files, which is how spatial data is uploaded.
+const UPLOAD: Record<Exclude<UploadStage, 'spatial'>, RegExp> = {
+  images: /image|ome-?tiff|codex|qptiff/i,
+  runs: /xenium|visium|space ?ranger|cosmx|merscope|curio|steinbock|mcmicro/i,
 };
 
 // Which datasets could hold anything the app shows, judged by the process that made them
@@ -338,11 +349,31 @@ export class CirroCollection implements Collection {
     return `${this.cirro.tenant.url}/project/${this.projectOf(datasetId)}/dataset/${datasetId}`;
   }
 
-  async pipelines(datasetId: string, purpose: PipelinePurpose): Promise<PipelineLink[]> {
-    const [processes, detail] = await Promise.all([this.processMap(), this.detail(datasetId)]);
+  // A process the project can use: offered to every project, or linked to this one.
+  private usable(p: Process): boolean {
+    return !p.isArchived && (p.isTenantWide || p.linkedProjectIds.includes(this.id));
+  }
+
+  async pipelines(datasetId: string | null, purpose: PipelinePurpose): Promise<PipelineLink[]> {
+    const [processes, input] = await Promise.all([this.processMap(), datasetId ? this.detail(datasetId) : null]);
+    const launch = datasetId ? `${this.datasetUrl(datasetId)}/pipeline` : `${this.cirro.tenant.url}/project/${this.id}/pipeline`;
     return [...processes.values()]
-      .filter((p) => !p.isArchived && p.executor !== 'INGEST' && p.parentProcessIds.includes(detail.processId) && PURPOSE[purpose].test(`${p.id} ${p.name}`))
+      .filter((p) => this.usable(p) && p.executor !== 'INGEST' && (!input || p.parentProcessIds.includes(input.processId)))
+      .filter((p) => PURPOSE[purpose].test(`${p.id} ${p.name}`) && !REFERENCE_BUILDER.test(p.name))
       .sort((a, b) => a.name.localeCompare(b.name))
-      .map((p) => ({ id: p.id, name: p.name, url: `${this.datasetUrl(datasetId)}/pipeline/${p.id}` }));
+      .map((p) => ({ id: p.id, name: p.name, description: p.description, url: `${launch}/${p.id}` }));
+  }
+
+  async uploadTypes(stage: UploadStage): Promise<UploadType[]> {
+    const processes = await this.processMap();
+    const files = processes.get(FILES_PROCESS);
+    // Refused the process list, the Files type is still the one every Cirro has.
+    if (this.processesRefused) return [{ id: FILES_PROCESS, name: 'Files', requirements: null }];
+    const specific = stage === 'spatial' ? [] : [...processes.values()]
+      .filter((p) => this.usable(p) && p.executor === 'INGEST' && p.id !== FILES_PROCESS && UPLOAD[stage].test(`${p.id} ${p.name}`))
+      // The shortest name first: the most general type (Images before CODEX Images (raw)).
+      .sort((a, b) => a.name.length - b.name.length || a.name.localeCompare(b.name));
+    return [...specific, ...(files ? [files] : [])]
+      .map((p) => ({ id: p.id, name: p.name, requirements: p.fileRequirementsMessage || null }));
   }
 }

@@ -20,7 +20,7 @@ function ProjectPicker({ projects }: { projects: Project[] }) {
   const current = projects.find((p) => p.id === route.project);
   const shown = projects.filter((p) => p.name.toLowerCase().includes(filter.toLowerCase()));
   return (
-    <Popover label={<>{current?.name ?? 'Choose a project'} <Chevron /></>}>
+    <Popover label={<><span className="shell-project">{current?.name ?? 'Choose a project'}</span> <Chevron /></>}>
       {(close) => (
         <div className="menu" role="menu">
           {projects.length > 8 && (
@@ -156,6 +156,11 @@ export function Shell({ session, projects, children }: {
         </nav>
         <span className="shell-spacer" />
         <CatalogStatus />
+        <button type="button" className="topbar-button" disabled={!session || !studio}
+          title={!session ? 'Log in to Cirro to add data' : !studio ? 'Choose a project to add data to' : 'Upload data, or make it with a pipeline'}
+          onClick={() => navigate({ section: 'add', dataset: null })}>
+          Add Data
+        </button>
         {session && studio && <Suspense fallback={null}><Workspaces session={session} /></Suspense>}
         <AccountMenu session={session} />
       </header>

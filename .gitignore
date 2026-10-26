@@ -40,6 +40,8 @@ checkpoints/
 .run.pids
 
 .env
+# Vite's local settings, such as a development registration's client ID (cirro-studio)
+.env.local
 
 sds-governance/sbom.json
 __pycache__/

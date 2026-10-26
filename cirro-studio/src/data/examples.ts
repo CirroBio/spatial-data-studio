@@ -8,7 +8,7 @@ import { openZarrStore } from '@cirrobio/spatial-viewer';
 import { APP_TAG } from '../app/appInfo';
 import { parseManifest } from '../stack/manifest';
 import { getBrowserDataset, listBrowserDatasets, putBrowserDataset } from './browserStore';
-import type { Collection, NewVersion, PipelineLink } from './collection';
+import type { Collection, NewVersion, PipelineLink, UploadType } from './collection';
 import { datasetContents, storeName } from './discover';
 import type { Credit, DatasetRecord } from './model';
 import { summarizeVersion, type ScanRecord } from './scan';
@@ -174,6 +174,10 @@ export class ExampleCollection implements Collection {
   }
 
   async pipelines(): Promise<PipelineLink[]> {
+    return [];
+  }
+
+  async uploadTypes(): Promise<UploadType[]> {
     return [];
   }
 }

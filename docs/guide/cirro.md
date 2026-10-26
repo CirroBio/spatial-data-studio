@@ -40,6 +40,31 @@ project (*Spatial Data Studio catalog*), so the next visit, by anyone, reads onl
 datasets added since. Where the project can't have that sheet, the catalog stays in your
 browser and the top bar says so.
 
+## Add data
+
+Spatial data is too large to send through a web page, so it reaches a project one of two
+ways: uploaded from your computer with Cirro's command-line tool, or made by a pipeline
+in Cirro from data already in the project. **Add Data** at the top of every page opens a
+page that sets out both for each [stage](public-data.md#four-stages-of-data):
+
+- **Upload from your computer.** Choose the data type (the ones this Cirro offers for
+  that stage come first, then plain Files), name the dataset and give the folder to
+  upload, and the page writes the commands to run in a terminal: installing Cirro's
+  `cirro` Python package (Python 3.11 or later), pointing it at your Cirro, and
+  `cirro upload` into this project. Cirro checks the files against the data type before
+  anything is uploaded, and the first upload asks you to log in in your browser. Upload an
+  instrument run's output folder whole; for spatial data, upload the folder that holds the
+  store (a `.zarr` folder or `.zarr.zip`), not the store itself.
+- **Run a pipeline in Cirro.** The pipelines this project can run that make that stage's
+  data: converting a slide to OME-TIFF (images); counting a Visium run, re-segmenting a
+  Xenium run or MCMICRO (instrument runs); Spatial Data Studio's workflow, nf-core/sopa,
+  Proseg and cell segmentation (spatial data). Each opens Cirro's own form for it, where
+  you choose the input dataset and see the options and cost.
+
+Figures have no upload: a figure is made in the app, from a spatial dataset. Either way,
+what you add becomes a dataset in the project; reload the map once it has finished to see
+it there.
+
 ## Images and instrument runs
 
 An image opens across the page with its channels in the right drawer. A run opens with

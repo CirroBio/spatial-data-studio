@@ -12,7 +12,7 @@ there.
 browser*: the sections are read straight from where they are published, the analyses run
 in your browser, and anything you save is kept in this browser, in a folder of its own
 (*Saved in this browser*). **Log In (Cirro)** at the top right switches to your own
-projects.
+projects; **Add Data** beside it adds data to one of them, so it waits until you log in.
 
 There are four sections. One is a Xenium human lung section as the instrument counted
 it, with no analysis yet: it is the one to try the analyses on. The other three, a Xenium
