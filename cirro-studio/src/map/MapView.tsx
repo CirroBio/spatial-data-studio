@@ -22,7 +22,7 @@ export default function MapView() {
   return (
     <div className="map">
       {route.section === 'stage' && known
-        ? <StageView stage={known} nodes={nodes} onScene={setScene} />
+        ? <StageView key={known} stage={known} nodes={nodes} onScene={setScene} />
         : <Home nodes={nodes} onScene={setScene} />}
       <BubbleLayer scene={scene} />
     </div>

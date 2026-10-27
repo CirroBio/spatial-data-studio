@@ -1,26 +1,52 @@
-// One stage opened: its items packed by folder (or tag, or month), a circle you step
-// into by clicking and out of with Esc or a click on empty space. A list beside it is
-// the same content for reading and for the keyboard. The bubbles are the map's
-// BubbleLayer: this says where each belongs, the other stages' resting in the rail.
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
+// One stage opened: the stage's items as a tree of their folders (StageTree.tsx), beside a
+// rail of the four stages, each a small cluster of its bubbles: the open stage's is its
+// minimap, dimmed where the search leaves items out, with the selected item and its lineage
+// ringed. The bubbles are the map's BubbleLayer, so the overview's carry on into the rail, and
+// an item opened from its row grows from the row's dot over the page.
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { STAGES, stageOf, type StageId } from '../app/library';
-import { BY_PARAM, GROUP_PARAM, LENS_PARAM, navigate, openItem, STAGE_PARAM, stepBack, useRoute } from '../app/route';
-import { formatBytes, formatDate, plural, STAGE_ICONS, tint } from '../app/ui';
+import {
+  FILTER_PARAM, FLAT_PARAM, LENS_PARAM, navigate, openItem, QUERY_PARAM, SELECT_PARAM, SORT_PARAM, STAGE_PARAM, stepBack, useRoute,
+} from '../app/route';
+import { plural, STAGE_ICONS, tint } from '../app/ui';
 import { useSize } from '../lib/useSize';
+import { SORT_KEYS, type SortKey } from './browse';
 import { parkBubble, type Bubble, type Scene } from './BubbleLayer';
-import { groupTree, packCluster, packTree, type Grouping, type PackedNode, type StageNode } from './nodes';
+import { packCluster, type StageNode } from './nodes';
+import { StageTree, type BrowseState } from './StageTree';
 
-const GROUPINGS: { id: Grouping; label: string }[] = [
-  { id: 'folders', label: 'Folders' }, { id: 'tags', label: 'Tags' }, { id: 'time', label: 'Time' },
-];
 const FLOOR_SHARE = 0.01;
-// Room around the focused circle for its name, which sits just above it.
-const VIEW_MARGIN = 1.1;
-// Opening an item: its bubble grows to cover the page, faded to a tint of its color.
+// Opening an item: its row's dot grows to cover the page, faded to a tint of its color.
 const OPEN_MS = 450;
 const OPEN_TINT = 0.12;
-// Above this many items a stage shows their list from the start.
-const LIST_FROM = 20;
+// How the minimap shows the open stage's items the search or filters leave out.
+const DIMMED = 0.25;
+const FILTER_SEP = '|';
+
+// What the browser shows, as the address holds it.
+function browseOf(params: URLSearchParams): BrowseState {
+  const sort = params.get(SORT_PARAM) as SortKey | null;
+  return {
+    selected: params.get(SELECT_PARAM),
+    query: params.get(QUERY_PARAM) ?? '',
+    sort: sort && SORT_KEYS.includes(sort) ? sort : 'name',
+    flat: params.get(FLAT_PARAM) === '1',
+    filters: new Set((params.get(FILTER_PARAM) ?? '').split(FILTER_SEP).filter(Boolean)),
+  };
+}
+
+function addressOf(patch: Partial<BrowseState>): Record<string, string | null> {
+  const out: Record<string, string | null> = {};
+  if ('selected' in patch) out[SELECT_PARAM] = patch.selected ?? null;
+  if ('query' in patch) out[QUERY_PARAM] = patch.query || null;
+  if (patch.sort) out[SORT_PARAM] = patch.sort === 'name' ? null : patch.sort;
+  if ('flat' in patch) out[FLAT_PARAM] = patch.flat ? '1' : null;
+  if (patch.filters) out[FILTER_PARAM] = patch.filters.size ? [...patch.filters].join(FILTER_SEP) : null;
+  return out;
+}
+
+// Moving to another stage, or back to the overview, leaves this stage's selection and search behind.
+const leaving = { [SELECT_PARAM]: null, [QUERY_PARAM]: null, [FILTER_PARAM]: null };
 
 function Rail({ current, nodes, slots }: {
   current: StageId; nodes: Record<StageId, StageNode[]>; slots: RefObject<Partial<Record<StageId, HTMLElement>>>;
@@ -29,131 +55,109 @@ function Rail({ current, nodes, slots }: {
     <nav className="map-rail" aria-label="Stages">
       {STAGES.map((s) => (
         <button key={s.id} type="button" className="map-rail-stage" style={tint(s.color)} aria-current={s.id === current}
-          onClick={() => navigate({ section: 'stage', [STAGE_PARAM]: s.id, [GROUP_PARAM]: null })}>
-          {/* Where the stage's bubbles rest while another stage is open; its icon when it has none. */}
-          <span className="map-rail-icon" ref={(el) => { if (el) slots.current[s.id] = el; else delete slots.current[s.id]; }}>
-            {(s.id === current || !nodes[s.id].length) && STAGE_ICONS[s.id]}
-          </span>
+          onClick={() => navigate({ section: 'stage', [STAGE_PARAM]: s.id, ...leaving })}>
           <span className="map-rail-name">{s.label}</span>
           <span className="map-rail-caption">{plural(nodes[s.id].length, s.unit)}</span>
-          {s.id === current && <span className="map-rail-here">Shown on the right →</span>}
+          {/* Where the stage's bubbles rest as its minimap; its icon when it has none. */}
+          <span className="map-rail-map" ref={(el) => { if (el) slots.current[s.id] = el; else delete slots.current[s.id]; }}>
+            {!nodes[s.id].length && STAGE_ICONS[s.id]}
+          </span>
         </button>
       ))}
     </nav>
   );
 }
 
-function Card({ node }: { node: StageNode }) {
-  return (
-    <div className="map-card" role="tooltip">
-      <strong>{node.label}</strong>
-      {node.datasetName !== node.label && <span className="muted">{node.datasetName}</span>}
-      <span className="muted">
-        {[node.size ? formatBytes(node.size) : null, formatDate(node.date) || null, node.versions ? plural(node.versions, ['version', 'versions']) : null]
-          .filter(Boolean).join(' · ')}
-      </span>
-    </div>
-  );
-}
+interface Opening { node: StageNode; dot: { x: number; y: number; r: number }; grown: boolean }
 
 export function StageView({ stage, nodes, onScene }: {
   stage: StageId; nodes: Record<StageId, StageNode[]>; onScene: (scene: Scene) => void;
 }) {
   const route = useRoute();
   const info = stageOf(stage);
-  const grouping = (route.params.get(BY_PARAM) as Grouping | null) ?? 'folders';
-  const focusPath = route.params.get(GROUP_PARAM) ?? '';
-  const [filter, setFilter] = useState('');
-  // A stage of many items opens with their list beside the bubbles: too many to name inside them.
-  const [list, setList] = useState(() => nodes[stage].length > LIST_FROM);
-  const [hover, setHover] = useState<StageNode | null>(null);
-  const [opening, setOpening] = useState<string | null>(null);
-  const ref = useRef<HTMLDivElement>(null);
+  // One object per address, so what is derived from it (the search, the filters) holds still.
+  const state = useMemo(() => browseOf(route.params), [route.params]);
+  const onState = useCallback((patch: Partial<BrowseState>) => navigate(addressOf(patch), { replace: true }), []);
+  const [open, setOpen] = useState<Set<string> | null>(null);
+  const [match, setMatch] = useState<Set<string> | null>(null);
+  const [opening, setOpening] = useState<Opening | null>(null);
   const page = useRef<HTMLDivElement>(null);
   const slots = useRef<Partial<Record<StageId, HTMLElement>>>({});
-  const { width, height } = useSize(ref);
-  const side = Math.max(1, Math.min(width, height));
+  const search = useRef<HTMLInputElement>(null);
+  const { width, height } = useSize(page);
 
-  const shown = useMemo(() => {
-    const f = filter.trim().toLowerCase();
-    return f ? nodes[stage].filter((n) => `${n.label} ${n.datasetName} ${n.tags.join(' ')} ${n.folders.join(' ')}`.toLowerCase().includes(f)) : nodes[stage];
-  }, [nodes, stage, filter]);
+  const selected = nodes[stage].find((n) => n.key === state.selected) ?? null;
 
-  const root = useMemo(() => {
-    const largest = Math.max(1, ...shown.map((n) => n.size));
-    return packTree(groupTree(shown, grouping), 1000, 1000, largest * FLOOR_SHARE);
-  }, [shown, grouping]);
-
-  const focus: PackedNode = root.descendants().find((d) => !d.data.node && d.data.path === focusPath) ?? root;
-
-  // The bubble grows over the page, then the page opens; the map coming back shrinks it
-  // into its place again (parkBubble).
-  const open = (n: StageNode) => {
+  const openNode = (n: StageNode, dot: Element | null) => {
     const go = () => openItem(n.target.datasetId, n.target.path, n.target.lens ? { [LENS_PARAM]: n.target.lens } : {});
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || !page.current) {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || !dot || !page.current) {
       go();
       return;
     }
+    const d = dot.getBoundingClientRect();
     const at = page.current.getBoundingClientRect();
+    // The map coming back shrinks the bubble from the page into its place again.
     parkBubble(n.key, { x: at.left + at.width / 2, y: at.top + at.height / 2, r: Math.hypot(at.width, at.height) / 2, a: OPEN_TINT });
-    setOpening(n.key);
+    setOpening({ node: n, dot: { x: d.left + d.width / 2, y: d.top + d.height / 2, r: d.width / 2 }, grown: false });
     setTimeout(go, OPEN_MS);
   };
+  // The dot is put in place first, then grows: two scenes, a frame apart.
+  useEffect(() => {
+    if (!opening || opening.grown) return;
+    const frame = requestAnimationFrame(() => setOpening({ ...opening, grown: true }));
+    return () => cancelAnimationFrame(frame);
+  }, [opening]);
+
+  const reveal = (n: StageNode) => navigate({ section: 'stage', [STAGE_PARAM]: n.stage, ...leaving, [SELECT_PARAM]: n.key });
 
   useLayoutEffect(() => {
-    if (!ref.current || !page.current || !width) return;
-    const at = ref.current.getBoundingClientRect();
-    const scale = side / (2 * focus.r * VIEW_MARGIN);
-    const toScreen = (x: number, y: number) => [at.left + width / 2 + (x - focus.x) * scale, at.top + height / 2 + (y - focus.y) * scale] as const;
-    const bubbles: Bubble[] = root.descendants().slice(1).map((d): Bubble => {
-      const [x, y] = toScreen(d.x, d.y);
-      const r = d.r * scale;
-      const n = d.data.node;
-      if (!n) {
-        return {
-          key: `group:${grouping}:${d.data.path}`, kind: 'group', x, y, r, tint: info.color, opacity: opening ? 0 : 1,
-          label: r > 40 ? d.data.name : undefined, onClick: () => navigate({ [GROUP_PARAM]: d.data.path }),
-        };
-      }
-      if (n.key === opening) {
-        const p = page.current!.getBoundingClientRect();
-        return { key: n.key, kind: 'leaf', x: p.left + p.width / 2, y: p.top + p.height / 2, r: Math.hypot(p.width, p.height) / 2, opacity: OPEN_TINT, tint: info.color };
-      }
-      return {
-        key: n.key, kind: 'leaf', x, y, r, tint: info.color, versions: n.versions, opacity: opening ? 0 : 1,
-        label: n.label, onClick: () => open(n), onHover: (over) => setHover((h) => (over ? n : h === n ? null : h)),
-      };
-    });
-    // The other stages rest in their places in the rail (hidden on a narrow screen,
-    // where they leave the picture instead).
+    if (!page.current || !width) return;
+    const marked = new Set(selected ? [selected.key, ...selected.from, ...selected.into] : []);
+    const bubbles: Bubble[] = [];
     for (const s of STAGES) {
-      const slot = slots.current[s.id];
-      const box = slot?.getBoundingClientRect();
-      if (s.id === stage || !box?.width || !nodes[s.id].length) continue;
+      const box = slots.current[s.id]?.getBoundingClientRect();
+      if (!box?.width || !nodes[s.id].length) continue;
       const largest = Math.max(1, ...nodes[s.id].map((n) => n.size));
-      for (const p of packCluster(nodes[s.id], box.width, largest * FLOOR_SHARE)) {
-        bubbles.push({ key: p.node.key, kind: 'leaf', x: box.left + p.x, y: box.top + p.y, r: p.r, tint: s.color, versions: p.node.versions, opacity: opening ? 0 : 1 });
+      // A circle as wide as the slot allows, in its middle.
+      const d = Math.min(box.width, box.height);
+      const left = box.left + (box.width - d) / 2;
+      const top = box.top + (box.height - d) / 2;
+      for (const p of packCluster(nodes[s.id], d, largest * FLOOR_SHARE)) {
+        if (p.node.key === opening?.node.key) continue;
+        const dim = s.id === stage && match && !match.has(p.node.key);
+        bubbles.push({
+          key: p.node.key, kind: 'leaf', x: left + p.x, y: top + p.y, r: p.r, tint: s.color, versions: p.node.versions,
+          marked: marked.has(p.node.key), opacity: opening ? 0 : dim ? DIMMED : 1,
+        });
       }
     }
-    onScene({ id: opening ? `open:${opening}` : `stage:${stage}:${grouping}:${focus.data.path}:${filter}`, bubbles, duration: opening ? OPEN_MS : undefined });
-  }, [root, focus, grouping, stage, nodes, width, height, side, opening, filter, info.color, onScene]);
+    if (opening) {
+      const at = page.current.getBoundingClientRect();
+      const pose = opening.grown
+        ? { x: at.left + at.width / 2, y: at.top + at.height / 2, r: Math.hypot(at.width, at.height) / 2, opacity: OPEN_TINT }
+        : { ...opening.dot, opacity: 1 };
+      bubbles.push({ key: opening.node.key, kind: 'leaf', tint: info.color, ...pose });
+    }
+    const id = opening ? `open:${opening.node.key}:${opening.grown}` : `stage:${stage}:${state.selected}:${[...(match ?? [])].length}:${state.query}`;
+    onScene({ id, bubbles, duration: opening ? (opening.grown ? OPEN_MS : 0) : undefined });
+  }, [nodes, stage, selected, match, opening, width, height, state.selected, state.query, info.color, onScene]);
 
-  const stepOut = () => {
-    if (!focus.parent) return;
-    stepBack({ [GROUP_PARAM]: focus.parent.data.path || null });
-  };
+  // Esc closes the look under a row, then goes back to the overview; / finds.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || e.defaultPrevented || document.querySelector('.popover-panel')) return;
-      if (focus.parent) stepOut();
-      else stepBack({ section: 'home', [STAGE_PARAM]: null, [GROUP_PARAM]: null });
+      const typing = e.target instanceof HTMLElement && e.target.closest('input, textarea, select');
+      if (e.key === '/' && !typing) {
+        e.preventDefault();
+        search.current?.focus();
+        return;
+      }
+      if (e.key !== 'Escape' || e.defaultPrevented || document.querySelector('.popover-panel, .modal-backdrop')) return;
+      if (state.selected) onState({ selected: null });
+      else stepBack({ section: 'home', [STAGE_PARAM]: null, ...leaving });
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  });
-
-  const crumbs = focus.ancestors().reverse().slice(1);
-  const inFocus = focus.leaves().filter((l) => l.data.node).map((l) => l.data.node!);
+  }, [state.selected, onState]);
 
   return (
     <div className="map-stage-view" style={tint(info.color)} ref={page}>
@@ -161,58 +165,20 @@ export function StageView({ stage, nodes, onScene }: {
       <section className="map-main">
         <div className="map-bar">
           <nav className="map-crumbs" aria-label="Where you are">
-            <button type="button" className="map-crumb" onClick={() => navigate({ section: 'home', [STAGE_PARAM]: null, [GROUP_PARAM]: null })}>
+            <button type="button" className="map-crumb" onClick={() => navigate({ section: 'home', [STAGE_PARAM]: null, ...leaving })}>
               <span className="map-crumb-dot" /> All data
             </button>
             <span className="map-sep">›</span>
-            <button type="button" className="map-crumb" disabled={!crumbs.length} onClick={() => navigate({ [GROUP_PARAM]: null })}>
+            <button type="button" className="map-crumb" disabled>
               <span className="map-crumb-dot" style={{ color: `var(${info.color})` }} /> {info.label}
             </button>
-            {crumbs.map((c, i) => (
-              <span key={c.data.path} className="map-crumb-step">
-                <span className="map-sep">›</span>
-                <button type="button" className="map-crumb" disabled={i === crumbs.length - 1} onClick={() => navigate({ [GROUP_PARAM]: c.data.path })}>
-                  <span className="map-crumb-dot" /> {c.data.name}
-                </button>
-              </span>
-            ))}
           </nav>
-          <input className="input map-search" type="search" placeholder={`Filter ${info.unit[1]}`} value={filter} onChange={(e) => setFilter(e.target.value)} />
-          <div className="map-seg" role="group" aria-label="Group by">
-            {GROUPINGS.map((g) => (
-              <button key={g.id} type="button" aria-pressed={grouping === g.id}
-                onClick={() => navigate({ [BY_PARAM]: g.id === 'folders' ? null : g.id, [GROUP_PARAM]: null }, { replace: true })}>
-                {g.label}
-              </button>
-            ))}
-          </div>
-          <button type="button" className="map-tool" aria-pressed={list} onClick={() => setList((l) => !l)}>List</button>
         </div>
-        <div className="map-canvas" ref={ref} onClick={(e) => { if (e.target === e.currentTarget) stepOut(); }}>
-          {!shown.length && <p className="map-empty-note muted">{filter ? 'Nothing matches the filter.' : `No ${info.unit[1]} in this project yet.`}</p>}
-          {hover && <Card node={hover} />}
-          {list && (
-            <aside className="map-list" aria-label={`${info.label} here`}>
-              <ul>
-                {inFocus.map((n) => (
-                  <li key={n.key}>
-                    <button type="button" className="map-list-row" onClick={() => open(n)}>
-                      <span className="map-list-dot" />
-                      <span className="map-list-text">
-                        <span>{n.label}</span>
-                        <span className="muted">
-                          {[n.datasetName !== n.label ? n.datasetName : null, n.versions ? plural(n.versions, ['version', 'versions']) : null].filter(Boolean).join(' · ')}
-                        </span>
-                      </span>
-                      <span className="muted">{n.size ? formatBytes(n.size) : ''}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </aside>
-          )}
+        <div className="map-browser">
+          <StageTree stage={stage} nodes={nodes} state={state} onState={onState} open={open} onOpenFolders={setOpen}
+            onOpen={openNode} onReveal={reveal} onMatch={setMatch} searchRef={search} />
         </div>
-        <p className="map-hint">Click a group to step into it and an item to open it; Esc or a click on empty space steps back out.</p>
+        <p className="map-hint">Click a row for more about it; double-click it, or Enter, opens it. / finds; Esc steps back.</p>
       </section>
     </div>
   );

@@ -13,8 +13,13 @@ export const STAGE_PARAM = appKey('stage');
 export const ITEM_PARAM = appKey('item');
 export const LENS_PARAM = appKey('lens');
 export const TASK_PARAM = appKey('task');
-export const GROUP_PARAM = appKey('group');
-export const BY_PARAM = appKey('by');
+// An open stage's browser: the selected row, the search, the order, the flat list and the
+// filters, so a reload, a shared link or Back opens the same view.
+export const SELECT_PARAM = appKey('select');
+export const QUERY_PARAM = appKey('q');
+export const SORT_PARAM = appKey('sort');
+export const FLAT_PARAM = appKey('flat');
+export const FILTER_PARAM = appKey('only');
 
 export interface Route {
   tenant: string | null;

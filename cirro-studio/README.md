@@ -80,7 +80,9 @@ src/data/           the Collection interface both sources implement, discovery o
 src/stack/          the version format: Cirro references, the Zarr v3 writer, the layered
                     store, the AnnData editor, layer.json, and opening a stack
 src/workbench/      an opened stack: its draft, edits into it, reopening, saving
-src/map/            the home map and the stage view
+src/map/            the home map (stages as bubbles) and an open stage: its items as a tree
+                    of folders with facts in words (browse.ts, pure and tested;
+                    StageTree.tsx) beside the stages' minimaps (StageView.tsx)
 src/item/           an opened item: the store page (its views as tabs in ViewTabs.tsx,
                     the canvas tools beside them in ViewTools.tsx, history, the
                     unsaved-changes bar), the image page (OME-TIFF via Viv), the run

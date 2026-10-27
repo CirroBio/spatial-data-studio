@@ -1,7 +1,7 @@
 // The map's bubbles: one SVG over the whole map that stays while the views change around
 // it. Each view says where every bubble belongs, and the bubbles move there, so the one
-// for a dataset keeps its identity from the overview into its stage, between groupings,
-// in and out of folders, and into the page it opens (as Expression Studio's map does).
+// for a dataset keeps its identity from the overview into the stage rail's minimap, and
+// into the page it opens (as Expression Studio's map does).
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { tint } from '../app/ui';
 import { labelLines } from './nodes';
@@ -17,6 +17,8 @@ export interface Bubble {
   // The stage color's CSS variable.
   tint: string;
   versions?: number;
+  // Ringed: a minimap's selected item and its lineage.
+  marked?: boolean;
   // A leaf's name, drawn inside it; a group's, drawn above it.
   label?: string;
   // A bubble with an action takes the pointer; the rest let it through to the page.
@@ -126,7 +128,7 @@ export function BubbleLayer({ scene }: { scene: Scene | null }) {
         const lines = b.kind === 'leaf' && b.label && n.to.r >= LABEL_MIN_R ? labelLines(b.label, Math.floor(n.to.r / 4), n.to.r >= LABEL_THREE_LINES_R ? 3 : 2) : [];
         return (
           <g key={key} ref={(el) => { if (el) elements.current.set(key, el); else elements.current.delete(key); }}
-            className={`bubble bubble-${b.kind}`} data-active={b.onClick && !n.leaving ? '' : undefined}
+            className={`bubble bubble-${b.kind}${b.marked ? ' bubble-marked' : ''}`} data-active={b.onClick && !n.leaving ? '' : undefined}
             transform={`translate(${cur.x} ${cur.y})`} style={{ ...tint(b.tint), opacity: cur.a }}
             onClick={b.onClick && !n.leaving ? (e) => { e.stopPropagation(); b.onClick!(); } : undefined}
             onMouseEnter={b.onHover ? () => b.onHover!(true) : undefined}

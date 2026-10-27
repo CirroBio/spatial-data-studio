@@ -130,16 +130,37 @@ runs, Spatial data, Figures). Each bubble is one item, sized by its files and na
 inside it when there is room. A dataset holding several stores shows each one, and rings
 inside a spatial-data bubble are the versions saved on that store.
 
-Dashed lines join a run or an image to the spatial data made from it. Click a stage to
-step inside it: its items are packed by Cirro folder, or regrouped by tag or by month,
-with a filter and a list beside them (shown from the start when a stage holds more than
-20 items). Click a group to step into it and a bubble to open it. **About** in the top
-bar says which version of the app this is and cites the methods it follows.
+Dashed lines join a run or an image to the spatial data made from it. **About** in the
+top bar says which version of the app this is and cites the methods it follows.
 
-Each bubble stays itself as you move: stepping into a stage brings its bubbles to the
-middle and sends the other stages' bubbles to their places in the rail on the left;
-regrouping or stepping into a folder moves them to their new places; a bubble you open
-grows into its page and shrinks back into the map when you return.
+Click a stage to open it as a list of its items, a row each, in their Cirro folders:
+
+- **A row** gives the item's full name and, under it, what it is in a few words: an
+  image's format and whether spatial data was made from it, a run's platform, a spatial
+  dataset's kind, how many versions it has and what it was made from. Its size is the
+  number on the right and a dot on the stage's size scale (KB, MB, GB), and the date is
+  when it was added. A folder's row gives what its items weigh together, with a tick on
+  the scale for each one, so a closed folder still shows where its large items are.
+- **Said once.** What every item of the stage shares ("all 10x Xenium") is said once,
+  above the list, rather than on every row.
+- **Find and narrow.** Search by name, folder, tag or any of those facts; the chips beside
+  the search narrow the list to one kind of item (only "OME-TIFF", say), and are offered
+  only for facts that tell the stage's items apart. Order by name, size or newest, and
+  switch between **Folders** and a **Flat list** of everything.
+- **Select** a row to see more under it: the dataset's description, who added it and when,
+  a link to it in Cirro, what it was made from and what was made from it (click one to go
+  to it in its own stage), and what you can do: **Open** it, open it in an Analysis
+  Workspace, or run a pipeline on it. A double-click, or Enter, opens an item straight
+  away, its picture growing out of its row; leaving the picture comes back to the list with
+  the row still selected.
+- **Keyboard.** The arrow keys move through the list and open and close folders, typing
+  jumps to a name, `/` goes to the search, and Esc closes what is open under a row, then
+  goes back to the map.
+
+On a wide screen, a rail on the left keeps every stage as a small map of its bubbles: the
+open stage's dims the items the search leaves out and rings the selected item and what
+it was made from and into. What you have opened, searched for, selected and chosen is
+kept in the page's address, so a reload, Back or a shared link shows the same list.
 
 ## Open a spatial dataset
 
