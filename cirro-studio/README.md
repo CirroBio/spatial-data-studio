@@ -31,17 +31,19 @@ reads.
 ```bash
 echo 'VITE_TENANT_CLIENT_IDS=dev:<client id>' > cirro-studio/.env.local
 ```
-**Public Data** needs no sign-in. It reads the Cirro datasets `src/data/publicDatasets.json`
-lists, each a `{ baseUrl, uri }` pair naming a dataset in a Cirro publication: static
-copies of Cirro datasets in a public bucket, written by `cirro-publish`
+**Public Data** needs no sign-in. It is everything in Spatial Data Studio's own Cirro
+publication, `published/spatial-data-studio` in the public bucket (its address is
+`PUBLICATION_URL` in `src/data/examples.ts`): a project of static copies of Cirro
+datasets, written by `cirro-publish`
 ([Cirro-publish-data-objects](https://github.com/CirroBio/Cirro-publish-data-objects)).
+Publishing a dataset there is what makes it public data; the app keeps no list of its own.
 `src/cirro/cirro-publication.ts` is that repository's publication shim, copied in
 unchanged (never edit the copy; change the canonical file there). Through it a
 publication answers the same calls as a Cirro project (`src/cirro/datasetReader.ts`), so a
 dataset's Folder tags file it on the map, and its `credit.<field>: <value>` tags (source,
 publisher, license, what was changed) are shown as its credit, as a Creative Commons
-license asks. The list stays empty until Spatial Data Studio's publication
-(`published/spatial-data-studio`) holds its datasets. The About links go to `about/` beside
+license asks. Until the publication exists, Public Data shows the shim's "Not published:
+v2/project.json". The About links go to `about/` beside
 the app, which only the assembled site has (`.github/workflows/docs.yml`).
 `npx vite --port <other>` runs it elsewhere for public data alone; sign-in only returns to
 5171.
@@ -81,7 +83,7 @@ src/cirro/          everything that talks to Cirro: the project as a Collection
 src/data/           the Collection interface both sources implement, discovery of stores,
                     runs and images from a file listing (discover.ts, which applies the
                     workflow's own nextflow/data_types.json), Public Data (examples.ts,
-                    the datasets publicDatasets.json lists) and browser storage (idb.ts)
+                    everything in the app's publication) and browser storage (idb.ts)
 src/stack/          the version format: Cirro references, the Zarr v3 writer, the layered
                     store, the AnnData editor, layer.json, and opening a stack
 src/workbench/      an opened stack: its draft, edits into it, reopening, saving

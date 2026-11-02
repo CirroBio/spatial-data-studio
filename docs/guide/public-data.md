@@ -8,7 +8,9 @@ there.
 
 ## The public data
 
-**Public Data** needs no account. The top bar says *Public data · nothing leaves this
+**Public Data** needs no account. It is Spatial Data Studio's publication: copies of
+Cirro datasets in a public bucket, the same for every visitor, so a section appears here
+once it is published there. The top bar says *Public data · nothing leaves this
 browser*: the sections are read straight from where they are published, the analyses run
 in your browser, and anything you save is kept in this browser, in a folder of its own
 (*Saved in this browser*). **Log In (Cirro)** at the top right switches to your own

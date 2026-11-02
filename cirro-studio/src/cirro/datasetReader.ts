@@ -38,6 +38,18 @@ export class DatasetReader {
 
   constructor(private readonly source: DataSource) {}
 
+  /** Every dataset in a project, paged through its listing. */
+  async list(projectId: string, processes: Map<string, Process>): Promise<DatasetRecord[]> {
+    const all: DatasetRecord[] = [];
+    let nextToken: string | undefined;
+    do {
+      const page = await this.source.dataService.datasets.getDatasets({ projectId, limit: 1000, nextToken });
+      all.push(...page.data.map((d) => datasetRecord(d, processes)));
+      nextToken = page.nextToken || undefined;
+    } while (nextToken);
+    return all;
+  }
+
   detail(projectId: string, datasetId: string): Promise<DatasetDetail> {
     let pending = this.details.get(datasetId);
     if (!pending) {
