@@ -99,17 +99,7 @@ export class CirroCollection implements Collection {
   }
 
   datasets(): Promise<DatasetRecord[]> {
-    this.listed ??= (async () => {
-      const processes = await this.processMap();
-      const all: DatasetRecord[] = [];
-      let nextToken: string | undefined;
-      do {
-        const page = await this.cirro.data.datasets.getDatasets({ projectId: this.id, limit: 1000, nextToken });
-        all.push(...page.data.map((d) => datasetRecord(d, processes)));
-        nextToken = page.nextToken || undefined;
-      } while (nextToken);
-      return all;
-    })();
+    this.listed ??= this.processMap().then((processes) => this.reader.list(this.id, processes));
     this.listed.catch(() => (this.listed = null));
     return this.listed;
   }

@@ -1,8 +1,8 @@
-// Public data, open to anyone: the Cirro datasets `publicDatasets.json` lists, read from
-// their Cirro publications (static copies in a public bucket, written by cirro-publish)
-// with the same calls a project uses. Versions saved on them stay in this browser
-// (browserStore.ts) — the same files a Cirro dataset would hold.
-import type { Process } from '@cirrobio/api-client';
+// Public data, open to anyone: everything in Spatial Data Studio's own Cirro publication, a
+// project of static copies of Cirro datasets in the public bucket, written by cirro-publish.
+// Publishing a dataset is what makes it public data. It is read with the same calls a Cirro
+// project uses. Versions saved on it stay in this browser (browserStore.ts) — the same files
+// a Cirro dataset would hold.
 import { APP_TAG } from '../app/appInfo';
 import type { DatasetReader } from '../cirro/datasetReader';
 import { parseManifest } from '../stack/manifest';
@@ -10,15 +10,12 @@ import { getBrowserDataset, listBrowserDatasets, putBrowserDataset } from './bro
 import type { Collection, NewVersion, PipelineLink, UploadType } from './collection';
 import { datasetContents } from './discover';
 import type { DatasetRecord } from './model';
-import publicDatasets from './publicDatasets.json';
 import { summarizeVersion, type ScanRecord } from './scan';
 
-// A whole dataset (`cirro::<project>:dataset:<dataset>`) and the publication that holds it
-// (Cirro-publish-data-objects, SPEC.md "Dataset URIs").
-interface PublicDataset { baseUrl: string; uri: string }
-const PUBLIC_DATASETS: PublicDataset[] = publicDatasets;
+// The publication's root (Cirro-publish-data-objects, SPEC.md "Publication layout").
+const PUBLICATION_URL = 'https://cirro-public-resources-20250818192017584600000001.s3.us-west-2.amazonaws.com/published/spatial-data-studio';
 
-interface Published { reader: DatasetReader; projectId: string; processes: Promise<Map<string, Process>> }
+interface Publication { reader: DatasetReader; projectId: string; datasets: DatasetRecord[] }
 
 export const EXAMPLES_ID = 'examples';
 const BROWSER_FOLDER = 'Saved in this browser';
@@ -30,38 +27,36 @@ export class ExampleCollection implements Collection {
   readonly saveTarget = 'this browser (log in to Cirro to save to a project)';
   readonly catalogNote = null;
 
-  private published: Promise<Map<string, Published>> | null = null;
+  private loading: Promise<Publication> | null = null;
   private readonly scans = new Map<string, Promise<ScanRecord>>();
 
   // The Cirro client loads only when public data is first read.
-  private publishedDatasets(): Promise<Map<string, Published>> {
-    this.published ??= (async () => {
-      const [{ createPublicationDataSource, parseDatasetUri }, { DatasetReader }] = await Promise.all([
+  private publication(): Promise<Publication> {
+    this.loading ??= (async () => {
+      const [{ createPublicationDataSource }, { DatasetReader }] = await Promise.all([
         import('../cirro/cirro-publication'), import('../cirro/datasetReader'),
       ]);
-      const sources = new Map<string, Omit<Published, 'projectId'>>();
-      const byId = new Map<string, Published>();
-      for (const { baseUrl, uri } of PUBLIC_DATASETS) {
-        let source = sources.get(baseUrl);
-        if (!source) {
-          const publication = createPublicationDataSource({ baseUrl });
-          const processes = publication.dataService.processes.getProcesses({}).then((list) => new Map(list.map((p) => [p.id, p])));
-          source = { reader: new DatasetReader(publication), processes };
-          sources.set(baseUrl, source);
-        }
-        const { projectId, datasetId } = parseDatasetUri(uri);
-        byId.set(datasetId, { ...source, projectId });
-      }
-      return byId;
+      const source = createPublicationDataSource({ baseUrl: PUBLICATION_URL });
+      const reader = new DatasetReader(source);
+      // A publication is one project.
+      const [[project], processes] = await Promise.all([
+        source.dataService.projects.getProjects(), source.dataService.processes.getProcesses({}),
+      ]);
+      const datasets = await reader.list(project.id, new Map(processes.map((p) => [p.id, p])));
+      return { reader, projectId: project.id, datasets };
     })();
-    return this.published;
+    this.loading.catch(() => (this.loading = null));
+    return this.loading;
+  }
+
+  /** The publication, when it holds this dataset; null for a version saved in this browser. */
+  private async holding(datasetId: string): Promise<Publication | null> {
+    const publication = await this.publication();
+    return publication.datasets.some((d) => d.id === datasetId) ? publication : null;
   }
 
   async datasets(): Promise<DatasetRecord[]> {
-    const { datasetRecord } = await import('../cirro/datasetReader');
-    const published = await Promise.all([...(await this.publishedDatasets())].map(
-      async ([datasetId, { reader, projectId, processes }]) => datasetRecord(await reader.detail(projectId, datasetId), await processes),
-    ));
+    const { datasets } = await this.publication();
     const saved = (await listBrowserDatasets()).map((d): DatasetRecord => ({
       id: d.id,
       name: d.name,
@@ -76,7 +71,7 @@ export class ExampleCollection implements Collection {
       sourceIds: d.sourceIds,
       share: null,
     }));
-    return [...published, ...saved];
+    return [...datasets, ...saved];
   }
 
   worthScanning(): boolean {
@@ -87,9 +82,9 @@ export class ExampleCollection implements Collection {
     let pending = this.scans.get(dataset.id);
     if (!pending) {
       pending = (async () => {
-        const published = (await this.publishedDatasets()).get(dataset.id);
-        const files = published
-          ? (await published.reader.listing(published.projectId, dataset.id)).files
+        const publication = await this.holding(dataset.id);
+        const files = publication
+          ? (await publication.reader.listing(publication.projectId, dataset.id)).files
           : (await this.browserDataset(dataset.id)).files.map((f) => ({ path: f.name, size: f.bytes.length }));
         const contents = datasetContents(files);
         const version = contents.version ? summarizeVersion(await this.manifest(dataset.id, contents.version)) : null;
@@ -101,10 +96,10 @@ export class ExampleCollection implements Collection {
     return pending;
   }
 
-  private async publishedDataset(datasetId: string): Promise<Published> {
-    const published = (await this.publishedDatasets()).get(datasetId);
-    if (!published) throw new Error(`Dataset ${datasetId} is not public data.`);
-    return published;
+  private async holdingOrThrow(datasetId: string): Promise<Publication> {
+    const publication = await this.holding(datasetId);
+    if (!publication) throw new Error(`Dataset ${datasetId} is not public data.`);
+    return publication;
   }
 
   private async browserDataset(datasetId: string) {
@@ -122,20 +117,20 @@ export class ExampleCollection implements Collection {
   }
 
   async openStore(datasetId: string, path: string, isFolder: boolean) {
-    const { reader, projectId } = await this.publishedDataset(datasetId);
+    const { reader, projectId } = await this.holdingOrThrow(datasetId);
     return reader.openStore(projectId, datasetId, path, isFolder);
   }
 
   async readFile(datasetId: string, path: string): Promise<Uint8Array> {
-    const published = (await this.publishedDatasets()).get(datasetId);
-    if (published) return published.reader.readFile(published.projectId, datasetId, path);
+    const publication = await this.holding(datasetId);
+    if (publication) return publication.reader.readFile(publication.projectId, datasetId, path);
     const file = (await this.browserDataset(datasetId)).files.find((f) => f.name === path);
     if (!file) throw new Error(`Dataset ${datasetId} has no file ${path}.`);
     return file.bytes;
   }
 
   async fileUrl(datasetId: string, path: string) {
-    const { reader, projectId } = await this.publishedDataset(datasetId);
+    const { reader, projectId } = await this.holdingOrThrow(datasetId);
     return reader.fileUrl(projectId, datasetId, path);
   }
 
