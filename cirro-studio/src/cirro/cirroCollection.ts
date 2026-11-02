@@ -1,24 +1,21 @@
 // A Cirro project as the app's collection: its datasets, what each holds (from the
 // project's catalog, listing files only for datasets nobody has scanned), signed reads of
 // their files, and new versions uploaded as datasets of their own.
-import { EntityType, ProjectAccessType, type Dataset, type DatasetDetail, type Process } from '@cirrobio/api-client';
+import { EntityType, ProjectAccessType, type Process } from '@cirrobio/api-client';
 import { ProjectFileAccessContext, uploadFile } from '@cirrobio/sdk';
-import { openZarrStore, type FolderAccess } from '@cirrobio/spatial-viewer';
 import { APP_TAG } from '../app/appInfo';
 import type { Collection, NewVersion, PipelineLink, PipelinePurpose, UploadStage, UploadType } from '../data/collection';
-import { datasetContents, type ListedFile } from '../data/discover';
-import { FOLDER_PREFIX, foldersOf, type DatasetRecord } from '../data/model';
+import { datasetContents } from '../data/discover';
+import { FOLDER_PREFIX, type DatasetRecord } from '../data/model';
 import { summarizeVersion, type ScanRecord } from '../data/scan';
 import { mapLimit } from '../lib/async';
 import { parseManifest } from '../stack/manifest';
 import { browserFallback, openCatalog, type CatalogCache } from './catalogSheet';
+import { DatasetReader, datasetRecord } from './datasetReader';
 import { addProvenanceNote, withAppTag } from './provenance';
 import { refusedPermission, retryRateLimited, type CirroSession } from './session';
 
 const FILES_PROCESS = 'custom_dataset';
-// A store stays open for as long as someone looks at it; its reader re-signs on expiry.
-const STORE_URL_MINUTES = 60;
-const DATA_DIR = 'data/';
 const COMPLETION_WAIT_MS = 60_000;
 
 // Pipelines by what they do, read from their ID and name (IDs differ between tenants).
@@ -49,25 +46,10 @@ function worthScanning(d: Pick<DatasetRecord, 'processId' | 'processName' | 'tag
   if (d.status !== 'COMPLETED') return false;
   // By value: the app once wrote it as { key: 'cirro-app', value: APP_ID }, which this finds too.
   const ours = d.tags.some((t) => t.value === APP_TAG.value);
-  const othersAsset = d.tags.some((t) => t.key === 'asset') && !ours;
+  // Other apps mark their saved assets with an `asset` tag: keyed, or as the plain text
+  // "asset: <kind>" they move to now that Cirro has deprecated tag keys.
+  const othersAsset = d.tags.some((t) => t.key === 'asset' || t.value.startsWith('asset:')) && !ours;
   return !othersAsset && (ours || SPATIAL_PROCESS.test(`${d.processId} ${d.processName}`));
-}
-
-function record(d: Dataset | DatasetDetail, processes: Map<string, Process>): DatasetRecord {
-  return {
-    id: d.id,
-    name: d.name,
-    description: d.description ?? '',
-    processId: d.processId,
-    processName: processes.get(d.processId)?.name ?? d.processId,
-    status: d.status,
-    createdAt: new Date(d.createdAt).toISOString(),
-    createdBy: d.createdBy,
-    tags: d.tags.map((t) => ({ key: t.key ?? '', value: t.value })),
-    folders: foldersOf(d.tags),
-    sourceIds: d.sourceDatasetIds,
-    share: 'share' in d ? d.share?.name ?? null : null,
-  };
 }
 
 export class CirroCollection implements Collection {
@@ -82,8 +64,7 @@ export class CirroCollection implements Collection {
   private cached: Promise<Map<string, ScanRecord>> | null = null;
   // Datasets referenced from other projects, by ID: the project they were found in.
   private readonly elsewhere = new Map<string, string>();
-  private readonly details = new Map<string, Promise<DatasetDetail>>();
-  private readonly listings = new Map<string, Promise<{ domain: string; files: ListedFile[] }>>();
+  private readonly reader: DatasetReader;
   private readonly scans = new Map<string, Promise<ScanRecord>>();
   // Scans found this visit, written to the catalog together.
   private unsaved: ScanRecord[] = [];
@@ -92,6 +73,7 @@ export class CirroCollection implements Collection {
 
   constructor(private readonly cirro: CirroSession, readonly id: string, readonly name: string) {
     this.saveTarget = `a new dataset in ${name}`;
+    this.reader = new DatasetReader({ dataService: cirro.data, fileService: cirro.files });
   }
 
   get catalogNote(): string | null {
@@ -123,7 +105,7 @@ export class CirroCollection implements Collection {
       let nextToken: string | undefined;
       do {
         const page = await this.cirro.data.datasets.getDatasets({ projectId: this.id, limit: 1000, nextToken });
-        all.push(...page.data.map((d) => record(d, processes)));
+        all.push(...page.data.map((d) => datasetRecord(d, processes)));
         nextToken = page.nextToken || undefined;
       } while (nextToken);
       return all;
@@ -139,41 +121,6 @@ export class CirroCollection implements Collection {
 
   private projectOf(datasetId: string): string {
     return this.elsewhere.get(datasetId) ?? this.id;
-  }
-
-  private detail(datasetId: string): Promise<DatasetDetail> {
-    let pending = this.details.get(datasetId);
-    if (!pending) {
-      pending = this.cirro.data.datasets.getDataset({ projectId: this.projectOf(datasetId), datasetId });
-      this.details.set(datasetId, pending);
-      pending.catch(() => this.details.delete(datasetId));
-    }
-    return pending;
-  }
-
-  /** Every file in the dataset's data directory, paged through the manifest. */
-  private listing(datasetId: string): Promise<{ domain: string; files: ListedFile[] }> {
-    let pending = this.listings.get(datasetId);
-    if (!pending) {
-      pending = (async () => {
-        const files: ListedFile[] = [];
-        let domain = '';
-        for (let offset = 0; ;) {
-          const page = await this.cirro.data.datasets.getDatasetManifest({ projectId: this.projectOf(datasetId), datasetId, fileOffset: offset });
-          domain = (page.domain ?? '').replace(/\/+$/, '');
-          const entries = page.files ?? [];
-          for (const f of entries) {
-            if (f.path?.startsWith(DATA_DIR)) files.push({ path: f.path.slice(DATA_DIR.length), size: f.size ?? 0 });
-          }
-          offset += entries.length;
-          if (!entries.length || offset >= (page.totalFiles ?? 0)) break;
-        }
-        return { domain, files };
-      })();
-      this.listings.set(datasetId, pending);
-      pending.catch(() => this.listings.delete(datasetId));
-    }
-    return pending;
   }
 
   private catalogCache(): Promise<CatalogCache> {
@@ -201,7 +148,7 @@ export class CirroCollection implements Collection {
       pending = (async () => {
         const hit = (await this.cachedScans()).get(dataset.id);
         if (hit) return hit;
-        const { files } = await this.listing(dataset.id);
+        const { files } = await this.reader.listing(this.projectOf(dataset.id), dataset.id);
         const contents = datasetContents(files);
         const version = contents.version ? summarizeVersion(await this.manifest(dataset.id, contents.version)) : null;
         const scanned: ScanRecord = { datasetId: dataset.id, contents, version, scannedAt: new Date().toISOString() };
@@ -244,8 +191,8 @@ export class CirroCollection implements Collection {
       try {
         const detail = await this.cirro.data.datasets.getDataset({ projectId: project.id, datasetId });
         this.elsewhere.set(datasetId, project.id);
-        this.details.set(datasetId, Promise.resolve(detail));
-        return record(detail, processes);
+        this.reader.remember(detail);
+        return datasetRecord(detail, processes);
       } catch {
         // Not in this project (404) or not visible to this user (403): try the next.
       }
@@ -253,44 +200,16 @@ export class CirroCollection implements Collection {
     return null;
   }
 
-  private async context(datasetId: string): Promise<ProjectFileAccessContext> {
-    // Picks SHARED_DATASET_DOWNLOAD for a dataset shared into the project.
-    return ProjectFileAccessContext.datasetDownload({ id: this.projectOf(datasetId) }, await this.detail(datasetId));
+  openStore(datasetId: string, path: string, isFolder: boolean) {
+    return this.reader.openStore(this.projectOf(datasetId), datasetId, path, isFolder);
   }
 
-  private async sign(datasetId: string, path: string, minutes = 5): Promise<string> {
-    const [{ domain }, fileAccessContext] = await Promise.all([this.listing(datasetId), this.context(datasetId)]);
-    return retryRateLimited(() => this.cirro.files.getSignedUrlFromProjectFile(
-      { url: `${domain}/${DATA_DIR}${path}`, name: path.split('/').pop(), fileAccessContext },
-      { timeout: minutes },
-    ));
+  readFile(datasetId: string, path: string): Promise<Uint8Array> {
+    return this.reader.readFile(this.projectOf(datasetId), datasetId, path);
   }
 
-  async openStore(datasetId: string, path: string, isFolder: boolean) {
-    if (!isFolder) {
-      const sign = () => this.sign(datasetId, path, STORE_URL_MINUTES);
-      return openZarrStore(await sign(), sign);
-    }
-    const { files } = await this.listing(datasetId);
-    const prefix = `${path}/`;
-    const keys = files.filter((f) => f.path.startsWith(prefix)).map((f) => f.path.slice(prefix.length));
-    const folder: FolderAccess = {
-      signKeys: (wanted) => Promise.all(wanted.map((k) => this.sign(datasetId, `${prefix}${k}`, STORE_URL_MINUTES))),
-      listKeys: async (under) => keys.filter((k) => k.startsWith(under)),
-    };
-    // The folder URL only names the store for the reader's caches; it is never fetched.
-    return openZarrStore(`https://cirro-dataset.invalid/${datasetId}/${encodeURI(path)}/`, undefined, folder);
-  }
-
-  async readFile(datasetId: string, path: string): Promise<Uint8Array> {
-    const res = await fetch(await this.sign(datasetId, path));
-    if (!res.ok) throw new Error(`Reading ${path} from Cirro failed: HTTP ${res.status}.`);
-    return new Uint8Array(await res.arrayBuffer());
-  }
-
-  async fileUrl(datasetId: string, path: string) {
-    const refresh = () => this.sign(datasetId, path, STORE_URL_MINUTES);
-    return { url: await refresh(), refresh };
+  fileUrl(datasetId: string, path: string) {
+    return this.reader.fileUrl(this.projectOf(datasetId), datasetId, path);
   }
 
   async saveVersion(version: NewVersion, onProgress?: (fraction: number) => void) {
@@ -355,7 +274,7 @@ export class CirroCollection implements Collection {
   }
 
   async pipelines(datasetId: string | null, purpose: PipelinePurpose): Promise<PipelineLink[]> {
-    const [processes, input] = await Promise.all([this.processMap(), datasetId ? this.detail(datasetId) : null]);
+    const [processes, input] = await Promise.all([this.processMap(), datasetId ? this.reader.detail(this.projectOf(datasetId), datasetId) : null]);
     const launch = datasetId ? `${this.datasetUrl(datasetId)}/pipeline` : `${this.cirro.tenant.url}/project/${this.id}/pipeline`;
     return [...processes.values()]
       .filter((p) => this.usable(p) && p.executor !== 'INGEST' && (!input || p.parentProcessIds.includes(input.processId)))

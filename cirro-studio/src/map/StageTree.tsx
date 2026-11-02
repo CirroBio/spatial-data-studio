@@ -6,6 +6,7 @@ import { stageOf, type StageId } from '../app/library';
 import { useStudio } from '../app/studio';
 import { formatBytes, formatDate, plural } from '../app/ui';
 import { itemKey } from '../data/model';
+import { CreditLine } from '../item/CreditLine';
 import { PipelineLinks } from '../item/PipelineLinks';
 import { openWorkspaces, requestFor } from '../workspaces/request';
 import {
@@ -303,9 +304,7 @@ function Look({ node, byKey, onOpen, onReveal }: {
         <p className="muted">
           {[d?.processName, d?.createdBy ? `added by ${d.createdBy}` : null, node.date ? formatDate(node.date) : null].filter(Boolean).join(' · ')}
           {cirro && <> · <a href={cirro} target="_blank" rel="noreferrer">Open the dataset in Cirro ↗</a></>}
-          {d?.credit && (
-            <> · data <a href={d.credit.url} target="_blank" rel="noreferrer">{d.credit.source}</a>, {d.credit.by}, <a href={d.credit.licenseUrl} target="_blank" rel="noreferrer">{d.credit.license}</a></>
-          )}
+          {d?.credit && <> · <CreditLine credit={d.credit} /></>}
         </p>
         {(node.from.length > 0 || node.into.length > 0) && (
           <dl className="stage-tree-lineage">

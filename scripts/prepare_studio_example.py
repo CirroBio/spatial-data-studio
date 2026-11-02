@@ -8,8 +8,10 @@ resolution down. Transcripts, label images and the full-resolution image level a
 out, which is what keeps it near 12 MB.
 
 Reads test-data/xenium.zarr (make it with scripts/prepare_xenium_data.py) and writes
-cirro-studio/examples/xenium-human-lung.sdata.zarr.zip, a ZIP_STORED zip of the store
-with consolidated metadata, which is what the app reads by HTTP range:
+test-data/xenium-human-lung.sdata.zarr.zip, a ZIP_STORED zip of the store with
+consolidated metadata, which is what the app reads by HTTP range. The web app shows it as
+public data once it is uploaded to Cirro as a Files dataset and published with
+cirro-publish:
 
     .venv-introspect/bin/python scripts/prepare_studio_example.py
 """
@@ -26,7 +28,7 @@ from spatialdata.transformations import Scale
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SOURCE = os.path.join(ROOT, "test-data", "xenium.zarr")
-OUT = os.path.join(ROOT, "cirro-studio", "examples", "xenium-human-lung.sdata.zarr.zip")
+OUT = os.path.join(ROOT, "test-data", "xenium-human-lung.sdata.zarr.zip")
 IMAGE = "morphology_focus"
 BOUNDARIES = "cell_boundaries"
 

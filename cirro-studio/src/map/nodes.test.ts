@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { creditOf } from '../cirro/cirro-publication';
 import type { DatasetRecord } from '../data/model';
 import { labelLines, userTags } from './nodes';
 
@@ -34,5 +35,19 @@ describe('userTags', () => {
       { key: '', value: 'tumor' },
       { key: 'site', value: 'Seattle' },
     ]))).toEqual(['tumor', 'site: Seattle']);
+  });
+
+  it('leaves out credit tags when they make a credit, which needs a source or a license', () => {
+    const credited = record([
+      { key: '', value: 'credit.source: Xenium Human Lung' },
+      { key: '', value: 'credit.license: CC BY 4.0' },
+      { key: '', value: 'tumor' },
+    ]);
+    const credit = creditOf(credited.tags) ?? undefined;
+    expect(credit).toEqual({ source: 'Xenium Human Lung', license: 'CC BY 4.0' });
+    expect(userTags({ ...credited, credit })).toEqual(['tumor']);
+    const uncredited = record([{ key: '', value: 'credit.by: 10x Genomics' }]);
+    expect(creditOf(uncredited.tags)).toBeNull();
+    expect(userTags(uncredited)).toEqual(['credit.by: 10x Genomics']);
   });
 });

@@ -627,11 +627,11 @@ Schema file: [`backend/app/schemas/checkpoint/checkpoint_index.schema.json`](../
 relative to the page. This app's own writer (`backend/app/cirro.py`,
 `_write_viewer_index`) only ever emits `path` and `label` — `title` and
 `description` are reader-side conveniences a hand-authored manifest can add,
-not something this app currently produces. So are `folder` and `credit`, which only the
-web app reads (`cirro-studio/src/data/examples.ts`): its public data is a hand-authored
-index naming checkpoints published elsewhere by URL, and `credit` is the attribution a
-Creative Commons license asks of a copy — the source, its publisher, the license, and what
-was changed. Its `label` is each file's stem (§7),
+not something this app currently produces. So are `folder` and `credit`: a hand-authored index
+can file a checkpoint, and carry the attribution a Creative Commons license asks of a copy —
+the source, its publisher, the license, and what was changed. Nothing in this repo reads
+them now: the web app's public data is a Cirro publication, where folders and credit are
+dataset tags. Its `label` is each file's stem (§7),
 derived without opening the file; the session name recorded *inside* the file
 (§3) is what a reader shows once it has actually opened it.
 

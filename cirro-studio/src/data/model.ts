@@ -3,6 +3,7 @@
 // store, or a saved version of one. A dataset may hold several items (a sopa run writes
 // a store and images; a Spatial Data Studio run writes a full and a low-res store per
 // sample), and most datasets in a project hold none.
+import type { Credit } from '../cirro/cirro-publication';
 import type { Change } from '../stack/manifest';
 import type { ScanRecord } from './scan';
 
@@ -23,18 +24,8 @@ export interface DatasetRecord {
   // Set when the dataset reached the project through a share.
   share: string | null;
   // Whose data a public dataset is made from, under what license, and what was done to
-  // it: what a Creative Commons license asks a copy to say.
-  credit?: Credit;
-}
-
-export interface Credit {
-  // The dataset as its publisher titles it, and its page.
-  source: string;
-  url: string;
-  by: string;
-  license: string;
-  licenseUrl: string;
-  changes: string;
+  // it: what a Creative Commons license asks a copy to say. Only the fields its tags give.
+  credit?: Partial<Credit>;
 }
 
 export type ItemKind = 'image' | 'run' | 'store' | 'version';
@@ -110,12 +101,7 @@ export function itemsOf(dataset: DatasetRecord, scan: ScanRecord): CatalogItem[]
   ];
 }
 
-export const FOLDER_PREFIX = 'folder://';
+// Credit tags are plain text, "credit.<field>: <value>" (cirro-publication.ts creditOf).
+export const CREDIT_TAG_PREFIX = 'credit.';
 
-/** Cirro's folders, from the `Folder: folder://a/b` tags its datasets page writes, as
- * paths with empty segments dropped (`folder:///a//b/` is `a/b`). */
-export function foldersOf(tags: { key?: string | null; value: string }[]): string[] {
-  return tags.flatMap((t) => (t.value.startsWith(FOLDER_PREFIX)
-    ? [t.value.slice(FOLDER_PREFIX.length).split('/').filter(Boolean).join('/')].filter(Boolean)
-    : []));
-}
+export const FOLDER_PREFIX = 'folder://';

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { datasetContents, findRuns, findStores, storeLabel } from './discover';
-import { itemsOf, foldersOf, type DatasetRecord } from './model';
+import { folderPaths } from '../cirro/cirro-publication';
+import { itemsOf, type DatasetRecord } from './model';
 import { rowsOf, scansOf, type ScanRecord } from './scan';
 
 const files = (...paths: string[]) => paths.map((path) => ({ path, size: 10 }));
@@ -115,6 +116,6 @@ describe('the catalog', () => {
   });
 
   it('reads Cirro folders from folder tags, dropping empty segments', () => {
-    expect(foldersOf([{ key: 'Folder', value: 'folder:///RNAseq//Benchmarks/' }, { key: 'x', value: 'y' }])).toEqual(['RNAseq/Benchmarks']);
+    expect(folderPaths([{ value: 'folder:///RNAseq//Benchmarks/' }, { value: 'y' }])).toEqual(['RNAseq/Benchmarks']);
   });
 });

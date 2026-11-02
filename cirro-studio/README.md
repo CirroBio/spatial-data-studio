@@ -31,17 +31,20 @@ reads.
 ```bash
 echo 'VITE_TENANT_CLIENT_IDS=dev:<client id>' > cirro-studio/.env.local
 ```
-**Public Data** needs no sign-in. Its catalog is `examples/index.json`
-([`CHECKPOINT_FORMAT.md` §8](../docs/CHECKPOINT_FORMAT.md#8-indexjson--a-collection-of-checkpoints)):
-each path is resolved against the index, so an entry can name a store anywhere that
-answers range requests (and allows this app's origin, for another host) by its URL; its
-`folder` files it on the map, and its `credit` (source, publisher, license, what was
-changed) is shown with it, as a Creative Commons license asks. Today it lists this app's
-own raw-counts Xenium store and the docs site's demo checkpoints
-(`docs-site/viewer-data/`), which the dev server serves at `/examples/` and `/viewer/`,
-the way the Pages site lays them out. The About links go to `about/` beside the app,
-which only the assembled site has (`.github/workflows/docs.yml`). `npx vite --port <other>`
-runs it elsewhere for the examples alone; sign-in only returns to 5171.
+**Public Data** needs no sign-in. It reads the Cirro datasets `src/data/publicDatasets.json`
+lists, each a `{ baseUrl, uri }` pair naming a dataset in a Cirro publication: static
+copies of Cirro datasets in a public bucket, written by `cirro-publish`
+([Cirro-publish-data-objects](https://github.com/CirroBio/Cirro-publish-data-objects)).
+`src/cirro/cirro-publication.ts` is that repository's publication shim, copied in
+unchanged (never edit the copy; change the canonical file there). Through it a
+publication answers the same calls as a Cirro project (`src/cirro/datasetReader.ts`), so a
+dataset's Folder tags file it on the map, and its `credit.<field>: <value>` tags (source,
+publisher, license, what was changed) are shown as its credit, as a Creative Commons
+license asks. The list stays empty until Spatial Data Studio's publication
+(`published/spatial-data-studio`) holds its datasets. The About links go to `about/` beside
+the app, which only the assembled site has (`.github/workflows/docs.yml`).
+`npx vite --port <other>` runs it elsewhere for public data alone; sign-in only returns to
+5171.
 
 ```bash
 npm run test:studio                     # vitest
@@ -69,14 +72,16 @@ src/app/            shell, URL routing (route.ts), the catalog store (catalog.ts
                     project model (library.ts: stages, stores with their versions, figures,
                     lineage links), the studio context (studio.tsx)
 src/cirro/          everything that talks to Cirro: the project as a Collection
-                    (cirroCollection.ts: datasets, manifests, signed range reads, version
-                    uploads, pipeline links and upload data types, both matched by name),
+                    (cirroCollection.ts: datasets, version uploads, pipeline links and
+                    upload data types, both matched by name), reading a dataset's record,
+                    manifest and files from a project or a publication (datasetReader.ts),
+                    the publication shim (cirro-publication.ts, a copy; see above),
                     the catalog sheet (catalogSheet.ts),
                     provenance notes, error wording
 src/data/           the Collection interface both sources implement, discovery of stores,
                     runs and images from a file listing (discover.ts, which applies the
-                    workflow's own nextflow/data_types.json), the example collection
-                    (examples.ts) and browser storage (idb.ts)
+                    workflow's own nextflow/data_types.json), Public Data (examples.ts,
+                    the datasets publicDatasets.json lists) and browser storage (idb.ts)
 src/stack/          the version format: Cirro references, the Zarr v3 writer, the layered
                     store, the AnnData editor, layer.json, and opening a stack
 src/workbench/      an opened stack: its draft, edits into it, reopening, saving
@@ -105,7 +110,6 @@ src/workspaces/     Analysis Workspaces on chosen items: Cirro's
 src/add/            the Add Data page: per stage, the `cirro upload` command for this
                     Cirro and project (uploadCommand.ts) and the pipelines that make that
                     stage's data, each linking to Cirro's launch form
-examples/           the raw-counts example store (scripts/prepare_studio_example.py)
 deploy/tenants.json the tenants the published site serves
 cirro-permissions.json  what the registration grants, and why
 ```
@@ -198,7 +202,7 @@ The rest follows the app kit's workspace guide:
 ## Deploying
 
 `.github/workflows/docs.yml` builds the app with the docs site and publishes it at the
-site's root, with `examples/` beside it and `deploy/tenants.json` as its `tenants.json`;
+site's root, with `deploy/tenants.json` as its `tenants.json`;
 the docs are its About section, under `/about/`.
 Merging to `main` deploys it. No release tag is involved: the app doesn't ship in the
 Nextflow workflow's viewer bundle.

@@ -3,10 +3,9 @@ name: docs
 # Builds the Cirro app, the documentation site (docs-site/, VitePress over the repo's own
 # markdown) and the serverless viewer, and publishes all three to GitHub Pages: the app at
 # the site's root, the docs as its About section at /about/, the viewer at /viewer/. The demo
-# checkpoints are committed under docs-site/viewer-data/ (and the app's own example under
-# cirro-studio/examples/), so this job never downloads data and never needs Cirro
-# credentials — refresh them with scripts/fetch_example_checkpoints.py and
-# scripts/prepare_studio_example.py and commit the result.
+# checkpoints are committed under docs-site/viewer-data/, so this job never downloads data
+# and never needs Cirro credentials — refresh them with scripts/fetch_example_checkpoints.py
+# and commit the result. The app's own Public Data is read from its Cirro publication.
 #
 # Pages must be enabled once by hand: Settings -> Pages -> Source = GitHub Actions.
 on:
@@ -63,16 +62,14 @@ jobs:
         run: npm run docs:build
 
       - name: Assemble the Pages tree
-        # The Cirro app is the site's root, with its examples beside it and the deployed
-        # tenants in place of the development one. The docs site is the About section,
+        # The Cirro app is the site's root, with the deployed tenants in place of the
+        # development one. The docs site is the About section,
         # under /about/. /viewer/ ends up a valid standalone deployment in its own right
         # (DESIGN §14.3): index.html + assets + index.json + the .zarr.zip files in one
         # directory, which is what makes it browsable as a collection as well as
-        # embeddable per page; the app's example index names those demo checkpoints at
-        # ../viewer/ rather than copying them.
+        # embeddable per page.
         run: |
           cp -r cirro-studio/dist site
-          cp -r cirro-studio/examples site/examples
           cp cirro-studio/deploy/tenants.json site/tenants.json
           cp -r docs-site/.vitepress/dist site/about
           mkdir -p site/about/docs
