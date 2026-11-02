@@ -1,39 +1,27 @@
-// The example collection, open to anyone: the stores `examples/index.json` lists. That is
-// this app's own folder (cirro-studio/examples, served as `examples/`), and its paths are
-// resolved against it (docs/CHECKPOINT_FORMAT.md §8), so it can name a store published
-// anywhere that answers range requests, such as the public data bucket, by its URL.
-// Versions saved on them stay in this browser (browserStore.ts) — the same files a Cirro
-// dataset would hold.
-import { openZarrStore } from '@cirrobio/spatial-viewer';
+// Public data, open to anyone: the Cirro datasets `publicDatasets.json` lists, read from
+// their Cirro publications (static copies in a public bucket, written by cirro-publish)
+// with the same calls a project uses. Versions saved on them stay in this browser
+// (browserStore.ts) — the same files a Cirro dataset would hold.
+import type { Process } from '@cirrobio/api-client';
 import { APP_TAG } from '../app/appInfo';
+import type { DatasetReader } from '../cirro/datasetReader';
 import { parseManifest } from '../stack/manifest';
 import { getBrowserDataset, listBrowserDatasets, putBrowserDataset } from './browserStore';
 import type { Collection, NewVersion, PipelineLink, UploadType } from './collection';
-import { datasetContents, storeName } from './discover';
-import type { Credit, DatasetRecord } from './model';
+import { datasetContents } from './discover';
+import type { DatasetRecord } from './model';
+import publicDatasets from './publicDatasets.json';
 import { summarizeVersion, type ScanRecord } from './scan';
 
-interface ExampleIndex {
-  title?: string;
-  checkpoints: { path: string; label?: string; description?: string; folder?: string; credit?: Credit }[];
-}
+// A whole dataset (`cirro::<project>:dataset:<dataset>`) and the publication that holds it
+// (Cirro-publish-data-objects, SPEC.md "Dataset URIs").
+interface PublicDataset { baseUrl: string; uri: string }
+const PUBLIC_DATASETS: PublicDataset[] = publicDatasets;
+
+interface Published { reader: DatasetReader; projectId: string; processes: Promise<Map<string, Process>> }
 
 export const EXAMPLES_ID = 'examples';
-const EXAMPLE_PREFIX = 'example-';
-const EXAMPLE_FOLDER = 'Examples';
 const BROWSER_FOLDER = 'Saved in this browser';
-
-const indexUrl = () => new URL('examples/index.json', document.baseURI);
-const exampleUrl = (path: string) => new URL(path, indexUrl()).toString();
-
-// The total size of a static file, from the Content-Range of a one-byte read: what
-// the zip reader asks for first anyway, and what both Pages and the dev server answer.
-async function sizeOf(url: string): Promise<number> {
-  const res = await fetch(url, { headers: { Range: 'bytes=0-0' } });
-  if (!res.ok) throw new Error(`${url} answered HTTP ${res.status}.`);
-  await res.arrayBuffer();
-  return Number(res.headers.get('content-range')?.split('/')[1] ?? res.headers.get('content-length') ?? 0);
-}
 
 export class ExampleCollection implements Collection {
   readonly kind = 'examples' as const;
@@ -42,34 +30,38 @@ export class ExampleCollection implements Collection {
   readonly saveTarget = 'this browser (log in to Cirro to save to a project)';
   readonly catalogNote = null;
 
-  private index: Promise<ExampleIndex> | null = null;
+  private published: Promise<Map<string, Published>> | null = null;
   private readonly scans = new Map<string, Promise<ScanRecord>>();
 
-  private examples(): Promise<ExampleIndex> {
-    this.index ??= fetch(indexUrl()).then(async (res) => {
-      if (!res.ok) throw new Error(`The example index answered HTTP ${res.status}.`);
-      return (await res.json()) as ExampleIndex;
-    });
-    return this.index;
+  // The Cirro client loads only when public data is first read.
+  private publishedDatasets(): Promise<Map<string, Published>> {
+    this.published ??= (async () => {
+      const [{ createPublicationDataSource, parseDatasetUri }, { DatasetReader }] = await Promise.all([
+        import('../cirro/cirro-publication'), import('../cirro/datasetReader'),
+      ]);
+      const sources = new Map<string, Omit<Published, 'projectId'>>();
+      const byId = new Map<string, Published>();
+      for (const { baseUrl, uri } of PUBLIC_DATASETS) {
+        let source = sources.get(baseUrl);
+        if (!source) {
+          const publication = createPublicationDataSource({ baseUrl });
+          const processes = publication.dataService.processes.getProcesses({}).then((list) => new Map(list.map((p) => [p.id, p])));
+          source = { reader: new DatasetReader(publication), processes };
+          sources.set(baseUrl, source);
+        }
+        const { projectId, datasetId } = parseDatasetUri(uri);
+        byId.set(datasetId, { ...source, projectId });
+      }
+      return byId;
+    })();
+    return this.published;
   }
 
   async datasets(): Promise<DatasetRecord[]> {
-    const index = await this.examples();
-    const examples = index.checkpoints.map((c): DatasetRecord => ({
-      id: `${EXAMPLE_PREFIX}${storeName(c.path)}`,
-      name: c.label ?? storeName(c.path),
-      description: c.description ?? '',
-      processId: 'example',
-      processName: 'Example store (Spatial Data Studio)',
-      status: 'COMPLETED',
-      createdAt: '',
-      createdBy: '',
-      tags: [],
-      folders: [c.folder ?? EXAMPLE_FOLDER],
-      sourceIds: [],
-      share: null,
-      credit: c.credit,
-    }));
+    const { datasetRecord } = await import('../cirro/datasetReader');
+    const published = await Promise.all([...(await this.publishedDatasets())].map(
+      async ([datasetId, { reader, projectId, processes }]) => datasetRecord(await reader.detail(projectId, datasetId), await processes),
+    ));
     const saved = (await listBrowserDatasets()).map((d): DatasetRecord => ({
       id: d.id,
       name: d.name,
@@ -84,7 +76,7 @@ export class ExampleCollection implements Collection {
       sourceIds: d.sourceIds,
       share: null,
     }));
-    return [...examples, ...saved];
+    return [...published, ...saved];
   }
 
   worthScanning(): boolean {
@@ -95,10 +87,11 @@ export class ExampleCollection implements Collection {
     let pending = this.scans.get(dataset.id);
     if (!pending) {
       pending = (async () => {
-        const example = await this.examplePath(dataset.id);
-        const contents = example
-          ? datasetContents([{ path: example.slice(example.lastIndexOf('/') + 1), size: await sizeOf(exampleUrl(example)) }])
-          : datasetContents((await this.browserDataset(dataset.id)).files.map((f) => ({ path: f.name, size: f.bytes.length })));
+        const published = (await this.publishedDatasets()).get(dataset.id);
+        const files = published
+          ? (await published.reader.listing(published.projectId, dataset.id)).files
+          : (await this.browserDataset(dataset.id)).files.map((f) => ({ path: f.name, size: f.bytes.length }));
+        const contents = datasetContents(files);
         const version = contents.version ? summarizeVersion(await this.manifest(dataset.id, contents.version)) : null;
         return { datasetId: dataset.id, contents, version, scannedAt: new Date().toISOString() };
       })();
@@ -108,17 +101,10 @@ export class ExampleCollection implements Collection {
     return pending;
   }
 
-  private async examplePath(datasetId: string): Promise<string | null> {
-    if (!datasetId.startsWith(EXAMPLE_PREFIX)) return null;
-    const index = await this.examples();
-    return index.checkpoints.find((c) => `${EXAMPLE_PREFIX}${storeName(c.path)}` === datasetId)?.path ?? null;
-  }
-
-  // An example's dataset is the folder its store is published in, holding that one store
-  // under its file name.
-  private async exampleRoot(datasetId: string): Promise<string | null> {
-    const path = await this.examplePath(datasetId);
-    return path === null ? null : new URL('.', exampleUrl(path)).toString();
+  private async publishedDataset(datasetId: string): Promise<Published> {
+    const published = (await this.publishedDatasets()).get(datasetId);
+    if (!published) throw new Error(`Dataset ${datasetId} is not public data.`);
+    return published;
   }
 
   private async browserDataset(datasetId: string) {
@@ -136,28 +122,21 @@ export class ExampleCollection implements Collection {
   }
 
   async openStore(datasetId: string, path: string, isFolder: boolean) {
-    const root = await this.exampleRoot(datasetId);
-    if (isFolder || !root) throw new Error(`No example store at ${datasetId}/${path}.`);
-    return openZarrStore(new URL(path, root).toString());
+    const { reader, projectId } = await this.publishedDataset(datasetId);
+    return reader.openStore(projectId, datasetId, path, isFolder);
   }
 
   async readFile(datasetId: string, path: string): Promise<Uint8Array> {
-    const root = await this.exampleRoot(datasetId);
-    if (root) {
-      const res = await fetch(new URL(path, root));
-      if (!res.ok) throw new Error(`${path} answered HTTP ${res.status}.`);
-      return new Uint8Array(await res.arrayBuffer());
-    }
+    const published = (await this.publishedDatasets()).get(datasetId);
+    if (published) return published.reader.readFile(published.projectId, datasetId, path);
     const file = (await this.browserDataset(datasetId)).files.find((f) => f.name === path);
     if (!file) throw new Error(`Dataset ${datasetId} has no file ${path}.`);
     return file.bytes;
   }
 
   async fileUrl(datasetId: string, path: string) {
-    const root = await this.exampleRoot(datasetId);
-    if (!root) throw new Error(`No example file at ${datasetId}/${path}.`);
-    const url = new URL(path, root).toString();
-    return { url, refresh: async () => url };
+    const { reader, projectId } = await this.publishedDataset(datasetId);
+    return reader.fileUrl(projectId, datasetId, path);
   }
 
   async saveVersion(version: NewVersion): Promise<{ datasetId: string; noteProblem: string | null }> {

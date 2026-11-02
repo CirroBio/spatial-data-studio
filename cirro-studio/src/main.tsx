@@ -107,15 +107,15 @@ async function startTenant(tenant: Tenant) {
     return current.access_token;
   };
   // The Cirro client and the code that reads projects load only for a signed-in visit.
-  const [{ DataService, FileService }, { CirroCollection }, { forgetBrowserCatalog }] = await Promise.all([
-    import('@cirrobio/sdk'), import('./cirro/cirroCollection'), import('./cirro/catalogSheet'),
+  const [{ createCirroDataSource }, { CirroCollection }, { forgetBrowserCatalog }] = await Promise.all([
+    import('./cirro/cirro-publication'), import('./cirro/cirroCollection'), import('./cirro/catalogSheet'),
   ]);
-  const data = new DataService({ basePath: `${tenant.url}/api`, tokenGetter });
+  const { dataService: data, fileService: files } = createCirroDataSource({ basePath: `${tenant.url}/api`, tokenGetter });
   const username = usernameOf(user);
   const session: CirroSession = {
     tenant,
     data,
-    files: new FileService(data.file),
+    files,
     username,
     displayName: typeof user.profile.email === 'string' ? user.profile.email : username,
     tenantName,

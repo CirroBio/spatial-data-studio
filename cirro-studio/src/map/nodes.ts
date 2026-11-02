@@ -5,7 +5,7 @@ import { APP_TAG } from '../app/appInfo';
 import type { CatalogState } from '../app/catalog';
 import type { Library, StageId } from '../app/library';
 import type { DatasetRecord, ImageItem, RunItem } from '../data/model';
-import { FOLDER_PREFIX } from '../data/model';
+import { CREDIT_TAG_PREFIX, FOLDER_PREFIX } from '../data/model';
 import type { Fact } from './browse';
 
 export interface StageNode {
@@ -30,11 +30,13 @@ export interface StageNode {
   facts: Fact[];
 }
 
-/** Tags a person gave the dataset: not the app's own bookkeeping, not folders. */
+/** Tags a person gave the dataset: not the app's own bookkeeping, not folders, not the
+ * credit tags it already shows as its credit. */
 export function userTags(d: DatasetRecord | undefined): string[] {
   return (d?.tags ?? [])
     // Versions saved before tags became plain values also carry keyed `spatial-data-studio.*` ones.
     .filter((t) => t.value !== APP_TAG.value && !t.key.startsWith(`${APP_TAG.value}.`) && !t.value.startsWith(FOLDER_PREFIX))
+    .filter((t) => !(d?.credit && t.value.startsWith(CREDIT_TAG_PREFIX)))
     .map((t) => (t.key ? `${t.key}: ${t.value}` : t.value));
 }
 
@@ -125,7 +127,8 @@ export function stageNodes(library: Library, catalog: Pick<CatalogState, 'byId'>
       if (entity.versions.some((v) => ds(v.datasetId)?.processId === BROWSER_VERSION)) out.push({ key: 'browser', text: 'versions in this browser' });
     }
     if (n.stage === 'figures') out.push({ key: 'in', text: `in “${n.datasetName}”` });
-    if (n.dataset?.credit) out.push({ key: 'credit', text: `${n.dataset.credit.by} · ${n.dataset.credit.license}`, group: n.dataset.credit.by });
+    const credit = n.dataset?.credit;
+    if (credit) out.push({ key: 'credit', text: [credit.by, credit.license].filter(Boolean).join(' · '), group: credit.by ?? credit.license });
     // An item that isn't the whole of its dataset says which dataset it is in.
     if (n.stage !== 'spatial' && n.stage !== 'figures' && n.dataset && n.dataset.name !== n.label) out.push({ key: 'dataset', text: `in ${n.dataset.name}` });
     if (n.tags.length) out.push({ key: 'tags', text: n.tags.join(' · '), all: `all tagged ${n.tags.join(' · ')}` });
