@@ -46,7 +46,7 @@ import {
 } from "@cirrobio/api-client";
 import { ApiError, DataService, DownloadableFile, FileService, GetSignedUrlOptions, ProjectFileAccessContext } from "@cirrobio/sdk";
 
-export const SHIM_VERSION = 3;
+export const SHIM_VERSION = 4;
 
 // ---------------------------------------------------------------------------------------------
 // Data sources: what an app constructs instead of DataService and FileService.
@@ -81,11 +81,22 @@ export function createPublicationDataSource(options: PublicationOptions): DataSo
   };
 }
 
-/** Returns public https:// file URLs unchanged and signs s3:// ones, so it serves both sources. */
+/** Returns public file URLs without signing and signs s3:// ones, so it serves both sources. */
 export class PassThroughFileService extends FileService {
   override async getSignedUrlFromProjectFile(file: DownloadableFile, params?: GetSignedUrlOptions): Promise<string> {
-    return file.url.startsWith("s3://") ? super.getSignedUrlFromProjectFile(file, params) : file.url;
+    return file.url.startsWith("s3://") ? super.getSignedUrlFromProjectFile(file, params) : encodeFileUrl(file.url);
   }
+}
+
+/**
+ * Percent-encodes each path segment of a file URL joined from raw manifest paths, as the SDK's
+ * ManifestParser joins `${domain}/${path}`. S3 reads a literal "+" in a path as a space, so a
+ * file named "IgM+" is unreadable unless encoded. The base URL itself must not be percent-encoded.
+ */
+export function encodeFileUrl(url: string): string {
+  const match = /^([a-z][a-z0-9+.-]*:\/\/[^/]*)(\/.*)?$/i.exec(url);
+  const [origin, path] = match ? [match[1], match[2] ?? ""] : ["", url];
+  return origin + path.split("/").map(encodeURIComponent).join("/");
 }
 
 const API_BASE_PATH = "/api";
