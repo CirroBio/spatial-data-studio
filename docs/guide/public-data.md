@@ -68,7 +68,8 @@ and, if you like, how the map shows it:
 `label` and `description` name and describe it, `folder` files it (a `/` nests folders),
 `from` draws its lineage from the stores it was made from, and `credit` says whose data it
 is. Anyone who adds the address sees the same project, and nothing about it passes
-through Spatial Data Studio. A pipeline run's `results/` folder already carries an
+through Spatial Data Studio. To show one store on its own, with no `index.json` and nothing
+to add in Settings, [link to it](link-a-dataset.md) instead. A pipeline run's `results/` folder already carries an
 `index.json` of this kind. [`CHECKPOINT_FORMAT.md`](../CHECKPOINT_FORMAT.md#8-indexjson--a-collection-of-checkpoints)
 lists every field.
 

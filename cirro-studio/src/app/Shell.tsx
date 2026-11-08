@@ -1,11 +1,11 @@
 import { lazy, Suspense, useState, type ReactNode } from 'react';
 import { describeError, type CirroSession } from '../cirro/session';
 import { usePublicProjects } from '../data/publicProjects';
-import { forgetTenant, showHome, showSignIn } from '../tenants';
+import { forgetTenant, homeUrl, showHome, showSignIn, showSignInTab } from '../tenants';
 import { About } from './About';
 import type { CirroProject } from './App';
 import { APP_NAME, APP_VERSION } from './appInfo';
-import { navigate, useRoute } from './route';
+import { navigate, openedStore, useRoute } from './route';
 import { useOptionalStudio } from './studio';
 import { Popover } from './ui';
 import { countCirroDrafts } from '../workbench/workbench';
@@ -16,7 +16,7 @@ const Workspaces = lazy(() => import('../workspaces/Workspaces'));
 const Chevron = () => <svg className="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.6" /></svg>;
 
 // Projects are one list: the user's Cirro projects, when logged in, and the public ones.
-function ProjectPicker({ projects, loggedIn, onSettings }: { projects: CirroProject[] | null; loggedIn: boolean; onSettings: () => void }) {
+function ProjectPicker({ projects, loggedIn, onSettings }: { projects: CirroProject[] | null; loggedIn: boolean; onSettings?: () => void }) {
   const route = useRoute();
   const [filter, setFilter] = useState('');
   const publicProjects = usePublicProjects().flatMap((p) => (p.status === 'ready' ? [p.project] : []));
@@ -43,7 +43,7 @@ function ProjectPicker({ projects, loggedIn, onSettings }: { projects: CirroProj
           <p className="menu-heading">Public projects</p>
           {publicProjects.filter((p) => matches(p.name)).map((p) => item(p, close))}
           {!publicProjects.length && <p className="menu-note muted">None listed.</p>}
-          <button type="button" className="menu-item" onClick={() => { close(); onSettings(); }}>Manage public projects…</button>
+          {onSettings && <button type="button" className="menu-item" onClick={() => { close(); onSettings(); }}>Manage public projects…</button>}
         </div>
       )}
     </Popover>
@@ -51,7 +51,7 @@ function ProjectPicker({ projects, loggedIn, onSettings }: { projects: CirroProj
 }
 
 // What read-only means here, and how to keep work for good.
-function ReadOnlyBadge({ loggedIn }: { loggedIn: boolean }) {
+function ReadOnlyBadge({ loggedIn, onSignIn }: { loggedIn: boolean; onSignIn: () => void }) {
   return (
     <Popover className="shell-access" label="Read-only">
       {() => (
@@ -60,7 +60,7 @@ function ReadOnlyBadge({ loggedIn }: { loggedIn: boolean }) {
           {loggedIn ? <p className="muted">To keep your work in Cirro, open a project you can add to.</p> : (
             <>
               <p className="muted">Log in to Cirro to open your own projects, where what you save is kept for your team.</p>
-              <button type="button" className="button button-primary" onClick={showSignIn}>Log In (Cirro)</button>
+              <button type="button" className="button button-primary" onClick={onSignIn}>Log In (Cirro)</button>
             </>
           )}
         </div>
@@ -99,7 +99,7 @@ function CatalogStatus() {
 // Where the app goes once logged out: the start page, or the log-in box for another Cirro.
 type Leaving = { next: () => void };
 
-function AccountMenu({ session, onSettings }: { session: CirroSession | null; onSettings: () => void }) {
+function AccountMenu({ session, onSettings, onSignIn }: { session: CirroSession | null; onSettings?: () => void; onSignIn: () => void }) {
   const [problem, setProblem] = useState<Leaving & { message: string } | null>(null);
   const [unsaved, setUnsaved] = useState<Leaving & { drafts: number } | null>(null);
   const [about, setAbout] = useState(false);
@@ -107,9 +107,9 @@ function AccountMenu({ session, onSettings }: { session: CirroSession | null; on
   if (!session) {
     return (
       <>
-        <button type="button" className="topbar-button" onClick={onSettings}>Settings</button>
+        {onSettings && <button type="button" className="topbar-button" onClick={onSettings}>Settings</button>}
         <button type="button" className="topbar-button" onClick={() => setAbout(true)}>About</button>
-        <button type="button" className="button button-primary shell-log-in" onClick={showSignIn}>Log In (Cirro)</button>
+        <button type="button" className="button button-primary shell-log-in" onClick={onSignIn}>Log In (Cirro)</button>
         {aboutDialog}
       </>
     );
@@ -136,7 +136,7 @@ function AccountMenu({ session, onSettings }: { session: CirroSession | null; on
         label={<><span className="shell-account-name">{session.tenantName} · {session.displayName}</span> <Chevron /></>}>
         {(close) => (
           <div className="menu" role="menu">
-            <button type="button" className="menu-item" onClick={() => { close(); onSettings(); }}>Settings</button>
+            {onSettings && <button type="button" className="menu-item" onClick={() => { close(); onSettings(); }}>Settings</button>}
             <button type="button" className="menu-item" onClick={() => { close(); void askToLogOut(showSignIn); }}>Log in to another Cirro</button>
             <button type="button" className="menu-item" onClick={() => { close(); setAbout(true); }}>About {APP_NAME}</button>
             <button type="button" className="menu-item" onClick={() => { close(); void askToLogOut(showHome); }}>Log out</button>
@@ -176,27 +176,35 @@ function AccountMenu({ session, onSettings }: { session: CirroSession | null; on
 // The session comes from App rather than the studio: the shell also frames the pages
 // shown before a project opens, where the account menu still has to offer Log out.
 export function Shell({ session, projects, onSettings, children }: {
-  session: CirroSession | null; projects: CirroProject[] | null; onSettings: () => void; children: ReactNode;
+  session: CirroSession | null; projects: CirroProject[] | null; children: ReactNode;
+  // Absent for a store opened by its address, which lists no public projects to manage.
+  onSettings?: () => void;
 }) {
   const studio = useOptionalStudio();
   const readOnly = studio?.collection.access === 'read';
+  // A store opened by its address stands alone, perhaps in another site's frame: no
+  // projects to pick, and the rest of the app, logging in included, in a tab of its own.
+  const lone = openedStore() !== null;
+  const signIn = lone ? showSignInTab : showSignIn;
   return (
     <div className="shell">
       <header className="shell-topbar">
-        <button type="button" className="shell-appname" onClick={() => navigate({ section: 'home' })}>{APP_NAME}</button>
+        {lone
+          ? <a className="shell-appname" href={homeUrl()} target="_blank" rel="noreferrer" title={`Open ${APP_NAME} in a new tab`}>{APP_NAME}</a>
+          : <button type="button" className="shell-appname" onClick={() => navigate({ section: 'home' })}>{APP_NAME}</button>}
         <nav className="shell-breadcrumb" aria-label="Project">
-          <ProjectPicker projects={projects} loggedIn={session !== null} onSettings={onSettings} />
-          {readOnly && <ReadOnlyBadge loggedIn={session !== null} />}
+          {!lone && <ProjectPicker projects={projects} loggedIn={session !== null} onSettings={onSettings} />}
+          {readOnly && <ReadOnlyBadge loggedIn={session !== null} onSignIn={signIn} />}
         </nav>
         <span className="shell-spacer" />
-        <CatalogStatus />
+        {!lone && <CatalogStatus />}
         {studio && !readOnly && (
           <button type="button" className="topbar-button" title="Upload data, or make it with a pipeline" onClick={() => navigate({ section: 'add', dataset: null })}>
             Add Data
           </button>
         )}
         {session && studio && !readOnly && <Suspense fallback={null}><Workspaces session={session} /></Suspense>}
-        <AccountMenu session={session} onSettings={onSettings} />
+        <AccountMenu session={session} onSettings={onSettings} onSignIn={signIn} />
       </header>
       <main className="shell-main">{children}</main>
     </div>

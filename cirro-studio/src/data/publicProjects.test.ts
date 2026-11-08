@@ -142,3 +142,31 @@ describe('the public projects this browser lists', () => {
     expect(m.publicProjectsSnapshot().map((p) => p.url)).toEqual([m.DEFAULT_PUBLIC_PROJECT]);
   });
 });
+
+describe('openedStoreProject', () => {
+  const SIGNED = 'https://lab.s3.amazonaws.com/sections/Mouse%20brain-0123456789ab.sdata.zarr.zip?X-Amz-Expires=600&X-Amz-Signature=';
+
+  it('opens a .zarr.zip as a project of that one store, named after its file', async () => {
+    const { openedStoreProject } = await load();
+    const opened = openedStoreProject(`${SIGNED}aaa`);
+    expect(opened.project).toMatchObject({ kind: 'store', url: `${SIGNED}aaa`, name: 'Mouse brain' });
+    expect(opened.path).toBe('Mouse brain-0123456789ab.sdata.zarr.zip');
+  });
+
+  it('knows a store by its address without the query, so a link signed again is the same project', async () => {
+    const { openedStoreProject } = await load();
+    const first = openedStoreProject(`${SIGNED}aaa`);
+    const again = openedStoreProject(`${SIGNED}bbb`);
+    expect(again.project.id).toBe(first.project.id);
+    expect(again.datasetId).toBe(first.datasetId);
+    expect(openedStoreProject('https://lab.s3.amazonaws.com/sections/other.zarr.zip').project.id).not.toBe(first.project.id);
+  });
+
+  it('refuses an address that is not an https .zarr.zip', async () => {
+    const { openedStoreProject } = await load();
+    for (const address of ['not an address', 'http://lab.example.org/a.zarr.zip', 'https://lab.example.org/a.zarr/', 'https://lab.example.org/page.html?f=a.zarr.zip']) {
+      expect(() => openedStoreProject(address)).toThrow('.zarr.zip');
+    }
+    expect(openedStoreProject('http://localhost:8080/a.zarr.zip').path).toBe('a.zarr.zip');
+  });
+});

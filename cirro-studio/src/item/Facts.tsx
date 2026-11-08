@@ -3,7 +3,7 @@
 import type { ReactNode } from 'react';
 import type { CatalogItem } from '../data/model';
 import { stageOf, type Library, type StageId } from '../app/library';
-import { backToMap, openItem, STAGE_PARAM, useRoute } from '../app/route';
+import { backToMap, openedStore, openItem, STAGE_PARAM, useRoute } from '../app/route';
 import { useStudio } from '../app/studio';
 import { formatBytes, formatDate, Popover, tint } from '../app/ui';
 import { openWorkspaces, requestFor } from '../workspaces/request';
@@ -27,10 +27,13 @@ export function Facts({ title, item, origin, kind, stage, from, into, extra, uns
   const { color, label } = stageOf(stage);
   return (
     <div className="facts" style={tint(color)}>
-      <button type="button" className="facts-back" title="Back to the map" onClick={() => backToMap(fromStage)}>
-        <svg className="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3L5 8l5 5" fill="none" stroke="currentColor" strokeWidth="1.6" /></svg>
-        {fromStage ? label : 'All data'}
-      </button>
+      {/* A store opened by its address has no map to go back to. */}
+      {openedStore() === null && (
+        <button type="button" className="facts-back" title="Back to the map" onClick={() => backToMap(fromStage)}>
+          <svg className="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3L5 8l5 5" fill="none" stroke="currentColor" strokeWidth="1.6" /></svg>
+          {fromStage ? label : 'All data'}
+        </button>
+      )}
       <h1 className="facts-title">{title}</h1>
       <span className="facts-kind"><span className="dot" /> {kind}</span>
       {item.size > 0 && <span>{formatBytes(item.size)}</span>}

@@ -54,6 +54,7 @@ any web server, or a frame in a dashboard.
 | --- | --- |
 | See what the app does, or explore public data | the web app, as it opens |
 | Show your own data to anyone, with no account | a folder with an `index.json`, added in the web app's Settings ([Show your own data](public-data.md#show-your-own-data)) |
+| Link to one of your datasets from your own page, with the analyses | the web app, opened on the file's address ([Link to your own dataset](link-a-dataset.md)) |
 | Look at and analyze your own data, and share results with your team | the web app, logged in to Cirro |
 | Run a squidpy or scanpy function the web app doesn't offer, or a recipe | an Analysis Workspace, started from the web app |
 | Work on data on your own computer, or have an AI assistant drive the app | an Analysis Workspace, run with Docker |
@@ -68,6 +69,8 @@ any web server, or a frame in a dashboard.
   saving versions, and working as a team.
 - [Analyze in the browser](analyze.md): the analyses, their reports, figures, and how the
   results compare with scanpy and squidpy.
+- [Link to your own dataset](link-a-dataset.md): a link that opens one dataset in the web
+  app from wherever you host it, presigned URLs included, and how to prepare the file.
 - [Analysis Workspaces](analysis-workspaces.md): starting one, sharing it, and everything
   it adds.
 - [Run it with Docker](docker.md): an Analysis Workspace on your own computer, and the AI

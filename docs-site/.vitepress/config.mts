@@ -135,6 +135,7 @@ export default defineConfig({
           { text: 'Explore public data', link: '/docs/guide/public-data' },
           { text: 'Your data in Cirro', link: '/docs/guide/cirro' },
           { text: 'Analyze in the browser', link: '/docs/guide/analyze' },
+          { text: 'Link to your own dataset', link: '/docs/guide/link-a-dataset' },
           {
             text: 'Analysis Workspaces',
             link: '/docs/guide/analysis-workspaces',

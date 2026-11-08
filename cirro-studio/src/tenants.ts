@@ -154,6 +154,8 @@ function openWith(params: Record<string, string>) {
 
 /** Logging in starts with the choice of tenant: a deployment can serve several. */
 export const showSignIn = () => window.location.assign(signInUrl());
+/** The log-in box in a tab of its own, from a page that may sit in another site's frame. */
+export const showSignInTab = () => void window.open(signInUrl(), '_blank', 'noopener');
 export const showHome = () => window.location.assign(homeUrl());
 
 export function chooseTenant(t: Tenant) {
