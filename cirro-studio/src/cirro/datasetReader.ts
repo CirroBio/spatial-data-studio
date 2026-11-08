@@ -1,6 +1,7 @@
 // Reading Cirro datasets: their records, their file listings and their files. The same
 // calls serve a Cirro tenant (files signed for the signed-in user) and a publication
-// (cirro-publication.ts: files at public URLs), so a project and Public Data read alike.
+// (cirro-publication.ts: files at public URLs), so a Cirro project and a public project
+// read alike.
 import type { Dataset, DatasetDetail, Process } from '@cirrobio/api-client';
 import { openZarrStore, type FolderAccess } from '@cirrobio/spatial-viewer';
 import type { ListedFile } from '../data/discover';

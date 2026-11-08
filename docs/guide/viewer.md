@@ -15,7 +15,7 @@ Studio's workflow made or an Analysis Workspace
 A saved checkpoint is a single `.zarr.zip` the viewer can read on its own. Open the viewer
 with `?checkpoint=<url>` and it reads that file directly over HTTP range requests: the
 tissue image, the cells, the cell-boundary shapes, the text and shape annotations drawn on
-the dataset, and every display setting (color by any obs column or gene, palettes and
+the dataset, and every display setting (color by any annotation or gene, palettes and
 per-category colors, point size and shape, channel colors and contrast, legends, layer
 visibility, pan and zoom) work exactly as they do in an Analysis Workspace, with no
 backend and no server to run. It streams only what the current view needs rather than

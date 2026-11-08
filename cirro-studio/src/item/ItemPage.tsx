@@ -43,15 +43,18 @@ export default function ItemPage() {
   const { item, error } = useItem(route.dataset, path);
   const fromStage = route.params.has(STAGE_PARAM);
 
+  // Esc closes the open task but never leaves the dataset: it is the reflex for closing a
+  // menu, and leaving would lose the view.
   useEffect(() => {
+    if (route.section !== 'task') return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.defaultPrevented || document.querySelector('.popover-panel, .modal')) return;
-      if (route.section === 'task') stepBack({ section: 'item', 'spatial-data-studio.task': null });
-      else backToMap(fromStage);
+      if (e.target instanceof Element && e.target.closest('input, select, textarea')) return;
+      stepBack({ section: 'item', 'spatial-data-studio.task': null });
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [route.section, fromStage]);
+  }, [route.section]);
 
   if (error) {
     return (

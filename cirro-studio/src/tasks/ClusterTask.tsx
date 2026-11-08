@@ -29,7 +29,7 @@ export default function ClusterTask({ wb, unit }: TaskProps) {
   const run = async () => {
     setProblem(null);
     try {
-      const matrix = await readMatrix(wb.key, handle);
+      const matrix = await job.prepare('Reading the expression matrix', readMatrix(wb.key, handle));
       const result = await job.run('cluster', { matrix, resolution });
       if (!result) return;
       const column = name.trim();
@@ -65,11 +65,7 @@ export default function ClusterTask({ wb, unit }: TaskProps) {
 
   return (
     <div className="task-body">
-      <p className="muted">
-        Groups the cells by their expression, the way scanpy does by default: counts are normalized and log-transformed,
-        the most variable genes go into a PCA, and Leiden finds communities in the cells' nearest-neighbor graph.
-        The clusters open as a report.
-      </p>
+      <p className="muted">Groups {unit}s with similar expression (Leiden, as scanpy does it). The report says how.</p>
       <label className="field">
         <span>Resolution: {resolution.toFixed(1)} <span className="muted">(higher gives more, smaller clusters)</span></span>
         <input type="range" min={0.1} max={3} step={0.1} value={resolution} onChange={(e) => setResolution(Number(e.target.value))} />

@@ -49,7 +49,7 @@ describe('startOf', () => {
   });
 
   it('opens the saved tenant on other page loads only while logged in to it', () => {
-    expect(startOf(tenants)).toEqual({ screen: 'landing' });
+    expect(startOf(tenants)).toEqual({ tenant: 'public' });
     signedIn(tenants[1]);
     expect(startOf(tenants)).toEqual({ tenant: tenants[1] });
   });
@@ -60,11 +60,11 @@ describe('startOf', () => {
     expect(startOf(tenants)).toEqual({ tenant: tenants[1] });
   });
 
-  it('opens the examples and the log-in box by their URLs', () => {
-    location.search = '?tenant=examples&project=examples';
-    expect(startOf(tenants)).toEqual({ tenant: 'examples' });
+  it('opens the public projects and the log-in box by their URLs', () => {
+    location.search = '?tenant=public';
+    expect(startOf(tenants)).toEqual({ tenant: 'public' });
     location.search = '?sign-in';
-    expect(startOf(tenants)).toEqual({ screen: 'sign-in' });
+    expect(startOf(tenants)).toEqual({ signIn: true });
   });
 });
 
@@ -114,8 +114,8 @@ describe('loadTenants', () => {
     expect((await listing({ url: 'https://a.cirro.bio' }))[0].clientId).toBeUndefined();
   });
 
-  it('keeps the examples\' id for the examples', async () => {
-    await expect(listing({ id: 'examples', url: 'https://a.cirro.bio' })).rejects.toThrow('keeps it for its examples');
+  it('keeps the id "public" for the public projects', async () => {
+    await expect(listing({ id: 'public', url: 'https://a.cirro.bio' })).rejects.toThrow('keeps it for public projects');
   });
 });
 
@@ -152,6 +152,6 @@ describe('the log-in box', () => {
     localStorage.setItem('spatial-data-studio.tenant', 'cirro.example.org');
     expect(startOf(listed)).toEqual({ tenant: { id: 'cirro.example.org', name: 'cirro.example.org', url: 'https://cirro.example.org' } });
     location.search = '?tenant=evil.example.com';
-    expect(startOf(listed)).toEqual({ screen: 'sign-in', unknownFromUrl: 'evil.example.com' });
+    expect(startOf(listed)).toEqual({ signIn: true, unknownFromUrl: 'evil.example.com' });
   });
 });

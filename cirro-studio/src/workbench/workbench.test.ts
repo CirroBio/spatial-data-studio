@@ -4,7 +4,7 @@ import ZipFileStore from '@zarrita/storage/zip';
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { describe, expect, it, vi } from 'vitest';
-import { ExampleCollection } from '../data/examples';
+import { PublicProject } from '../data/publicProject';
 import type { StackEditor } from '../stack/editor';
 import { applyEdit, useWorkbench, type Workbench } from './workbench';
 
@@ -25,7 +25,7 @@ vi.mock('../data/idb', () => {
 const DEMO = resolve(__dirname, '../../../docs-site/viewer-data/visium-human-colon.sdata.zarr.zip');
 const OPEN_TIMEOUT_MS = 30_000;
 
-class DemoCollection extends ExampleCollection {
+class DemoCollection extends PublicProject {
   override async openStore() {
     return ZipFileStore.fromBlob(new Blob([readFileSync(DEMO)]));
   }
@@ -35,7 +35,7 @@ class DemoCollection extends ExampleCollection {
 async function openDemo(datasetId: string) {
   const seen: { wb: Workbench | null } = { wb: null };
   const top = { datasetId, path: 'demo.zarr.zip', kind: 'store' as const };
-  const collection = new DemoCollection();
+  const collection = new DemoCollection({ kind: 'publication', url: 'https://example.invalid/published/demo', id: 'demo', name: 'Demo', description: '' });
   function Probe() {
     seen.wb = useWorkbench(collection, top);
     return null;

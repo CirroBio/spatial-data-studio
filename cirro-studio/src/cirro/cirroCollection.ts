@@ -1,10 +1,12 @@
 // A Cirro project as the app's collection: its datasets, what each holds (from the
 // project's catalog, listing files only for datasets nobody has scanned), signed reads of
-// their files, and new versions uploaded as datasets of their own.
+// their files, and new versions uploaded as datasets of their own. A user who can only
+// read the project saves versions in this browser instead, as on a public project.
 import { EntityType, ProjectAccessType, type Process } from '@cirrobio/api-client';
 import { ProjectFileAccessContext, uploadFile } from '@cirrobio/sdk';
 import { APP_TAG } from '../app/appInfo';
-import type { Collection, NewVersion, PipelineLink, PipelinePurpose, UploadStage, UploadType } from '../data/collection';
+import { browserFile, browserListing, browserRecord, listBrowserDatasets, saveInBrowser } from '../data/browserStore';
+import type { Collection, NewVersion, PipelineLink, PipelinePurpose, ProjectAccess, UploadStage, UploadType } from '../data/collection';
 import { datasetContents } from '../data/discover';
 import { FOLDER_PREFIX, type DatasetRecord } from '../data/model';
 import { summarizeVersion, type ScanRecord } from '../data/scan';
@@ -54,7 +56,6 @@ function worthScanning(d: Pick<DatasetRecord, 'processId' | 'processName' | 'tag
 
 export class CirroCollection implements Collection {
   readonly kind = 'cirro' as const;
-  readonly saveTarget: string;
 
   private processes: Promise<Map<string, Process>> | null = null;
   // Cirro refused the process list: its empty map says nothing about which processes exist.
@@ -70,10 +71,19 @@ export class CirroCollection implements Collection {
   private unsaved: ScanRecord[] = [];
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private catalogWhere: CatalogCache['where'] | null = null;
+  // Versions saved in this browser while the project was read-only to this user.
+  private readonly inBrowser = new Set<string>();
 
-  constructor(private readonly cirro: CirroSession, readonly id: string, readonly name: string) {
-    this.saveTarget = `a new dataset in ${name}`;
+  constructor(private readonly cirro: CirroSession, readonly id: string, readonly name: string, private role: ProjectAccess) {
     this.reader = new DatasetReader({ dataService: cirro.data, fileService: cirro.files });
+  }
+
+  get access(): ProjectAccess {
+    return this.role;
+  }
+
+  get saveTarget(): string {
+    return this.role === 'write' ? `a new dataset in ${this.name}` : 'this browser';
   }
 
   get catalogNote(): string | null {
@@ -99,9 +109,16 @@ export class CirroCollection implements Collection {
   }
 
   datasets(): Promise<DatasetRecord[]> {
-    this.listed ??= this.processMap().then((processes) => this.reader.list(this.id, processes));
+    this.listed ??= Promise.all([this.processMap().then((processes) => this.reader.list(this.id, processes)), this.savedInBrowser()])
+      .then(([listed, saved]) => [...listed, ...saved]);
     this.listed.catch(() => (this.listed = null));
     return this.listed;
+  }
+
+  private async savedInBrowser(): Promise<DatasetRecord[]> {
+    const saved = (await listBrowserDatasets()).filter((d) => d.projectId === this.id);
+    for (const d of saved) this.inBrowser.add(d.id);
+    return saved.map(browserRecord);
   }
 
   /** Forget the dataset list, so the next call lists again (after a save). */
@@ -136,6 +153,11 @@ export class CirroCollection implements Collection {
     let pending = this.scans.get(dataset.id);
     if (!pending) {
       pending = (async () => {
+        if (this.inBrowser.has(dataset.id)) {
+          const contents = datasetContents(await browserListing(dataset.id));
+          const version = contents.version ? summarizeVersion(await this.manifest(dataset.id, contents.version)) : null;
+          return { datasetId: dataset.id, contents, version, scannedAt: new Date().toISOString() };
+        }
         const hit = (await this.cachedScans()).get(dataset.id);
         if (hit) return hit;
         const { files } = await this.reader.listing(this.projectOf(dataset.id), dataset.id);
@@ -195,6 +217,7 @@ export class CirroCollection implements Collection {
   }
 
   readFile(datasetId: string, path: string): Promise<Uint8Array> {
+    if (this.inBrowser.has(datasetId)) return browserFile(datasetId, path);
     return this.reader.readFile(this.projectOf(datasetId), datasetId, path);
   }
 
@@ -203,6 +226,25 @@ export class CirroCollection implements Collection {
   }
 
   async saveVersion(version: NewVersion, onProgress?: (fraction: number) => void) {
+    if (this.role === 'read') return this.saveInBrowser(version);
+    try {
+      return await this.saveToProject(version, onProgress);
+    } catch (e) {
+      // The user's role, when Cirro didn't say it up front, is learned here.
+      if (refusedPermission(e) !== 'CREATE_DATASET') throw e;
+      this.role = 'read';
+      const saved = await this.saveInBrowser(version);
+      return { ...saved, notice: `Your role in ${this.name} doesn't let you add datasets to it, so this version was saved in this browser.` };
+    }
+  }
+
+  private async saveInBrowser(version: NewVersion) {
+    const datasetId = await saveInBrowser(this.id, version);
+    this.refresh();
+    return { datasetId, notice: null };
+  }
+
+  private async saveToProject(version: NewVersion, onProgress?: (fraction: number) => void) {
     const processes = await this.processMap();
     if (!this.processesRefused && !processes.has(FILES_PROCESS)) throw new Error(`This Cirro has no "${FILES_PROCESS}" (Files) data type to save versions as.`);
     const parent = version.sourceIds[0];
@@ -231,14 +273,14 @@ export class CirroCollection implements Collection {
       done += f.bytes.length;
       onProgress?.(done / total);
     });
-    const noteProblem = await addProvenanceNote(this.cirro, this.id, { type: EntityType.Dataset, id: created.id }, {
+    const notice = await addProvenanceNote(this.cirro, this.id, { type: EntityType.Dataset, id: created.id }, {
       what: version.note.what,
       inputs: parentRecord ? [{ name: parentRecord.name, id: parentRecord.id }] : [],
       parameters: version.note.parameters,
     });
     await this.untilCompleted(created.id);
     this.refresh();
-    return { datasetId: created.id, noteProblem };
+    return { datasetId: created.id, notice };
   }
 
   // Cirro marks an upload COMPLETED once it has seen every expected file; until then the

@@ -4,8 +4,9 @@ name: docs
 # markdown) and the serverless viewer, and publishes all three to GitHub Pages: the app at
 # the site's root, the docs as its About section at /about/, the viewer at /viewer/. The demo
 # checkpoints are committed under docs-site/viewer-data/, so this job never downloads data
-# and never needs Cirro credentials — refresh them with scripts/fetch_example_checkpoints.py
-# and commit the result. The app's own Public Data is read from its Cirro publication.
+# and never needs Cirro credentials — refresh them with builders/spatial-data-studio/
+# fetch_example_checkpoints.py in Cirro's internal studio-data repository and commit the
+# result. The app's public projects are read from where they are published.
 #
 # Pages must be enabled once by hand: Settings -> Pages -> Source = GitHub Actions.
 on:

@@ -50,8 +50,8 @@ const GUIDES: Guide[] = [
 export default function AddData() {
   const { session, collection } = useStudio();
   const back = () => stepBack({ section: 'home' });
-  if (!session || collection.kind !== 'cirro') {
-    return <div className="page-message"><p>Log in to Cirro to add data to one of your projects.</p></div>;
+  if (!session || collection.access === 'read') {
+    return <div className="page-message"><p>You can only read this project, so nothing can be added to it. Choose a project you can add to.</p></div>;
   }
   const figures = stageOf('figures');
   return (

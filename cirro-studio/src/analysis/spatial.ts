@@ -89,9 +89,9 @@ export function spatialKnn(xy: Float32Array, n: number, k: number, progress: Pro
       }
     }
     heap.drainInto(out, i * k);
-    if ((i & 4095) === 0) progress(i / n, 'Finding spatial neighbours');
+    if ((i & 4095) === 0) progress(i / n, 'Finding spatial neighbors');
   }
-  progress(1, 'Finding spatial neighbours');
+  progress(1, 'Finding spatial neighbors');
   return out;
 }
 

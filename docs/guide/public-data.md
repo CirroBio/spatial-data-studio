@@ -1,41 +1,92 @@
 # Explore public data
 
 Open the [web app](https://cirrobio.github.io/spatial-data-studio/) (**Open the app** at
-the top of this site). Its start page offers two ways in, **Public Data** and **Private Data (Cirro)**, and links
-to the About section, which is this documentation. This page covers the first. Logging
-in to Cirro is in [Your data in Cirro](cirro.md), and everything below works the same
-there.
+the top of this site). It opens straight onto Spatial Data Studio's public sections, with
+no account. **Log In (Cirro)** at the top right adds your own projects
+([Your data in Cirro](cirro.md)), and everything below works the same there.
 
-## The public data
+## Projects
 
-**Public Data** needs no account. It is Spatial Data Studio's publication: copies of
-Cirro datasets in a public bucket, the same for every visitor, so a section appears here
-once it is published there. The top bar says *Public data · nothing leaves this
-browser*: the sections are read straight from where they are published, the analyses run
-in your browser, and anything you save is kept in this browser, in a folder of its own
-(*Saved in this browser*). **Log In (Cirro)** at the top right switches to your own
-projects; **Add Data** beside it adds data to one of them, so it waits until you log in.
+All data lives in projects. The project name in the top bar opens the list of them: your
+Cirro projects once you have logged in (before that, **Log in to see them…**), then the
+public projects, so you can move between them. **About** says which version of the app this is and cites the methods it follows.
 
-There are four sections. One is a Xenium human lung section as the instrument counted
-it, with no analysis yet: it is the one to try the analyses on. The other three, a Xenium
-human pancreas and two Visium sections (human colon and mouse brain), were already
-analyzed by Spatial Data Studio's workflow, with clusters and cellular neighborhoods.
-They were saved without their expression matrix to keep them small, so the analyses that
-need gene expression can't run on them, and the task drawer says which those are.
+Every project is either one you can add to or a read-only one, and that is the only
+difference the app makes between them. A read-only project has a **Read-only** badge
+beside its name, which says what that means when clicked (and offers to log in). You can
+look and run every analysis there, and what you save is kept in
+this browser, in a folder of its own (*Saved in this browser*) in the project you saved it
+in: not on other computers, and nobody else can see it. It offers no **Add Data**,
+pipelines or Analysis Workspaces, which all add to a project. Every public project is
+read-only, and so is a Cirro project where your role lets you only view
+([Projects you can only read](cirro.md#projects-you-can-only-read)).
 
-All four are public datasets from 10x Genomics, shared under the
-[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) license. The map files them by
-platform (Xenium, Visium). The line above an open section names the 10x dataset it was
-made from, linked to its page, with its license, and **Details** says what was done to
-the data to make the section.
+## Public projects
+
+A public project is a project anyone can open with no account: a Cirro publication,
+copies of Cirro datasets in a public bucket, the same for every visitor. The app opens on
+Spatial Data Studio's own, *Spatial Data Studio examples*, where a section appears once it
+is published there. Its sections are read straight from where they are published.
+
+### Choose which public projects to list
+
+**Settings** (in the top bar, or in your account menu once logged in), or **Manage public
+projects…** at the bottom of the project list, lists the public projects this browser
+shows. Each one gives its name, its description and the address it is read from, and
+says whether it is Spatial Data Studio's own or one you added, which this app hasn't
+reviewed.
+
+- **Add** a public project by pasting its address: a Cirro publication's root (the
+  `https://…/published/<name>` address its publisher gives), or a folder with an
+  `index.json` ([Show your own data](#show-your-own-data)). The app checks that one of the
+  two answers there before listing it. Other Cirro apps publish their public data the
+  same way, so one of theirs can be added here; the app shows what it can read in it.
+- **Remove** drops one from the list; nothing is deleted. Spatial Data Studio's own can be
+  removed too, and **Bring back Spatial Data Studio's public project** restores it.
+
+The list is kept in this browser only: another browser, or a private window, starts with
+Spatial Data Studio's own.
+
+### Show your own data
+
+A public project needs no Cirro: any folder of SpatialData stores, zipped
+(`.sdata.zarr.zip`), with an `index.json` at its root listing them, is one. Put it
+anywhere a browser can read files from another site with byte ranges (CORS), such as an S3
+bucket set up for it, and add the folder's address in Settings. Each entry names a store
+and, if you like, how the map shows it:
+
+```json
+{ "title": "Our lung sections",
+  "description": "Xenium sections from the lab, raw and clustered",
+  "checkpoints": [
+    { "path": "raw/lung.sdata.zarr.zip", "label": "Lung (raw counts)", "folder": "Xenium" },
+    { "path": "clustered/lung.sdata.zarr.zip", "label": "Lung, clustered", "folder": "Xenium",
+      "from": ["raw/lung.sdata.zarr.zip"], "tags": ["tumor"],
+      "credit": { "source": "…", "url": "…", "by": "…", "license": "CC BY 4.0" } } ] }
+```
+
+`label` and `description` name and describe it, `folder` files it (a `/` nests folders),
+`from` draws its lineage from the stores it was made from, and `credit` says whose data it
+is. Anyone who adds the address sees the same project, and nothing about it passes
+through Spatial Data Studio. A pipeline run's `results/` folder already carries an
+`index.json` of this kind. [`CHECKPOINT_FORMAT.md`](../CHECKPOINT_FORMAT.md#8-indexjson--a-collection-of-checkpoints)
+lists every field.
+
+## Whose data it is
+
+A public dataset says where it comes from. The line above an open section names the
+dataset it was made from, linked to its page, with its license, and **Details** says what
+was done to the data to make the section. A publication carries this in its datasets'
+`credit.<field>: <value>` tags, an `index.json` in each entry's `credit`. The map files
+each dataset in its folders.
 
 ## Four stages of data
 
 The web app works with data in four stages: from what a microscope or an instrument
 produced, through the SpatialData a pipeline makes of it, to the figures you keep. Each
 stage is a column of the [map](#the-map), and an item moves on to the next stage when a
-pipeline or an analysis makes it. Public Data holds only spatial data; a Cirro project can
-hold all four. [What the app finds in a project](cirro.md#what-the-app-finds-in-a-project)
+pipeline or an analysis makes it. A public project holds whatever stages were published in
+it; a Cirro project can hold all four. [What the app finds in a project](cirro.md#what-the-app-finds-in-a-project)
 says which Cirro datasets it reads.
 
 ### Images
@@ -127,15 +178,14 @@ says which Cirro datasets it reads.
 
 ## The map
 
-Public Data, like a Cirro project, opens as a map of the four stages (Images, Instrument
-runs, Spatial data, Figures). Each bubble is one item, sized by its files and named
-inside it when there is room. A dataset holding several stores shows each one, and rings
-inside a spatial-data bubble are the versions saved on that store.
+A project opens as a map of the four stages (Images, Instrument runs, Spatial data,
+Figures). Each bubble is one item, sized by its files and named inside it when there is
+room; pointing at one shows its full name under the map. A dataset holding several stores
+shows each one, and rings inside a spatial-data bubble are the versions saved on that
+store. Dashed lines join a run or an image to the spatial data made from it.
 
-Dashed lines join a run or an image to the spatial data made from it. **About** in the
-top bar says which version of the app this is and cites the methods it follows.
-
-Click a stage to open it as a list of its items, a row each, in their Cirro folders:
+Click a bubble to open that item. Click a stage's heading, or the space around its
+bubbles, to open it as a list of its items, a row each, in their Cirro folders:
 
 - **A row** gives the item's full name and, under it, what it is in a few words: an
   image's format and whether spatial data was made from it, a run's platform, a spatial
@@ -156,8 +206,9 @@ Click a stage to open it as a list of its items, a row each, in their Cirro fold
   away, its picture growing out of its row; leaving the picture comes back to the list with
   the row still selected.
 - **Keyboard.** The arrow keys move through the list and open and close folders, typing
-  jumps to a name, `/` goes to the search, and Esc closes what is open under a row, then
-  goes back to the map.
+  jumps to a name, `/` goes to the search (where the down arrow moves into the list and
+  Enter opens the first item found), and Esc closes what is open under a row, then goes
+  back to the map.
 
 On a wide screen, a rail on the left keeps every stage as a small map of its bubbles: the
 open stage's dims the items the search leaves out and rings the selected item and what
@@ -171,7 +222,9 @@ pieces on screen. Pan and zoom as you would on a map. The color legend, the imag
 channels and an overview of the whole section are drawn on the image itself. The line
 above it starts with the way back to the map, names the store, its size and where it came
 from, counts its cells (spots, for Visium) and genes, and links the run or image it was
-made **from** and what it was **made into**.
+made **from** and what it was **made into**. A version shows as *Version N · its title*
+beside the name of the store it was saved on, and keeps that store's credit. Esc closes
+menus and an open task, but never leaves the dataset: the way back does.
 
 Tabs over the top of the view switch what is shown:
 
@@ -183,21 +236,27 @@ Tabs over the top of the view switch what is shown:
 - **Versions**: the store's history, with the page to itself (it has nothing to set).
 - **Figures**: a menu of the figures saved with it, when there are any.
 
-At the other end of the tabs are a scale bar (when the store says its coordinates are
-microns), zoom out and in, and **Fit to data**, which stay in reach when the drawers are
-away. For a Visium store, whose observations are capture spots, the header, the map's tab
-and Composition say spots rather than cells.
+Beside the tabs are **Color by** (the same box as in the Display drawer, below: type a
+gene's or an annotation's name and pick it), a scale bar (when the store says its
+coordinates are microns), zoom out and in, and **Fit to data**, which stay in reach when
+the drawers are away; when the view is narrow they move under the tabs. For a Visium
+store, whose observations are capture spots, the header, the map's tab, Composition and
+Label cells say spots rather than cells.
 
 Two drawers float over the view. Pull one in with its tab at the edge of the view and
 push it away with its arrow, or press **[** for the left one, **]** for the right one
-and **\\** for both at once; the app remembers which you keep open. The left one holds
+and **\\** for both at once; the app remembers which you keep open. In a window narrower
+than 1,100 pixels only one is out at a time. The left one holds
 the analysis tasks ([Analyze in the browser](analyze.md)). The right one, **Display**,
 holds the display settings, the same panel with the same names as in an Analysis
 Workspace: **View** (cells and image on or off, mirroring, zoom, the overview, fit),
-**Cells** (first what colors the cells, any annotation, gene or layer, with the color
-legend and its title; then render mode, point size and shape, the cell boundaries and
-their style, opacity, and each category's color) and **Image** (which image, a light or
-dark backdrop, and each channel's color, contrast and name).
+**Cells** (first **Color by**, with the color legend and its title; then render mode,
+point size and shape, the cell boundaries and their style, opacity, and each category's
+color) and **Image** (which image, a light or dark backdrop, and each channel's color,
+contrast and name). **Color by** is one search box: click it to list the store's
+annotations, groupings first, or type a gene's name to find it. Arrow keys and Enter
+pick from the list and Esc closes it. When the store has layers, **Gene values** below
+it picks whether a gene is read from the expression matrix or from one of them.
 
 A store first opens with a light backdrop behind a stained (brightfield) slide and a dark
 one behind fluorescence, and the legends and overview take the backdrop's colors. It

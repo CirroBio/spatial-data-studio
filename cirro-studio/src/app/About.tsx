@@ -25,9 +25,9 @@ export function About({ onClose }: { onClose: () => void }) {
           <p className="muted">Version {APP_VERSION}</p>
         </div>
         <p>
-          Opens the SpatialData stores in your Cirro projects in this browser, reading only the parts on screen. The
-          analyses run here too, and each result is saved back to Cirro as a version: a dataset that holds only what
-          changed, on top of the store it was made from.
+          Opens spatial data from public projects and your Cirro projects in this browser, reading only the parts on screen.
+          The analyses run here too. What you make is saved as a version that holds only what changed: in the project, when
+          you can add to it, and otherwise in this browser.
         </p>
         <div>
           <h3>Methods</h3>

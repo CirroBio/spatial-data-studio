@@ -41,7 +41,7 @@ export function StageTree({ stage, nodes, state, onState, open, onOpenFolders, o
   onMatch: (keys: Set<string> | null) => void;
   searchRef: RefObject<HTMLInputElement | null>;
 }) {
-  const { catalog, collection } = useStudio();
+  const { catalog } = useStudio();
   const info = stageOf(stage);
   const mine = nodes[stage];
   const byKey = useMemo(() => new Map(Object.values(nodes).flat().map((n) => [n.key, n])), [nodes]);
@@ -129,9 +129,7 @@ export function StageTree({ stage, nodes, state, onState, open, onOpenFolders, o
   const reading = catalog.status === 'scanning' ? ` · still reading ${catalog.toScan - catalog.scanned} datasets` : '';
 
   if (!mine.length) {
-    const note = catalog.status === 'loading' || catalog.status === 'scanning' ? 'Looking…'
-      : collection.kind === 'examples' && (stage === 'images' || stage === 'runs') ? `Log in to Cirro to see your own ${info.unit[1]}.`
-        : `No ${info.unit[1]} in this project yet.`;
+    const note = catalog.status === 'loading' || catalog.status === 'scanning' ? 'Looking…' : `No ${info.unit[1]} in this project yet.`;
     return <section className="stage-tree" aria-label={info.label}><p className="stage-tree-none muted">{note}</p></section>;
   }
 
@@ -149,7 +147,19 @@ export function StageTree({ stage, nodes, state, onState, open, onOpenFolders, o
       </header>
       <div className="stage-tree-tools">
         <input ref={searchRef} className="input map-search" type="search" value={state.query} placeholder={`Find ${info.unit[1]}`}
-          aria-label={`Find ${info.unit[1]} by name, folder, tag or fact (press / to come here)`} onChange={(e) => onState({ query: e.target.value })} />
+          aria-label={`Find ${info.unit[1]} by name, folder, tag or fact (press / to come here)`} onChange={(e) => onState({ query: e.target.value })}
+          onKeyDown={(e) => {
+            // From the search: down into the rows, or Enter to open the first item found.
+            const first = rows.find((r) => r.node.kind === 'item')?.node;
+            if (e.key === 'ArrowDown' && rows.length) {
+              e.preventDefault();
+              select(rows[0].node.id);
+              requestAnimationFrame(() => rowEl(rows[0].node.id)?.focus());
+            } else if (e.key === 'Enter' && first?.kind === 'item') {
+              e.preventDefault();
+              onOpen(first.node, dotOf(first.id));
+            }
+          }} />
         {facets.flatMap((facet) => facet.values.map((v) => {
           const id = filterId({ key: facet.key, text: v.text });
           const on = state.filters.has(id);
@@ -315,7 +325,7 @@ function Look({ node, byKey, onOpen, onReveal }: {
       </div>
       <div className="stage-tree-look-actions">
         <button type="button" className="button button-primary" onClick={onOpen}>Open</button>
-        {collection.kind === 'cirro' && item && (
+        {collection.access === 'write' && item && (
           <button type="button" className="button" title="Every squidpy and scanpy analysis, on a machine in this project, in a new tab"
             onClick={() => openWorkspaces(requestFor(item, node.label, library))}>
             Open in an Analysis Workspace

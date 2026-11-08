@@ -28,7 +28,7 @@ export default function MarkersTask({ wb, unit }: TaskProps) {
     try {
       const obs = await readGroups(handle, column);
       if (obs.categories.length > MAX_GROUPS) throw new Error(`“${column}” has ${obs.categories.length} groups; that looks like an identifier column.`);
-      const matrix = await readMatrix(wb.key, handle);
+      const matrix = await job.prepare('Reading the expression matrix', readMatrix(wb.key, handle));
       const tests = await job.run('markersForAll', { matrix, codes: obs.codes, nGroups: obs.categories.length });
       if (!tests) return;
       const sizes = obs.categories.map(() => 0);
@@ -57,8 +57,8 @@ export default function MarkersTask({ wb, unit }: TaskProps) {
 
   return (
     <div className="task-body">
-      <p className="muted">Tests every gene in each group against all the other {unit}s, and opens what sets each group apart as a report.</p>
-      <ColumnSelect handle={handle} value={column} onChange={setColumn} label="Groups" />
+      <p className="muted">The genes that set each group apart from the other {unit}s.</p>
+      <ColumnSelect handle={handle} wbKey={wb.key} value={column} onChange={setColumn} label="Groups" />
       <JobStatus job={job} label="Testing every gene in every group" />
       {problem && <p className="notice notice-danger">{problem}</p>}
       <button type="button" className="button button-primary" disabled={!column || job.running} onClick={() => void run()}>Find marker genes</button>

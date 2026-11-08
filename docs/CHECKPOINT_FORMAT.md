@@ -600,19 +600,27 @@ expected, not an error condition.
 
 Not part of any single checkpoint file — a sibling manifest describing a
 **directory of them**, for a static deployment (a built frontend + a folder of
-`.zarr.zip` files + this manifest) or a Cirro dataset upload.
+`.zarr.zip` files + this manifest), a Cirro dataset upload, or a public project in the
+web app: any folder on a host a browser can read, added in the web app's Settings
+(`cirro-studio/src/data/indexFolder.ts`).
 
 Schema file: [`backend/app/schemas/checkpoint/checkpoint_index.schema.json`](../backend/app/schemas/checkpoint/checkpoint_index.schema.json).
 
 ```jsonc
 {
-  "title": "My study",                 // optional
+  "title": "My study",                 // optional; the web app's name for the public project
+  "description": "…",                  // optional; shown with the public project in Settings
   "checkpoints": [
     { "path": "sessions/foo.sdata.zarr.zip",   // required; resolved relative to this index.json's own URL
+      "id": "foo",                             // optional; what `from` refers to; defaults to the path
       "label": "Foo",                          // optional; falls back to the file's basename
       "description": "…",                      // optional
-      "folder": "Xenium",                      // optional; the web app's map files it here
-      "credit": {                              // optional; the web app shows it with the checkpoint
+      "folder": "Xenium/Lung",                 // optional; the web app's map files it here ("/" nests)
+      "from": ["raw/foo.sdata.zarr.zip"],      // optional; the checkpoints it was made from, by id or path
+      "tags": ["tumor", "site: Seattle"],      // optional; plain text, shown and searched
+      "date": "2026-10-01",                    // optional; when it was made (ISO date)
+      "size": 83456789,                        // optional; bytes, for a host that doesn't say
+      "credit": {                              // optional; any of the six, shown with the checkpoint
         "source": "FFPE Human Pancreas with Xenium Multimodal Cell Segmentation",
         "url": "https://www.10xgenomics.com/datasets/…",
         "by": "10x Genomics",
@@ -627,11 +635,14 @@ Schema file: [`backend/app/schemas/checkpoint/checkpoint_index.schema.json`](../
 relative to the page. This app's own writer (`backend/app/cirro.py`,
 `_write_viewer_index`) only ever emits `path` and `label` — `title` and
 `description` are reader-side conveniences a hand-authored manifest can add,
-not something this app currently produces. So are `folder` and `credit`: a hand-authored index
-can file a checkpoint, and carry the attribution a Creative Commons license asks of a copy —
-the source, its publisher, the license, and what was changed. Nothing in this repo reads
-them now: the web app's public data is a Cirro publication, where folders and credit are
-dataset tags. Its `label` is each file's stem (§7),
+not something this app currently produces. So are the rest, which the web app reads when the
+folder is a public project: each checkpoint becomes a dataset of one file, filed by `folder`,
+linked to what it was made from by `from`, tagged, dated, and credited with the attribution a
+Creative Commons license asks of a copy (the source, its publisher, the license, what was
+changed; shown when it names a source or a license). Only zipped checkpoints can be listed this
+way: a host serving a folder of files has no listing for a reader to find a `.zarr/` folder's
+keys. The standalone viewer reads `title`, `path`, `label` and `description`, and ignores the
+rest. The writer's `label` is each file's stem (§7),
 derived without opening the file; the session name recorded *inside* the file
 (§3) is what a reader shows once it has actually opened it.
 

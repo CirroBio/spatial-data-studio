@@ -2,12 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://spatial-data-studio/schemas/checkpoint/checkpoint_index.schema.json",
   "title": "CheckpointIndex",
-  "description": "index.json manifest for a deployed collection of checkpoints (DESIGN.md §14.3, backend/app/cirro.py:_write_viewer_index, frontend/src/data/checkpointIndex.ts). Documented in docs/CHECKPOINT_FORMAT.md.",
+  "description": "index.json manifest for a folder of checkpoints: a static deployment of the viewer, a Cirro dataset upload, or a public project in the web app (DESIGN.md §14.3, backend/app/cirro.py:_write_viewer_index, frontend/src/data/checkpointIndex.ts, cirro-studio/src/data/indexFolder.ts). Documented in docs/CHECKPOINT_FORMAT.md.",
   "type": "object",
   "required": ["checkpoints"],
   "additionalProperties": false,
   "properties": {
     "title": { "type": "string" },
+    "description": { "type": "string", "description": "What the folder holds; the web app shows it with the public project." },
     "checkpoints": {
       "type": "array",
       "items": {
@@ -15,6 +16,10 @@
         "required": ["path"],
         "additionalProperties": false,
         "properties": {
+          "id": {
+            "type": "string",
+            "description": "A name for the checkpoint that other entries' `from` can use; defaults to its path."
+          },
           "path": {
             "type": "string",
             "description": "Resolved relative to this index.json's own URL."
@@ -25,10 +30,21 @@
             "type": "string",
             "description": "The folder the web app files the checkpoint under on its map."
           },
+          "from": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "The checkpoints this one was made from, by id or path: its lineage, drawn on the web app's map."
+          },
+          "tags": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Plain-text tags the web app shows and searches."
+          },
+          "date": { "type": "string", "description": "When the checkpoint was made, as an ISO date." },
+          "size": { "type": "integer", "minimum": 0, "description": "The file's size in bytes, when the host doesn't say." },
           "credit": {
             "type": "object",
-            "description": "Whose data the checkpoint is made from, under what license, and what was done to it; the web app shows it with the checkpoint.",
-            "required": ["source", "url", "by", "license", "licenseUrl", "changes"],
+            "description": "Whose data the checkpoint is made from, under what license, and what was done to it. Any of the six fields; the web app shows a credit that names a source or a license.",
             "additionalProperties": false,
             "properties": {
               "source": { "type": "string", "description": "The dataset as its publisher titles it." },

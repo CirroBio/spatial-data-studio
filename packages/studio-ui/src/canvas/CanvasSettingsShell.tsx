@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { keepEscapeInField } from '../keepEscapeInField';
 
 interface Props {
   collapsed: boolean;
@@ -11,9 +12,12 @@ interface Props {
 
 /* Settings panel chrome — top right; minimizes to a gear icon in the same corner.
    Shared by CanvasControls (Spatial) and EmbeddingControls (Embeddings). The Studio's
-   guided tour points at it by its data-tour value (frontend/src/tours/anchors.ts). */
+   guided tour points at it by its data-tour value (frontend/src/tours/anchors.ts). An
+   Escape pressed in any of the panel's fields stays in the panel. */
 export default function CanvasSettingsShell({ collapsed, onToggleCollapsed, docked = false, children }: Props) {
-  if (docked) return <div data-tour="display-settings" className="flex flex-col gap-2">{children}</div>;
+  if (docked) {
+    return <div data-tour="display-settings" className="flex flex-col gap-2" onKeyDown={keepEscapeInField}>{children}</div>;
+  }
   if (collapsed) {
     return (
       <button
@@ -33,7 +37,11 @@ export default function CanvasSettingsShell({ collapsed, onToggleCollapsed, dock
   }
 
   return (
-    <div data-tour="display-settings" className="absolute top-3 right-3 z-10 bg-surface/90 border border-border rounded p-3 flex flex-col gap-2 min-w-[200px] max-h-[calc(100vh-1.5rem)] backdrop-blur-sm">
+    <div
+      data-tour="display-settings"
+      className="absolute top-3 right-3 z-10 bg-surface/90 border border-border rounded p-3 flex flex-col gap-2 min-w-[200px] max-h-[calc(100vh-1.5rem)] backdrop-blur-sm"
+      onKeyDown={keepEscapeInField}
+    >
       <div className="flex items-center justify-between -mt-1 -mr-1">
         <span className="text-xs font-semibold text-muted uppercase tracking-wide">Display Settings</span>
         <button

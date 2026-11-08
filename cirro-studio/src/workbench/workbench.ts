@@ -139,6 +139,10 @@ function benchFor(collection: Collection, top: StackTop): Internal {
     };
     benches.set(key, b);
     void open(b, top);
+  } else {
+    // A publication keeps its origin's dataset IDs, so the same store can be open from two
+    // projects; a save goes to the one the user is in now, as its dialog says.
+    b.collection = collection;
   }
   return b;
 }

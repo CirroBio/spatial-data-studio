@@ -1,5 +1,6 @@
 import { useState, useMemo, useRef } from 'react';
 import type { ObsField } from '@cirrobio/spatial-viewer';
+import { keepEscapeInField } from './keepEscapeInField';
 import { useClickOutside } from './useClickOutside';
 
 interface Props {
@@ -16,8 +17,7 @@ interface Props {
 const INPUT_CLASS =
   'w-full bg-bg border border-border rounded pl-2 pr-7 py-1 text-xs text-text placeholder:text-muted/40 focus:outline-none focus:border-accent';
 
-// Themed combobox for obs columns, matching VarNameSelect so the two pickers that
-// sit side by side under "Color by" share one visual language (native <select>
+// Themed combobox for obs columns, in ColorBySelect's visual language (native <select>
 // hands the open menu to the OS, which ignores the app theme).
 export default function ObsFieldSelect({
   fields,
@@ -58,7 +58,7 @@ export default function ObsFieldSelect({
   const cls = className ?? INPUT_CLASS;
 
   return (
-    <div ref={wrapRef} className="relative">
+    <div ref={wrapRef} className="relative" onKeyDown={keepEscapeInField}>
       <input
         type="text"
         value={open ? query : value}

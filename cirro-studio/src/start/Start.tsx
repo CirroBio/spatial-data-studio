@@ -1,12 +1,8 @@
-// The pages before the app: the landing page, the log-in box for a Cirro tenant, and
-// what is shown when starting fails. The first two move between each other without
-// reloading, so the backdrop carries on.
-import { useEffect, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { APP_NAME, CIRRO_URL, DOCS_URL, REPO_URL } from '../app/appInfo';
-import {
-  SUGGEST_AFTER, chooseTenant, hostOf, lastTenant, openExamples, showLanding, startScreenOf, startUrl, suggestTenants, tenantNamed,
-  type StartScreen, type Tenant,
-} from '../tenants';
+// The pages before the app: the log-in box for a Cirro tenant, and what is shown when
+// starting fails. Anyone who isn't logging in goes straight to the projects.
+import { useState, type KeyboardEvent, type ReactNode } from 'react';
+import { CIRRO_URL, DOCS_URL, REPO_URL } from '../app/appInfo';
+import { SUGGEST_AFTER, chooseTenant, hostOf, lastTenant, showHome, suggestTenants, tenantNamed, type Tenant } from '../tenants';
 import Backdrop from './Backdrop';
 
 
@@ -32,50 +28,9 @@ function Frame({ children }: { children: ReactNode }) {
   );
 }
 
-const ExamplesIcon = () => (
-  <svg viewBox="0 0 36 36" className="start-choice-icon" aria-hidden="true">
-    {[[9, 12], [15, 8], [21, 11], [27, 9], [11, 19], [18, 17], [25, 20], [14, 26], [22, 27]].map(([x, y], i) => (
-      <circle key={i} cx={x} cy={y} r={2.6} fill="currentColor" opacity={0.35 + (i % 3) * 0.25} />
-    ))}
-    <circle cx="18" cy="18" r="15" fill="none" stroke="currentColor" strokeWidth="1.5" />
-  </svg>
-);
-
-const SignInIcon = () => (
-  <svg viewBox="0 0 36 36" className="start-choice-icon" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M20 7h7a2 2 0 0 1 2 2v18a2 2 0 0 1-2 2h-7" />
-    <path d="M7 18h15M17 12l6 6-6 6" />
-  </svg>
-);
-
-function Landing({ onSignIn }: { onSignIn: () => void }) {
-  return (
-    <>
-      <h1 className="start-title">{APP_NAME}</h1>
-      <p className="start-lede">
-        Spatial omics in your browser: open tissue sections cell by cell, find what sets regions and cell types apart,
-        and save each step as a version on top of the data.
-      </p>
-      <div className="start-choices">
-        <button type="button" className="start-choice" onClick={openExamples}>
-          <ExamplesIcon />
-          <span className="start-choice-title">Public Data</span>
-          <span className="start-choice-text">Xenium and Visium sections, ready to open. No account needed.</span>
-        </button>
-        <button type="button" className="start-choice" onClick={onSignIn}>
-          <SignInIcon />
-          <span className="start-choice-title">Private Data (Cirro)</span>
-          <span className="start-choice-text">Your projects: images, instrument runs and SpatialData, with versions saved back to Cirro.</span>
-        </button>
-      </div>
-      <a className="start-about" href={DOCS_URL}>About {APP_NAME} <span aria-hidden="true">→</span></a>
-    </>
-  );
-}
-
 // The user names their Cirro: the box suggests listed tenants once SUGGEST_AFTER
 // characters are typed, and takes any Cirro's address.
-function SignIn({ tenants, unknownFromUrl, onBack }: { tenants: Tenant[]; unknownFromUrl?: string; onBack: () => void }) {
+function SignIn({ tenants, unknownFromUrl }: { tenants: Tenant[]; unknownFromUrl?: string }) {
   const [text, setText] = useState(() => lastTenant(tenants)?.name ?? '');
   // The suggestion list opens on typing and closes on a pick, Escape or leaving the box.
   const [open, setOpen] = useState(false);
@@ -168,27 +123,15 @@ function SignIn({ tenants, unknownFromUrl, onBack }: { tenants: Tenant[]; unknow
       {typed && !choice && !suggestions.length && <p className="muted">Pick a suggestion, or type the address you use for Cirro, such as cirro.example.org.</p>}
       <p className="muted">You'll sign in on Cirro's own page, which shows what this app may do.</p>
       <button type="submit" className="button button-primary" disabled={!choice}>{choice ? `Log in to ${choice.name}` : 'Log in'}</button>
-      <button type="button" className="link-button" onClick={onBack}>← Back</button>
+      <button type="button" className="link-button" onClick={showHome}>← Back to the public projects</button>
     </form>
   );
 }
 
-export function StartPages({ tenants, screen: first, unknownFromUrl }: { tenants: Tenant[]; screen: StartScreen; unknownFromUrl?: string }) {
-  const [screen, setScreen] = useState(first);
-  useEffect(() => {
-    const onPop = () => setScreen(startScreenOf(new URLSearchParams(window.location.search)));
-    window.addEventListener('popstate', onPop);
-    return () => window.removeEventListener('popstate', onPop);
-  }, []);
-  const go = (next: StartScreen) => {
-    window.history.pushState(null, '', startUrl(next));
-    setScreen(next);
-  };
+export function SignInStart({ tenants, unknownFromUrl }: { tenants: Tenant[]; unknownFromUrl?: string }) {
   return (
     <Frame>
-      {screen === 'sign-in'
-        ? <SignIn tenants={tenants} unknownFromUrl={unknownFromUrl} onBack={() => go('landing')} />
-        : <Landing onSignIn={() => go('sign-in')} />}
+      <SignIn tenants={tenants} unknownFromUrl={unknownFromUrl} />
     </Frame>
   );
 }
@@ -201,7 +144,7 @@ export function SignInPage({ tenantName, onSignIn }: { tenantName: string; onSig
         <p className="muted">Your session has ended, or this tab hasn't signed in yet.</p>
         <div className="button-row">
           <button type="button" className="button button-primary" onClick={onSignIn}>Log in</button>
-          <button type="button" className="button" onClick={showLanding}>Start page</button>
+          <button type="button" className="button" onClick={showHome}>Public projects</button>
         </div>
       </div>
     </Frame>

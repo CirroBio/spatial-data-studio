@@ -1,5 +1,5 @@
 // What sign-in leaves in this browser, readable without the sign-in library, so a page
-// that never signs in (the examples, the landing page) doesn't load it.
+// that never signs in (a visitor's public projects, the landing page) doesn't load it.
 import { appKey } from './app/appInfo';
 
 // Sign-in returns here. The tenant finds the app's registration by it, so it is unique to

@@ -1,8 +1,9 @@
 // What the reports share: the header that says what was run and when, the tiles of
-// summary numbers, sections, the folded full table, the tissue they draw thumbnails of,
-// and the actions that reach back into the data (color the tissue, score a gene set).
+// summary numbers, sections, the folded full table and its CSV download, the tissue they
+// draw thumbnails of, and the actions that reach back into the data (color the tissue,
+// score a gene set).
 import { useEffect, useState, type ReactNode } from 'react';
-import type { CheckpointHandle, ExpressionMatrix } from '@cirrobio/spatial-viewer';
+import { downloadBlob, type CheckpointHandle, type ExpressionMatrix } from '@cirrobio/spatial-viewer';
 import { geneIndex } from '../analysis/matrix';
 import { LENS_PARAM, navigate } from '../app/route';
 import { formatCount, formatDate } from '../app/ui';
@@ -10,9 +11,10 @@ import { tissueOf, type Tissue } from '../charts/TissueThumb';
 import { describeError } from '../cirro/session';
 import { updateEncoding } from '../item/displayState';
 import { freeName, readCoords, readMatrix } from '../tasks/data';
-import { JobStatus, writeObsColumn } from '../tasks/parts';
+import { JobStatus, writeObsColumn, type Column } from '../tasks/parts';
 import { useJob } from '../tasks/useJob';
 import type { Workbench } from '../workbench/workbench';
+import { csvFileName, toCsv } from './csv';
 import type { KeptResult } from './store';
 
 // How many of a group's genes make its gene set.
@@ -93,6 +95,22 @@ export function FullTable({ count, children }: { count: number; children: ReactN
       <summary>All {formatCount(count)} rows</summary>
       {children}
     </details>
+  );
+}
+
+/** Download a table as CSV, every row of it, and say so once the file is on its way. */
+export function DownloadCsv<R extends object>({ name, rows, columns }: { name: string; rows: R[]; columns: Column<R>[] }) {
+  const [downloaded, setDownloaded] = useState<string | null>(null);
+  const download = () => {
+    const file = csvFileName(name);
+    downloadBlob(new Blob([toCsv(rows, columns)], { type: 'text/csv;charset=utf-8' }), file);
+    setDownloaded(file);
+  };
+  return (
+    <span className="button-row">
+      <button type="button" className="button button-small" onClick={download}>Download CSV</button>
+      {downloaded && <span className="muted" role="status">Downloaded {downloaded}</span>}
+    </span>
   );
 }
 

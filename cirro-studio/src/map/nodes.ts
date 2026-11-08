@@ -43,7 +43,7 @@ export function userTags(d: DatasetRecord | undefined): string[] {
 const count = (n: number, [one, many]: [string, string]) => `${n} ${n === 1 ? one : many}`;
 // A file's extension as people name the format: ".ndpi" is NDPI.
 const extension = (path: string) => path.slice(path.lastIndexOf('.') + 1).toUpperCase();
-// The kind of id a version saved in this browser carries (data/examples.ts).
+// The kind of id a version saved in this browser carries (data/publicProject.ts).
 const BROWSER_VERSION = 'browser-version';
 
 type Bare = Omit<StageNode, 'from' | 'into' | 'facts'>;

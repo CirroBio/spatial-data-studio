@@ -1,10 +1,11 @@
 // The project at a glance: the four stages side by side, each a cluster of bubbles whose
 // areas share one scale of bytes, with lines from each run or image to the spatial data
-// made from it. A stage opens on click, and its bubbles carry on into it: they are drawn
-// by the map's BubbleLayer, which this only tells where they belong.
-import { useLayoutEffect, useMemo, useRef } from 'react';
+// made from it. A bubble opens its item, anywhere else in a stage opens the stage's list,
+// and the bubbles carry on into it: they are drawn by the map's BubbleLayer, which this
+// only tells where they belong.
+import { useLayoutEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { STAGES, type StageId } from '../app/library';
-import { navigate, STAGE_PARAM } from '../app/route';
+import { LENS_PARAM, navigate, openItem, STAGE_PARAM } from '../app/route';
 import { useStudio } from '../app/studio';
 import { formatBytes, plural, STAGE_ICONS, tint } from '../app/ui';
 import { useSize } from '../lib/useSize';
@@ -22,7 +23,7 @@ const FLOOR_SHARE = 0.004;
 interface Placed { x: number; y: number; r: number; node: StageNode }
 
 export function Home({ nodes, onScene }: { nodes: Record<StageId, StageNode[]>; onScene: (scene: Scene) => void }) {
-  const { catalog, collection, library } = useStudio();
+  const { catalog, library } = useStudio();
   const ref = useRef<HTMLDivElement>(null);
   const { width, height } = useSize(ref);
 
@@ -64,13 +65,31 @@ export function Home({ nodes, onScene }: { nodes: Record<StageId, StageNode[]>; 
     onScene({ id: 'home', bubbles });
   }, [layout, nodes, onScene]);
 
+  // The bubble under the pointer, found by position: the bubbles are drawn on a layer
+  // over the page, and the stage's button sits beneath them.
+  const [hovered, setHovered] = useState<StageNode | null>(null);
+  const bubbleAt = (e: MouseEvent, stage: StageId): StageNode | null => {
+    if (!layout || !ref.current) return null;
+    const at = ref.current.getBoundingClientRect();
+    const [x, y] = [e.clientX - at.left, e.clientY - at.top];
+    return nodes[stage].find((n) => {
+      const p = layout.placed.get(n.key);
+      return p !== undefined && (x - p.x) ** 2 + (y - p.y) ** 2 <= p.r ** 2;
+    }) ?? null;
+  };
+  const open = (e: MouseEvent, stage: StageId) => {
+    const n = bubbleAt(e, stage);
+    if (n) openItem(n.target.datasetId, n.target.path, n.target.lens ? { [LENS_PARAM]: n.target.lens } : {});
+    else navigate({ section: 'stage', [STAGE_PARAM]: stage });
+  };
+
   const totalBytes = (id: StageId) => nodes[id].reduce((s, n) => s + n.size, 0);
   const caption = (id: StageId) => {
     const n = nodes[id];
     const stage = STAGES.find((s) => s.id === id)!;
     if (!n.length) {
       if (catalog.status === 'loading' || catalog.status === 'scanning') return 'Looking…';
-      return collection.kind === 'examples' && (id === 'images' || id === 'runs') ? 'Log in to see your own' : `No ${stage.unit[1]} yet`;
+      return `No ${stage.unit[1]} yet`;
     }
     return id === 'figures' ? plural(n.length, stage.unit) : `${plural(n.length, stage.unit)} · ${formatBytes(totalBytes(id))}`;
   };
@@ -94,7 +113,8 @@ export function Home({ nodes, onScene }: { nodes: Record<StageId, StageNode[]>; 
       <div className="map-landing">
         {STAGES.map((s) => (
           <button key={s.id} type="button" className={nodes[s.id].length ? 'map-stage' : 'map-stage map-stage-empty'} style={tint(s.color)}
-            onClick={() => navigate({ section: 'stage', [STAGE_PARAM]: s.id })}>
+            title={hovered?.stage === s.id ? `Open ${hovered.label}` : `List the ${s.unit[1]}`}
+            onClick={(e) => open(e, s.id)} onMouseMove={(e) => setHovered(bubbleAt(e, s.id))} onMouseLeave={() => setHovered(null)}>
             <span className="map-stage-head">
               <span className="map-icon">{STAGE_ICONS[s.id]}</span>
               <span className="map-stage-name">{s.label}</span>
@@ -103,9 +123,7 @@ export function Home({ nodes, onScene }: { nodes: Record<StageId, StageNode[]>; 
           </button>
         ))}
       </div>
-      <p className="map-tagline">
-        Each bubble is one item, sized by its files{STAGES.some((s) => nodes[s.id].some((n) => n.versions)) ? '; the rings inside one are the versions saved on it' : ''}. Choose a stage to step inside.
-      </p>
+      <p className="map-tagline">{hovered ? hovered.label : 'Click a bubble to open it, or a heading to list everything there.'}</p>
     </div>
   );
 }

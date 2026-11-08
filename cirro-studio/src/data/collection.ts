@@ -1,6 +1,8 @@
-// Where the app's datasets come from: a Cirro project, or the example collection that
+// Where the app's datasets come from: a Cirro project, or a public project that
 // needs no account. Everything else in the app works through this interface, so both
-// behave alike, saving versions included (examples save into this browser).
+// behave alike. What differs is access: a project the user can only read (every public
+// project, and a Cirro project their role doesn't let them add to) saves versions into
+// this browser.
 import type { AsyncReadable } from '@zarrita/storage';
 import type { LayerManifest } from '../stack/manifest';
 import type { VersionFile } from '../stack/version';
@@ -18,10 +20,13 @@ export interface NewVersion {
 }
 
 export interface Collection {
-  readonly kind: 'cirro' | 'examples';
-  // The project ID, or 'examples'.
+  readonly kind: 'cirro' | 'public';
+  // The Cirro project's ID, or the public project's.
   readonly id: string;
   readonly name: string;
+  // Whether the user can add datasets to the project: save versions into it, upload, run
+  // pipelines, start workspaces.
+  readonly access: ProjectAccess;
   // Where a saved version goes, as the save dialog says it.
   readonly saveTarget: string;
   // Why the catalog of what each dataset holds is kept in this browser rather than with
@@ -46,8 +51,9 @@ export interface Collection {
   /** A URL a range-reading library (an OME-TIFF reader) can fetch, and how to renew it. */
   fileUrl(datasetId: string, path: string): Promise<{ url: string; refresh: () => Promise<string> }>;
 
-  /** Write a version as a new dataset; resolves to its ID and any problem with its note. */
-  saveVersion(version: NewVersion, onProgress?: (fraction: number) => void): Promise<{ datasetId: string; noteProblem: string | null }>;
+  /** Write a version as a new dataset; resolves to its ID and anything the user should
+   * know about how the save went (its provenance note failed, it went to this browser). */
+  saveVersion(version: NewVersion, onProgress?: (fraction: number) => void): Promise<{ datasetId: string; notice: string | null }>;
 
   /** The dataset's page in Cirro, when there is one. */
   datasetUrl(datasetId: string): string | null;
@@ -58,6 +64,8 @@ export interface Collection {
   /** The data types a stage's data can be uploaded to the project as, most specific first. */
   uploadTypes(stage: UploadStage): Promise<UploadType[]>;
 }
+
+export type ProjectAccess = 'read' | 'write';
 
 // The stages data arrives at from outside the app; a figure is only ever made in it.
 export type UploadStage = 'images' | 'runs' | 'spatial';

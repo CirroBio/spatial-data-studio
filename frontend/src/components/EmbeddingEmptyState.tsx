@@ -92,6 +92,7 @@ export default function EmbeddingEmptyState({
         <div className="flex flex-col gap-1">
           <label className={labelClass}>Embedding</label>
           <select
+            aria-label="Embedding"
             value={embeddingKey}
             onChange={(e) => setSelectedKey(e.target.value)}
             className="w-full bg-bg border border-border rounded px-2 py-1 text-xs text-text focus:outline-none focus:border-accent"

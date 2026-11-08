@@ -12,13 +12,13 @@ import type { TaskProps } from './TaskPanel';
 
 const TOOL_LABELS: Record<SelectionTool, string> = { lasso: 'Lasso', circle: 'Circle', ellipse: 'Ellipse', square: 'Square', rectangle: 'Rectangle' };
 
-export default function LabelTask({ wb }: TaskProps) {
+export default function LabelTask({ wb, unit }: TaskProps) {
   const handle = wb.handle!;
   const selection = useSelection(wb.key);
   useArmedSelection(wb.key, true);
   const groupColumns = handle.fields.obs.filter((f) => f.kind === 'categorical');
   const taken = handle.fields.obs.map((f) => f.name);
-  const [column, setColumn] = useState(() => freeName('regions', taken));
+  const [column, setColumn] = useState(() => freeName('labels', taken));
   const [label, setLabel] = useState('region 1');
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -57,13 +57,13 @@ export default function LabelTask({ wb }: TaskProps) {
 
   return (
     <div className="task-body">
-      <p className="muted">Draw on the tissue: click around cells with the lasso, or drag a shape. Then name them.</p>
+      <p className="muted">Drag around {unit}s on the tissue, then name them. Hold Space to pan.</p>
       <div className="seg seg-wrap" role="group" aria-label="Drawing tool">
         {(['lasso', ...SELECTION_SHAPE_KINDS] as SelectionTool[]).map((t) => (
           <button key={t} type="button" aria-pressed={selection.tool === t} onClick={() => setTool(wb.key, t)}>{TOOL_LABELS[t]}</button>
         ))}
       </div>
-      <p className="answer-small" aria-live="polite">{cells.length ? `${formatCount(cells.length)} cells selected` : 'No cells selected yet'}</p>
+      <p className="answer-small" aria-live="polite">{cells.length ? `${formatCount(cells.length)} ${unit}s selected` : `No ${unit}s selected yet`}</p>
       <div className="button-row">
         <button type="button" className="button button-small" onClick={() => commitShape(wb.key)} disabled={!selection.ring.length && !selection.shape}>Keep shape, draw another</button>
         <button type="button" className="button button-small" onClick={() => clearSelection(wb.key)}
@@ -80,9 +80,8 @@ export default function LabelTask({ wb }: TaskProps) {
       {problem && <p className="notice notice-danger">{problem}</p>}
       <button type="button" className="button button-primary" disabled={busy || !cells.length || !label.trim() || !target}
         onClick={() => void apply()}>
-        {busy ? 'Labelling…' : `Label ${cells.length ? formatCount(cells.length) : ''} cells “${label.trim()}”`}
+        {busy ? 'Labelling…' : `Label ${cells.length ? formatCount(cells.length) : ''} ${unit}s “${label.trim()}”`}
       </button>
-      <p className="muted task-about">Cells that already had a label in this column take the new one. Unlabelled cells stay empty.</p>
     </div>
   );
 }

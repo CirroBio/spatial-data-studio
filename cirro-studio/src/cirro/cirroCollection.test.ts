@@ -1,7 +1,24 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Executor, type Process } from '@cirrobio/api-client';
+import type { NewVersion } from '../data/collection';
 import { CirroCollection } from './cirroCollection';
 import type { CirroSession } from './session';
+
+// This browser's saved versions, in memory: the tests have no IndexedDB.
+const savedInBrowser: { projectId: string; name: string }[] = [];
+vi.mock('../data/browserStore', () => ({
+  listBrowserDatasets: async () => [],
+  saveInBrowser: async (projectId: string, v: { name: string }) => {
+    savedInBrowser.push({ projectId, name: v.name });
+    return `saved-${savedInBrowser.length}`;
+  },
+  browserRecord: () => null,
+  browserFile: async () => new Uint8Array(),
+  browserListing: async () => [],
+}));
+beforeEach(() => {
+  savedInBrowser.length = 0;
+});
 
 const PROJECT = 'project-1';
 
@@ -38,7 +55,7 @@ const session = {
   data: { processes: { getProcesses: async () => PROCESSES } },
 } as unknown as CirroSession;
 
-const collection = () => new CirroCollection(session, PROJECT, 'Project');
+const collection = () => new CirroCollection(session, PROJECT, 'Project', 'write');
 
 describe('CirroCollection, adding data', () => {
   it('lists the pipelines that make each stage, launched from the project', async () => {
@@ -66,5 +83,37 @@ describe('CirroCollection, adding data', () => {
     // The general type comes before the specific ones.
     expect((await collection().uploadTypes('images')).map((t) => t.id)).toEqual(['images', 'codex_raw', 'custom_dataset']);
     expect((await collection().uploadTypes('spatial')).map((t) => t.id)).toEqual(['custom_dataset']);
+  });
+});
+
+describe('CirroCollection, a project the user can only read', () => {
+  const version: NewVersion = { name: 'v', description: '', files: [], sourceIds: [], note: { what: '', parameters: {} } };
+  const refusing = (upload: () => Promise<never>) => new CirroCollection({
+    ...session, data: { ...session.data, datasets: { uploadDataset: upload } },
+  } as unknown as CirroSession, PROJECT, 'Project', 'write');
+
+  it('saves versions in this browser', async () => {
+    const readOnly = new CirroCollection(session, PROJECT, 'Project', 'read');
+    expect(readOnly.saveTarget).toBe('this browser');
+    expect(await readOnly.saveVersion(version)).toEqual({ datasetId: 'saved-1', notice: null });
+    expect(savedInBrowser).toEqual([{ projectId: PROJECT, name: 'v' }]);
+  });
+
+  it('learns it from a refused save, and saves in this browser instead', async () => {
+    const c = refusing(async () => {
+      throw Object.assign(new Error('Not allowed to CREATE_DATASET on project project-1'), { errorCode: 403, errors: [] });
+    });
+    const { notice } = await c.saveVersion(version);
+    expect(notice).toMatch(/saved in this browser/);
+    expect(c.access).toBe('read');
+    expect(c.saveTarget).toBe('this browser');
+  });
+
+  it('passes on any other failure', async () => {
+    const c = refusing(async () => {
+      throw Object.assign(new Error('Service unavailable'), { errorCode: 503, errors: [] });
+    });
+    await expect(c.saveVersion(version)).rejects.toThrow('Service unavailable');
+    expect(c.access).toBe('write');
   });
 });

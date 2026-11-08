@@ -241,13 +241,14 @@ interface AppStore {
   setRegionTarget: (setName: string, category: string, color: string) => void;
 
   // cell-selection draw state — shared between the canvas (draws) and the active tab's
-  // panel (commit / apply / clear). drawPolygons holds committed rings; drawRing is
-  // the in-progress ring being clicked out, and drawShape the in-progress geometric
-  // shape (one at a time, like the ring) placed by the circle/ellipse/square/rectangle
-  // tools. Both in-progress items count toward the selection before being committed.
+  // panel (commit / apply / clear). drawPolygons holds committed rings, a dragged lasso
+  // ring among them as soon as it is released; drawRing is the in-progress ring being
+  // clicked out, and drawShape the in-progress geometric shape (one at a time, like the
+  // ring) placed by the circle/ellipse/square/rectangle tools. Both in-progress items
+  // count toward the selection before being committed.
   drawPolygons: [number, number][][];
   drawRing: [number, number][];
-  // Which selection tool a canvas drag drives: the click-built lasso, or one of the
+  // Which selection tool a canvas drag drives: the lasso, or one of the
   // geometric shapes. A panel-level choice, shared by the Regions and Subset tabs.
   selectionTool: SelectionTool;
   setSelectionTool: (tool: SelectionTool) => void;
@@ -283,6 +284,7 @@ interface AppStore {
   }) => void;
   setRegionCellIndices: (idx: number[] | null) => void;
   addDrawVertex: (pt: [number, number]) => void;
+  addDrawPolygon: (ring: [number, number][]) => void;
   // Bank whatever is in progress — the closeable ring and/or the placed geometric
   // shape — as committed rings, freeing the surface for the next area.
   commitDrawRegion: () => void;
@@ -744,6 +746,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       };
     }),
   addDrawVertex: (pt) => set((s) => ({ drawRing: [...s.drawRing, pt] })),
+  addDrawPolygon: (ring) => set((s) => ({ drawPolygons: [...s.drawPolygons, ring] })),
   commitDrawRegion: () =>
     set((s) => {
       const committed = [...s.drawPolygons];

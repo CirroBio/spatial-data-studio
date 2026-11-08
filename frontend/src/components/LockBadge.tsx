@@ -10,7 +10,7 @@ import { TourAnchors } from '../tours';
 // is locked (to you, or to the viewer named on the badge) and an open one when it is
 // unlocked and free to take. Clicking opens the panel that takes/releases the lock,
 // lists who else is here, and edits your own display name. Same click-outside popover
-// pattern as VarNameSelect (a Radix menu can't hold a text input — its typeahead eats
+// pattern as ColorBySelect (a Radix menu can't hold a text input — its typeahead eats
 // the keystrokes).
 export default function LockBadge() {
   const { activeSessionId, presence, clientName, renameClient } = useAppStore();

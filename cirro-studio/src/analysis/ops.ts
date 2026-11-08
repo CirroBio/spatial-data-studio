@@ -74,7 +74,7 @@ export const ops = {
     const kept: number[] = [];
     for (let i = 0; i < n; i++) if (composition.subarray(i * nCategories, (i + 1) * nCategories).some((f) => f > 0)) kept.push(i);
     const rows = new Float32Array(kept.length * nCategories);
-    if (kept.length === 0) throw new Error('No cell has a labelled cell in its neighbourhood.');
+    if (kept.length === 0) throw new Error('No cell has a labeled cell in its neighborhood.');
     kept.forEach((cell, r) => rows.set(composition.subarray(cell * nCategories, (cell + 1) * nCategories), r * nCategories));
     const keptLabels = kmeans(rows, kept.length, nCategories, Math.min(nNiches, kept.length), seed, 300, stage(progress, 0.2, 1));
     const found = labelCount(keptLabels);

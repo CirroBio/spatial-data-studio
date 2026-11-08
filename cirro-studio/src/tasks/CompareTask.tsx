@@ -35,7 +35,7 @@ export default function CompareTask({ wb, unit }: TaskProps) {
       let inB = 0;
       for (const m of members) if (m === 1) inA++; else if (m === 2) inB++;
       if (inA < 2 || inB < 2) throw new Error(`Each group needs at least two ${unit}s: ${groupLabel(a)} has ${inA}, ${groupLabel(b)} has ${inB}.`);
-      const matrix = await readMatrix(wb.key, handle);
+      const matrix = await job.prepare('Reading the expression matrix', readMatrix(wb.key, handle));
       const rows = await job.run('compareGroups', { matrix, membership: members });
       if (!rows) return;
       const summary: CompareSummary = {

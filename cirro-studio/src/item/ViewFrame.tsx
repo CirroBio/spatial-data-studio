@@ -2,7 +2,7 @@
 // over it in two drawers, the tasks on the left (where the Studio keeps its compute
 // sidebar) and the display settings on the right (where the Studio's gear is), pulled in
 // and pushed away with their tabs or the [ and ] keys; \ moves both.
-import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { appKey } from '../app/appInfo';
 
 type Side = 'left' | 'right';
@@ -19,8 +19,19 @@ const TAB_ROOM = 124;
 /** The strip at the top of the frame the views bar takes, which the canvas' overlays and a
  * sheet's content start below. */
 export const BAR_ROOM = 40;
-// Below this the drawers start closed: open, they would cover most of the view.
+// Below this the drawers start closed, and only one is out at a time: both would cover
+// most of the view.
 const ROOMY_WIDTH = 1100;
+
+function useNarrow(): boolean {
+  const [narrow, setNarrow] = useState(() => window.innerWidth < ROOMY_WIDTH);
+  useEffect(() => {
+    const onResize = () => setNarrow(window.innerWidth < ROOMY_WIDTH);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  return narrow;
+}
 
 function initialOpen(): Open {
   try {
@@ -53,9 +64,17 @@ export interface Drawers {
 
 /** The drawers' state: remembered in this browser, and the tasks drawer opens with a task. */
 export function useDrawers(working: boolean): Drawers {
-  const [open, setOpen] = useState(initialOpen);
+  const [chosen, setOpen] = useState(initialOpen);
+  const narrow = useNarrow();
+  const narrowRef = useRef(narrow);
+  narrowRef.current = narrow;
+  // On a narrow window the one pulled out last stays; the tasks drawer, when both are.
+  const open = narrow && chosen.left && chosen.right ? { left: true, right: false } : chosen;
   const toggle = useCallback((side: Side) => setOpen((o) => {
-    const next = { ...o, [side]: !o[side] };
+    // From what is shown, so pushing one away on a narrow window doesn't bring the other out.
+    const shown = narrowRef.current && o.left && o.right ? { left: true, right: false } : o;
+    const next = { ...shown, [side]: !shown[side] };
+    if (narrowRef.current && next[side]) next[side === 'left' ? 'right' : 'left'] = false;
     remember(next);
     return next;
   }), []);

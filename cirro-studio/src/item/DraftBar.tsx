@@ -63,7 +63,7 @@ function SaveDialog({ wb, baseSize, datasetName, onClose }: { wb: Workbench; bas
     setProblem(null);
     setProgress(0);
     try {
-      const { datasetId, key, noteProblem } = await saveDraft(wb.key, {
+      const { datasetId, key, notice } = await saveDraft(wb.key, {
         title: title.trim() || suggestTitle(wb.changes),
         message: message.trim(),
         createdBy: session?.displayName ?? '',
@@ -71,7 +71,7 @@ function SaveDialog({ wb, baseSize, datasetName, onClose }: { wb: Workbench; bas
       }, setProgress);
       carryDisplays(wb.key, key);
       reloadCatalog(collection);
-      if (noteProblem) setNotice({ datasetId, note: noteProblem });
+      if (notice) setNotice({ datasetId, note: notice });
       else openItem(datasetId, LAYER_MANIFEST);
     } catch (e) {
       setProgress(null);
@@ -106,11 +106,17 @@ function SaveDialog({ wb, baseSize, datasetName, onClose }: { wb: Workbench; bas
         <ul className="save-changes">
           {wb.changes.map((c, i) => <li key={i} className={isRemoval(c) ? 'removed' : ''}>{describeChange(c)}</li>)}
         </ul>
-        <p className="save-explain">
-          Writes <strong>{formatBytes(wb.draftBytes)}</strong>, only what changed, to {collection.saveTarget}, as version {depth} on top
-          of {depth > 1 ? 'the version open now' : 'the original store'}
-          {baseSize > 0 && <> ({formatBytes(baseSize)}, which is not copied)</>}. Anyone who can open both sees the full dataset.
-        </p>
+        {collection.access === 'write' ? (
+          <p className="save-explain">
+            Writes <strong>{formatBytes(wb.draftBytes)}</strong>, only what changed, to {collection.saveTarget}, as version {depth} on
+            top of {depth > 1 ? 'the version open now' : 'the original'}{baseSize > 0 && <> ({formatBytes(baseSize)}, not copied)</>}.
+          </p>
+        ) : (
+          <p className="save-explain">
+            You can only read this project, so the version ({formatBytes(wb.draftBytes)}) is kept in <strong>this browser only</strong>:
+            not on other computers, and nobody else can see it.
+          </p>
+        )}
         {problem && <p className="notice notice-danger">{problem}</p>}
         {progress !== null && <progress max={1} value={progress} aria-label="Saving" />}
         <div className="button-row">

@@ -1,12 +1,13 @@
 // Pieces the task panels share: a job's progress, choosing a column or a group of cells,
 // writing a column into the draft, and a sortable result table.
-import { useMemo, useState } from 'react';
-import type { CheckpointHandle } from '@cirrobio/spatial-viewer';
+import { useEffect, useMemo, useState } from 'react';
+import { buildColorLegend, type CheckpointHandle } from '@cirrobio/spatial-viewer';
 import { ObsFieldSelect } from '@cirrobio/studio-ui';
 import { formatCount } from '../app/ui';
 import { describeError } from '../cirro/session';
-import { updateEncoding } from '../item/displayState';
+import { updateEncoding, useDisplays } from '../item/displayState';
 import { useSelection } from '../item/selection';
+import { useColorKey } from '../item/useColorField';
 import type { ObsColumn } from '../stack/editor';
 import { applyEdit } from '../workbench/workbench';
 import { readGroups } from './data';
@@ -24,9 +25,23 @@ export function JobStatus({ job, label }: { job: Job; label: string }) {
   );
 }
 
-export function ColumnSelect({ handle, value, onChange, label }: {
-  handle: CheckpointHandle; value: string; onChange: (v: string) => void; label: string;
+/** The column the tissue is colored by, when a groups chooser can start on it: a
+ * categorical column with no more groups than the tissue colors. Null until that is
+ * known, and without a dataset key. */
+function useColoredGroups(wbKey: string, handle: CheckpointHandle): string | null {
+  const colorBy = useDisplays(wbKey, handle).spatial?.encoding.color_by;
+  const { key } = useColorKey(colorBy?.startsWith('obs:') ? colorBy : null, 0);
+  return key?.kind === 'categorical' ? key.field.slice('obs:'.length) : null;
+}
+
+/** A column of groups, starting on the one the tissue is colored by until another is chosen. */
+export function ColumnSelect({ handle, wbKey, value, onChange, label }: {
+  handle: CheckpointHandle; wbKey: string; value: string; onChange: (v: string) => void; label: string;
 }) {
+  const colored = useColoredGroups(wbKey, handle);
+  useEffect(() => {
+    if (!value && colored) onChange(colored);
+  }, [value, colored, onChange]);
   return (
     <label className="field studio-ui">
       <span>{label}</span>
@@ -82,21 +97,33 @@ export function GroupPicker({ handle, wbKey, value, onChange, label, allowRest }
   const selection = useSelection(wbKey);
   const [column, setColumn] = useState(value?.kind === 'category' ? value.column : '');
   const [categories, setCategories] = useState<string[]>([]);
+  // How many groups the chosen column has, when that is too many to list.
+  const [tooMany, setTooMany] = useState<number | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const columns = handle.fields.obs.filter((f) => f.kind === 'categorical');
   const chooseColumn = async (c: string) => {
     setColumn(c);
     setCategories([]);
+    setTooMany(null);
     setProblem(null);
     // A group of the old column is not one of the new column's.
     if (value?.kind === 'category') onChange(null);
     if (!c) return;
     try {
-      setCategories((await readGroups(handle, c)).categories);
+      const groups = await readGroups(handle, c);
+      // Past the tissue's cap on colors, a column names cells (IDs, barcodes) rather than
+      // grouping them.
+      if (buildColorLegend(groups, undefined)?.kind === 'too-many-categories') setTooMany(groups.categories.length);
+      else setCategories(groups.categories);
     } catch (e) {
       setProblem(describeError(e));
     }
   };
+  // Start on the grouping the tissue is colored by, until something is chosen.
+  const colored = useColoredGroups(wbKey, handle);
+  useEffect(() => {
+    if (colored && !column && !value) void chooseColumn(colored);
+  }, [colored]);
   const current = value?.kind === 'category' ? `c:${value.category}` : value?.kind ?? '';
   return (
     <fieldset className="group-picker">
@@ -122,6 +149,7 @@ export function GroupPicker({ handle, wbKey, value, onChange, label, allowRest }
           {categories.map((c) => <option key={c} value={`c:${c}`}>{c}</option>)}
         </select>
       </div>
+      {tooMany !== null && <p className="muted">“{column}” has {formatCount(tooMany)} groups, too many to compare.</p>}
       {problem && <p className="notice notice-danger">{problem}</p>}
     </fieldset>
   );

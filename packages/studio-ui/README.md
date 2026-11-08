@@ -13,9 +13,11 @@ workspace package and is not published.
   hands its `controls` slot. By default the panel floats over the canvas and shrinks to a
   gear (`collapsed`, `onCollapse`), as in the Studio. With `docked` it renders flat, for a
   host that puts it in a panel of its own.
-- `ColorBySelect`, `ObsFieldSelect`, `VarNameSelect`, `ColorSwatchPicker`, `PanelTabs`
-  and `useClickOutside`: the pickers and pieces the panel uses, which the apps also use
-  on their own.
+- `ColorBySelect`, `ObsFieldSelect`, `ColorSwatchPicker`, `PanelTabs` and
+  `useClickOutside`: the pickers and pieces the panel uses, which the apps also use on
+  their own. `ColorBySelect` is one searchable list of the table's annotations and, once
+  a name is typed, its genes; it needs a `DataSourceProvider` around it to search genes,
+  and offers annotations alone without one.
 
 ## Using it
 

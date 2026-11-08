@@ -9,9 +9,9 @@ import { BarList } from '../charts/BarList';
 import { Histogram } from '../charts/Histogram';
 import { TissueThumb, type Paint, type Tissue } from '../charts/TissueThumb';
 import { describeError } from '../cirro/session';
-import { FORMATS, ResultTable } from '../tasks/parts';
+import { FORMATS, ResultTable, type Column } from '../tasks/parts';
 import { storeOf, type Workbench } from '../workbench/workbench';
-import { FullTable, GENE_SET_SIZE, geneValues, ScoreGenes, Section, showOnTissue, Stats, useMatrix, useTissue } from './parts';
+import { DownloadCsv, FullTable, GENE_SET_SIZE, geneValues, ScoreGenes, Section, showOnTissue, Stats, useMatrix, useTissue } from './parts';
 import type { ReportProps } from './ReportView';
 import { GENE_TEST_COLUMN, readResultTable, type KeptResult } from './store';
 
@@ -38,6 +38,11 @@ const THUMB_W = 132;
 const SIDE_W = 340;
 
 const patternName = (p: number) => `pattern ${p + 1}`;
+const TABLE_COLUMNS: Column<MoranRow>[] = [
+  { key: 'gene', label: 'Gene' }, { key: 'I', label: "Moran's I", format: FORMATS.num },
+  { key: 'z', label: 'z', format: FORMATS.num }, { key: 'padj', label: 'Adj. p', format: FORMATS.p },
+  { key: 'pattern', label: 'Pattern', format: (p) => (p < 0 ? '—' : String(p + 1)) },
+];
 
 /** Each cell's mean of the genes' log1p expression. */
 function meanValues(matrix: ExpressionMatrix, genes: string[]): Float32Array {
@@ -145,6 +150,8 @@ export default function MoranReport({ result, table, wb, handle, unit, width }: 
     const [I, z, padj] = ['I', 'z', GENE_TEST_COLUMN.padj].map((c) => table.columns[c] as ArrayLike<number>);
     return table.index.map((gene, i) => ({ gene, I: I[i], z: z[i], padj: padj[i], pattern: patternOf?.get(gene) ?? -1 }));
   }, [table, patternOf]);
+  // In the file, patterns are numbered as the table numbers them, and a gene in none is left empty.
+  const csvRows = useMemo(() => rows.map((r) => ({ ...r, pattern: r.pattern < 0 ? NaN : r.pattern + 1 })), [rows]);
   const spatial = useMemo(() => rows.filter((r) => r.padj < cutoff.padj && r.I > 0), [rows, cutoff.padj]);
   const groups = useMemo(() => Array.from({ length: patterns.count }, (_, p) => rows.filter((r) => r.pattern === p)), [rows, patterns.count]);
   const top = spatial[0] ?? rows[0];
@@ -226,14 +233,9 @@ export default function MoranReport({ result, table, wb, handle, unit, width }: 
           </div>
         </div>
       </Section>
-      <Section title="All results">
+      <Section title="All results" actions={<DownloadCsv name="spatially variable genes" rows={csvRows} columns={TABLE_COLUMNS} />}>
         <FullTable count={rows.length}>
-          <ResultTable rows={rows} rowKey={(r) => r.gene} onPick={(r) => showOnTissue(wb.key, `X:${r.gene}`)}
-            columns={[
-              { key: 'gene', label: 'Gene' }, { key: 'I', label: "Moran's I", format: FORMATS.num },
-              { key: 'z', label: 'z', format: FORMATS.num }, { key: 'padj', label: 'Adj. p', format: FORMATS.p },
-              { key: 'pattern', label: 'Pattern', format: (p) => (p < 0 ? '—' : String(p + 1)) },
-            ]} />
+          <ResultTable rows={rows} rowKey={(r) => r.gene} onPick={(r) => showOnTissue(wb.key, `X:${r.gene}`)} columns={TABLE_COLUMNS} />
         </FullTable>
       </Section>
     </div>

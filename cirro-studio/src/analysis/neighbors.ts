@@ -65,7 +65,7 @@ export function knnGraph(points: Float32Array, n: number, dim: number, k: number
         }
       }
     }
-    progress((0.3 * (tree + 1)) / nTrees, 'Building neighbour graph');
+    progress((0.3 * (tree + 1)) / nTrees, 'Building the neighbor graph');
   }
   for (let i = 0; i < n; i++) {
     while (heaps.count(i) < k) {
@@ -114,10 +114,10 @@ export function knnGraph(points: Float32Array, n: number, dim: number, k: number
         }
       }
     }
-    progress(0.3 + (0.7 * (iter + 1)) / maxIterations, 'Building neighbour graph');
+    progress(0.3 + (0.7 * (iter + 1)) / maxIterations, 'Building the neighbor graph');
     if (updates <= NN_DESCENT_DELTA * k * n) break;
   }
-  progress(1, 'Building neighbour graph');
+  progress(1, 'Building the neighbor graph');
   return heaps.sorted();
 }
 

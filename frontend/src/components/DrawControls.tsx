@@ -21,9 +21,10 @@ interface Props {
 
 // Selection-tool picker plus the "Finish region / Clear" controls, shared by the
 // regions and subsetting panels — the drawing itself happens on the canvas, these
-// actions just manage what has been drawn. The lasso collects a vertex per click; a
-// geometric tool places its shape with one drag, which is then moved by its body and
-// resized/rotated by its handles (SpatialCanvas / useSelectionShape).
+// actions just manage what has been drawn. The lasso banks a ring per drag, or collects a
+// vertex per click for Finish region to close; a geometric tool places its shape with one
+// drag, which is then moved by its body and resized/rotated by its handles
+// (useSelectionShape).
 export default function DrawControls({
   regionCount, drawRingLength, drawPolygonsLength, shapePlaced, onFinish, onClear,
 }: Props) {
@@ -51,13 +52,13 @@ export default function DrawControls({
         {regionCount} region{regionCount === 1 ? '' : 's'}
         {drawRingLength > 0 ? `, ${drawRingLength}-pt drawing` : ''}.
       </p>
-      {shapeTool && (
-        <p className="text-[10px] text-muted/60 leading-snug">
-          {shapePlaced
-            ? `Drag the shape to move it, its handles to resize${selectionTool === 'circle' ? '' : ' and rotate'}. Finish region to keep it and place another.`
-            : 'Drag on the canvas to place it.'}
-        </p>
-      )}
+      <p className="text-[10px] text-muted/60 leading-snug">
+        {!shapeTool
+          ? 'Drag around cells, or click point by point and Finish region. Hold Space to pan.'
+          : shapePlaced
+          ? `Drag the shape to move it, its handles to resize${selectionTool === 'circle' ? '' : ' and rotate'}. Finish region to keep it and place another.`
+          : 'Drag on the canvas to place it.'}
+      </p>
       <div className="flex gap-1">
         <button
           type="button"

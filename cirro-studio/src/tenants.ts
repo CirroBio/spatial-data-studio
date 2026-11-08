@@ -26,8 +26,8 @@ const SIGN_IN_NOW_KEY = appKey('sign-in-now');
 const SIGN_IN_PARAM = 'sign-in';
 // Suggestions appear once this much is typed, so the box doesn't list every tenant to anyone.
 export const SUGGEST_AFTER = 3;
-// The example collection, open without an account; it stands where a tenant would.
-export const EXAMPLES_TENANT = 'examples';
+// The public projects, open without an account; they stand where a tenant would.
+export const PUBLIC_TENANT = 'public';
 
 // A registration that isn't discoverable (a development one, for localhost) needs its
 // client ID, and none is kept in the repo: the dev server reads them from the untracked
@@ -46,7 +46,7 @@ export async function loadTenants(): Promise<Tenant[]> {
   for (const t of tenants) {
     if (!t.id || !t.url) throw new Error(`tenants.json entry ${JSON.stringify(t.id ?? t)} needs id and url.`);
     if (!TENANT_URL.test(t.url)) throw new Error(`tenants.json entry ${JSON.stringify(t.id)} has url ${t.url}; it must be an https address with no path.`);
-    if (t.id === EXAMPLES_TENANT) throw new Error(`tenants.json can't use the id "${EXAMPLES_TENANT}"; the app keeps it for its examples.`);
+    if (t.id === PUBLIC_TENANT) throw new Error(`tenants.json can't use the id "${PUBLIC_TENANT}"; the app keeps it for public projects.`);
   }
   const clientIds = localClientIds();
   return tenants.map((t: Tenant) => ({ ...t, url: t.url.replace(/\/$/, ''), clientId: t.clientId ?? clientIds.get(t.id) }));
@@ -106,22 +106,17 @@ export function takeSignInNow(): boolean {
   return now;
 }
 
-export type StartScreen = 'landing' | 'sign-in';
-export type Start = { tenant: Tenant | typeof EXAMPLES_TENANT } | { screen: StartScreen; unknownFromUrl?: string };
-
-/** The start page a URL asks for. */
-export const startScreenOf = (params: URLSearchParams): StartScreen => (params.has(SIGN_IN_PARAM) ? 'sign-in' : 'landing');
+export type Start = { tenant: Tenant | typeof PUBLIC_TENANT } | { signIn: true; unknownFromUrl?: string };
 
 /** Where a page load starts. The `tenant` URL parameter (context from another app) wins
  * over the saved choice, and a return from sign-in goes to the tenant this tab signed in
- * to; someone signed in to a tenant goes back to it; anyone else starts on the landing
- * page, unless the URL asks for the log-in box. */
+ * to; someone signed in to a tenant goes back to it; anyone else opens the public
+ * projects, unless the URL asks for the log-in box. */
 export function startOf(tenants: Tenant[]): Start {
   const params = new URLSearchParams(window.location.search);
-  const screen = startScreenOf(params);
-  if (screen !== 'landing') return { screen };
+  if (params.has(SIGN_IN_PARAM)) return { signIn: true };
   const fromUrl = params.get('tenant');
-  if (fromUrl === EXAMPLES_TENANT) return { tenant: EXAMPLES_TENANT };
+  if (fromUrl === PUBLIC_TENANT) return { tenant: PUBLIC_TENANT };
   if (fromUrl) {
     // A typed tenant only by the user's own choice, so a link can't send them to a
     // look-alike host.
@@ -130,34 +125,36 @@ export function startOf(tenants: Tenant[]): Start {
       localStorage.setItem(TENANT_KEY, t.id);
       return { tenant: t };
     }
-    return { screen: 'sign-in', unknownFromUrl: fromUrl };
+    return { signIn: true, unknownFromUrl: fromUrl };
   }
   // The saved tenant opens only for someone still logged in to it, or coming back from its
-  // sign-in; anyone else gets the landing page, and the log-in box remembers their choice.
+  // sign-in; anyone else gets the public projects, and the log-in box remembers their choice.
   const saved = byId(readSaved(), tenants);
   const tenant = byId(signInReturnTenant(), tenants)
     ?? (saved && (isSignInReturn(params) || hasSession(saved)) ? saved : undefined)
     ?? tenants.find(hasSession);
-  return tenant ? { tenant } : { screen: 'landing' };
+  return { tenant: tenant ?? PUBLIC_TENANT };
 }
 
-/** The start pages' address, without whatever the app had in the URL. */
-export function startUrl(screen: StartScreen): string {
-  const url = new URL(window.location.pathname, window.location.href);
-  if (screen === 'sign-in') url.searchParams.set(SIGN_IN_PARAM, '');
-  return url.toString().replace(/=$/, '');
+// The app's own address, without whatever it had in the URL.
+function baseUrl(): URL {
+  return new URL(window.location.pathname, window.location.href);
 }
+
+/** The log-in box's address. */
+export const signInUrl = () => `${baseUrl()}?${SIGN_IN_PARAM}`;
+/** The app's address with nothing chosen: the tenant still logged in to, else the public projects. */
+export const homeUrl = () => baseUrl().toString();
 
 function openWith(params: Record<string, string>) {
-  const url = new URL(window.location.pathname, window.location.href);
+  const url = baseUrl();
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
   window.location.assign(url.toString());
 }
 
 /** Logging in starts with the choice of tenant: a deployment can serve several. */
-export const showSignIn = () => window.location.assign(startUrl('sign-in'));
-export const showLanding = () => window.location.assign(startUrl('landing'));
-export const openExamples = () => openWith({ tenant: EXAMPLES_TENANT, project: EXAMPLES_TENANT });
+export const showSignIn = () => window.location.assign(signInUrl());
+export const showHome = () => window.location.assign(homeUrl());
 
 export function chooseTenant(t: Tenant) {
   localStorage.setItem(TENANT_KEY, t.id);

@@ -19,9 +19,12 @@ export function describeChange(c: Change, withNote = true): string {
 export const isRemoval = (c: Change) => c.op.startsWith('delete-');
 
 /** A default title for a version from what it changes. */
+// A version is named for what was found when it holds results ("Clusters in leiden"), since
+// the columns they came with are part of them; otherwise for its first change.
 export function suggestTitle(changes: Change[]): string {
   const added = changes.filter((c) => !isRemoval(c));
   if (!added.length) return 'Removed results';
-  const first = describeChange(added[0], false).replace(/[“”]/g, '');
-  return added.length === 1 ? first : `${first} and ${added.length - 1} more`;
+  const results = [...new Set(added.flatMap((c) => (c.op === 'set-uns' && c.note ? [c.note] : [])))];
+  const names = results.length ? results : added.map((c) => describeChange(c, false).replace(/[“”]/g, ''));
+  return names.length === 1 ? names[0] : `${names[0]} and ${names.length - 1} more`;
 }

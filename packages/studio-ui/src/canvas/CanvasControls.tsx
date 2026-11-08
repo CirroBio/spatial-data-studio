@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useId, useState, type ReactNode } from 'react';
 import * as Tabs from '@radix-ui/react-tabs';
 import PanelTabs, { type PanelTab } from '../PanelTabs';
 import ColorBySelect from './ColorBySelect';
@@ -170,6 +170,7 @@ export default function CanvasControls({
   const mode = shapeSets.length > 0 ? renderMode : 'points';
   const hasImage = imageElement !== null;
   const [tab, setTab] = useState<DisplayTab>('layers');
+  const fieldId = useId();
   // Which channel's color/contrast settings are expanded (Image tab). Ephemeral UI.
   const [expandedChannel, setExpandedChannel] = useState<number | null>(null);
   // Which category's color swatch picker is expanded (Cells tab). Ephemeral UI.
@@ -327,8 +328,9 @@ export default function CanvasControls({
           {/* Points + Shapes mode is only offered when polygon element(s) exist. */}
           {shapeSets.length > 0 && (
             <div className="flex flex-col gap-1">
-              <label className={FIELD_LABEL}>Render mode</label>
+              <label htmlFor={`${fieldId}-render-mode`} className={FIELD_LABEL}>Render mode</label>
               <select
+                id={`${fieldId}-render-mode`}
                 value={mode}
                 onChange={(e) => setRenderMode(e.target.value as 'points' | 'points+shapes')}
                 className={SELECT_CLASS}
@@ -344,8 +346,9 @@ export default function CanvasControls({
             onChange={(v) => updateEncoding({ point_size: v })} />
 
           <div className="flex flex-col gap-1">
-            <label className={FIELD_LABEL}>Geometry</label>
+            <label htmlFor={`${fieldId}-geometry`} className={FIELD_LABEL}>Geometry</label>
             <select
+              id={`${fieldId}-geometry`}
               value={display.encoding.point_marker ?? SPATIAL_ENCODING_DEFAULTS.point_marker}
               onChange={(e) => updateEncoding({ point_marker: e.target.value as 'circle' | 'square' | 'hexagon' })}
               className={SELECT_CLASS}
@@ -360,8 +363,9 @@ export default function CanvasControls({
           {mode === 'points+shapes' && (
             <>
               <div className="flex flex-col gap-1">
-                <label className={FIELD_LABEL}>Shape set</label>
+                <label htmlFor={`${fieldId}-shape-set`} className={FIELD_LABEL}>Shape set</label>
                 <select
+                  id={`${fieldId}-shape-set`}
                   value={shapesElement ?? ''}
                   onChange={(e) => setShapesElement(e.target.value)}
                   className={SELECT_CLASS}
@@ -374,8 +378,9 @@ export default function CanvasControls({
               </div>
 
               <div className="flex flex-col gap-1">
-                <label className={FIELD_LABEL}>Boundary style</label>
+                <label htmlFor={`${fieldId}-boundary-style`} className={FIELD_LABEL}>Boundary style</label>
                 <select
+                  id={`${fieldId}-boundary-style`}
                   value={display.encoding.boundary_style ?? SPATIAL_ENCODING_DEFAULTS.boundary_style}
                   onChange={(e) => updateEncoding({ boundary_style: e.target.value as 'filled' | 'outline' })}
                   className={SELECT_CLASS}
@@ -453,6 +458,7 @@ export default function CanvasControls({
                           onChange={(e) => setCategoryColor(item.label, e.target.value)}
                           className="w-7 h-6 rounded border border-border bg-bg cursor-pointer"
                           title="Pick any color"
+                          aria-label={`Pick any color for ${item.label}`}
                         />
                         <ColorSwatchPicker colors={CATEGORY_SWATCHES} selected={item.color} onSelect={(color) => setCategoryColor(item.label, color)} columns={5} />
                       </div>
@@ -472,8 +478,9 @@ export default function CanvasControls({
               (an H&E alongside a morphology stain); "None" shows the backdrop alone. */}
           {imageSets.length > 0 && (
             <div className="flex flex-col gap-1">
-              <label className={FIELD_LABEL}>Image</label>
+              <label htmlFor={`${fieldId}-image`} className={FIELD_LABEL}>Image</label>
               <select
+                id={`${fieldId}-image`}
                 value={imageElement ?? ''}
                 onChange={(e) => setImageElement(e.target.value || null)}
                 className={SELECT_CLASS}
@@ -539,6 +546,7 @@ export default function CanvasControls({
                         onChange={(e) => setChannel(c.index, { visible: e.target.checked })}
                         className="accent-accent disabled:opacity-40 disabled:cursor-not-allowed"
                         title={maxVisibleReached && !c.visible ? 'Maximum of 6 channels shown' : 'Toggle channel'}
+                        aria-label={`Show ${c.name}`}
                       />
                       <button
                         type="button"
@@ -554,6 +562,7 @@ export default function CanvasControls({
                         onChange={(e) => setChannel(c.index, { name: e.target.value })}
                         className="flex-1 min-w-0 bg-bg border border-border rounded px-1 py-0.5 text-[10px] text-text focus:outline-none focus:border-accent"
                         title="Rename channel"
+                        aria-label={`Channel ${c.index + 1} name`}
                       />
                       <button
                         type="button"
@@ -582,6 +591,7 @@ export default function CanvasControls({
                             onChange={(e) => setChannel(c.index, { color: e.target.value })}
                             className="w-7 h-6 rounded border border-border bg-bg cursor-pointer"
                             title="Pick any color"
+                            aria-label={`Pick any color for ${c.name}`}
                           />
                           <ColorSwatchPicker colors={CHANNEL_COLORS} selected={c.color} onSelect={(color) => setChannel(c.index, { color })} />
                         </div>

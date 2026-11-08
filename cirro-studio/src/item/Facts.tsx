@@ -11,20 +11,23 @@ import { CreditLine } from './CreditLine';
 
 export interface Kin { item: CatalogItem; label: string; color: string }
 
-export function Facts({ title, item, kind, stage, from, into, extra, unsaved = false }: {
+export function Facts({ title, item, origin, kind, stage, from, into, extra, unsaved = false }: {
   title: string; item: CatalogItem; kind: string; stage: StageId; from: Kin[]; into: Kin[]; extra?: ReactNode;
+  // What a version was saved on: whose data it is, and what was done to it, are that one's.
+  origin?: CatalogItem;
   // Changes not saved as a version, which a workspace opening the item can't see.
   unsaved?: boolean;
 }) {
   const { catalog, collection, library } = useStudio();
   const fromStage = useRoute().params.has(STAGE_PARAM);
   const dataset = catalog.byId.get(item.datasetId);
-  const credit = dataset?.credit;
+  const source = origin && origin.datasetId !== item.datasetId ? catalog.byId.get(origin.datasetId) : undefined;
+  const credit = (source ?? dataset)?.credit;
   const url = collection.datasetUrl(item.datasetId);
   const { color, label } = stageOf(stage);
   return (
     <div className="facts" style={tint(color)}>
-      <button type="button" className="facts-back" title="Back to the map (Esc)" onClick={() => backToMap(fromStage)}>
+      <button type="button" className="facts-back" title="Back to the map" onClick={() => backToMap(fromStage)}>
         <svg className="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3L5 8l5 5" fill="none" stroke="currentColor" strokeWidth="1.6" /></svg>
         {fromStage ? label : 'All data'}
       </button>
@@ -38,7 +41,7 @@ export function Facts({ title, item, kind, stage, from, into, extra, unsaved = f
       {into.length > 0 && <span className="facts-kin">made into {into.slice(0, 3).map((k) => <KinChip key={k.item.key} kin={k} />)}{into.length > 3 && <span className="muted"> +{into.length - 3}</span>}</span>}
       {extra}
       <span className="facts-spacer" />
-      {collection.kind === 'cirro' && (
+      {collection.access === 'write' && (
         <button type="button" className="button button-small" title="Every squidpy and scanpy analysis, on a machine in this project, in a new tab"
           onClick={() => openWorkspaces(requestFor(item, title, library, unsaved))}>
           Open in an Analysis Workspace
@@ -49,7 +52,8 @@ export function Facts({ title, item, kind, stage, from, into, extra, unsaved = f
           <dl className="details">
             <dt>Dataset</dt><dd>{dataset?.name ?? item.datasetId}</dd>
             {dataset?.description && <><dt>About</dt><dd>{dataset.description}</dd></>}
-            {credit?.changes && <><dt>Changes</dt><dd>{credit.changes}</dd></>}
+            {source && <><dt>Saved on</dt><dd>{source.name}</dd></>}
+            {credit?.changes && <><dt>{source ? 'Processing of the original' : 'Processing'}</dt><dd>{credit.changes}</dd></>}
             <dt>Path</dt><dd className="mono">{item.path || '(whole dataset)'}</dd>
             {dataset?.createdBy && <><dt>Made by</dt><dd>{dataset.createdBy}</dd></>}
             {dataset?.folders.length ? <><dt>Folder</dt><dd>{dataset.folders.join(', ')}</dd></> : null}

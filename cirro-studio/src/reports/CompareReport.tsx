@@ -2,6 +2,7 @@
 // the volcano beside where each group is on the tissue, then each side's strongest genes
 // (each side's set to score), and the full table.
 import { useEffect, useMemo, useState } from 'react';
+import type { GeneTest } from '../analysis/rankGenes';
 import { useStudio } from '../app/studio';
 import { formatCount } from '../app/ui';
 import { BarList } from '../charts/BarList';
@@ -12,9 +13,9 @@ import { SIZE_PRESETS } from '../figures/layout';
 import { keepFigure } from '../figures/spec';
 import { useDisplays } from '../item/displayState';
 import { readGroups } from '../tasks/data';
-import { FORMATS, ResultTable, type GroupSpec } from '../tasks/parts';
+import { FORMATS, ResultTable, type Column, type GroupSpec } from '../tasks/parts';
 import { storeOf } from '../workbench/workbench';
-import { FullTable, GENE_SET_SIZE, geneValues, pct, ScoreGenes, Section, showOnTissue, Stats, useMatrix, useTissue } from './parts';
+import { DownloadCsv, FullTable, GENE_SET_SIZE, geneValues, pct, ScoreGenes, Section, showOnTissue, Stats, useMatrix, useTissue } from './parts';
 import type { ReportProps } from './ReportView';
 import { geneTestsOf, readResultTable } from './store';
 
@@ -99,6 +100,11 @@ export default function CompareReport({ result, table, wb, handle, unit, width }
     }
   };
 
+  const tableColumns: Column<GeneTest>[] = [
+    { key: 'gene', label: 'Gene' }, { key: 'logfc', label: 'log2FC', format: FORMATS.num },
+    { key: 'padj', label: 'Adj. p', format: FORMATS.p }, { key: 'fracA', label: a.label, format: FORMATS.pct },
+    { key: 'fracB', label: b.label, format: FORMATS.pct },
+  ];
   const volcanoW = Math.min(640, width - THUMB_W - 40);
   const thumbs: { label: string; paint: Paint | null }[] = [
     { label: `Where ${a.label} is`, paint: sides ? { kind: 'group', member: (c) => sides[c] === 1, color: SIDE_COLORS[0] } : null },
@@ -166,14 +172,9 @@ export default function CompareReport({ result, table, wb, handle, unit, width }
           );
         })}
       </div>
-      <Section title="All results">
+      <Section title="All results" actions={<DownloadCsv name={`compare ${a.label} vs ${b.label}`} rows={tests} columns={tableColumns} />}>
         <FullTable count={tests.length}>
-          <ResultTable rows={tests} rowKey={(t) => t.gene} onPick={(t) => setPicked(t.gene)} picked={picked}
-            columns={[
-              { key: 'gene', label: 'Gene' }, { key: 'logfc', label: 'log2FC', format: FORMATS.num },
-              { key: 'padj', label: 'Adj. p', format: FORMATS.p }, { key: 'fracA', label: a.label, format: FORMATS.pct },
-              { key: 'fracB', label: b.label, format: FORMATS.pct },
-            ]} />
+          <ResultTable rows={tests} rowKey={(t) => t.gene} onPick={(t) => setPicked(t.gene)} picked={picked} columns={tableColumns} />
         </FullTable>
       </Section>
     </div>

@@ -12,10 +12,10 @@ import { withBase } from 'vitepress';
 const shot = withBase('/docs/images/web-app.jpg');
 
 // The web app is the Pages site's root, one level above this section (config.mts `base`).
-// Public Data and the log-in box are the start page's two choices, opened directly; the
-// links carry `target="_self"` so the docs router doesn't take them for its own pages.
+// The public projects (what the app opens on) and the log-in box, opened directly; the links
+// carry `target="_self"` so the docs router doesn't take them for its own pages.
 const app = withBase('/../');
-const publicData = withBase('/../?tenant=examples&project=examples');
+const publicData = withBase('/../?tenant=public');
 const privateData = withBase('/../?sign-in');
 
 // A string rather than template text, so its line breaks survive Vue's whitespace handling.
@@ -41,14 +41,14 @@ const embedSnippet = '<iframe src="viewer/index.html\n    ?checkpoint=my-run.sda
 
           <div class="ways">
             <a class="way" :href="publicData" target="_self">
-              <span class="way-title">Public Data</span>
-              <span class="way-text">Public sections, ready to open, with no account. The
-              analyses run in your browser, and nothing leaves it.</span>
+              <span class="way-title">Public projects</span>
+              <span class="way-text">Example sections anyone can open, with no account. They
+              are read-only: what you save stays in your browser.</span>
             </a>
             <a class="way" :href="privateData" target="_self">
-              <span class="way-title">Private Data (Cirro)</span>
-              <span class="way-text">Your own Cirro projects, read where they are stored, with
-              each result saved back to the project for your team.</span>
+              <span class="way-title">Your Cirro projects</span>
+              <span class="way-text">Log in to open your own projects, read where they are
+              stored. Where you can add to one, each result is saved back to it for your team.</span>
             </a>
           </div>
         </div>
@@ -57,9 +57,9 @@ const embedSnippet = '<iframe src="viewer/index.html\n    ?checkpoint=my-run.sda
       <section>
         <figure>
           <img class="shot" :src="shot" width="2400" height="1350"
-               alt="A Xenium pancreas section open in the web app: every cell drawn over the H&amp;E image and colored by its cellular neighborhood, with the analysis tasks in a drawer on the left and the display settings in a drawer on the right." />
-          <figcaption>A Xenium human pancreas section from Public Data, each cell colored by its
-          cellular neighborhood over the H&amp;E image. The analyses are in the drawer on the left and the
+               alt="A Xenium pancreas section open in the web app: every cell drawn over the immunofluorescence image and colored by its cellular neighborhood, with the analysis tasks in a drawer on the left and the display settings in a drawer on the right." />
+          <figcaption>A Xenium human pancreas section from Spatial Data Studio's public project, each cell colored by its
+          cellular neighborhood over the immunofluorescence image. The analyses are in the drawer on the left and the
           display settings in the drawer on the right.
           <a :href="withBase('/docs/guide/public-data')">Explore public data</a> walks through
           it.</figcaption>

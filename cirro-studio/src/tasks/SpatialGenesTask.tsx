@@ -33,7 +33,7 @@ export default function SpatialGenesTask({ wb, unit }: TaskProps) {
   const run = async () => {
     setProblem(null);
     try {
-      const [matrix, xy] = await Promise.all([readMatrix(wb.key, handle), readCoords(handle, coords)]);
+      const [matrix, xy] = await job.prepare('Reading the expression matrix', Promise.all([readMatrix(wb.key, handle), readCoords(handle, coords)]));
       const rows = await job.run('moransI', { matrix, xy });
       if (!rows) return;
       // `rows` come highest I first.
@@ -84,7 +84,7 @@ export default function SpatialGenesTask({ wb, unit }: TaskProps) {
 
   return (
     <div className="task-body">
-      <p className="muted">Moran's I measures how much a gene's expression in a {unit} resembles its neighbors': near 1 for a gene that marks a region, near 0 for one scattered at random. The genes with the strongest patterns are grouped by how alike their maps are, and the run opens as a report.</p>
+      <p className="muted">Genes whose expression follows a pattern on the tissue (Moran's I), grouped by how alike their maps are.</p>
       <JobStatus job={job} label="Measuring every gene" />
       {problem && <p className="notice notice-danger">{problem}</p>}
       <button type="button" className="button button-primary" disabled={job.running} onClick={() => void run()}>Find spatially variable genes</button>

@@ -50,7 +50,7 @@ class BrowserCatalog implements CatalogCache {
   }
 }
 
-// Every entry in 'scans' is a Cirro project's: the examples list their own files.
+// Every entry in 'scans' is a Cirro project's: public projects list their own files.
 export const forgetBrowserCatalog = () => kvDeleteWhere('scans', () => true);
 
 class SheetCatalog implements CatalogCache {
