@@ -184,12 +184,11 @@ const subscribeScale = (l: () => void) => {
 };
 export const useWorldPerPixel = (key: string) => useSyncExternalStore(subscribeScale, () => worldPerPixelOf(key));
 
-// The element each dataset's tissue is drawn in while a lens shows it: what a figure's
-// download captures. Only the tissue registers, since the figure's scale bar, legend and
-// caption describe the tissue, not the cell map.
-const tissueCanvases = new Map<string, HTMLElement>();
-export function setTissueCanvas(key: string, el: HTMLElement | null) {
-  if (el) tissueCanvases.set(key, el);
-  else tissueCanvases.delete(key);
+// The element each dataset's tissue, or cell map, is drawn in while a lens shows it: what
+// a figure's download captures.
+const viewCanvases = new Map<string, HTMLElement>();
+export function setViewCanvas(key: string, slot: keyof Displays, el: HTMLElement | null) {
+  if (el) viewCanvases.set(`${slot}:${key}`, el);
+  else viewCanvases.delete(`${slot}:${key}`);
 }
-export const tissueCanvasOf = (key: string) => tissueCanvases.get(key) ?? null;
+export const viewCanvasOf = (key: string, slot: keyof Displays) => viewCanvases.get(`${slot}:${key}`) ?? null;

@@ -18,14 +18,17 @@ import type { SnapshotExportParams } from '../lib/snapshots';
 export interface RegionDrawHost {
   readonly drawPolygons: [number, number][][];
   readonly drawRing: [number, number][];
-  /** What a drag on the canvas does: collect lasso vertices a click at a time, or place
-   *  a geometric shape (see lib/selectionShapes). The panel owns the choice. */
+  /** What a drag on the canvas does: draw a lasso ring (whose vertices a click also adds,
+   *  one at a time), or place a geometric shape (see lib/selectionShapes). The panel owns
+   *  the choice. */
   readonly selectionTool: SelectionTool;
   /** The one geometric shape in progress — the counterpart of `drawRing`, contributing
    *  its ring to the selection until the panel's Finish action banks it. */
   readonly drawShape: SelectionShape | null;
   readonly setDrawShape: (shape: SelectionShape | null) => void;
   readonly addDrawVertex: (pt: [number, number]) => void;
+  /** A whole ring drawn in one drag with the lasso, banked with the committed rings. */
+  readonly addDrawPolygon: (ring: [number, number][]) => void;
   readonly clearDraw: () => void;
   readonly setRegionCellCount: (n: number) => void;
   readonly setRegionCellIndices: (idx: number[] | null) => void;

@@ -11,9 +11,9 @@ import { describeError } from '../cirro/session';
 import { useDisplays } from '../item/displayState';
 import { useColorKey } from '../item/useColorField';
 import { readGroups } from '../tasks/data';
-import { ResultTable } from '../tasks/parts';
+import { ResultTable, type Column } from '../tasks/parts';
 import { storeOf } from '../workbench/workbench';
-import { FullTable, NO_COLOR, pct, Section, showOnTissue, Stats, useTissue } from './parts';
+import { DownloadCsv, FullTable, NO_COLOR, pct, Section, showOnTissue, Stats, useTissue } from './parts';
 import type { ReportProps } from './ReportView';
 import { readResultTable } from './store';
 
@@ -41,6 +41,12 @@ const SCREE_H = 200;
 const THUMB_W = 120;
 
 const percent = (v: number) => `${(100 * v).toFixed(1)}%`;
+type PcaRow = { component: string; ratio: number; cumulative: number };
+const PCA_COLUMNS: Column<PcaRow>[] = [
+  { key: 'component', label: 'Component' },
+  { key: 'ratio', label: 'Variance explained', format: (v) => `${(100 * v).toFixed(2)}%` },
+  { key: 'cumulative', label: 'Up to here', format: percent },
+];
 
 export default function ClustersReport({ result, table, wb, handle, unit, width }: ReportProps) {
   const summary = result.meta.summary as ClustersSummary;
@@ -105,9 +111,17 @@ export default function ClustersReport({ result, table, wb, handle, unit, width 
     let total = 0;
     return variance ? Array.from(variance, (v) => (total += v)) : null;
   }, [variance]);
+  const pcaRows = useMemo(
+    (): PcaRow[] | null => variance && cumulative && Array.from(variance, (v, i) => ({ component: `PC${i + 1}`, ratio: v, cumulative: cumulative[i] })),
+    [variance, cumulative],
+  );
 
   const sizeColumn = table.columns.size as ArrayLike<number>;
   const sizeRows = table.index.map((cluster, i) => ({ cluster, size: sizeColumn[i], share: sizeColumn[i] / Math.max(cells, 1) }));
+  const sizeColumns: Column<(typeof sizeRows)[number]>[] = [
+    { key: 'cluster', label: 'Cluster' }, { key: 'size', label: units, format: formatCount },
+    { key: 'share', label: 'Share', format: percent },
+  ];
   const shareOf = (i: number) => percent(sizes[i] / Math.max(cells, 1));
   // How evenly the cells divided: how many of the largest clusters hold half of them.
   let spread = `All ${formatCount(cells)} ${unit}s are in one cluster.`;
@@ -144,6 +158,10 @@ export default function ClustersReport({ result, table, wb, handle, unit, width 
         },
       ]} />
       {problem && <p className="notice notice-danger">{problem}</p>}
+      {/* Clustering doesn't recompute an embedding, so on one the store came with new clusters can look scattered. */}
+      {handle.fields.obsm.some((f) => /umap|tsne/i.test(f.name)) && (
+        <p className="notice notice-info">The cell map is the UMAP the store came with, made before these clusters, so they may look scattered on it.</p>
+      )}
       <Section title="Cluster sizes" note={`Largest first, in the colors the tissue uses. ${spread}`}
         actions={<button type="button" className="button button-small" onClick={() => showOnTissue(wb.key, field)}>Color the tissue by {column}</button>}>
         <BarList width={Math.min(BARS_W, width - 2)} label={`${units} per cluster of ${column}`}
@@ -172,24 +190,20 @@ export default function ClustersReport({ result, table, wb, handle, unit, width 
         ) : <p className="muted">Reading where the {unit}s are…</p>}
       </Section>
       <Section title="The PCA behind them"
+        actions={pcaRows && <DownloadCsv name={`clusters ${column} pca`} rows={pcaRows} columns={PCA_COLUMNS} />}
         note={(
           <>
             {headline} The clusters come from the {unit}s' nearest neighbors in all {summary.n_comps} components.
             {summary.pca_key && <> The scores are kept as <code>obsm['{summary.pca_key}']</code>.</>}
           </>
         )}>
-        {variance && cumulative && (
+        {variance && pcaRows && (
           <>
             <div className="task-chart" style={{ width: Math.min(SCREE_W, width - 2) }}>
               <Scree ratios={variance} width={Math.min(SCREE_W, width - 2) - 2} height={SCREE_H} label="Variance explained by each principal component" />
             </div>
-            <FullTable count={variance.length}>
-              <ResultTable rows={Array.from(variance, (v, i) => ({ component: `PC${i + 1}`, ratio: v, cumulative: cumulative[i] }))} rowKey={(r) => r.component}
-                columns={[
-                  { key: 'component', label: 'Component' },
-                  { key: 'ratio', label: 'Variance explained', format: (v) => `${(100 * v).toFixed(2)}%` },
-                  { key: 'cumulative', label: 'Up to here', format: percent },
-                ]} />
+            <FullTable count={pcaRows.length}>
+              <ResultTable rows={pcaRows} rowKey={(r) => r.component} columns={PCA_COLUMNS} />
             </FullTable>
           </>
         )}
@@ -200,13 +214,9 @@ export default function ClustersReport({ result, table, wb, handle, unit, width 
           <button type="button" className="button" onClick={() => navigate({ section: 'task', [TASK_PARAM]: 'markers' })}>Find marker genes</button>
         </div>
       </Section>
-      <Section title="All clusters">
+      <Section title="All clusters" actions={<DownloadCsv name={`clusters ${column}`} rows={sizeRows} columns={sizeColumns} />}>
         <FullTable count={table.index.length}>
-          <ResultTable rows={sizeRows} rowKey={(r) => r.cluster}
-            columns={[
-              { key: 'cluster', label: 'Cluster' }, { key: 'size', label: units, format: formatCount },
-              { key: 'share', label: 'Share', format: percent },
-            ]} />
+          <ResultTable rows={sizeRows} rowKey={(r) => r.cluster} columns={sizeColumns} />
         </FullTable>
       </Section>
     </div>

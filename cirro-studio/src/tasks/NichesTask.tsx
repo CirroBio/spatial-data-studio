@@ -31,7 +31,7 @@ export default function NichesTask({ wb, unit }: TaskProps) {
   const run = async () => {
     setProblem(null);
     try {
-      const [obs, xy] = await Promise.all([readGroups(handle, column), readCoords(handle, coords)]);
+      const [obs, xy] = await job.prepare('Reading the groups and positions', Promise.all([readGroups(handle, column), readCoords(handle, coords)]));
       const r = await job.run('niches', { codes: obs.codes, nCategories: obs.categories.length, xy, k: neighbors, nNiches: count });
       if (!r) return;
       const niches = Array.from({ length: r.nNiches }, (_, i) => `N${i + 1}`);
@@ -69,8 +69,8 @@ export default function NichesTask({ wb, unit }: TaskProps) {
 
   return (
     <div className="task-body">
-      <p className="muted">Groups {unit}s by what surrounds them, adds each {unit}'s niche as a column, and opens what each niche is made of as a report.</p>
-      <ColumnSelect handle={handle} value={column} onChange={setColumn} label="Cell types or clusters" />
+      <p className="muted">Groups {unit}s by what surrounds them: regions with the same mix of groups.</p>
+      <ColumnSelect handle={handle} wbKey={wb.key} value={column} onChange={setColumn} label="Cell types or clusters" />
       <label className="field"><span>Niches to find: {count}</span><input type="range" min={2} max={20} value={count} onChange={(e) => setCount(Number(e.target.value))} /></label>
       <label className="field"><span>Neighbors per cell: {neighbors}</span><input type="range" min={5} max={50} value={neighbors} onChange={(e) => setNeighbors(Number(e.target.value))} /></label>
       <label className="field"><span>Column</span><input className="input" value={name} onChange={(e) => setName(e.target.value)} /></label>

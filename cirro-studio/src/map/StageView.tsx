@@ -178,7 +178,7 @@ export function StageView({ stage, nodes, onScene }: {
           <StageTree stage={stage} nodes={nodes} state={state} onState={onState} open={open} onOpenFolders={setOpen}
             onOpen={openNode} onReveal={reveal} onMatch={setMatch} searchRef={search} />
         </div>
-        <p className="map-hint">Click a row for more about it; double-click it, or Enter, opens it. / finds; Esc steps back.</p>
+        {nodes[stage].length > 0 && <p className="map-hint">Double-click a row to open it · / to search</p>}
       </section>
     </div>
   );

@@ -2,7 +2,7 @@
 // above the one it was saved on, branches side by side, the unsaved draft on top of the
 // version that is open. Any version opens from here, and saving from an older one
 // starts a branch rather than overwriting what came after.
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import type { SpatialEntity } from '../app/library';
 import { childrenByParent, refOfItem } from '../app/library';
 import { openItem } from '../app/route';
@@ -58,10 +58,14 @@ function layout(entity: SpatialEntity, draftOn: string | null): Row[] {
 }
 
 function ChangeList({ changes }: { changes: Change[] }) {
+  const [all, setAll] = useState(false);
+  const shown = all ? changes : changes.slice(0, 4);
   return (
     <ul className="history-changes">
-      {changes.slice(0, 4).map((c, i) => <li key={i} className={isRemoval(c) ? 'removed' : ''}>{describeChange(c)}</li>)}
-      {changes.length > 4 && <li className="muted">{changes.length - 4} more</li>}
+      {shown.map((c, i) => <li key={i} className={isRemoval(c) ? 'removed' : ''}>{describeChange(c)}</li>)}
+      {changes.length > shown.length && (
+        <li><button type="button" className="link-button" onClick={() => setAll(true)}>{changes.length - shown.length} more</button></li>
+      )}
     </ul>
   );
 }
@@ -116,11 +120,11 @@ export function History({ entity, openRef, draft }: { entity: SpatialEntity; ope
               <span className="muted">
                 {v ? `${v.createdBy ? `${v.createdBy}, ` : ''}${formatDate(v.createdAt)} · ${plural(v.changes.length, ['change', 'changes'])}` : entity.base ? entity.label : 'In a project you can\'t see'}
               </span>
+              {v?.message && <span className="history-message">{v.message}</span>}
               {v && <ChangeList changes={v.changes} />}
               {noneSaved && (
                 <p className="history-note muted">
-                  No versions are saved on this store yet. What a task makes waits in the bar at the bottom of the page
-                  until you save it as a version, which then appears here.
+                  No versions saved yet. Save what you make, from the bar at the bottom, to list it here.
                 </p>
               )}
             </div>

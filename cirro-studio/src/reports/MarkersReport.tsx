@@ -9,9 +9,9 @@ import { TissueThumb, type Paint, type Tissue } from '../charts/TissueThumb';
 import { useDisplays } from '../item/displayState';
 import { useColorKey } from '../item/useColorField';
 import { readGroups } from '../tasks/data';
-import { FORMATS, ResultTable } from '../tasks/parts';
+import { FORMATS, ResultTable, type Column } from '../tasks/parts';
 import type { Workbench } from '../workbench/workbench';
-import { FullTable, GENE_SET_SIZE, geneValues, NO_COLOR, pct, ScoreGenes, Section, showOnTissue, Stats, useMatrix, useTissue } from './parts';
+import { DownloadCsv, FullTable, GENE_SET_SIZE, geneValues, NO_COLOR, pct, ScoreGenes, Section, showOnTissue, Stats, useMatrix, useTissue } from './parts';
 import type { ReportProps } from './ReportView';
 import { geneTestsOf } from './store';
 
@@ -26,7 +26,13 @@ const SHOWN_MARKERS = 5;
 // More columns than this and the dot plot stops being read at a glance.
 const MAX_DOT_GENES = 80;
 const THUMB_W = 132;
-
+const TABLE_COLUMNS: Column<GeneTest>[] = [
+  { key: 'gene', label: 'Gene' }, { key: 'score', label: 'Score', format: FORMATS.num },
+  { key: 'logfc', label: 'log2FC', format: FORMATS.num }, { key: 'padj', label: 'Adj. p', format: FORMATS.p },
+  { key: 'fracA', label: 'In group', format: FORMATS.pct }, { key: 'fracB', label: 'Others', format: FORMATS.pct },
+];
+// The table shows a group at a time; its file holds every group's, one after another.
+const CSV_COLUMNS: Column<GeneTest & { group: string }>[] = [{ key: 'group', label: 'Group' }, ...TABLE_COLUMNS];
 
 function GroupCard({ wb, handle, column, label, size, total, color, tests, significant, tissue, member, matrix, unit }: {
   wb: Workbench; handle: ReportProps['handle']; column: string; label: string; size: number; total: number; color: string;
@@ -157,6 +163,7 @@ export default function MarkersReport({ result, table, wb, handle, unit, width }
 
   const [focus, setFocus] = useState(0);
   const groupRows = byGroup[focus] ?? [];
+  const allRows = useMemo(() => byGroup.flatMap((tests, i) => tests.map((t) => ({ group: groups[i], ...t }))), [byGroup, groups]);
   const at = codes ? new Map(codes.categories.map((c, i) => [c, i])) : null;
 
   return (
@@ -170,7 +177,13 @@ export default function MarkersReport({ result, table, wb, handle, unit, width }
       ]} />
       <Section title="Markers at a glance"
         note={`Each group's strongest markers. A dot's size is the share of the group's ${unit}s that express the gene; its color, the group's mean expression of it, from the gene's lowest group to its highest.`}
-        actions={<button type="button" className="button button-small" onClick={() => showOnTissue(wb.key, field)}>Color the tissue by {column}</button>}>
+        actions={(
+          <>
+            {/* The full table is far below the group cards, so its download is offered up here too. */}
+            <DownloadCsv name={`markers ${column}`} rows={allRows} columns={CSV_COLUMNS} />
+            <button type="button" className="button button-small" onClick={() => showOnTissue(wb.key, field)}>Color the tissue by {column}</button>
+          </>
+        )}>
         {dots.genes.length
           ? <DotPlot data={{ groups: groups.map((g) => ({ label: g, color: colorOf(g) })), genes: dots.genes, fraction: dots.fraction, mean: dots.mean }}
               width={width - 2} onPickGene={(g) => showOnTissue(wb.key, `X:${g}`)} />
@@ -189,7 +202,7 @@ export default function MarkersReport({ result, table, wb, handle, unit, width }
           })}
         </div>
       </Section>
-      <Section title="All results">
+      <Section title="All results" actions={<DownloadCsv name={`markers ${column}`} rows={allRows} columns={CSV_COLUMNS} />}>
         <FullTable count={table.index.length}>
           <label className="field field-inline">
             <span>Group</span>
@@ -197,12 +210,7 @@ export default function MarkersReport({ result, table, wb, handle, unit, width }
               {groups.map((g, i) => <option key={g} value={i}>{g} ({formatCount(byGroup[i].length)})</option>)}
             </select>
           </label>
-          <ResultTable rows={groupRows} rowKey={(t) => t.gene} onPick={(t) => showOnTissue(wb.key, `X:${t.gene}`)}
-            columns={[
-              { key: 'gene', label: 'Gene' }, { key: 'score', label: 'Score', format: FORMATS.num },
-              { key: 'logfc', label: 'log2FC', format: FORMATS.num }, { key: 'padj', label: 'Adj. p', format: FORMATS.p },
-              { key: 'fracA', label: 'In group', format: FORMATS.pct }, { key: 'fracB', label: 'Others', format: FORMATS.pct },
-            ]} />
+          <ResultTable rows={groupRows} rowKey={(t) => t.gene} onPick={(t) => showOnTissue(wb.key, `X:${t.gene}`)} columns={TABLE_COLUMNS} />
         </FullTable>
       </Section>
     </div>

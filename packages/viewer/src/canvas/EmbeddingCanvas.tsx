@@ -29,8 +29,8 @@ import { CANVAS_PLACEHOLDER, CANVAS_ROOT, MONO_FONT, themeColor } from './overla
 const NO_POLYGONS: [number, number][][] = [];
 const NO_POINTS: [number, number][] = [];
 // Stable stand-in for a host without region drawing — drawing is off without one, so
-// nothing can place a selection shape and the sink is never called.
-const NO_SHAPE_SINK = () => {};
+// nothing can place a selection shape or ring and the sink is never called.
+const NO_DRAW_SINK = () => {};
 
 type Point = [number, number];
 
@@ -84,7 +84,8 @@ export default function EmbeddingCanvas({
   const drawRing = regions?.drawRing ?? NO_POINTS;
   const selectionTool = regions?.selectionTool ?? 'lasso';
   const placedSelectionShape = regions?.drawShape ?? null;
-  const setDrawShape = regions?.setDrawShape ?? NO_SHAPE_SINK;
+  const setDrawShape = regions?.setDrawShape ?? NO_DRAW_SINK;
+  const addDrawPolygon = regions?.addDrawPolygon ?? NO_DRAW_SINK;
 
   const { is_3d, x_component, y_component, z_component } = display.encoding;
   const coordsPath = `obsm:${display.encoding.obsm_key}`;
@@ -164,11 +165,12 @@ export default function EmbeddingCanvas({
     tool: selectionTool,
     shape: placedSelectionShape,
     setShape: setDrawShape,
+    addRing: addDrawPolygon,
     toCoord: pickedPoint,
     unitsPerPixel: is_3d ? 1 : Math.pow(2, -((viewState as { zoom?: number } | null)?.zoom ?? 0)),
   });
 
-  // A click adds a lasso vertex.
+  // A click adds a lasso vertex; a drag draws a whole ring (useSelectionShape).
   const handleClick = useCallback((info: PickingInfo) => {
     // A geometric selection tool places its shape by dragging (useSelectionShape below);
     // only the lasso builds its ring out of clicks.
@@ -242,8 +244,9 @@ export default function EmbeddingCanvas({
 
   const drawLayers = useMemo<Layer[]>(() => {
     if (!lassoMode || is_3d) return [];  // 3D draws a screen-space SVG overlay instead
-    // The geometric shape draws as one more selection ring, then its edit handles on top.
-    const rings = selection.ring ? [...drawPolygons, selection.ring] : drawPolygons;
+    // The geometric shape and a lasso ring being dragged out draw as more selection rings,
+    // then the shape's edit handles on top.
+    const rings = [...drawPolygons, ...(selection.ring ? [selection.ring] : []), ...(selection.stroke ? [selection.stroke] : [])];
     const layers = buildLassoLayers(rings, drawRing, selColor, { idPrefix: 'embed-draw' });
     if (selection.shape) {
       layers.push(...buildShapeHandleLayer(selection.handles, selection.shape.center,
@@ -251,7 +254,7 @@ export default function EmbeddingCanvas({
     }
     return layers;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lassoMode, is_3d, drawPolygons, drawRing, selection.ring, selection.shape, selection.handles, canvasMode]);
+  }, [lassoMode, is_3d, drawPolygons, drawRing, selection.ring, selection.stroke, selection.shape, selection.handles, canvasMode]);
 
   const { persistDisplay, currentSpec, updateEncoding } = useDisplayEditor(display, isEmbeddingDisplay);
 
@@ -363,7 +366,7 @@ export default function EmbeddingCanvas({
 
       {/* 3D lasso overlay: the ring lives in screen pixels (see handleClick), which the
           canvas-sized SVG draws in directly. 2D rings render as deck layers instead. */}
-      {is_3d && lassoMode && (drawPolygons.length > 0 || drawRing.length > 0 || selection.ring) && (
+      {is_3d && lassoMode && (drawPolygons.length > 0 || drawRing.length > 0 || selection.ring || selection.stroke) && (
         <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}>
           {drawPolygons.map((ring, i) => (
             <polygon key={i} points={ring.map((p) => p.join(',')).join(' ')}
@@ -376,10 +379,10 @@ export default function EmbeddingCanvas({
           {drawRing.map((p, i) => (
             <circle key={i} cx={p[0]} cy={p[1]} r={3} fill={`rgba(${selColor.join(',')},1)`} />
           ))}
-          {selection.ring && (
-            <polygon points={selection.ring.map((p) => p.join(',')).join(' ')}
+          {[selection.ring, selection.stroke].map((ring, i) => ring && (
+            <polygon key={i} points={ring.map((p) => p.join(',')).join(' ')}
               fill={`rgba(${selColor.join(',')},0.15)`} stroke={`rgba(${selColor.join(',')},0.85)`} strokeWidth={2} />
-          )}
+          ))}
           {/* Edit handles, matching the deck-layer overlay the 2D views draw:
               white with a blue ring, the rotate handle green on its arm. */}
           {selectionShape && selection.handles.map((h) => (

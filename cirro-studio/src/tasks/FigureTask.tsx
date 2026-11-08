@@ -1,9 +1,10 @@
-// Save the tissue as it is shown as a figure: its spec (what is drawn, colors, camera) goes
-// into the draft's `uns`, so the version redraws it from its own data. Export draws it
-// now, at print size, as SVG, PDF or a 300 dpi PNG: the canvas as an image, with the
-// title, legend and a scale bar as vectors.
-import { useState } from 'react';
+// Save the view open now (the tissue, or the cell map) as a figure: its spec (what is drawn,
+// colors, camera) goes into the draft's `uns`, so the version redraws it from its own data.
+// Export draws it now, at print size, as SVG, PDF or a 300 dpi PNG: the canvas as an image,
+// with the title, legend and (on the tissue) a scale bar as vectors.
+import { useEffect, useState } from 'react';
 import { colorByLabel, downloadBlob, plotCanvas, VIRIDIS_CSS_STOPS } from '@cirrobio/spatial-viewer';
+import { LENS_PARAM, useRoute } from '../app/route';
 import { useStudio } from '../app/studio';
 import { plural } from '../app/ui';
 import { describeError } from '../cirro/session';
@@ -11,7 +12,7 @@ import { pdfBlob, pngBlob, svgBlob } from '../figures/export';
 import { figureLayout, figureSvg, SIZE_PRESETS, type FigureLegend, type SizePreset } from '../figures/layout';
 import { coordinateUnit, scaleBar, storeReader } from '../figures/scaleBar';
 import { keepFigure } from '../figures/spec';
-import { currentDisplay, tissueCanvasOf, useDisplays, worldPerPixelOf } from '../item/displayState';
+import { currentDisplay, useDisplays, viewCanvasOf, worldPerPixelOf } from '../item/displayState';
 import { useColorKey, type ColorKey } from '../item/useColorField';
 import { storeOf } from '../workbench/workbench';
 import type { TaskProps } from './TaskPanel';
@@ -43,16 +44,23 @@ const slug = (s: string) => s.trim().replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|
 export default function FigureTask({ wb, name, inset }: TaskProps) {
   const { session } = useStudio();
   const displays = useDisplays(wb.key, wb.handle);
-  const display = displays.spatial;
+  const slot = useRoute().params.get(LENS_PARAM) === 'cells' && displays.embedding ? 'embedding' : 'spatial';
+  const display = displays[slot];
+  const where = slot === 'embedding' ? 'the cell map' : 'the tissue';
   const colorBy = display?.encoding.color_by ?? null;
   const { key } = useColorKey(colorBy, wb.dataVersions[colorBy ?? ''] ?? 0, display?.encoding.category_colors?.[colorBy ?? '']);
   // Until edited, the title and caption follow what the tissue is colored by.
   const [titleEdit, setTitle] = useState<string | null>(null);
   const [captionEdit, setCaption] = useState<string | null>(null);
   const title = titleEdit ?? (colorBy ? `${name}: ${colorByLabel(colorBy)}` : name);
-  const caption = captionEdit ?? (colorBy ? `Cells of ${name} on the tissue, colored by ${colorByLabel(colorBy)}.` : `${name} on the tissue.`);
+  const caption = captionEdit ?? (colorBy ? `Cells of ${name} on ${where}, colored by ${colorByLabel(colorBy)}.` : `${name} on ${where}.`);
   const [preset, setPreset] = useState<SizePreset>('single');
   const [saved, setSaved] = useState<string | null>(null);
+  const [downloaded, setDownloaded] = useState<string | null>(null);
+  // Discarded or saved as a version, the kept figure is no longer waiting in the draft.
+  useEffect(() => {
+    if (!wb.changes.length) setSaved(null);
+  }, [wb.changes.length]);
   const [problem, setProblem] = useState<string | null>(null);
   // Legend categories the last download had no room for.
   const [omitted, setOmitted] = useState(0);
@@ -74,17 +82,19 @@ export default function FigureTask({ wb, name, inset }: TaskProps) {
   };
 
   const exportAs = async (format: 'svg' | 'pdf' | 'png') => {
-    const tissue = tissueCanvasOf(wb.key);
-    if (!tissue) {
-      setProblem('Nothing is drawn to download. Open the Tissue view, then download.');
+    const canvas = viewCanvasOf(wb.key, slot);
+    if (!canvas) {
+      setProblem('Nothing is drawn to download. Open the Tissue or the cell map, then download.');
       return;
     }
     setProblem(null);
+    setDownloaded(null);
     setOmitted(0);
     setExporting(true);
     try {
-      const { image, cssWidth } = visiblePart(plotCanvas(tissue), inset);
-      const unit = coordinateUnit(await storeReader(storeOf(wb.key)));
+      const { image, cssWidth } = visiblePart(plotCanvas(canvas), inset);
+      // A scale bar only on the tissue: the cell map's axes have no length.
+      const unit = slot === 'spatial' ? coordinateUnit(await storeReader(storeOf(wb.key))) : null;
       const perPixel = worldPerPixelOf(wb.key);
       const spec = {
         title: title.trim(),
@@ -98,7 +108,9 @@ export default function FigureTask({ wb, name, inset }: TaskProps) {
       const svg = figureSvg(spec);
       const layout = figureLayout(spec);
       const blob = format === 'svg' ? svgBlob(svg) : format === 'pdf' ? await pdfBlob(svg, layout) : await pngBlob(svg, layout);
-      downloadBlob(blob, `${slug(title)}.${format}`);
+      const file = `${slug(title)}.${format}`;
+      downloadBlob(blob, file);
+      setDownloaded(file);
       setOmitted(layout.legend?.omitted ?? 0);
     } catch (e) {
       setProblem(describeError(e));
@@ -109,7 +121,7 @@ export default function FigureTask({ wb, name, inset }: TaskProps) {
 
   return (
     <div className="task-body">
-      <p className="muted">The tissue as it is shown now: its colors, channels and framing. Pan and zoom first to frame it.</p>
+      <p className="muted">{where === 'the tissue' ? 'The tissue' : 'The cell map'} as it is shown now. Pan and zoom first to frame it.</p>
       <label className="field"><span>Title</span><input className="input" value={title} onChange={(e) => setTitle(e.target.value)} /></label>
       <label className="field"><span>Caption</span><textarea className="input" rows={3} value={caption} onChange={(e) => setCaption(e.target.value)} /></label>
       <label className="field">
@@ -124,15 +136,16 @@ export default function FigureTask({ wb, name, inset }: TaskProps) {
           The page has no room for the last {plural(omitted, ['group', 'groups'])} of the legend, which the download leaves out. A wider size fits more.
         </p>
       )}
-      {saved && <p className="notice notice-info">“{saved}” is in the unsaved changes. Save a version to keep it.</p>}
-      <button type="button" className="button button-primary" disabled={!display || !title.trim()} onClick={() => void keep()}>Keep with the data</button>
       <div className="button-row">
         <span className="muted">Download</span>
-        {(['svg', 'pdf', 'png'] as const).map((f) => (
-          <button key={f} type="button" className="button button-small" disabled={exporting} onClick={() => void exportAs(f)}>{f.toUpperCase()}</button>
+        {(['png', 'pdf', 'svg'] as const).map((f) => (
+          <button key={f} type="button" className={f === 'png' ? 'button button-primary' : 'button'} disabled={exporting} onClick={() => void exportAs(f)}>{f.toUpperCase()}</button>
         ))}
       </div>
-      <p className="muted task-about">A kept figure is a description of the view, not a copy of the picture: it redraws from the version it is saved in, in this app or from Python (<code>uns["spatial_data_studio"]["figures"]</code>). Downloads use Arial at 7 pt, with a scale bar when the store says its coordinates are microns.</p>
+      {downloaded && <p className="notice notice-info">Downloaded {downloaded}.</p>}
+      <button type="button" className="button" disabled={!display || !title.trim()} onClick={() => void keep()}>Keep with the data</button>
+      {saved && <p className="notice notice-info">“{saved}” is in the unsaved changes. Save a version to keep it.</p>}
+      <p className="muted task-about">A kept figure redraws from the data when its version is opened again. Downloads on the tissue carry a scale bar when the data is in microns.</p>
     </div>
   );
 }

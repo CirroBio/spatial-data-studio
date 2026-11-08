@@ -46,7 +46,7 @@ a section too big for a laptop only needs a bigger machine.
   [publish it to Cirro](#publish-to-cirro); it then appears on the web app's map.
 
 Analysis Workspaces need your organization's Cirro to offer the Spatial Data Studio
-workspace environment; where it doesn't, the Workspaces sheet says so. Public Data
+workspace environment; where it doesn't, the Workspaces sheet says so. A public project
 doesn't offer them.
 
 ## Work in it together
@@ -143,14 +143,16 @@ rendering, and view non-spatial embeddings (UMAP/PCA) in 2D or 3D — all on the
 canvas. A **minimap** in the canvas' top-left corner shows the whole section with a box
 marking the part you're looking at; click or drag it to jump somewhere else.
 
-![The display settings panel, organised into View, Cells, and Image icon tabs: layer visibility, color by, render mode, point size, plot orientation, zoom, minimap, image selection, plot backdrop, and per-channel image color/contrast.](../images/display.jpg)
+![The display settings panel open on its Cells tab, beside the View and Image tabs: a single Color by box set to cellular_neighborhood, the color legend toggle, render mode Points + Shapes, point size, geometry, shape set, boundary style, opacity, and a color for each neighborhood.](../images/display.jpg)
 
 *Customize the display, organised into **View**, **Cells**, and **Image** icon tabs —
-choose what colors the cells (first on the **Cells** tab), how they render, how the
-plot is oriented (flip the horizontal/vertical axes), the zoom level (buttons plus
-scroll/pinch), whether the minimap is shown, the plot's own light/dark backdrop (on
-the **Image** tab, set per plot and independent of the app theme), and how each
-tissue-image channel is colored and contrast-adjusted. A dataset that carries more
+choose what colors the cells (first on the **Cells** tab: **Color by** is one search box
+that lists the dataset's annotations and finds any gene as you type its name, with
+**Gene values** below it to read genes from a layer when the dataset has them), how they
+render, how the plot is oriented (flip the horizontal/vertical axes), the zoom level
+(buttons plus scroll/pinch), whether the minimap is shown, the plot's own light/dark
+backdrop (on the **Image** tab, set per plot and independent of the app theme), and how
+each tissue-image channel is colored and contrast-adjusted. A dataset that carries more
 than one image (say an H&E next to a morphology stain) picks which one is drawn under
 the cells at the top of the **Image** tab, or **None** for no image at all; each image
 brings its own channels. When cells are colored by a categorical value, each group's
@@ -180,17 +182,19 @@ region.
 Both the **Regions** and **Subset** tabs pick their cells the same way, with a tool you
 choose at the top of the panel:
 
-- **Lasso** — click point after point on the canvas to trace any outline you like, then
-  **Finish region** to close it.
+- **Lasso** — drag around the cells you want: the outline closes when you let go and
+  joins the selection. Or click point after point to trace an outline, then **Finish
+  region** to close it. While the lasso is out, a drag draws, so hold Space and drag to
+  pan.
 - **Circle**, **Ellipse**, **Square**, **Rectangle** — drag once on the canvas and the
   shape appears where you dragged. Then adjust it: drag the shape itself to move it, and
   its side handles to resize — a circle and a square keep their aspect, so they get one
   handle driving both. Everything except the circle also gets a green handle on an arm
   that rotates it. The cell count on the action button follows each adjustment.
 
-A selection can combine areas: **Finish region** banks the shape (or the closed lasso
-ring) and frees the canvas for the next one, and the action applies to all of them
-together. **Clear** discards the lot.
+A selection can combine areas: each dragged lasso outline joins it as you let go, and
+**Finish region** banks a shape (or a clicked lasso outline) and frees the canvas for the
+next one. The action applies to all of them together. **Clear** discards the lot.
 
 ### Subset
 

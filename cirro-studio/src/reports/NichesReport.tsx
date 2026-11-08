@@ -15,7 +15,7 @@ import { useColorKey } from '../item/useColorField';
 import { useSize } from '../lib/useSize';
 import { readGroups } from '../tasks/data';
 import { ResultTable, type Column } from '../tasks/parts';
-import { FullTable, NO_COLOR, pct, Section, showOnTissue, Stats, useTissue } from './parts';
+import { DownloadCsv, FullTable, NO_COLOR, pct, Section, showOnTissue, Stats, useTissue } from './parts';
 import type { ReportProps } from './ReportView';
 
 export type NichesSummary = {
@@ -234,7 +234,7 @@ export default function NichesReport({ result, table, wb, handle, unit, width }:
           ))}
         </div>
       </Section>
-      <Section title="All results">
+      <Section title="All results" actions={<DownloadCsv name={`niches ${column}`} rows={tableRows} columns={tableColumns} />}>
         <FullTable count={niches.length}>
           <ResultTable rows={tableRows} rowKey={(r) => String(r.niche)} columns={tableColumns} />
         </FullTable>

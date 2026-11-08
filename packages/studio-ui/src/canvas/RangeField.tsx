@@ -23,6 +23,7 @@ export default function RangeField({ label, value, min, max, step, digits = 1, o
         step={step}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
+        aria-label={label}
         className="w-full accent-accent"
       />
     </div>

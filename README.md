@@ -9,16 +9,14 @@ image, find clusters, compare groups and the genes that set them apart, and keep
 find. Explore public data with no account, or open your own projects in
 [Cirro](https://cirro.bio/), save results back to them, and work on them with your team.
 
-![A Xenium pancreas section open in the web app: every cell drawn over the H&E image and colored by its cellular neighborhood, with the analysis tasks in a drawer on the left and the display settings in a drawer on the right.](./docs/images/web-app.jpg)
+![A Xenium pancreas section open in the web app: every cell drawn over the immunofluorescence image and colored by its cellular neighborhood, with the analysis tasks in a drawer on the left and the display settings in a drawer on the right.](./docs/images/web-app.jpg)
 
 ## Use it
 
-Open **[cirrobio.github.io/spatial-data-studio][app]** and choose:
-
-- **Public Data**: public sections, ready to open, with no account. Nothing leaves your
-  browser.
-- **Private Data (Cirro)**: your own Cirro projects, read where they are stored, with
-  each result saved back to the project as a version.
+Open **[cirrobio.github.io/spatial-data-studio][app]**: it opens straight onto public
+example sections, with no account. **Log In (Cirro)** adds your own Cirro projects. Every
+project is either one you can add to, where each result is saved back as a version, or a
+read-only one, where what you save stays in your browser.
 
 For work beyond the browser, the web app starts an **Analysis Workspace** in your Cirro
 project: the server version of Spatial Data Studio, with every

@@ -15,9 +15,9 @@ import { keepFigure } from '../figures/spec';
 import { useDisplays } from '../item/displayState';
 import { useColorKey } from '../item/useColorField';
 import { readGroups } from '../tasks/data';
-import { ResultTable } from '../tasks/parts';
+import { ResultTable, type Column } from '../tasks/parts';
 import { storeOf } from '../workbench/workbench';
-import { FullTable, NO_COLOR, pct, Section, showOnTissue, Stats, useTissue } from './parts';
+import { DownloadCsv, FullTable, NO_COLOR, pct, Section, showOnTissue, Stats, useTissue } from './parts';
 import type { ReportProps } from './ReportView';
 import { readResultTable, type DataFrame } from './store';
 
@@ -52,6 +52,12 @@ const APART_COLOR = 'var(--sds-div-neg)';
 
 const fmtZ = (z: number) => (Number.isFinite(z) ? z.toFixed(1) : 'no value');
 const fmtShare = (v: number) => (Number.isFinite(v) ? pct(v) : '—');
+const PAIR_COLUMNS: Column<PairRow>[] = [
+  { key: 'from', label: 'Group' }, { key: 'to', label: 'Neighbor group' },
+  { key: 'z', label: 'z-score', format: fmtZ },
+  { key: 'count', label: 'Neighbor pairs', format: (v) => (Number.isFinite(v) ? formatCount(v) : '—') },
+  { key: 'share', label: 'Share of its neighbors', format: fmtShare },
+];
 const listed = (items: string[]) => (items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`);
 
 /** A square kept table as a row-major matrix; its columns are named by its index. */
@@ -221,6 +227,13 @@ export default function NeighborhoodsReport({ result, table, wb, handle, unit, w
     from, to, z: z[i * n + j], count: counts?.[i * n + j] ?? NaN, share: shares?.[i * n + j] ?? NaN,
   }))), [groups, z, n, counts, shares]);
 
+  // The heatmap as a table: a row per group, a column per neighbor group.
+  const zRows = useMemo(
+    () => groups.map((g, i) => ({ group: g, ...Object.fromEntries(groups.map((_, j) => [`z${j}`, z[i * n + j]])) })),
+    [groups, z, n],
+  );
+  const zColumns: Column<Record<string, string | number>>[] = [{ key: 'group', label: 'Group' }, ...groups.map((g, j) => ({ key: `z${j}`, label: g }))];
+
   const total = sizes.reduce((s, v) => s + v, 0);
   const ungrouped = handle.fields.n_obs - total;
   const heatW = Math.min(width - 2, HEAT_LABELS_W + n * HEAT_CELL);
@@ -247,6 +260,7 @@ export default function NeighborhoodsReport({ result, table, wb, handle, unit, w
             <button type="button" className="button button-small" disabled={figure !== null} onClick={() => void saveFigure()}>
               {figure === 'saved' ? 'Saved as a figure' : 'Save the heatmap as a figure'}
             </button>
+            <DownloadCsv name={`neighborhoods ${column} z-scores`} rows={zRows} columns={zColumns} />
           </span>
         )}>
         {problem && <p className="notice notice-danger">{problem}</p>}
@@ -292,15 +306,10 @@ export default function NeighborhoodsReport({ result, table, wb, handle, unit, w
           ))}
         </div>
       </Section>
-      <Section title="All pairs" note={`One row per ordered pair: the first group's ${unit}s, with the second's among their neighbors.`}>
+      <Section title="All pairs" note={`One row per ordered pair: the first group's ${unit}s, with the second's among their neighbors.`}
+        actions={<DownloadCsv name={`neighborhoods ${column}`} rows={rows} columns={PAIR_COLUMNS} />}>
         <FullTable count={rows.length}>
-          <ResultTable rows={rows} rowKey={(r) => `${r.from}\u0000${r.to}`}
-            columns={[
-              { key: 'from', label: 'Group' }, { key: 'to', label: 'Neighbor group' },
-              { key: 'z', label: 'z-score', format: fmtZ },
-              { key: 'count', label: 'Neighbor pairs', format: (v) => (Number.isFinite(v) ? formatCount(v) : '—') },
-              { key: 'share', label: 'Share of its neighbors', format: fmtShare },
-            ]} />
+          <ResultTable rows={rows} rowKey={(r) => `${r.from}\u0000${r.to}`} columns={PAIR_COLUMNS} />
         </FullTable>
       </Section>
     </div>

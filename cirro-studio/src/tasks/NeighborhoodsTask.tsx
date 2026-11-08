@@ -28,7 +28,7 @@ export default function NeighborhoodsTask({ wb, unit }: TaskProps) {
   const run = async () => {
     setProblem(null);
     try {
-      const [obs, xy] = await Promise.all([readGroups(handle, column), readCoords(handle, coords)]);
+      const [obs, xy] = await job.prepare('Reading the groups and positions', Promise.all([readGroups(handle, column), readCoords(handle, coords)]));
       const n = obs.categories.length;
       if (n > MAX_GROUPS) throw new Error(`“${column}” has ${n} groups; this compares at most ${MAX_GROUPS}.`);
       const r = await job.run('neighborhoodEnrichment', { codes: obs.codes, nCategories: n, xy });
@@ -61,11 +61,8 @@ export default function NeighborhoodsTask({ wb, unit }: TaskProps) {
 
   return (
     <div className="task-body">
-      <p className="muted">
-        Counts how often each pair of groups are neighbors (each {unit}'s {SPATIAL_NEIGHBOURS} nearest on the tissue) against shuffled
-        labels, and opens which groups sit together and which keep apart as a report.
-      </p>
-      <ColumnSelect handle={handle} value={column} onChange={setColumn} label="Groups" />
+      <p className="muted">Which groups sit next to each other on the tissue, and which keep apart.</p>
+      <ColumnSelect handle={handle} wbKey={wb.key} value={column} onChange={setColumn} label="Groups" />
       <JobStatus job={job} label="Counting neighbors" />
       {problem && <p className="notice notice-danger">{problem}</p>}
       <button type="button" className="button button-primary" disabled={!column || job.running} onClick={() => void run()}>Measure enrichment</button>

@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import ColorBySelect from './ColorBySelect';
 import CanvasSettingsShell from './CanvasSettingsShell';
 import LegendControls from './LegendControls';
@@ -38,6 +39,7 @@ function AxisComponentSelect({
       <select
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
+        aria-label={`${label} axis`}
         className="flex-1 bg-bg border border-border rounded px-1.5 py-1 text-xs text-text focus:outline-none focus:border-accent"
       >
         {Array.from({ length: max }, (_, i) => (
@@ -65,6 +67,7 @@ export default function EmbeddingControls({
   const { obsm_key, x_component, y_component, z_component, is_3d } = display.encoding;
   const nComponents = obsmFields.find((f) => f.name === obsm_key)?.n_components ?? 2;
   const can3d = nComponents >= 3;
+  const embeddingId = useId();
 
   // Switching the obsm slot resets the axis picks to sane defaults for its shape,
   // and drops out of 3D if the new slot doesn't have a third component.
@@ -101,8 +104,9 @@ export default function EmbeddingControls({
       />
 
       <div className="flex flex-col gap-1">
-        <label className="text-[10px] text-muted font-mono uppercase tracking-wide">Embedding</label>
+        <label htmlFor={embeddingId} className="text-[10px] text-muted font-mono uppercase tracking-wide">Embedding</label>
         <select
+          id={embeddingId}
           value={obsm_key}
           onChange={(e) => changeObsmKey(e.target.value)}
           className="w-full bg-bg border border-border rounded px-2 py-1 text-xs text-text focus:outline-none focus:border-accent"

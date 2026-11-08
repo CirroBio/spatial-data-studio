@@ -1,6 +1,6 @@
 // The signed-in Cirro session, and plain words for what Cirro answers.
 import type { DataService, FileService } from '@cirrobio/sdk';
-import type { Collection } from '../data/collection';
+import type { Collection, ProjectAccess } from '../data/collection';
 import type { Tenant } from '../tenants';
 
 export interface CirroSession {
@@ -16,10 +16,17 @@ export interface CirroSession {
   tenantId: string;
   sheetsEnabled: boolean;
   signOut: () => Promise<void>;
+  // The user's access to each project, from their role in it; a project missing from the
+  // map (Cirro didn't say) counts as writable until a save is refused.
+  projectAccess: () => Promise<Map<string, ProjectAccess>>;
   // A project as a collection. Made here, where the Cirro code is loaded, so a visitor
-  // to the examples never downloads it.
-  openProject: (project: { id: string; name: string }) => Collection;
+  // to the public projects never downloads it.
+  openProject: (project: { id: string; name: string; access: ProjectAccess }) => Collection;
 }
+
+// Cirro's Collaborator role is view-only: it can't add datasets, run pipelines or start
+// workspaces (docs: features/users.md, project-level role permissions).
+export const accessOfRole = (role: string): ProjectAccess => (role === 'COLLABORATOR' ? 'read' : 'write');
 
 // The SDK's ApiError, recognized by its shape: every page uses this module, and importing
 // the class would load the whole Cirro client for visitors who never sign in.

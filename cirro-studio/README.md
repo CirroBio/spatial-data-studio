@@ -31,19 +31,30 @@ reads.
 ```bash
 echo 'VITE_TENANT_CLIENT_IDS=dev:<client id>' > cirro-studio/.env.local
 ```
-**Public Data** needs no sign-in. It is everything in Spatial Data Studio's own Cirro
-publication, `published/spatial-data-studio` in the public bucket (its address is
-`PUBLICATION_URL` in `src/data/examples.ts`): a project of static copies of Cirro
-datasets, written by `cirro-publish`
-([Cirro-publish-data-objects](https://github.com/CirroBio/Cirro-publish-data-objects)).
-Publishing a dataset there is what makes it public data; the app keeps no list of its own.
+**Public projects** need no sign-in. A public project is a Cirro publication: a project
+of static copies of Cirro datasets in a public bucket, written by `cirro-publish`
+([Cirro-publish-data-objects](https://github.com/CirroBio/Cirro-publish-data-objects)),
+and the app lists everything in it. Or it is a folder of zipped checkpoints with an
+`index.json` at its root (`src/data/indexFolder.ts`; the format is
+[`docs/CHECKPOINT_FORMAT.md` §8](../docs/CHECKPOINT_FORMAT.md#8-indexjson--a-collection-of-checkpoints)),
+each entry a dataset of one file; Settings tries a publication's `catalog.json` first,
+then `index.json`. Which public projects a browser lists is that
+visitor's own setting, kept in `localStorage` (`src/data/publicProjects.ts`; Settings in
+`src/app/Settings.tsx`): it starts with Spatial Data Studio's own,
+`published/spatial-data-studio` in the public bucket (`DEFAULT_PUBLIC_PROJECT`), and any
+publication can be added by its root's address or dropped. Each one is listed by its
+publication's project ID and name, beside the user's Cirro projects once they log in, and
+opens as a `PublicProject` (`src/data/publicProject.ts`), read-only, with versions saved in
+this browser and filed under the project they were made in (`src/data/browserStore.ts`, which
+a Cirro project the user can only read uses too: see `Collection.access`). Publishing a dataset into
+Spatial Data Studio's publication is what makes it part of the default public data.
 `src/cirro/cirro-publication.ts` is that repository's publication shim, copied in
 unchanged (never edit the copy; change the canonical file there). Through it a
 publication answers the same calls as a Cirro project (`src/cirro/datasetReader.ts`), so a
 dataset's Folder tags file it on the map, and its `credit.<field>: <value>` tags (source,
 publisher, license, what was changed) are shown as its credit, as a Creative Commons
-license asks. Until the publication exists, Public Data shows the shim's "Not published:
-v2/project.json". The About links go to `about/` beside
+license asks. A publication that doesn't answer is listed in Settings as not reachable,
+with the shim's error ("Not published: v2/project.json" before it exists). The About links go to `about/` beside
 the app, which only the assembled site has (`.github/workflows/docs.yml`).
 `npx vite --port <other>` runs it elsewhere for public data alone; sign-in only returns to
 5171.
@@ -82,8 +93,10 @@ src/cirro/          everything that talks to Cirro: the project as a Collection
                     provenance notes, error wording
 src/data/           the Collection interface both sources implement, discovery of stores,
                     runs and images from a file listing (discover.ts, which applies the
-                    workflow's own nextflow/data_types.json), Public Data (examples.ts,
-                    everything in the app's publication) and browser storage (idb.ts)
+                    workflow's own nextflow/data_types.json), public projects (the
+                    visitor's list, publicProjects.ts; one opened, publicProject.ts, read
+                    from a publication or an index.json folder, indexFolder.ts) and
+                    browser storage (idb.ts)
 src/stack/          the version format: Cirro references, the Zarr v3 writer, the layered
                     store, the AnnData editor, layer.json, and opening a stack
 src/workbench/      an opened stack: its draft, edits into it, reopening, saving

@@ -4,11 +4,12 @@ import type { SystemInfoResponse } from '@cirrobio/api-client';
 import '@fontsource-variable/geist';
 import '@fontsource-variable/geist-mono';
 import { REDIRECT_URI, forgetStoredUsers, isSignInReturn, signInError } from './signInState';
-import { EXAMPLES_TENANT, chooseTenant, forgetTenant, loadTenants, showSignIn, startOf, startUrl, takeSignInNow, type Tenant } from './tenants';
-import { FatalError, SignInPage, StartPages } from './start/Start';
+import { PUBLIC_TENANT, chooseTenant, forgetTenant, homeUrl, loadTenants, showSignIn, startOf, takeSignInNow, type Tenant } from './tenants';
+import { FatalError, SignInPage, SignInStart } from './start/Start';
 import { App } from './app/App';
 import { APP_NAME } from './app/appInfo';
-import { describeError, type CirroSession } from './cirro/session';
+import { accessOfRole, describeError, type CirroSession } from './cirro/session';
+import type { ProjectAccess } from './data/collection';
 import { forgetCirroDrafts } from './workbench/workbench';
 import './styles/tokens.css';
 import './styles/app.css';
@@ -78,21 +79,21 @@ async function startTenant(tenant: Tenant) {
     render(<FatalError title={`Logging in to ${tenantName} didn't finish`} message={describeError(e)} action={tenantActions} />);
   };
   // A sign-in that can't start (no registration the tenant will name) is an error for someone
-  // who asked for this tenant; anyone else just starts on the landing page.
+  // who asked for this tenant; anyone else just starts on the public projects.
   const signIn = await createSignIn(tenant.url, tenant.clientId).catch((e: unknown) => {
     if (!fromStoredLogin) return didntFinish(e);
     console.warn(e);
     leaveTenant();
-    window.location.replace(startUrl('landing'));
+    window.location.replace(homeUrl());
   });
   if (!signIn) return;
   const user = await currentUser(signIn).catch(didntFinish);
   if (user === undefined) return;
   if (!user && fromStoredLogin) {
     // The stored login no longer works, or was made under a registration since replaced:
-    // forget it, and the visitor starts on the landing page like anyone not logged in.
+    // forget it, and the visitor starts on the public projects like anyone not logged in.
     leaveTenant();
-    window.location.replace(startUrl('landing'));
+    window.location.replace(homeUrl());
     return;
   }
   if (!user) {
@@ -112,6 +113,7 @@ async function startTenant(tenant: Tenant) {
   ]);
   const { dataService: data, fileService: files } = createCirroDataSource({ basePath: `${tenant.url}/api`, tokenGetter });
   const username = usernameOf(user);
+  let access: Promise<Map<string, ProjectAccess>> | null = null;
   const session: CirroSession = {
     tenant,
     data,
@@ -130,7 +132,15 @@ async function startTenant(tenant: Tenant) {
         await Promise.all([forgetCirroDrafts(), forgetBrowserCatalog()]);
       }
     },
-    openProject: (project) => new CirroCollection(session, project.id, project.name),
+    projectAccess: () => {
+      access ??= data.users.getUser({ username }).then(
+        (u) => new Map(u.projectAssignments.map((a) => [a.projectId, accessOfRole(a.role)])),
+        // Refused the user's own record, roles stay unknown and a refused save says it.
+        () => new Map(),
+      );
+      return access;
+    },
+    openProject: (project) => new CirroCollection(session, project.id, project.name, project.access),
   };
   render(<App session={session} />);
 }
@@ -150,8 +160,8 @@ if (window.top !== window.self) {
   loadTenants()
     .then((tenants) => {
       const start = startOf(tenants);
-      if (!('tenant' in start)) render(<StartPages tenants={tenants} screen={start.screen} unknownFromUrl={start.unknownFromUrl} />);
-      else if (start.tenant === EXAMPLES_TENANT) render(<App session={null} />);
+      if ('signIn' in start) render(<SignInStart tenants={tenants} unknownFromUrl={start.unknownFromUrl} />);
+      else if (start.tenant === PUBLIC_TENANT) render(<App session={null} />);
       else return startTenant(start.tenant);
     })
     .catch((e: unknown) => {

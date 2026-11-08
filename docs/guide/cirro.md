@@ -11,7 +11,7 @@ what is different about your own data.
 
 ## Log in
 
-**Private Data (Cirro)** on the start page asks which Cirro you use. It suggests the
+**Log In (Cirro)** at the top right asks which Cirro you use. It suggests the
 ones it knows as you type their name, and takes the address you use for any other (such
 as cirro.example.org). It remembers your choice for next time. You sign in on Cirro's
 own page, which shows what the app may do, and the app never sees your password.
@@ -19,9 +19,18 @@ Logging in works once your organization's Cirro has registered the app.
 
 When a Cirro can't be reached or the log-in doesn't finish, the page says why and offers
 **Try again** or **Log in to another Cirro**. Signed in, the menu at the top right (your
-Cirro and your name) has **Log out** and **Log in to another Cirro** on every page,
-including when your account can't see any projects yet. Each browser tab logs in on its
-own, so a new tab asks again.
+Cirro and your name) has **Settings**, **Log out** and **Log in to another Cirro** on
+every page, including when your account can't see any projects yet. Logging out returns
+to the public projects. Each browser tab logs in on its own, so a new tab asks again.
+
+## Projects you can only read
+
+Your role in a project decides what the app offers there. With Cirro's **Collaborator**
+role, which can only view, the project is read-only to you, exactly like a public project:
+a **Read-only** badge sits beside its name, there is no **Add Data**, no workspaces and no
+pipelines, and the analyses still run, with the versions you save kept in this browser.
+The app reads your role when you log in; if Cirro didn't say and a save is refused, it
+saves that version in this browser and says so.
 
 ## What the app finds in a project
 
@@ -92,13 +101,15 @@ was saved and by whom; the top bar says the catalog is updating while the projec
 read again to list it. **Discard** throws the changes away. Until you do one or the
 other they are kept in this browser, so a reload loses nothing. Logging out, or logging
 in to another Cirro, discards a project's unsaved changes (the app asks first), so the
-next person to log in on the same browser can't open them. On Public Data, a version is
-kept in this browser instead, and its unsaved changes stay when you log in or out.
+next person to log in on the same browser can't open them. On a project you can only read
+(a public one, or one where you are a Collaborator) a version is kept in this browser
+instead, filed under *Saved in this browser*; it is not on other computers, and nobody else
+can see it.
 
 ## Versions and history
 
 **Versions** shows a store's history: the original store at the bottom and each version
-above the one it was saved on, with what it changed. Open any version to see the data
+above the one it was saved on, with its note and what it changed. Open any version to see the data
 exactly as it was saved. Saving from an older version starts a branch beside the newer
 ones rather than replacing them. Nothing is ever overwritten, so going back is always
 just opening an older version.

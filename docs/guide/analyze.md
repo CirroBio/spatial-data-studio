@@ -7,15 +7,18 @@ until you [save a version](cirro.md#save-a-version), then in the version.
 
 ## The analyses
 
-- **Label cells**: draw around cells (lasso, circle, ellipse, square or rectangle) and
-  name them, into a new column or one you have.
+- **Label cells**: draw around cells and name them, into a new column (*labels* unless you
+  name another) or one you have. With the lasso, drag around the cells (each loop adds to
+  the selection when you let go) or click point by point; or drag a circle, ellipse, square
+  or rectangle. While you draw, hold Space and drag to pan.
 - **Find clusters**: Leiden clustering the way scanpy does it by default. Counts are
   normalized and log-transformed, the most variable genes go into a PCA, and Leiden
   works on the cells' nearest-neighbor graph. Resolution is yours to set. The report
   shows each cluster's size and where it is, and how much of the variation the PCA's
   components hold.
 - **Compare groups**: a Wilcoxon test of every gene between two groups. A group can be a
-  category of any column or the cells you selected on the tissue. The report shows the
+  category of any column or the cells you selected on the tissue. A column with more
+  than 100 groups, such as one of cell IDs, can't be compared. The report shows the
   volcano beside maps of where the two groups are, and each side's strongest genes.
 - **Marker genes**: each group of a column against all the others. The report shows
   every group's strongest markers in one dot plot, then a card per group: its size,
@@ -30,16 +33,26 @@ until you [save a version](cirro.md#save-a-version), then in the version.
   into niches and written as a new column. The report shows what each niche is made of
   and where it is.
 
-The gene analyses need the store's expression matrix. Stores saved without one (like
-three of the four public sections) still offer labelling, neighborhoods, niches and
-figures, and the drawer names the analyses they can't run. Clustering is the slowest:
-seconds for tens of thousands of cells, about half a minute for 200,000.
+An analysis that works on groups starts on the column the tissue is colored by, when
+that column has groups (and no more than 100 of them); choose another as you like.
+
+The gene analyses need the store's expression matrix. Stores saved without one still
+offer labelling, neighborhoods, niches and figures, and the drawer names the analyses they
+can't run. An analysis shows that it is running, with **Cancel**, from the moment you
+start it: reading a large store's expression matrix can take most of a minute the first
+time. Clustering is the slowest: seconds for tens of thousands of cells, about half a
+minute for 200,000.
 
 ## Reports
 
 Each analysis opens as a report across the view when it finishes. A report starts with
 what was run, on which column, with which settings and by whom; then the numbers that
 sum it up, its charts, and a card for each group, with the full table folded at the end.
+**Download CSV**, beside the full table (and beside the neighborhood heatmap), saves the
+whole table, every row (every group's, for marker genes), as a CSV file named after the
+report, such as `markers-leiden.csv`. Its columns are the table's, and its numbers are
+the values themselves rather than the rounded ones on screen: shares as fractions of 1,
+and adjusted p-values in full.
 The **Reports** menu over the view and the task drawer list every report kept here, and
 **Remove…** takes one out. A report draws only on what was kept and on data the app
 never changes, so it reads the same whenever it is opened. Picking a gene in a report
@@ -58,12 +71,14 @@ new column, and the tissue is colored by it.
 
 ## Keep a figure
 
-**Save as a figure**, in the task drawer, keeps the tissue as it is shown, with its colors
-and framing, as a figure, or downloads it as SVG, PDF or a 300 dpi PNG of what is between
-the drawers, one column (89 mm), two columns (183 mm) or a 16:9 slide wide. Downloads are
-of the tissue, so open the **Tissue** view first. A long legend takes more columns before
-the page grows, and a page stops at 240 mm: groups that still don't fit are left out of
-the legend, and the task says how many. A color of more than 100 groups has no legend.
+**Save as a figure**, in the task drawer, takes the view open now, the tissue or the cell
+map, with its colors and framing. **Download** saves it as a 300 dpi PNG, a PDF or an SVG
+of what is between the drawers, one column (89 mm), two columns (183 mm) or a 16:9 slide
+wide, and the task names the file it downloaded; a download of the tissue has a scale bar
+when the data is in microns. **Keep with the data** saves the figure with the version
+instead. A long legend takes more columns before the page grows, and a page stops at
+240 mm: groups that still don't fit are left out of the legend, and the task says how many.
+A color of more than 100 groups has no legend.
 
 A kept figure is saved with the version, listed under the **Figures** tab and on the
 map's Figures stage, and opens framed as it was.

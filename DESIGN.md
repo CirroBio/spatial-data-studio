@@ -664,10 +664,12 @@ empty-state authoring form, where the host decides what persisting it means: a l
 session PUTs it, a serverless checkpoint keeps it in the browser for that visit alone.
 Writing the spec into the store is therefore what makes the view open by itself.
 
-**Color by** first picks a slot (`obs`, `X` gene expression, or a `layer`) then the
-column within it: obs columns from a dropdown, genes from a type-to-search box backed by `GET
-/api/sessions/{id}/var-names?q=&limit=` (matches found server-side, prefix hits first),
-so datasets with tens of thousands of genes stay responsive.
+**Color by** is one search box over the table's annotations (obs columns, categorical
+first) and its genes. Genes are matched once something is typed, by the data source's
+`searchVarNames`: for a live session `GET /api/sessions/{id}/var-names?q=&limit=` (matches
+found server-side, prefix hits first), so datasets with tens of thousands of genes stay
+responsive. A table with layers adds a **Gene values** select (the expression matrix, or a
+layer) that decides which a gene is read from.
 
 ### 9.2 deck.gl layer mapping
 
@@ -1087,8 +1089,13 @@ terminal action differs. Selection is always a **union of rings** by the time an
 downstream sees it — client-side `indicesInRings`, or `polygons` for the backend's
 `polygon_query`/`contains_points` — and the tools differ only in how a ring is produced:
 
-- **Lasso** — a vertex per click, closed by the panel's Finish action. The original
-  interaction, and the only one that can trace an arbitrary outline.
+- **Lasso** — a whole ring per drag, banked into the committed rings the moment it is
+  released (`RegionDrawHost.addDrawPolygon`), or a vertex per click, closed by the
+  panel's Finish action. The only tool that can trace an arbitrary outline. A dragged
+  ring that encloses next to nothing — under 5% of the square on its bounding box, which
+  is what a straight drag made out of habit to pan gives — is dropped rather than left
+  as a sliver. Since the lasso claims every drag, holding Space hands drags back to the
+  camera while any selection tool is armed.
 - **Circle / ellipse / square / rectangle** (`lib/selectionShapes.ts`) — one drag places
   the shape, then it is relocated by its body, resized by its half-extent handles and
   rotated by a handle floating off its own +Y axis: the shape-annotation editor's
@@ -1100,9 +1107,10 @@ downstream sees it — client-side `indicesInRings`, or `polygons` for the backe
   knows a shape was involved, and the backend needed no change to accept one. A circle
   is offered no rotate handle, since rotation cannot change it.
 
-One geometric shape is in progress at a time, exactly like the one open lasso ring; the
-panel's Finish action banks it into the committed rings and frees the canvas, so with a
-shape placed a drag over empty canvas still pans the camera. The gesture state machine
+One geometric shape is in progress at a time, exactly like the one open clicked lasso
+ring; the panel's Finish action banks it into the committed rings and frees the canvas,
+so with a shape placed (and a shape tool armed) a drag over empty canvas still pans the
+camera. The gesture state machine
 (`canvas/useSelectionShape.ts`) is coordinate-space agnostic — world on the spatial
 canvas, embedding coords in a 2D embedding, screen pixels in a 3D one — and hit-tests
 geometrically (handle distance, point-in-ring) rather than through deck.gl picking, so
@@ -1435,7 +1443,7 @@ path (`getFieldData`, `getImageInfo`, `openImageLoader`, `getShapesGeoArrow`,
 `frontend/src/data/apiSource.ts` (live session) and the library's `checkpointSource`
 (zarrita over `ZipFileStore`). The handful of hooks that used to
 call `api.ts` directly — `useArrowField`, `useVivImageLayer`, `usePolygonBbox`,
-`VarNameSelect`, `SpatialCanvas` — read the source from `DataSourceProvider` instead.
+the gene search in `ColorBySelect`, `SpatialCanvas` — read the source from `DataSourceProvider` instead.
 Everything downstream (palettes, point styling, channel shaders, legends, minimap,
 invert axes, backdrop) already worked off plain typed arrays and is untouched.
 
@@ -1543,7 +1551,10 @@ broken.
 ### 14.3 Deploying a collection — `index.json`
 
 A serverless deployment is three things in one directory: the built SPA, the
-`.zarr.zip` files, and an `index.json` listing them.
+`.zarr.zip` files, and an `index.json` listing them. The web app reads the same folder,
+without the SPA, as a public project (`cirro-studio/src/data/indexFolder.ts`), using the
+optional fields docs/CHECKPOINT_FORMAT.md §8 adds (`folder`, `from`, `tags`, `date`,
+`size`, `credit`).
 
 ```
 index.html          the Vite build, unchanged — nothing deployment-specific in it

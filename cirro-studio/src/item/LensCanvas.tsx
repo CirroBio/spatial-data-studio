@@ -9,7 +9,7 @@ import {
   CanvasHostProvider, DataSourceProvider, type CanvasHost, type CheckpointHandle, type DisplaySpec,
   type EmbeddingDisplaySpec, type OverlayInset, type SpatialDisplaySpec,
 } from '@cirrobio/spatial-viewer';
-import { currentDisplay, setDisplay, setTissueCanvas, setWorldPerPixel } from './displayState';
+import { currentDisplay, setDisplay, setViewCanvas, setWorldPerPixel } from './displayState';
 import { regionHost, useSelection } from './selection';
 import { EmbeddingTools, SpatialTools } from './ViewTools';
 
@@ -64,7 +64,7 @@ export function SpatialLens({ display, wbKey, selecting, slots, unit }: {
   display: SpatialDisplaySpec; wbKey: string; selecting: boolean; slots: ControlSlots; unit: 'µm' | null;
 }) {
   return (
-    <div className="lens-canvas" ref={(el) => setTissueCanvas(wbKey, el)}>
+    <div className="lens-canvas" ref={(el) => setViewCanvas(wbKey, 'spatial', el)}>
       <SpatialCanvas display={display} sessionId={wbKey} canvasMode={selecting ? 'regions' : null} annotationTarget={null} followDisplayViewport
         controls={(api) => (
           <>
@@ -80,7 +80,7 @@ export function EmbeddingLens({ display, wbKey, handle, selecting, slots }: {
   display: EmbeddingDisplaySpec; wbKey: string; handle: CheckpointHandle; selecting: boolean; slots: ControlSlots;
 }) {
   return (
-    <div className="lens-canvas">
+    <div className="lens-canvas" ref={(el) => setViewCanvas(wbKey, 'embedding', el)}>
       <EmbeddingCanvas display={display} sessionId={wbKey} obsmFields={handle.fields.obsm} obsFields={handle.fields.obs}
         layerNames={handle.fields.layers} canvasMode={selecting ? 'regions' : null} annotationTarget={null} followDisplayViewport
         controls={(api) => (

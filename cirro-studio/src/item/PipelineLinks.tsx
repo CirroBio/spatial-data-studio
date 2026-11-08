@@ -10,13 +10,15 @@ export function PipelineLinks({ datasetId, purpose, about }: { datasetId: string
   const [links, setLinks] = useState<PipelineLink[] | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   useEffect(() => {
+    if (collection.access === 'read') return;
     let live = true;
     collection.pipelines(datasetId, purpose).then((l) => live && setLinks(l), (e: unknown) => live && setProblem(describeError(e)));
     return () => {
       live = false;
     };
   }, [collection, datasetId, purpose]);
-  if (collection.kind === 'examples') return <p className="muted task-about">Log in to Cirro to run pipelines on your own data.</p>;
+  // Running a pipeline adds a dataset to the project.
+  if (collection.access === 'read') return null;
   return (
     <div className="pipeline-links">
       <p className="muted task-about">{about}</p>

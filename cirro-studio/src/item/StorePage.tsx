@@ -38,6 +38,9 @@ function embeddingName(key: string): string {
   return `${EMBEDDING_NAMES[base] ?? base.replace(/_/g, ' ')}${dims ? ` ${dims}D` : ''}`;
 }
 
+// The views bar sits this far down the frame (the drawers' gap), and the overlays this far below it.
+const BAR_GAP = 14;
+
 // Readers whose observations are capture spots rather than segmented cells.
 const SPOT_READERS = new Set(['visium']);
 
@@ -60,7 +63,17 @@ export function StorePage({ item, entity }: { item: StoreItem | VersionItem; ent
   const taskDef = TASKS.find((t) => t.id === task) ?? null;
   const selecting = useSelection(wb.key).armed;
   const drawers = useDrawers(Boolean(taskDef));
-  const overlayInset = useMemo(() => ({ ...drawers.inset, top: BAR_ROOM }), [drawers.inset]);
+  // The canvas' overlays (legends, overview, drawing hints) start below the views bar,
+  // which takes a second row when the view is narrow.
+  const [bar, setBar] = useState<HTMLDivElement | null>(null);
+  const [barHeight, setBarHeight] = useState(0);
+  useEffect(() => {
+    if (!bar) return;
+    const observer = new ResizeObserver(([entry]) => setBarHeight(Math.round(entry.contentRect.height)));
+    observer.observe(bar);
+    return () => observer.disconnect();
+  }, [bar]);
+  const overlayInset = useMemo(() => ({ ...drawers.inset, top: Math.max(BAR_ROOM, barHeight + BAR_GAP) }), [drawers.inset, barHeight]);
   // Where the canvas docks the Studio's settings panel (the Display drawer's body) and
   // its tools (the views bar).
   const [settings, setSettings] = useState<HTMLElement | null>(null);
@@ -131,7 +144,8 @@ export function StorePage({ item, entity }: { item: StoreItem | VersionItem; ent
 
   const datasetName = catalog.byId.get(item.datasetId)?.name ?? item.label;
   const { from, into } = kinOf(entity?.base ?? item, library, (id) => catalog.byId.get(id)?.sourceIds ?? []);
-  const title = item.kind === 'version' ? item.title : entity?.label ?? item.label;
+  // A version is named by the dataset it was saved on, so it reads as that dataset still.
+  const title = entity?.label ?? item.label;
 
   if (wb.status === 'error') {
     return (
@@ -185,7 +199,8 @@ export function StorePage({ item, entity }: { item: StoreItem | VersionItem; ent
 
   return (
     <div className="picture" style={tint('--sds-stage-store')}>
-      <Facts title={title} item={item} kind={item.kind === 'version' ? `Version ${wb.levels.length - 1 || ''}`.trim() : 'Spatial data'}
+      <Facts title={title} item={item} origin={entity?.base ?? undefined}
+        kind={item.kind === 'version' ? `Version${wb.levels.length > 1 ? ` ${wb.levels.length - 1}` : ''} · ${item.title}` : 'Spatial data'}
         stage="spatial" from={from} into={into} unsaved={wb.changes.length > 0}
         extra={(
           <>
@@ -206,9 +221,20 @@ export function StorePage({ item, entity }: { item: StoreItem | VersionItem; ent
         <DatasetCanvases wbKey={wb.key} handle={wb.handle} dataVersions={wb.dataVersions} selecting={selecting} inset={overlayInset}>
           <ViewFrame drawers={drawers} sheet={!onCanvas}
             bar={(
-              <div className="view-bar" data-backdrop={backdrop}>
+              <div className="view-bar" data-backdrop={backdrop} ref={setBar}>
                 <ViewTabs views={views} reports={reportViews} figures={figureViews} current={lens} onChoose={chooseLens} />
-                {onCanvas && <div ref={setTools} />}
+                {onCanvas && (
+                  <div className="view-side">
+                    {/* What colors the cells, in reach on the view: the most common change there is. */}
+                    {fields && displays[canvasSlot] && (
+                      <div className="view-color studio-ui">
+                        <ColorBySelect value={colorBy ?? ''} obsFields={fields.obs} layers={fields.layers} hasX={fields.has_x}
+                          onChange={(path) => updateEncoding(wb.key, canvasSlot, { color_by: path })} />
+                      </div>
+                    )}
+                    <div ref={setTools} />
+                  </div>
+                )}
               </div>
             )}
             left={{

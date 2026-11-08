@@ -16,7 +16,7 @@ export interface Selection {
 
 const EMPTY: Selection = { polygons: [], ring: [], shape: null, tool: 'lasso', cells: null, armed: false };
 
-type Actions = Pick<RegionDrawHost, 'setDrawShape' | 'addDrawVertex' | 'clearDraw' | 'setRegionCellCount' | 'setRegionCellIndices'>;
+type Actions = Pick<RegionDrawHost, 'setDrawShape' | 'addDrawVertex' | 'addDrawPolygon' | 'clearDraw' | 'setRegionCellCount' | 'setRegionCellIndices'>;
 
 interface Entry { state: Selection; listeners: Set<() => void>; actions: Actions; host: RegionDrawHost | null }
 const entries = new Map<string, Entry>();
@@ -28,6 +28,7 @@ function actionsFor(key: string): Actions {
   return {
     setDrawShape: (shape) => set(key, { shape }),
     addDrawVertex: (pt) => set(key, { ring: [...entry(key).state.ring, pt] }),
+    addDrawPolygon: (ring) => set(key, { polygons: [...entry(key).state.polygons, ring] }),
     clearDraw: () => {
       const s = entry(key).state;
       if (s.polygons.length || s.ring.length || s.shape) set(key, { polygons: [], ring: [], shape: null });

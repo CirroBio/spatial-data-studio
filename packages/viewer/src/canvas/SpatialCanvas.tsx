@@ -53,8 +53,8 @@ const NO_POLYGONS: [number, number][][] = [];
 const NO_POINTS: [number, number][] = [];
 const NO_SHAPES: ShapeAnnotation[] = [];
 // Stable stand-in for a host without region drawing: nothing can place a selection
-// shape without one (the drawing modes are off), so the sink is never called.
-const NO_SHAPE_SINK = () => {};
+// shape or ring without one (the drawing modes are off), so the sink is never called.
+const NO_DRAW_SINK = () => {};
 
 type Point = [number, number];
 type ShapeDragTarget =
@@ -218,12 +218,13 @@ export default function SpatialCanvas({
   const [overHandle, setOverHandle] = useState(false);
   const [overBody, setOverBody] = useState(false);
 
-  // The lasso (click-to-add-vertex ring) interaction is shared by region-labeling
-  // and subsetting; the shape-annotation editor (canvasMode === 'shapes') uses a
-  // separate drag/handle interaction — see useShapeAnnotations/ShapeAnnotationLayers.
+  // The lasso (a ring dragged out, or clicked out a vertex at a time) is shared by
+  // region-labeling and subsetting; the shape-annotation editor (canvasMode === 'shapes')
+  // uses a separate drag/handle interaction — see useShapeAnnotations/ShapeAnnotationLayers.
   const lassoMode = !!regions && (canvasMode === 'regions' || canvasMode === 'subset');
   const selectionTool = regions?.selectionTool ?? 'lasso';
-  const setDrawShape = regions?.setDrawShape ?? NO_SHAPE_SINK;
+  const setDrawShape = regions?.setDrawShape ?? NO_DRAW_SINK;
+  const addDrawPolygon = regions?.addDrawPolygon ?? NO_DRAW_SINK;
   const shapesMode = !!annotations && canvasMode === 'shapes';
   const drawMode = lassoMode || shapesMode;
   // Pan is suppressed only while actively drawing (a tool armed) or dragging a
@@ -627,6 +628,7 @@ export default function SpatialCanvas({
     tool: selectionTool,
     shape: placedSelectionShape,
     setShape: setDrawShape,
+    addRing: addDrawPolygon,
     toCoord: pickedWorldPoint,
     unitsPerPixel: worldPerScreenPixel,
   });
@@ -694,9 +696,10 @@ export default function SpatialCanvas({
   const OVERLAY_PARAMS = { depthCompare: 'always' as const, depthWriteEnabled: false };
   const drawLayers: Layer[] = [];
   if (lassoMode) {
-    // The geometric shape draws as one more selection ring — same translucent fill and
-    // stroke as a lassoed one, so what it will select reads the same way.
-    const rings = selection.ring ? [...polygons, selection.ring] : polygons;
+    // The geometric shape, and a lasso ring while it is dragged out, draw as more selection
+    // rings — same translucent fill and stroke as a banked one, so what they will select
+    // reads the same way.
+    const rings = [...polygons, ...(selection.ring ? [selection.ring] : []), ...(selection.stroke ? [selection.stroke] : [])];
     drawLayers.push(...buildLassoLayers(rings, currentRing, SEL,
       { idPrefix: 'sel', modelMatrix: worldToPixelMat, parameters: OVERLAY_PARAMS }));
     if (selection.shape) {

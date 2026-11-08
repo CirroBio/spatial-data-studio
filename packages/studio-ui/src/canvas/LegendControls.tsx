@@ -28,6 +28,7 @@ export default function LegendControls({ legendVisible, legendTitle, colorByName
           placeholder={colorByName}
           className="bg-bg border border-border rounded px-2 py-1 text-xs text-text placeholder:text-muted/40 focus:outline-none focus:border-accent"
           title="Legend title"
+          aria-label="Legend title"
         />
       )}
     </>

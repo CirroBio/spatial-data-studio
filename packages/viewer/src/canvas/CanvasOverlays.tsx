@@ -197,9 +197,10 @@ export function DrawHint({
   // hints in the AnnotationsPanel; this hint is only for the cell-selection modes.
   if (!drawMode || canvasMode === 'shapes') return null;
   const tone = canvasMode === 'regions' ? 'success' : 'accent';
-  // The lasso collects a vertex per click; a geometric tool is one drag, and once its
-  // shape is down the gesture that matters is adjusting it.
-  const gesture = selectionTool === 'lasso' ? 'click to add points'
+  // The lasso draws a ring per drag (or a vertex per click), so it alone needs a way back
+  // to panning; a geometric tool is one drag, and once its shape is down the gesture that
+  // matters is adjusting it.
+  const gesture = selectionTool === 'lasso' ? 'drag around cells or click points (hold Space to pan)'
     : shapePlaced ? 'adjust the shape'
     : `drag out ${selectionTool === 'ellipse' ? 'an' : 'a'} ${selectionTool}`;
   return (

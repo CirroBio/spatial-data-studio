@@ -1,7 +1,7 @@
 // The project's Spatial Data Studio workspaces: a top-bar button that says what they are
 // doing from any page, a sheet that lists them (open, extend, stop, start, change,
 // delete) and starts new ones, and a notice when one finishes starting. Loaded only for a
-// signed-in Cirro project, so the examples never load the Cirro client for it.
+// signed-in Cirro project, so a visitor to the public projects never loads the Cirro client for it.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Workspace, WorkspaceEnvironment } from '@cirrobio/api-client';
 import { useStudio } from '../app/studio';
