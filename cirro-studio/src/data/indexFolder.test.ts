@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { IndexSource, parseIndex } from './indexFolder';
+import { IndexSource, parseIndex, storeIndex } from './indexFolder';
 
 const INDEX_URL = 'https://data.example.org/lab/index.json';
 
@@ -95,5 +95,16 @@ describe('IndexSource', () => {
     const { url } = await source.fileUrl('lung-clustered');
     expect(url).toBe('https://data.example.org/lab/analyzed/lung.sdata.zarr.zip');
     await expect(source.fileUrl('nope')).rejects.toThrow('no checkpoint "nope"');
+  });
+});
+
+describe('storeIndex', () => {
+  const address = 'https://lab.s3.amazonaws.com/sections/lung.sdata.zarr.zip?X-Amz-Signature=abc';
+  const source = new IndexSource(storeIndex(address));
+
+  it('lists the store as the one dataset, from its host, read at its full address', async () => {
+    const [dataset] = await source.datasets();
+    expect(dataset).toMatchObject({ name: 'lung', processName: 'lab.s3.amazonaws.com', folders: [] });
+    expect((await source.fileUrl(dataset.id)).url).toBe(address);
   });
 });

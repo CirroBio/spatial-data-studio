@@ -7,6 +7,7 @@ import { openZarrStore } from '@cirrobio/spatial-viewer';
 import type { ListedFile } from './discover';
 import type { DatasetRecord } from './model';
 import type { PublicSource } from './publicProject';
+import { openedStoreProject } from './publicProjects';
 
 export const INDEX_FILE = 'index.json';
 
@@ -103,6 +104,35 @@ export function parseIndex(body: unknown, indexUrl: string): FolderIndex {
   return { name: str(doc.title) ?? null, description: str(doc.description) ?? '', datasets };
 }
 
+/** A store opened by its address alone, as a folder holding just it. It is named after
+ * its file, and said to come from its host. */
+export function storeIndex(address: string): FolderIndex {
+  const { project, datasetId, path } = openedStoreProject(address);
+  return {
+    name: project.name,
+    description: '',
+    datasets: [{
+      url: project.url,
+      file: path,
+      size: null,
+      record: {
+        id: datasetId,
+        name: project.name,
+        description: '',
+        processId: 'address',
+        processName: new URL(project.url).host,
+        status: 'COMPLETED',
+        createdAt: '',
+        createdBy: '',
+        tags: [],
+        folders: [],
+        sourceIds: [],
+        share: null,
+      },
+    }],
+  };
+}
+
 // Each folder's index, read once per page.
 const indexes = new Map<string, Promise<FolderIndex>>();
 
@@ -122,11 +152,16 @@ export function readIndex(root: string): Promise<FolderIndex> {
   return pending;
 }
 
-// A file's size, when its host says; a listing doesn't need it to open the file.
+// A file's size, when its host says; a listing doesn't need it to open the file. Asked
+// with a one-byte GET, as the reader asks it: a presigned URL is signed for GET alone and
+// refuses HEAD.
 async function sizeOf(url: string): Promise<number> {
   try {
-    const res = await fetch(url, { method: 'HEAD' });
-    return Number(res.headers.get('content-length')) || 0;
+    const res = await fetch(url, { headers: { Range: 'bytes=0-0' } });
+    // A host that ignores the range sends the whole file; only its headers are wanted.
+    void res.body?.cancel();
+    if (!res.ok) return 0;
+    return Number(res.headers.get('content-range')?.split('/')[1] ?? res.headers.get('content-length')) || 0;
   } catch {
     return 0;
   }

@@ -24,9 +24,9 @@ export interface PublicSource {
 interface Publication { source: PublicSource; datasets: DatasetRecord[] }
 
 async function openSource(info: PublicProjectInfo): Promise<PublicSource> {
-  if (info.kind === 'index') {
-    const { IndexSource, readIndex } = await import('./indexFolder');
-    return new IndexSource(await readIndex(info.url));
+  if (info.kind === 'index' || info.kind === 'store') {
+    const { IndexSource, readIndex, storeIndex } = await import('./indexFolder');
+    return new IndexSource(info.kind === 'store' ? storeIndex(info.url) : await readIndex(info.url));
   }
   const [{ createPublicationDataSource }, { DatasetReader }] = await Promise.all([
     import('../cirro/cirro-publication'), import('../cirro/datasetReader'),

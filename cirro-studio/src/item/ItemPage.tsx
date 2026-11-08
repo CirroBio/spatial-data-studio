@@ -1,7 +1,8 @@
 // An item opened from the map: a spatial dataset (a store, or a version of one), an
 // image, or an instrument run, each as its own picture.
 import { useEffect, useState } from 'react';
-import { backToMap, ITEM_PARAM, STAGE_PARAM, stepBack, useRoute } from '../app/route';
+import { OPEN_DOCS_URL } from '../app/appInfo';
+import { backToMap, ITEM_PARAM, openedStore, STAGE_PARAM, stepBack, useRoute } from '../app/route';
 import { refOfItem, type SpatialEntity } from '../app/library';
 import { useStudio } from '../app/studio';
 import { itemKey, itemsOf, type CatalogItem } from '../data/model';
@@ -60,7 +61,9 @@ export default function ItemPage() {
     return (
       <div className="page-message">
         <p className="notice notice-danger">{error}</p>
-        <button type="button" className="button" onClick={() => backToMap(fromStage)}>Back to the map</button>
+        {openedStore() !== null
+          ? <a href={OPEN_DOCS_URL} target="_blank" rel="noreferrer">What a link to a dataset needs ↗</a>
+          : <button type="button" className="button" onClick={() => backToMap(fromStage)}>Back to the map</button>}
       </div>
     );
   }
