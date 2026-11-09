@@ -20,6 +20,8 @@ interface Entry {
   listeners: Set<() => void>;
   // Told of every camera move as well.
   cameraListeners: Set<() => void>;
+  // The canvases asked to fit to their data, until they next render (`takeFit`).
+  fits: Set<keyof Displays>;
 }
 
 const entries = new Map<string, Entry>();
@@ -100,7 +102,7 @@ function chooseBackdrop(key: string, handle: CheckpointHandle) {
 function entryFor(key: string, handle: CheckpointHandle | null): Entry | null {
   let e = entries.get(key);
   if (!e && handle) {
-    e = { displays: fromHandle(handle), viewports: {}, listeners: new Set(), cameraListeners: new Set() };
+    e = { displays: fromHandle(handle), viewports: {}, listeners: new Set(), cameraListeners: new Set(), fits: new Set() };
     entries.set(key, e);
     chooseBackdrop(key, handle);
     // A column that can't be read keeps the store's color; the canvas reports it.
@@ -179,18 +181,26 @@ export function showDisplay(key: string, display: DisplaySpec) {
   if (!e) return;
   const slot = isSpatialDisplay(display) ? 'spatial' : 'embedding';
   // A copy: the canvas moves to each viewport object once, and it may already have moved
-  // to this one before the user panned away.
+  // to this one before the user panned away. A null one (fit to the data) has no copy
+  // the canvas could tell from the null it may already have, since camera moves don't
+  // reach the display's own viewport: the canvas is asked to fit instead.
   const viewport = display.viewport && { ...display.viewport };
   e.viewports[slot] = viewport;
+  if (!viewport) e.fits.add(slot);
   e.displays = shareColor({ ...e.displays, [slot]: { ...display, viewport } }, slot);
   e.listeners.forEach((l) => l());
+}
+
+/** Whether the canvas in `slot` was asked to fit to its data; true once per asking. */
+export function takeFit(key: string, slot: keyof Displays): boolean {
+  return entries.get(key)?.fits.delete(slot) ?? false;
 }
 
 /** A version just saved opens looking as its parent did. */
 export function carryDisplays(fromKey: string, toKey: string) {
   const e = entries.get(fromKey);
   if (!e) return;
-  entries.set(toKey, { displays: e.displays, viewports: { ...e.viewports }, listeners: new Set(), cameraListeners: new Set() });
+  entries.set(toKey, { displays: e.displays, viewports: { ...e.viewports }, listeners: new Set(), cameraListeners: new Set(), fits: new Set() });
 }
 
 // World units per screen pixel of each dataset's spatial canvas, as the canvas reports it:
