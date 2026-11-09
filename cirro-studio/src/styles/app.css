@@ -290,6 +290,9 @@ input[type="checkbox"], input[type="radio"], input[type="range"] { accent-color:
   border: 1px solid var(--sds-color-border); border-radius: var(--sds-radius-md);
   background: color-mix(in srgb, var(--sds-color-surface-raised) 90%, transparent); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
 }
+/* The blur makes the strip a stacking context, which its Reports and Figures menus can't rise
+   out of; lifting the strip keeps them over the tools when those wrap under the tabs. */
+.view-tabs { position: relative; z-index: 1; }
 .view-tab, .view-tab-menu .topbar-button {
   font: inherit; font-weight: var(--sds-weight-medium); white-space: nowrap; padding: 4px var(--sds-space-3); border: 0; border-radius: 0;
   background: none; color: var(--sds-color-text-muted); cursor: pointer; transition: color 0.15s ease, background-color 0.15s ease;
