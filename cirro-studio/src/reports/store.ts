@@ -7,7 +7,7 @@ import type { AsyncReadable } from '@zarrita/storage';
 import * as zarr from 'zarrita';
 import type { GeneTest } from '../analysis/rankGenes';
 import { APP_ID, APP_VERSION } from '../app/appInfo';
-import { childNames, newId, readString } from '../figures/spec';
+import { childNames, newId, readEach, readString, type Kept } from '../figures/spec';
 import type { DataFrameColumn } from '../stack/editor';
 import { RESULTS, UNS_ROOT } from '../stack/manifest';
 import { applyEdit } from '../workbench/workbench';
@@ -135,18 +135,17 @@ export function removeResult(wbKey: string, table: string, result: KeptResult): 
 }
 
 /** Every result kept with the table, oldest first. */
-export async function readResults(store: Required<AsyncReadable>, table: string): Promise<KeptResult[]> {
+export async function readResults(store: Required<AsyncReadable>, table: string): Promise<Kept<KeptResult>> {
   const prefix = `tables/${table}/uns/${UNS_ROOT}/${RESULTS}`;
-  const ids = await childNames(store, prefix);
-  const results = await Promise.all(ids.map(async (id): Promise<KeptResult | null> => {
+  const { kept, unreadable } = await readEach(await childNames(store, prefix), async (id): Promise<KeptResult | null> => {
     const names = await childNames(store, `${prefix}/${id}`);
     if (!names.includes('meta')) return null;
     const meta = JSON.parse(await readString(store, `${prefix}/${id}/meta`)) as Partial<KeptMeta>;
     // Kept by a version of the app from before reports, or by something else.
     if (!meta.kind || !meta.title) return null;
     return { id, path: [UNS_ROOT, RESULTS, id], meta: meta as KeptMeta };
-  }));
-  return results.filter((r): r is KeptResult => r !== null).sort((a, b) => a.meta.created_at.localeCompare(b.meta.created_at));
+  });
+  return { kept: kept.sort((a, b) => a.meta.created_at.localeCompare(b.meta.created_at)), unreadable };
 }
 
 /** The dataframe at `tables/<table>/uns/<path>`. */
