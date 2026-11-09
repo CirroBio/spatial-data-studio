@@ -34,9 +34,10 @@ export interface NicheResult {
   profiles: Float32Array;
 }
 
-/** The values an expression analysis runs on: log-normalized when they look like counts. */
+/** The values an expression analysis runs on: log-normalized when they look like counts.
+ * The worker owns the matrix it was sent (client.ts), so it is normalized in place. */
 function analysisMatrix(m: ExpressionMatrix): ExpressionMatrix {
-  return looksLikeCounts(m) ? logNormalize(m) : m;
+  return looksLikeCounts(m) ? logNormalize(m, undefined, true) : m;
 }
 
 export const ops = {
@@ -98,7 +99,7 @@ export const ops = {
     // k excludes the cell itself, so the default 14 is scanpy's n_neighbors=15.
     const { matrix, resolution = 1, nTopGenes = 2000, nComps = 50, k = 14, seed = 0 } = args;
     const normalized = looksLikeCounts(matrix);
-    const m = normalized ? logNormalize(matrix) : matrix;
+    const m = normalized ? logNormalize(matrix, undefined, true) : matrix;
     progress(0.02, 'Selecting variable genes');
     const genes = highlyVariableGenes(m, nTopGenes);
     const comps = Math.min(nComps, genes.length - 1, m.nCells - 1);

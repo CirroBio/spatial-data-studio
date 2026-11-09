@@ -26,11 +26,12 @@ function cellTotals(m: ExpressionMatrix): Float64Array {
 }
 
 /** scanpy `normalize_total(target_sum=target)` followed by `log1p`. The sparsity pattern
- * is unchanged, so the result shares `indptr` and `indices` with the input. */
-export function logNormalize(m: ExpressionMatrix, target = 1e4): ExpressionMatrix {
+ * is unchanged, so the result shares `indptr` and `indices` with the input; `inPlace`
+ * writes over its values too, for a caller that owns them and has no other use for them. */
+export function logNormalize(m: ExpressionMatrix, target = 1e4, inPlace = false): ExpressionMatrix {
   const totals = cellTotals(m);
   const { indices, data } = m;
-  const out = new Float32Array(data.length);
+  const out = inPlace ? data : new Float32Array(data.length);
   for (let p = 0; p < data.length; p++) out[p] = Math.log1p((data[p] * target) / totals[indices[p]]);
   return { nCells: m.nCells, genes: m.genes, indptr: m.indptr, indices: m.indices, data: out };
 }

@@ -479,7 +479,9 @@ builds the library (`dist/`, ESM + CJS + types) and then the app.
 
 The web app needs no backend and is not part of `run.sh`: `npm run dev:studio` serves
 it on `http://localhost:5171`, the redirect URI Cirro's development registration lists
-for it ([`cirro-studio/README.md`](cirro-studio/README.md#run-it)).
+for it ([`cirro-studio/README.md`](cirro-studio/README.md#run-it)). Its links to the docs
+reach the docs dev server through it, when that runs on port 5180
+(`npm --prefix docs-site run docs:dev -- --port 5180`).
 
 `SDS_DATA_DIR` is the single read-write data folder — inputs, saved checkpoints,
 and snapshots all live there; `run.sh` sets it to `data/` (or `test-data/` with

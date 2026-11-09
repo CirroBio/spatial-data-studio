@@ -64,10 +64,13 @@ function GeneThumb({ tissue, values, grid, width, label }: {
     : <span className="thumb-empty" style={{ display: 'block', width, height: width }} />;
 }
 
-function PatternCard({ wb, handle, result, pattern, genes, tissue, grid, matrix }: {
+function PatternCard({ wb, handle, result, pattern, genes, tissue, grid }: {
   wb: Workbench; handle: CheckpointHandle; result: KeptResult; pattern: number; genes: MoranRow[];
-  tissue: Tissue | null; grid: number; matrix: ExpressionMatrix | null;
+  tissue: Tissue | null; grid: number;
 }) {
+  // Read here, not handed down: React's development build lists every value of a changed
+  // prop, and the matrix has tens of millions of them.
+  const matrix = useMatrix(wb);
   const [gene, setGene] = useState<string | null>(null);
   const mean = useMemo(() => (matrix ? meanValues(matrix, genes.map((g) => g.gene)) : null), [matrix, genes]);
   const picked = useMemo(() => (gene && matrix ? geneValues(matrix, gene) : null), [gene, matrix]);
@@ -205,7 +208,7 @@ export default function MoranReport({ result, table, wb, handle, unit, width }: 
         {patterns.count > 0 && patternOf && (
           <div className="group-cards">
             {groups.map((genes, p) => (
-              <PatternCard key={p} wb={wb} handle={handle} result={result} pattern={p} genes={genes} tissue={tissue} grid={patterns.grid} matrix={matrix} />
+              <PatternCard key={p} wb={wb} handle={handle} result={result} pattern={p} genes={genes} tissue={tissue} grid={patterns.grid} />
             ))}
           </div>
         )}

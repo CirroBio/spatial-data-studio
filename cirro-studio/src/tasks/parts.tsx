@@ -26,12 +26,13 @@ export function JobStatus({ job, label }: { job: Job; label: string }) {
 }
 
 /** The column the tissue is colored by, when a groups chooser can start on it: a
- * categorical column with no more groups than the tissue colors. Null until that is
- * known, and without a dataset key. */
+ * categorical column with at least two groups and no more than the tissue colors. A
+ * store can open colored by a column of one value (SpatialData's `region`, which only
+ * links cells to their outlines), and that groups nothing. Null until that is known. */
 function useColoredGroups(wbKey: string, handle: CheckpointHandle): string | null {
   const colorBy = useDisplays(wbKey, handle).spatial?.encoding.color_by;
   const { key } = useColorKey(colorBy?.startsWith('obs:') ? colorBy : null, 0);
-  return key?.kind === 'categorical' ? key.field.slice('obs:'.length) : null;
+  return key?.kind === 'categorical' && key.items.length > 1 ? key.field.slice('obs:'.length) : null;
 }
 
 /** A column of groups, starting on the one the tissue is colored by until another is chosen. */

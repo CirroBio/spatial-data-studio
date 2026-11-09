@@ -34,7 +34,7 @@ until you [save a version](cirro.md#save-a-version), then in the version.
   and where it is.
 
 An analysis that works on groups starts on the column the tissue is colored by, when
-that column has groups (and no more than 100 of them); choose another as you like.
+that column has groups (at least two, and no more than 100); choose another as you like.
 
 The gene analyses need the store's expression matrix. Stores saved without one still
 offer labelling, neighborhoods, niches and figures, and the drawer names the analyses they
