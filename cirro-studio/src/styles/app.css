@@ -523,6 +523,7 @@ input[type="checkbox"], input[type="radio"], input[type="range"] { accent-color:
 .chart-tick { font-size: 10px; fill: var(--sds-color-text-muted); font-variant-numeric: tabular-nums; }
 .chart-title { font-size: 11px; fill: var(--sds-color-text-muted); }
 .chart-point-label { font-size: 10px; fill: var(--sds-color-text); paint-order: stroke; stroke: var(--sds-color-surface-raised); stroke-width: 3px; }
+.heatmap-mark { fill: var(--sds-color-text); stroke: var(--sds-color-surface-raised); stroke-width: 1px; }
 
 /* Reports (src/reports): a kept analysis across the view, read top to bottom. */
 .sheet-report { max-width: 1240px; padding: var(--sds-space-6); }

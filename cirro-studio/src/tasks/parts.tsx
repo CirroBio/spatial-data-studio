@@ -181,6 +181,9 @@ export function ResultTable<R extends object>({ rows, columns, rowKey, onPick, p
     return [...rows].sort((a, b) => {
       const x = (a as Record<string, unknown>)[sort.key];
       const y = (b as Record<string, unknown>)[sort.key];
+      // A missing value (NaN: not tested) goes last whichever way the column sorts.
+      const missing = Number(Number.isNaN(x)) - Number(Number.isNaN(y));
+      if (missing) return missing;
       // Numeric-aware, so group labels 0, 1, 2… sort before 10.
       return (typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), undefined, { numeric: true })) * dir;
     });

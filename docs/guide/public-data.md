@@ -157,7 +157,7 @@ says which Cirro datasets it reads.
   own Xenium archives (`cells.zarr.zip` and the like) aren't SpatialData, and aren't
   listed.
 - **What you can do.** See every cell over the image, the cell map (UMAP) and the
-  composition of groups; label cells by drawing round them; find clusters, compare
+  composition of groups, alone or across another grouping; label cells by drawing round them; find clusters, compare
   groups, find marker genes and spatially variable genes, measure neighborhood
   enrichment, find cellular niches and score gene sets, each with a report; keep a view
   as a figure; save what you made as a version; or open it in an Analysis Workspace, with
@@ -231,7 +231,9 @@ Tabs over the top of the view switch what is shown:
 
 - **Tissue**: every cell over the image.
 - **Cell map**: the store's UMAP or other embedding.
-- **Composition**: cells per group of the current color. A color of values rather than
+- **Composition**: cells per group of the current color, or, with a column chosen under
+  **Across**, how each of that column's groups is made up
+  ([Compare composition](analyze.md#compare-composition)). A color of values rather than
   groups, or of more than 100 groups (too many to color), has nothing to count, and the
   view says so.
 - **Versions**: the store's history, with the page to itself (it has nothing to set).
@@ -266,4 +268,5 @@ shares), in which case it opens colored by its first grouping with 2 to 50 group
 store with no such grouping opens with its cells drawn as outlines (where it has cell
 boundaries), so the image shows through them. The tissue and the cell map share one
 color: choosing a color, its legend title or a group's color on one changes the other. On
-**Composition** the drawer holds just the color, which picks the groups counted.
+**Composition** the drawer holds the color, which picks the groups counted, and
+**Across**, the column they are counted across.

@@ -13,6 +13,8 @@ export const STAGE_PARAM = appKey('stage');
 export const ITEM_PARAM = appKey('item');
 export const LENS_PARAM = appKey('lens');
 export const TASK_PARAM = appKey('task');
+// The column the Composition view splits its counts across.
+export const ACROSS_PARAM = appKey('across');
 // An open stage's browser: the selected row, the search, the order, the flat list and the
 // filters, so a reload, a shared link or Back opens the same view.
 export const SELECT_PARAM = appKey('select');

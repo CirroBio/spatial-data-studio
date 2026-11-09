@@ -1,12 +1,13 @@
 // A chart figure drawn from the result it was saved over: a volcano from a comparison,
-// a heatmap from neighborhood enrichment.
+// a heatmap from neighborhood enrichment, stacked bars from a composition.
 import { useEffect, useRef, useState } from 'react';
 import type { AsyncReadable } from '@zarrita/storage';
 import { Heatmap } from '../charts/Heatmap';
+import { StackedBars } from '../charts/StackedBars';
 import { Volcano } from '../charts/Volcano';
 import { describeError } from '../cirro/session';
 import { useSize } from '../lib/useSize';
-import { GENE_TEST_COLUMN, readDataFrame, type DataFrame } from '../reports/store';
+import { GENE_TEST_COLUMN, matrixOf, readDataFrame, type DataFrame } from '../reports/store';
 import type { ChartSpec, FigureSpec } from './spec';
 
 const num = (df: DataFrame, column: string) => {
@@ -15,7 +16,7 @@ const num = (df: DataFrame, column: string) => {
   return c as ArrayLike<number>;
 };
 
-function Chart({ chart, df, width }: { chart: ChartSpec; df: DataFrame; width: number }) {
+function Chart({ chart, df, marks, width }: { chart: ChartSpec; df: DataFrame; marks: DataFrame | null; width: number }) {
   if (chart.type === 'volcano') {
     const logfc = num(df, GENE_TEST_COLUMN.logfc);
     const padj = num(df, GENE_TEST_COLUMN.padj);
@@ -31,13 +32,15 @@ function Chart({ chart, df, width }: { chart: ChartSpec; df: DataFrame; width: n
     const names = Object.keys(df.columns);
     const square = names.length === df.index.length && df.index.every((r) => Object.hasOwn(df.columns, r));
     const columns = square ? df.index : names;
-    const values = new Float64Array(df.index.length * columns.length);
-    columns.forEach((c, j) => {
-      const column = num(df, c);
-      df.index.forEach((_, i) => { values[i * columns.length + j] = column[i]; });
-    });
+    const values = matrixOf(df, columns);
+    const below = chart.marks?.below ?? 0;
+    const marked = marks ? Array.from(matrixOf(marks, columns), (v) => v < below) : undefined;
     // Shares (a niche's mix) have nothing below zero to diverge from.
-    return <Heatmap rows={df.index} columns={columns} values={values} width={width} label="Heatmap" diverging={values.some((v) => v < 0)} />;
+    return <Heatmap rows={df.index} columns={columns} values={values} width={width} label="Heatmap" diverging={values.some((v) => v < 0)} marked={marked} />;
+  }
+  if (chart.type === 'composition') {
+    return <StackedBars rows={df.index} segments={chart.segments} colors={chart.colors} counts={matrixOf(df, chart.segments)} overall="Overall"
+      width={width} label="Composition" unit={chart.unit} />;
   }
   // readFigures doesn't check the chart type, so a figure saved by a newer version can
   // name one this version doesn't draw.
@@ -45,26 +48,28 @@ function Chart({ chart, df, width }: { chart: ChartSpec; df: DataFrame; width: n
 }
 
 export function ChartFigure({ spec, store, table }: { spec: FigureSpec; store: Required<AsyncReadable>; table: string }) {
-  const [df, setDf] = useState<DataFrame | null>(null);
+  const [tables, setTables] = useState<{ df: DataFrame; marks: DataFrame | null } | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   const { width } = useSize(ref);
   const chart = spec.view.kind === 'chart' ? spec.view.chart : null;
   const resultPath = chart?.result ?? null;
+  const marksPath = chart?.type === 'heatmap' ? chart.marks?.result ?? null : null;
   useEffect(() => {
     if (!resultPath) return;
     let live = true;
-    readDataFrame(store, table, resultPath).then((d) => live && setDf(d), (e: unknown) => live && setProblem(describeError(e)));
+    Promise.all([readDataFrame(store, table, resultPath), marksPath ? readDataFrame(store, table, marksPath) : null])
+      .then(([df, marks]) => live && setTables({ df, marks }), (e: unknown) => live && setProblem(describeError(e)));
     return () => {
       live = false;
     };
-  }, [store, table, resultPath]);
+  }, [store, table, resultPath, marksPath]);
   return (
     <div className="chart-figure" ref={ref}>
       <h2>{spec.title}</h2>
       {spec.caption && <p className="muted">{spec.caption}</p>}
       {problem && <p className="notice notice-danger">{problem}</p>}
-      {chart && df && width > 0 && <Chart chart={chart} df={df} width={Math.min(width, 720)} />}
+      {chart && tables && width > 0 && <Chart chart={chart} df={tables.df} marks={tables.marks} width={Math.min(width, 720)} />}
     </div>
   );
 }

@@ -29,6 +29,7 @@ const REPORTS: Partial<Record<ReportKind, LazyExoticComponent<(p: ReportProps) =
   neighborhoods: lazy(() => import('./NeighborhoodsReport')),
   niches: lazy(() => import('./NichesReport')),
   clusters: lazy(() => import('./ClustersReport')),
+  composition: lazy(() => import('./CompositionReport')),
 };
 
 export function ReportView({ result, wb, unit }: { result: KeptResult; wb: Workbench; unit: string }) {
