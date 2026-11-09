@@ -31,6 +31,24 @@ describe('RangeGetReader', () => {
     expect([...far]).toEqual([...BYTES.slice(900_000, 900_004)]);
   });
 
+  it('hands a read its bytes once they arrive, before the rest of the span', async () => {
+    let finish!: () => void;
+    const rest = new Promise<void>((resolve) => { finish = resolve; });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(new ReadableStream({
+      async start(controller) {
+        controller.enqueue(BYTES.slice(0, 100));
+        await rest;
+        controller.enqueue(BYTES.slice(100, 200));
+        controller.close();
+      },
+    }), { status: 206 })));
+    const reader = new RangeGetReader('https://bucket.example/store.zip');
+    const late = reader.read(150, 50);
+    expect([...await reader.read(0, 10)]).toEqual([...BYTES.slice(0, 10)]);
+    finish();
+    expect([...await late]).toEqual([...BYTES.slice(150, 200)]);
+  });
+
   it('rejects every read in a group when the server ignores Range', async () => {
     mockFetch(200);
     const reader = new RangeGetReader('https://bucket.example/store.zip');

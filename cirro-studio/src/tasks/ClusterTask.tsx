@@ -29,7 +29,7 @@ export default function ClusterTask({ wb, unit }: TaskProps) {
   const run = async () => {
     setProblem(null);
     try {
-      const matrix = await job.prepare('Reading the expression matrix', readMatrix(wb.key, handle));
+      const matrix = await job.prepare('Reading the expression matrix', readMatrix(wb.key, handle, job.prepareProgress));
       const result = await job.run('cluster', { matrix, resolution });
       if (!result) return;
       const column = name.trim();

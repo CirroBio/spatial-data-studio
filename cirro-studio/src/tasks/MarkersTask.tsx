@@ -29,7 +29,7 @@ export default function MarkersTask({ wb, unit }: TaskProps) {
       const obs = await readGroups(handle, column);
       if (obs.categories.length > MAX_GROUPS) throw new Error(`“${column}” has ${obs.categories.length} groups; that looks like an identifier column.`);
       if (obs.categories.length < 2) throw new Error(`“${column}” has only one group, so there is nothing to set it apart from. Choose a column that divides the ${unit}s.`);
-      const matrix = await job.prepare('Reading the expression matrix', readMatrix(wb.key, handle));
+      const matrix = await job.prepare('Reading the expression matrix', readMatrix(wb.key, handle, job.prepareProgress));
       const tests = await job.run('markersForAll', { matrix, codes: obs.codes, nGroups: obs.categories.length });
       if (!tests) return;
       const sizes = obs.categories.map(() => 0);

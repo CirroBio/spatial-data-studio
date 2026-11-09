@@ -67,10 +67,13 @@ much of the canvas' left and right edges (and, optionally, its top) the host cov
 panels of its own; the legends, overview and hints then keep clear of them while the
 canvas still fills its box.
 
-A `DataSource` may also offer `getExpressionMatrix()`: the whole expression matrix,
-gene-major (CSC), for host-side statistics over every gene. The checkpoint source reads
-the store's `X_csc` mirror when there is one and transposes `X` otherwise; reads of a
-`.zarr.zip` coalesce nearby chunk ranges into single GETs.
+A `DataSource` may also offer `getExpressionMatrix(onProgress?)`: the whole expression
+matrix, gene-major (CSC), for host-side statistics over every gene. The checkpoint source
+reads the store's `X_csc` mirror when there is one and transposes `X` otherwise, in a
+module worker so the page stays responsive; `onProgress` gets the fraction of chunks read.
+The build emits that worker beside the bundle (`dist/assets/matrixWorker-*.js`) and loads
+it relative to it. Reads of a `.zarr.zip` coalesce nearby chunk ranges into single GETs,
+and a chunk is handed over as soon as its bytes arrive.
 
 ### No stylesheet
 

@@ -33,7 +33,7 @@ export default function SpatialGenesTask({ wb, unit }: TaskProps) {
   const run = async () => {
     setProblem(null);
     try {
-      const [matrix, xy] = await job.prepare('Reading the expression matrix', Promise.all([readMatrix(wb.key, handle), readCoords(handle, coords)]));
+      const [matrix, xy] = await job.prepare('Reading the expression matrix', Promise.all([readMatrix(wb.key, handle, job.prepareProgress), readCoords(handle, coords)]));
       const rows = await job.run('moransI', { matrix, xy });
       if (!rows) return;
       // `rows` come highest I first.

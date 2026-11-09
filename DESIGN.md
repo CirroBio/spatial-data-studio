@@ -1450,7 +1450,7 @@ This is one app with two data sources, not a second viewer:
 path (`getFieldData`, `getImageInfo`, `openImageLoader`, `getShapesGeoArrow`,
 `getElements`, `searchVarNames`, `imageThumbnailUrl`, `getPlotFigure`), implemented by
 `frontend/src/data/apiSource.ts` (live session) and the library's `checkpointSource`
-(zarrita over `ZipFileStore`). The handful of hooks that used to
+(zarrita over `ZipRangeStore`). The handful of hooks that used to
 call `api.ts` directly — `useArrowField`, `useVivImageLayer`, `usePolygonBbox`,
 the gene search in `ColorBySelect`, `SpatialCanvas` — read the source from `DataSourceProvider` instead.
 Everything downstream (palettes, point styling, channel shaders, legends, minimap,
@@ -1481,6 +1481,32 @@ Details that make it work:
   presigned S3 GET URLs which reject HEAD with 403, so zarrita's built-in
   `HTTPRangeReader` would abort the open before reading a chunk; the total length
   comes from the `Content-Range` of a one-byte GET.
+- **A whole array is a few large GETs.** `ZipRangeStore` (`zipStore.ts`) reads a zip
+  entry's local header and bytes in one range, where zarrita's `ZipFileStore` reads the
+  30-byte header first and the bytes second: two dependent requests per chunk, and a
+  second download of everything between a whole array's headers. Reads asked for in the
+  same task are coalesced by `RangeGetReader` (ranges at most 64 KiB apart join one GET
+  of at most 16 MiB), and each span is streamed, so a read is handed its bytes as soon as
+  they arrive rather than when the whole span has. The batch closes on a `MessageChannel`
+  task (`lib/afterThisTask.ts`), not `setTimeout(0)`, which a hidden tab holds to once a
+  second. A whole-array read asks zarrita for every chunk at once, so a zip's chunks
+  coalesce whatever order the zip lists them in — ours lists them `c/0, c/1, c/10,
+  c/100…`, and the earlier reads in index-order waves of 256 chunks landed all over the
+  file. A folder store, which makes one request per key, caps itself at 256 in flight
+  instead (`openZarrStore`).
+- **The expression matrix is read in a worker.** `getExpressionMatrix` (the web app's
+  gene analyses) reads the table's whole matrix gene-major — the `X_csc` mirror when the
+  store has one, else `X` transposed or sparsified — in a module worker
+  (`expressionMatrix.ts`, `matrixWorker.ts`), so decoding hundreds of megabytes of chunks
+  never holds the page still. The store stays on the page (it may be the web app's stack
+  of versions, or a folder the host signs), so the worker asks the page for each chunk's
+  bytes, in batches, and the page answers from the store; the arrays come back
+  transferred. `onProgress` reports the fraction of chunks read. The read is now bound
+  by the download alone: on the public Visium CytAssist lung cancer store (6,195 spots x
+  18,061 genes, 61M non-zeros, a 129 MB mirror) it went from 169 s and 13,581 requests
+  to 12 s in nine range GETs on a ~10 MB/s link, and on the Xenium Prime 5K melanoma
+  (110k cells x 5,004 genes, 33M non-zeros, 97 MB) from 18 s to 8.6 s in seven, each
+  byte fetched once.
 - The image is Viv's own `loadOmeZarrFromStore` over a prefix view of the zip store,
   so the native `MultiscaleImageLayer` path (§9.4) — tiling, cache budget, prefetch,
   channel shader uniforms — is shared verbatim.
@@ -1495,7 +1521,7 @@ Details that make it work:
   "No saved figure" rather than offering a redraw that has no backend to run it.
 - **Boundaries** (`packages/viewer/src/data/parquetShapes.ts`) are the one thing not
   read through zarrita: the shape file is GeoParquet, so the reader treats it as a
-  plain zip entry and drives `hyparquet` over a `ZipFileStore.getRange`-backed
+  plain zip entry and drives `hyparquet` over a `ZipRangeStore.getRange`-backed
   `AsyncBuffer`. A viewport is answered in increasing order of cost — reject on the
   sidecar's `bounds` (no request); parse the footer once per element, sized exactly
   from `footer_bytes`; prune row groups against the `covering` statistics (free, the

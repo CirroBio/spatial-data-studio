@@ -1,7 +1,7 @@
 // DataSource backed by a SpatialData store read directly over HTTP with zarrita — no
 // backend (DESIGN §14). Two containers:
 //  - a `.zarr.zip` checkpoint, read by HTTP Range: the zip is `ZIP_STORED`, so a zarr
-//    chunk is a contiguous byte span, and `ZipFileStore` pulls the central directory once
+//    chunk is a contiguous byte span, and `ZipRangeStore` pulls the central directory once
 //    and range-reads entries after that;
 //  - a `.zarr/` folder, one object per key (`folderStore`).
 // Either may be an app-saved checkpoint (with the `viewer/` sidecar) or a plain
@@ -14,19 +14,23 @@ import { loadOmeZarrFromStore } from '@vivjs/loaders';
 import { Schema, Table, makeTable } from 'apache-arrow';
 import type { AbsolutePath, AsyncReadable, RangeQuery } from '@zarrita/storage';
 import FetchStore from '@zarrita/storage/fetch';
-import ZipFileStore from '@zarrita/storage/zip';
+import { BlobReader } from 'unzipit';
 import * as zarr from 'zarrita';
 import {
   FIGURE_MEDIA_TYPES,
   type FigureFormat, type FigureIndex, type ImageInfo, type ObsField, type ObsmField,
   type SessionFields,
 } from '../types';
+import { afterThisTask } from '../lib/afterThisTask';
 import { SHAPE_ANNOTATIONS_ELEMENT } from '../lib/shapeAnnotations';
 import type { ShapeAnnotation } from '../schemas/annotations';
 import type { FileMetaData } from 'hyparquet';
 import type { ShapeIndexEntry, ShapeReader } from './parquetShapes';
-import type { DataSource, ElementInventory, ExpressionMatrix, ImageLoader, LocalCategorical } from './types';
+import type { DataSource, ElementInventory, ImageLoader, LocalCategorical } from './types';
+import { readMatrixThrough } from './expressionMatrix';
 import { type FolderAccess, HostSignedFolderStore } from './folderStore';
+import { readGroupAttrs, readTyped, type Root } from './zarrRead';
+import { ZipRangeStore } from './zipStore';
 import {
   autoDisplays, cellIndexOf, childrenOf, type Contents, deriveSidecar, UnrenderableStoreError,
 } from './plainSpatialData';
@@ -60,7 +64,7 @@ interface PendingRead {
   reject: (err: unknown) => void;
 }
 
-// Range-GET reader for ZipFileStore. Unlike zarrita's built-in HTTPRangeReader it
+// Range-GET reader for ZipRangeStore. Unlike zarrita's built-in HTTPRangeReader it
 // never issues a HEAD: Cirro serves checkpoints as method-specific presigned S3 GET
 // URLs, which reject HEAD with 403 (SignatureDoesNotMatch), so getLength()'s HEAD
 // would abort the open before a single chunk was read. The total comes from the
@@ -124,7 +128,7 @@ export class RangeGetReader {
       this.pending.push({ offset, size, resolve, reject });
       if (!this.flushScheduled) {
         this.flushScheduled = true;
-        setTimeout(() => this.flush(), 0);
+        afterThisTask(() => this.flush());
       }
     });
   }
@@ -137,11 +141,8 @@ export class RangeGetReader {
     let end = 0;
     const send = () => {
       const members = group;
-      const groupStart = start;
-      this.readSpan(groupStart, end - groupStart).then(
-        (bytes) => members.forEach((m) => m.resolve(bytes.slice(m.offset - groupStart, m.offset - groupStart + m.size))),
-        (err: unknown) => members.forEach((m) => m.reject(err)),
-      );
+      // A read already handed its bytes ignores the rejection.
+      this.readSpan(start, end - start, members).catch((err: unknown) => members.forEach((m) => m.reject(err)));
     };
     for (const r of batch) {
       const fits = group.length > 0 && r.offset <= end + MAX_COALESCE_GAP && r.offset + r.size - start <= MAX_COALESCED_BYTES;
@@ -157,14 +158,17 @@ export class RangeGetReader {
     if (group.length) send();
   }
 
-  private async readSpan(offset: number, size: number): Promise<Uint8Array<ArrayBuffer>> {
+  /** GETs one coalesced span and hands each read in it its bytes as soon as they have
+   * arrived: a span runs to megabytes, and the chunks at its start can be decoded (and
+   * counted as progress) while the rest is still downloading. */
+  private async readSpan(offset: number, size: number, members: PendingRead[]): Promise<void> {
     const res = await this.fetchRange(`bytes=${offset}-${offset + size - 1}`);
     if (!res.ok) {
       throw new Error(`range GET failed for ${this.url} at ${offset}+${size}: ${res.status} ${res.statusText}`);
     }
     // 206 is the only status whose body IS the requested span. A 200 means the server
     // (or a proxy in front of it) ignored the Range header and answered with the whole
-    // object, which ZipFileStore would then read as the entry at `offset` — every
+    // object, which ZipRangeStore would then read as the entry at `offset` — every
     // central-directory lookup and chunk decode silently off. getLength() tolerates a
     // 200 because it only needs the total size; a data read cannot.
     if (res.status !== 206) {
@@ -172,7 +176,25 @@ export class RangeGetReader {
         `range GET for ${this.url} at ${offset}+${size} was answered ${res.status}, not 206: `
         + 'the server or a proxy in front of it ignored the Range header.');
     }
-    return new Uint8Array(await res.arrayBuffer());
+    if (!res.body) throw new Error(`range GET for ${this.url} at ${offset}+${size} had no body.`);
+    const span = new Uint8Array(size);
+    const waiting = [...members].sort((a, b) => a.offset + a.size - (b.offset + b.size));
+    const handOut = (received: number) => {
+      while (waiting.length && waiting[0].offset + waiting[0].size - offset <= received) {
+        const m = waiting.shift()!;
+        m.resolve(span.slice(m.offset - offset, m.offset - offset + m.size));
+      }
+    };
+    const body = res.body.getReader();
+    let received = 0;
+    for (let part = await body.read(); !part.done; part = await body.read()) {
+      span.set(part.value.subarray(0, size - received), received);
+      received = Math.min(size, received + part.value.length);
+      handOut(received);
+    }
+    // A span reaching past the end of the file comes back short, and so do the reads at
+    // its end.
+    for (const m of waiting) m.resolve(span.slice(m.offset - offset, Math.min(received, m.offset - offset + m.size)));
   }
 }
 
@@ -210,66 +232,6 @@ interface ViewerSidecar {
   // its polygons (`transport.geometry.element_to_world`). Absent in a v1 sidecar; an
   // element the backend could not place is absent from a v2 one.
   shapes_transform?: Record<string, Record<string, number[]>>;
-}
-
-type Root = zarr.Location<AsyncReadable>;
-
-// null means the group is genuinely not in the store — the callers read that as
-// "this checkpoint predates the feature". Anything else (a 403 on an expired URL, a
-// dropped connection, corrupt metadata) propagates: swallowing it would turn a
-// transient failure into a confident wrong diagnosis about a healthy file.
-async function readGroupAttrs(root: Root, path: string): Promise<Record<string, unknown> | null> {
-  try {
-    const group = await zarr.open.v3(root.resolve(path), { kind: 'group' });
-    return (await group.attrs) as Record<string, unknown>;
-  } catch (err) {
-    if (zarr.isZarritaError(err, 'NotFoundError')) return null;
-    throw err;
-  }
-}
-
-// Whole-array reads go through this queue: zarrita otherwise requests every chunk at
-// once, and an array of a few thousand chunks (a table's X) makes the browser fail them
-// with ERR_INSUFFICIENT_RESOURCES.
-const WHOLE_ARRAY_CONCURRENCY = 256;
-
-function limitedQueue(concurrency: number): { add(fn: () => Promise<void>): void; onIdle(): Promise<void[]> } {
-  const waiting: (() => Promise<void>)[] = [];
-  const started: Promise<void>[] = [];
-  let running = 0;
-  const pump = () => {
-    while (running < concurrency && waiting.length) {
-      const fn = waiting.shift()!;
-      running += 1;
-      started.push(fn().finally(() => { running -= 1; pump(); }));
-    }
-  };
-  return {
-    add(fn) { waiting.push(fn); pump(); },
-    // A finishing chunk starts the next before its own promise settles, so `started`
-    // is only empty here once nothing is waiting either.
-    async onIdle() {
-      const results: void[] = [];
-      while (started.length) results.push(...await Promise.all(started.splice(0)));
-      return results;
-    },
-  };
-}
-
-const WHOLE_ARRAY: zarr.GetOptions = { createQueue: () => limitedQueue(WHOLE_ARRAY_CONCURRENCY) };
-
-type NumericArray = Float64Array | Float32Array | Int32Array;
-
-interface NumericArrayType<T extends NumericArray> {
-  new (length: number): T;
-  from(values: ArrayLike<number>, map: (v: number) => number): T;
-}
-
-// Whole numeric array as an `ArrayType`, uniform regardless of the on-disk dtype.
-async function readTyped<T extends NumericArray>(root: Root, path: string, ArrayType: NumericArrayType<T>): Promise<T> {
-  const arr = await zarr.open.v3(root.resolve(path), { kind: 'array' });
-  const { data } = await zarr.get(arr, null, WHOLE_ARRAY);
-  return data instanceof ArrayType ? data : ArrayType.from(data as ArrayLike<number>, Number);
 }
 
 // True for a zarr array holding strings rather than numbers. AnnData writes an
@@ -367,9 +329,36 @@ export function isFolderUrl(url: string): boolean {
 export async function openZarrStore(
   target: string | File, refreshUrl?: CheckpointUrlRefresher, folder?: FolderAccess,
 ): Promise<Required<AsyncReadable>> {
-  if (typeof target !== 'string') return ZipFileStore.fromBlob(target);
-  if (!isFolderUrl(target)) return new ZipFileStore(new RangeGetReader(target, refreshUrl));
-  return folder ? HostSignedFolderStore.open(folder) : new FetchStore(target);
+  if (typeof target !== 'string') return new ZipRangeStore(new BlobReader(target));
+  if (!isFolderUrl(target)) return new ZipRangeStore(new RangeGetReader(target, refreshUrl));
+  return limitRequests(folder ? await HostSignedFolderStore.open(folder) : new FetchStore(target));
+}
+
+// Requests a folder store has in flight at once. It makes one request per key, and a
+// whole-array read asks for every chunk together (`readTyped`): a table's X runs to
+// thousands of chunks, which the browser fails with ERR_INSUFFICIENT_RESOURCES. A zip's
+// reads coalesce instead, so it needs no limit.
+const FOLDER_CONCURRENCY = 256;
+
+function limitRequests(store: Required<AsyncReadable>): Required<AsyncReadable> {
+  let running = 0;
+  const waiting: (() => void)[] = [];
+  const limited = async <T>(request: () => Promise<T>): Promise<T> => {
+    // A finished request hands its slot straight to the next waiting one.
+    if (running < FOLDER_CONCURRENCY) running += 1;
+    else await new Promise<void>((resolve) => waiting.push(resolve));
+    try {
+      return await request();
+    } finally {
+      const next = waiting.shift();
+      if (next) next();
+      else running -= 1;
+    }
+  };
+  return {
+    get: (key, options) => limited(() => store.get(key, options)),
+    getRange: (key, range, options) => limited(() => store.getRange(key, range, options)),
+  };
 }
 
 // Every store this reader opens is Zarr v3, rooted at `zarr.json`. Say what the store
@@ -629,7 +618,18 @@ export async function openCheckpointStore(
       return new Blob([bytes], { type: FIGURE_MEDIA_TYPES[format] });
     },
 
-    getExpressionMatrix: async () => readExpressionMatrix(root, table, await varNamesOnce()),
+    async getExpressionMatrix(onProgress) {
+      const genes = await varNamesOnce();
+      const worker = new Worker(new URL('./matrixWorker.ts', import.meta.url), { type: 'module' });
+      const failed = new Promise<never>((_, reject) => {
+        worker.onerror = (event) => reject(new Error(event.message || 'The expression matrix reader failed to start.'));
+      });
+      try {
+        return await Promise.race([readMatrixThrough(worker, store, table, genes, onProgress), failed]);
+      } finally {
+        worker.terminate();
+      }
+    },
 
     async searchVarNames(query: string, limit = 50): Promise<string[]> {
       // Same ranking as `GET /var-names`: prefix hits first, then substring hits.
@@ -867,74 +867,6 @@ async function readGene(
     }
   }
   return makeTable({ value: await readGeneFromMatrix(root, `tables/${table}/${matrix}`, geneIndex) });
-}
-
-async function readCsc(root: Root, base: string, nCells: number, genes: string[]): Promise<ExpressionMatrix> {
-  const [indptr, indices, data] = await Promise.all([
-    readTyped(root, `${base}/indptr`, Float64Array),
-    readTyped(root, `${base}/indices`, Int32Array),
-    readTyped(root, `${base}/data`, Float32Array),
-  ]);
-  return { nCells, genes, indptr, indices, data };
-}
-
-/** Gene-major copy of a row-major matrix given as per-cell spans (CSR) — a counting
- * sort by gene, so cells stay in order within each gene. */
-function cscFromCsr(
-  nCells: number, genes: string[], rowPtr: Float64Array, cols: Int32Array, values: Float32Array,
-): ExpressionMatrix {
-  const indptr = new Float64Array(genes.length + 1);
-  for (const g of cols) indptr[g + 1] += 1;
-  for (let g = 0; g < genes.length; g++) indptr[g + 1] += indptr[g];
-  const next = Float64Array.from(indptr.subarray(0, genes.length));
-  const indices = new Int32Array(cols.length);
-  const data = new Float32Array(cols.length);
-  for (let cell = 0; cell < nCells; cell++) {
-    for (let k = rowPtr[cell]; k < rowPtr[cell + 1]; k++) {
-      const at = next[cols[k]]++;
-      indices[at] = cell;
-      data[at] = values[k];
-    }
-  }
-  return { nCells, genes, indptr, indices, data };
-}
-
-async function readExpressionMatrix(root: Root, table: string, genes: string[]): Promise<ExpressionMatrix> {
-  const mirrorBase = `viewer/tables/${table}/X_csc`;
-  const mirrorAttrs = await readGroupAttrs(root, mirrorBase);
-  if (mirrorAttrs) return readCsc(root, mirrorBase, (mirrorAttrs.shape as [number, number])[0], genes);
-
-  const path = `tables/${table}/X`;
-  const node = await zarr.open.v3(root.resolve(path));
-  if (node.kind === 'array') {
-    const { data, shape } = await zarr.get(node, null, WHOLE_ARRAY);
-    const [nCells, nGenes] = shape as [number, number];
-    const dense = data as ArrayLike<number>;
-    // Row-major dense: walk it as CSR with every row nnz-filtered.
-    const rowPtr = new Float64Array(nCells + 1);
-    const cols: number[] = [];
-    const vals: number[] = [];
-    for (let cell = 0; cell < nCells; cell++) {
-      for (let g = 0; g < nGenes; g++) {
-        const v = Number(dense[cell * nGenes + g]);
-        if (v !== 0) { cols.push(g); vals.push(v); }
-      }
-      rowPtr[cell + 1] = cols.length;
-    }
-    return cscFromCsr(nCells, genes, rowPtr, Int32Array.from(cols), Float32Array.from(vals));
-  }
-  const attrs = (await node.attrs) as Record<string, unknown>;
-  const [nCells] = attrs.shape as [number, number];
-  if (attrs['encoding-type'] === 'csc_matrix') return readCsc(root, path, nCells, genes);
-  if (attrs['encoding-type'] !== 'csr_matrix') {
-    throw new Error(`cannot read "${path}" as a matrix: encoding-type ${JSON.stringify(attrs['encoding-type'] ?? null)}.`);
-  }
-  const [rowPtr, cols, values] = await Promise.all([
-    readTyped(root, `${path}/indptr`, Float64Array),
-    readTyped(root, `${path}/indices`, Int32Array),
-    readTyped(root, `${path}/data`, Float32Array),
-  ]);
-  return cscFromCsr(nCells, genes, rowPtr, cols, values);
 }
 
 // One gene's column out of a CSC group: `data`/`indices`/`indptr` plus a `shape` attr
