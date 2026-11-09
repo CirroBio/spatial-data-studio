@@ -128,8 +128,8 @@ async function startTenant(tenant: Tenant) {
       try {
         await signOut(signIn);
       } finally {
-        // The project data this browser kept goes with the login: github.io is an origin
-        // other sites share, and the next person to sign in here may be someone else.
+        // The project data this browser kept goes with the login: the next person to sign
+        // in here may be someone else.
         await Promise.all([forgetCirroDrafts(), forgetBrowserCatalog()]);
       }
     },

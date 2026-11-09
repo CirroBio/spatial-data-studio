@@ -29,14 +29,16 @@ const CIRRO_MARK = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-103.9 -134
 // each such link into one relative to the page it is on, so the published site works from
 // whatever domain serves it. `target` keeps the docs router from taking the result for one
 // of its own pages (the web app is outside `base`).
-const PUBLISHED_AT = 'https://cirrobio.github.io/spatial-data-studio/';
+const PUBLISHED_AT = 'https://spatial-studio.apps.cirro.bio/';
 
 export default defineConfig({
   srcDir: '..',
   // The docs are the Pages site's About section: the Cirro app is the site's root, and the
   // viewer sits beside them at /viewer/ (docs.yml). A path from the site's root is written
-  // here as `/../<path>`, which withBase makes one the browser resolves to the root.
-  base: '/spatial-data-studio/about/',
+  // here as `/../<path>`, which withBase makes one the browser resolves to the root. The
+  // base is absolute, so it follows the Pages custom domain, which serves the site at the
+  // domain's root: removing that domain moves everything under /spatial-data-studio/.
+  base: '/about/',
   title: 'Spatial Data Studio',
   description: 'Interactive analysis and visualization for spatial transcriptomics.',
   cleanUrls: true,

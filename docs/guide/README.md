@@ -17,7 +17,7 @@ It reads Xenium, Visium, Visium HD, CosMx, MERSCOPE, and anything else
 
 ### In your browser
 
-Most people start with the [web app](https://cirrobio.github.io/spatial-data-studio/),
+Most people start with the [web app](https://spatial-studio.apps.cirro.bio/),
 which needs nothing installed. It opens straight onto Spatial Data Studio's public
 sections. All data lives in projects:
 

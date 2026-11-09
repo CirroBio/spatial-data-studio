@@ -1,6 +1,6 @@
 # Explore public data
 
-Open the [web app](https://cirrobio.github.io/spatial-data-studio/) (**Open the app** at
+Open the [web app](https://spatial-studio.apps.cirro.bio/) (**Open the app** at
 the top of this site). It opens straight onto Spatial Data Studio's public sections, with
 no account. **Log In (Cirro)** at the top right adds your own projects
 ([Your data in Cirro](cirro.md)), and everything below works the same there.
