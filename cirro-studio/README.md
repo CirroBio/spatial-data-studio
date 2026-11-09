@@ -179,9 +179,9 @@ registration, `src/auth.ts`), so the published site needs nothing built in for a
 To connect one:
 
 1. A tenant admin registers a **Public App** with redirect URI
-   `https://cirrobio.github.io/spatial-data-studio/` (exactly, trailing slash
-   included), **discovery enabled**, and the permissions in `cirro-permissions.json` as
-   project permissions, and approves it. A registration without discovery works only
+   `https://spatial-studio.apps.cirro.bio` (exactly, with no trailing slash: the app
+   is served at the domain's root, `src/signInState.ts`), **discovery enabled**, and
+   the permissions in `cirro-permissions.json` as project permissions, and approves it. A registration without discovery works only
    with its `clientId` in the tenant's `deploy/tenants.json` entry.
 2. `deploy/tenants.json` lists the tenants the log-in box suggests, each an `id`, a
    `name` and a `url` (the tenant's web address). The box suggests the entries whose

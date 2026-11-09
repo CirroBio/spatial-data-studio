@@ -10,19 +10,19 @@ web page. Nobody needs an account, and the data doesn't pass through Spatial Dat
 The link is the web app's address with `open=` and the address of a `.zarr.zip` file:
 
 ```
-https://cirrobio.github.io/spatial-data-studio/?open=<the file's address, URL-encoded>
+https://spatial-studio.apps.cirro.bio/?open=<the file's address, URL-encoded>
 ```
 
 Encode the file's address, so that its own `?` and `&` (a presigned URL has both) stay part
 of it:
 
 ```js
-const link = 'https://cirrobio.github.io/spatial-data-studio/?open=' + encodeURIComponent(fileUrl);
+const link = 'https://spatial-studio.apps.cirro.bio/?open=' + encodeURIComponent(fileUrl);
 ```
 
 ```python
 from urllib.parse import quote
-link = "https://cirrobio.github.io/spatial-data-studio/?open=" + quote(file_url, safe="")
+link = "https://spatial-studio.apps.cirro.bio/?open=" + quote(file_url, safe="")
 ```
 
 Whoever follows the link sees that dataset on its tissue view, read-only:
@@ -46,14 +46,14 @@ it. So the host must:
 
 - answer a `Range` request with `206 Partial Content`;
 - let a page on another site read the file (CORS). That means allowing `GET` from
-  `https://cirrobio.github.io` with a `Range` header, and exposing `Content-Range` and
+  `https://spatial-studio.apps.cirro.bio` with a `Range` header, and exposing `Content-Range` and
   `Content-Length`.
 
 For an S3 bucket, that CORS rule is:
 
 ```json
 [{
-  "AllowedOrigins": ["https://cirrobio.github.io"],
+  "AllowedOrigins": ["https://spatial-studio.apps.cirro.bio"],
   "AllowedMethods": ["GET"],
   "AllowedHeaders": ["Range"],
   "ExposeHeaders": ["Content-Range", "Content-Length", "ETag"]
@@ -79,13 +79,13 @@ last, make the file public instead.
 As a link:
 
 ```html
-<a href="https://cirrobio.github.io/spatial-data-studio/?open=…">Explore the section</a>
+<a href="https://spatial-studio.apps.cirro.bio/?open=…">Explore the section</a>
 ```
 
 Or in a frame:
 
 ```html
-<iframe src="https://cirrobio.github.io/spatial-data-studio/?open=…"
+<iframe src="https://spatial-studio.apps.cirro.bio/?open=…"
         style="width: 100%; height: 800px; border: 0"></iframe>
 ```
 

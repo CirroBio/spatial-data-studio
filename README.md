@@ -13,7 +13,7 @@ find. Explore public data with no account, or open your own projects in
 
 ## Use it
 
-Open **[cirrobio.github.io/spatial-data-studio][app]**: it opens straight onto public
+Open **[spatial-studio.apps.cirro.bio][app]**: it opens straight onto public
 example sections, with no account. **Log In (Cirro)** adds your own Cirro projects. Every
 project is either one you can add to, where each result is saved back as a version, or a
 read-only one, where what you save stays in your browser.
@@ -42,11 +42,11 @@ has how to run from a clone instead.
 
 ## Documentation
 
-**[cirrobio.github.io/spatial-data-studio/about][docs]** renders every file below, so the
+**[spatial-studio.apps.cirro.bio/about][docs]** renders every file below, so the
 same words read the same on GitHub and on the site.
 
-[docs]: https://cirrobio.github.io/spatial-data-studio/about/
-[app]: https://cirrobio.github.io/spatial-data-studio/
+[docs]: https://spatial-studio.apps.cirro.bio/about/
+[app]: https://spatial-studio.apps.cirro.bio/
 
 | | |
 | --- | --- |

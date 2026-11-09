@@ -5,9 +5,8 @@ import { REDIRECT_URI, SIGN_IN_TENANT_KEY } from './signInState';
 // app's name and requested permissions and lets them pick their sign-in provider. The
 // tenant publishes its endpoints (authorize, token, revocation, registration) in its
 // OAuth metadata document. Tokens come with PKCE (no client secret). oidc-client-ts
-// keeps them in sessionStorage (its default): the app is served from github.io, an
-// origin other sites share, where the app kit forbids localStorage. A reload keeps the
-// sign-in; a new tab signs in again.
+// keeps them in sessionStorage (its default). A reload keeps the sign-in; a new tab signs
+// in again.
 
 // Public Apps allow only the openid scope; asking for more fails with invalid_scope.
 const SCOPE = 'openid';

@@ -809,7 +809,12 @@ this repo builds, a checkpoint-format change means re-exporting them upstream, n
 re-running the script — the reader rejects a stale `VIEWER_SIDECAR_VERSION`.
 
 **Deploying** needs one manual step, once: **Settings → Pages → Source = GitHub
-Actions**. The web app is the Pages site's root, with
+Actions**. Pages serves the site from its custom domain, `spatial-studio.apps.cirro.bio`
+(**Settings → Pages → Custom domain**), at that domain's root;
+`cirrobio.github.io/spatial-data-studio/` redirects there. The docs' `base` and
+`PUBLISHED_AT` (`.vitepress/config.mts`) and the web app's registered redirect URI
+(`cirro-studio/README.md`) all name that address, so changing or removing the domain
+changes all three. The web app is the Pages site's root, with
 `cirro-studio/deploy/tenants.json` as its `tenants.json` (see
 [`cirro-studio/README.md`](cirro-studio/README.md#deploying)); its front page links to
 the docs site, which is the About section, under `/about/` — the `base` in

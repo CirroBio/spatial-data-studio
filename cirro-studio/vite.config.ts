@@ -8,11 +8,10 @@ import react from '@vitejs/plugin-react';
 const DEV_PORT = 5171;
 
 // The docs are the deployed site's About section (/about/, docs.yml), built from docs-site/
-// under a base of their own. In development the app's links to them reach the docs dev
-// server (`npm --prefix docs-site run docs:dev -- --port 5180`) through this one: /about/ is rewritten to
-// that base, and the pages' own assets and live reload use the base itself.
+// with that path as their base. In development the app's links to them, and the pages' own
+// assets and live reload, reach the docs dev server
+// (`npm --prefix docs-site run docs:dev -- --port 5180`) through this one.
 const DOCS_DEV = 'http://localhost:5180';
-const DOCS_BASE = '/spatial-data-studio/about';
 
 // Same single-copy rule as the Studio frontend: Viv pulls its own deck.gl/luma/math.gl
 // peers, and a second instance breaks layer registration and instanceof checks.
@@ -40,8 +39,7 @@ export default defineConfig({
     strictPort: true,
     host: 'localhost',
     proxy: {
-      '^/about/': { target: DOCS_DEV, rewrite: (path) => path.replace(/^\/about/, DOCS_BASE) },
-      [DOCS_BASE]: { target: DOCS_DEV, ws: true },
+      '/about/': { target: DOCS_DEV, ws: true },
     },
   },
   preview: { port: DEV_PORT, strictPort: true, host: 'localhost' },
