@@ -1,5 +1,7 @@
-// A matrix of values on a diverging scale centered on zero (z-scores), rows and columns
-// named: neighborhood enrichment between groups, or a niche's mix of cell types.
+// A matrix of values on a diverging scale centered on zero (z-scores, log ratios), rows
+// and columns named: neighborhood enrichment between groups, a niche's mix of cell types,
+// or the cells of one grouping across another. A square can carry a dot (a difference
+// that passes a test).
 import { useId } from 'react';
 import { scaleLinear } from 'd3-scale';
 
@@ -19,8 +21,10 @@ function quantile(sorted: number[], q: number): number {
   return sorted[Math.floor(q * (sorted.length - 1))] ?? 0;
 }
 
-export function Heatmap({ rows, columns, values, width, label, diverging = true }: {
+export function Heatmap({ rows, columns, values, width, label, diverging = true, marked }: {
   rows: string[]; columns: string[]; values: ArrayLike<number>; width: number; label: string; diverging?: boolean;
+  // Row-major like `values`: which squares get a dot.
+  marked?: ArrayLike<boolean>;
 }) {
   const gradient = useId();
   const labelW = Math.min(110, width * 0.3);
@@ -33,10 +37,11 @@ export function Heatmap({ rows, columns, values, width, label, diverging = true 
   const finite = Array.from(values).filter(Number.isFinite);
   const magnitudes = finite.map(Math.abs).sort((a, b) => a - b);
   const extent = Math.max(1e-9, quantile(magnitudes, SATURATE_AT));
-  const clipped = (magnitudes[magnitudes.length - 1] ?? 0) > extent;
+  // An infinite value (a log ratio of nothing observed) takes the scale's end.
+  const clipped = (magnitudes[magnitudes.length - 1] ?? 0) > extent || Array.from(values).some((v) => Math.abs(v) === Infinity);
   const max = Math.max(1e-9, ...finite);
   const fill = (v: number) => {
-    if (!Number.isFinite(v)) return 'var(--sds-color-surface)';
+    if (Number.isNaN(v)) return 'var(--sds-color-surface)';
     if (!diverging) return `color-mix(in srgb, var(--sds-seq-50) ${Math.round(100 * (v / max))}%, var(--sds-color-surface-raised))`;
     const t = scaleLinear().domain([-extent, 0, extent]).range([-100, 0, 100]).clamp(true)(v);
     return t >= 0
@@ -65,9 +70,14 @@ export function Heatmap({ rows, columns, values, width, label, diverging = true 
           {columns.map((c, j) => {
             const v = values[i * columns.length + j];
             return (
-              <rect key={c} x={labelW + j * cell} y={top + i * rowH} width={cell - 1} height={rowH - 1} fill={fill(v)}>
-                <title>{`${r} · ${c}: ${Number.isFinite(v) ? v.toFixed(2) : 'no value'}`}</title>
-              </rect>
+              <g key={c}>
+                <rect x={labelW + j * cell} y={top + i * rowH} width={cell - 1} height={rowH - 1} fill={fill(v)}>
+                  <title>{`${r} · ${c}: ${Number.isNaN(v) ? 'no value' : Number.isFinite(v) ? v.toFixed(2) : v > 0 ? '∞' : '−∞'}`}</title>
+                </rect>
+                {marked?.[i * columns.length + j] && (
+                  <circle cx={labelW + j * cell + (cell - 1) / 2} cy={top + i * rowH + (rowH - 1) / 2} r={Math.max(1.5, cell * 0.14)} className="heatmap-mark" />
+                )}
+              </g>
             );
           })}
         </g>

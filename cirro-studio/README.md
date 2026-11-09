@@ -128,13 +128,16 @@ src/item/           an opened item: the store page (its views as tabs in ViewTab
 src/tasks/          the task panels, each writing into the draft; an analysis keeps its run
                     and opens its report
 src/reports/        each analysis's report, drawn from the result kept in uns (store.ts
-                    writes and lists results; ReportView.tsx opens one by its kind)
+                    writes and lists results; ReportView.tsx opens one by its kind); the
+                    Composition view's comparison across a column draws the sections of
+                    its report (CompositionReport.tsx) live
 src/analysis/       the analyses, run in a Web Worker (ops.ts is the table of operations;
                     client.ts hands the expression matrix over as a transferred copy, which
                     the worker normalizes in place: the tab holds it twice during a run, not
-                    three and a half times)
-src/charts/         SVG charts (volcano, heatmap, dot plot, bar list, histogram, scree) and
-                    the tissue thumbnails reports draw
+                    three and a half times); composition.ts, a count and a test per pair of
+                    groups, runs on the page
+src/charts/         SVG charts (volcano, heatmap, dot plot, bar list, stacked bars,
+                    histogram, scree) and the tissue thumbnails reports draw
 src/figures/        figure specs in uns, and SVG/PNG/PDF export
 src/workspaces/     Analysis Workspaces on chosen items: Cirro's
                     side (cirro.ts: the environment, mounts, sizes, the per-user limit),

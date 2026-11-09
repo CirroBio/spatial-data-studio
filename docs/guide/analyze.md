@@ -43,6 +43,41 @@ start it: reading a large store's expression matrix can take most of a minute th
 time. Clustering is the slowest: seconds for tens of thousands of cells, about half a
 minute for 200,000.
 
+## Compare composition
+
+The **Composition** tab counts the cells in each group of what the tissue is colored
+by. Choose a column under **Across**, in its Display drawer, and it counts them across
+that column's groups instead: cell types or Leiden clusters across regions, say, or
+cellular neighborhoods across the areas you drew with **Label cells** (the *labels*
+column). Cells with no group in either column are left out, and the view says how many.
+A column of more than 100 groups can't be counted across. **Count the whole tissue**
+goes back to one bar per group.
+
+The comparison shows:
+
+- a stacked bar for each group of the **Across** column, split into the shares of the
+  counted groups in the tissue's colors, under an **Overall** bar of every cell
+  counted, the mix each group is compared with. Point at a segment for its count;
+- a heatmap of log2 observed over expected: the cells of each counted group in each
+  **Across** group, over the number there would be if that group had the overall mix.
+  Red is more, blue is fewer;
+- every pair in a table: its cells, their share of the **Across** group and of the
+  counted group, the cells expected, log2 enrichment, z, p and adjusted p, with
+  **Download CSV**.
+
+Each pair is tested with a chi-square test of its 2 × 2 table (in this **Across**
+group or not, in this counted group or not), without continuity correction, and the
+p-values of all the pairs are Benjamini–Hochberg adjusted together. A pair with an
+adjusted p below 0.05 gets a dot on the heatmap. A pair expected to hold fewer than 5
+cells isn't tested, and its square is blank. The test counts every cell as independent,
+as the gene tests do. Neighboring cells are alike, and the regions of one section are
+not replicates, so on a large section almost any difference you can see passes: read
+the shade as the size of the difference, and compare sections before claiming that a
+condition changes the mix.
+
+**Keep as a report** keeps the comparison with the data, like an analysis's report, and
+opens it. In the report, the bars and the heatmap can each be saved as a figure.
+
 ## Reports
 
 Each analysis opens as a report across the view when it finishes. A report starts with
@@ -99,6 +134,10 @@ with what Python gives on the same data, with these differences:
 - Permutation z-scores (neighborhood enrichment) and gene-set scores draw their random
   samples differently from numpy, so they differ from squidpy's and scanpy's by
   sampling noise.
+- A composition's tests agree with `scipy.stats.chi2_contingency(..., correction=False)`
+  on each pair's 2 × 2 table. An Analysis Workspace's *Region composition* runs one
+  chi-square test of the whole table instead, which says whether the mix differs
+  anywhere rather than where.
 
 ## When the browser isn't enough
 

@@ -19,7 +19,7 @@ import { ResultTable, type Column } from '../tasks/parts';
 import { storeOf } from '../workbench/workbench';
 import { DownloadCsv, FullTable, NO_COLOR, pct, Section, showOnTissue, Stats, useTissue } from './parts';
 import type { ReportProps } from './ReportView';
-import { readResultTable, type DataFrame } from './store';
+import { matrixOf, readResultTable } from './store';
 
 export type NeighborhoodsSummary = {
   column: string;
@@ -59,18 +59,6 @@ const PAIR_COLUMNS: Column<PairRow>[] = [
   { key: 'share', label: 'Share of its neighbors', format: fmtShare },
 ];
 const listed = (items: string[]) => (items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`);
-
-/** A square kept table as a row-major matrix; its columns are named by its index. */
-function matrixOf(df: DataFrame): Float64Array {
-  const n = df.index.length;
-  const out = new Float64Array(n * n);
-  df.index.forEach((name, j) => {
-    const column = df.columns[name];
-    if (!column || Array.isArray(column)) throw new Error(`The result has no numeric column “${name}”.`);
-    for (let i = 0; i < n; i++) out[i * n + j] = column[i];
-  });
-  return out;
-}
 
 function GroupCard({ label, groups, index, size, total, colors, z, shares, tissue, paint, unit }: {
   label: string; groups: string[]; index: number; size: number; total: number; colors: string[]; z: Float64Array;

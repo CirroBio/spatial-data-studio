@@ -12,8 +12,8 @@ import type { DataFrameColumn } from '../stack/editor';
 import { RESULTS, UNS_ROOT } from '../stack/manifest';
 import { applyEdit } from '../workbench/workbench';
 
-// The analyses with a report, by the task that runs them.
-export type ReportKind = 'markers' | 'compare' | 'moran' | 'neighborhoods' | 'niches' | 'clusters';
+// The analyses with a report: each analysis task's, and the Composition view's.
+export type ReportKind = 'markers' | 'compare' | 'moran' | 'neighborhoods' | 'niches' | 'clusters' | 'composition';
 
 export interface ResultMeta {
   kind: ReportKind;
@@ -78,6 +78,18 @@ export function geneTestsOf(df: DataFrame, genes: string[] = df.index): GeneTest
   return genes.map((gene, i) => ({
     gene, score: score[i], logfc: logfc[i], pval: pval[i], padj: padj[i], meanA: meanA[i], meanB: meanB[i], fracA: fracA[i], fracB: fracB[i],
   }));
+}
+
+/** A kept table's values as a row-major matrix, its columns in `columns`' order: by
+ * default its index's, for a square table of groups against the same groups. */
+export function matrixOf(df: DataFrame, columns: string[] = df.index): Float64Array {
+  const out = new Float64Array(df.index.length * columns.length);
+  columns.forEach((name, j) => {
+    const column = df.columns[name];
+    if (!column || Array.isArray(column)) throw new Error(`The result has no numeric column “${name}”.`);
+    df.index.forEach((_, i) => { out[i * columns.length + j] = column[i]; });
+  });
+  return out;
 }
 
 export interface KeptTable { index: string[]; columns: Record<string, DataFrameColumn> }

@@ -4,12 +4,12 @@
 // drawer on the right. Tasks write into the draft; the bar at the bottom saves it as a
 // version.
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ColorBySelect } from '@cirrobio/studio-ui';
+import { ColorBySelect, ObsFieldSelect } from '@cirrobio/studio-ui';
 import type { CheckpointHandle, SessionFields } from '@cirrobio/spatial-viewer';
 import type { SpatialEntity } from '../app/library';
 import { refOfItem } from '../app/library';
 import { OPEN_DOCS_URL } from '../app/appInfo';
-import { LENS_PARAM, navigate, openedStore, stepBack, TASK_PARAM, useRoute } from '../app/route';
+import { ACROSS_PARAM, LENS_PARAM, navigate, openedStore, stepBack, TASK_PARAM, useRoute } from '../app/route';
 import { useStudio } from '../app/studio';
 import { formatCount, plural, SettingsIcon, tint } from '../app/ui';
 import type { StoreItem, VersionItem } from '../data/model';
@@ -139,6 +139,9 @@ export function StorePage({ item, entity }: { item: StoreItem | VersionItem; ent
   const canvasSlot = lens === 'cells' || (figureOpen?.view.kind === 'canvas' && figureOpen.view.display.type === 'embedding_canvas') ? 'embedding' : 'spatial';
   const colorBy = (canvasSlot === 'embedding' ? displays.embedding?.encoding.color_by : displays.spatial?.encoding.color_by) ?? null;
   const overrides = displays.spatial?.encoding.category_colors?.[colorBy ?? ''];
+  // A link can carry the column from another store; one this store lacks counts nothing.
+  const askedAcross = route.params.get(ACROSS_PARAM);
+  const across = fields?.obs.some((f) => f.name === askedAcross && f.kind === 'categorical') ? askedAcross : null;
   const onCanvas = lens !== 'versions' && lens !== 'composition' && !reportOpen && figureOpen?.view.kind !== 'chart';
   // The tissue's own backdrop, which what sits on it follows.
   const backdrop = onCanvas && canvasSlot === 'spatial' ? displays.spatial?.encoding.background : undefined;
@@ -168,9 +171,15 @@ export function StorePage({ item, entity }: { item: StoreItem | VersionItem; ent
   } else if (lens === 'composition' && displays.spatial) {
     displayBody = (
       <div className="display-note studio-ui">
-        <p className="muted">The composition counts the {unit}s in each group of what the tissue is colored by.</p>
+        <p className="muted">The composition counts the {unit}s in each group of what the tissue is colored by, across the groups of another column if you choose one.</p>
         <ColorBySelect value={displays.spatial.encoding.color_by ?? ''} obsFields={fields!.obs} layers={fields!.layers}
           hasX={fields!.has_x} onChange={(path) => updateEncoding(wb.key, 'spatial', { color_by: path })} />
+        <label className="field">
+          <span>Across</span>
+          <ObsFieldSelect fields={fields!.obs.filter((f) => f.kind === 'categorical')} value={across ?? ''} placeholder="The whole tissue"
+            onChange={(c) => navigate({ [ACROSS_PARAM]: c || null }, { replace: true })} />
+        </label>
+        {across && <button type="button" className="link-button" onClick={() => navigate({ [ACROSS_PARAM]: null }, { replace: true })}>Count the whole tissue</button>}
       </div>
     );
   } else {
@@ -190,7 +199,7 @@ export function StorePage({ item, entity }: { item: StoreItem | VersionItem; ent
       return <div className="sheet"><ChartFigure spec={figureOpen} store={storeOf(wb.key)} table={handle.tableKey} /></div>;
     }
     if (lens === 'composition' && displays.spatial) {
-      return <div className="sheet sheet-fill"><Composition field={colorBy} version={wb.dataVersions[colorBy ?? ''] ?? 0} overrides={overrides} /></div>;
+      return <Composition field={colorBy} overrides={overrides} across={across} wb={wb} unit={unit} />;
     }
     let canvas: ReactNode;
     if (canvasSlot === 'embedding' && displays.embedding) {

@@ -123,8 +123,8 @@ Figures and analysis results go in the annotated table's `uns`, under
 | Key | Holds |
 | --- | --- |
 | `uns["spatial_data_studio"]["figures"][<id>]` | a figure spec as a JSON string: a canvas view (the display's colors, channels and camera) or a chart over a result, with its title, caption and print width |
-| `uns["spatial_data_studio"]["results"][<id>]["table"]` | an analysis result's main table as a dataframe (markers, a comparison, Moran's I, neighborhood enrichment, niches, clusters) |
-| `uns["spatial_data_studio"]["results"][<id>][<name>]` | any further tables the result keeps beside it, as dataframes (for example the cells a comparison drew on the tissue) |
+| `uns["spatial_data_studio"]["results"][<id>]["table"]` | an analysis result's main table as a dataframe (markers, a comparison, Moran's I, neighborhood enrichment, niches, clusters, a composition's cell counts) |
+| `uns["spatial_data_studio"]["results"][<id>][<name>]` | any further tables the result keeps beside it, as dataframes (for example the cells a comparison drew on the tissue, or a composition's log2 enrichment and adjusted p-values) |
 | `uns["spatial_data_studio"]["results"][<id>]["meta"]` | what made it, as a JSON string: the kind of analysis (`kind`), its title, method, parameters, a `summary` of what its report needs (group sizes, cutoffs and the like), who ran it, when, and the app version |
 
 A figure is a description, not a picture. Opening its version redraws it from the data

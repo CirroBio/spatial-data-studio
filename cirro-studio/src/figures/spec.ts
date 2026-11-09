@@ -13,7 +13,11 @@ export const FIGURE_FORMAT = 'spatial-data-studio.figure';
 
 export type ChartSpec =
   | { type: 'volcano'; result: string; labels: number; padj: number; logfc: number }
-  | { type: 'heatmap'; result: string };
+  // `marks`: a table shaped like `result` whose values under `below` get a dot.
+  | { type: 'heatmap'; result: string; marks?: { result: string; below: number } }
+  // Stacked bars of a counts table (rows: the bars, columns: their segments, in
+  // `segments`' order and `colors`), with the overall mix first.
+  | { type: 'composition'; result: string; segments: string[]; colors: string[]; unit: string };
 
 export interface FigureSpec {
   format: typeof FIGURE_FORMAT;
