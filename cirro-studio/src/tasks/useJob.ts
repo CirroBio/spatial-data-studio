@@ -11,8 +11,10 @@ export interface Job {
   message: string;
   error: string | null;
   /** Shows the job as running, with `message`, while its inputs are read: reading a large
-   * expression matrix can take most of a minute. A failure there ends the job. */
+   * expression matrix takes a while. A failure there ends the job. */
   prepare: <T>(message: string, work: Promise<T>) => Promise<T>;
+  /** Moves the progress bar while `prepare` waits, for a read that says how far it has got. */
+  prepareProgress: (fraction: number) => void;
   run: <O extends OpName>(op: O, args: OpArgs<O>) => Promise<OpResult<O> | null>;
   cancel: () => void;
 }
@@ -38,6 +40,9 @@ export function useJob(): Job {
       setState(IDLE);
       throw e;
     }
+  }, []);
+  const prepareProgress = useCallback((progress: number) => {
+    if (preparing.current && !cancelled.current) setState((s) => ({ ...s, progress }));
   }, []);
   const run = useCallback(async <O extends OpName>(op: O, args: OpArgs<O>): Promise<OpResult<O> | null> => {
     const stopped = preparing.current && cancelled.current;
@@ -74,5 +79,5 @@ export function useJob(): Job {
     }
     abort.current?.abort();
   }, []);
-  return { ...state, prepare, run, cancel };
+  return { ...state, prepare, prepareProgress, run, cancel };
 }

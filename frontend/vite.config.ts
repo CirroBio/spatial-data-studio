@@ -34,6 +34,9 @@ export default defineConfig({
   optimizeDeps: {
     include: ['@vivjs/loaders', '@vivjs/layers'],
   },
+  // The viewer reads an expression matrix in a module worker, which loads zarrita's
+  // codecs on demand: an iife worker can't split them out.
+  worker: { format: 'es' },
   test: {
     // The canvas library has no runner of its own; `npm test` here covers both
     // workspaces so its unit tests run in CI with everything else.

@@ -53,9 +53,7 @@ export interface ShapeIndexEntry {
 const MAX_QUERY_DOWNLOAD_BYTES = 32 * 1024 * 1024;
 
 // Column chunks separated by less than this are fetched as one request. RTT dominates
-// an HTTP range read, so fetching some slack beats a second round trip — doubly so here,
-// since `ZipFileStore.getRange` reads a 30-byte local header before every range it
-// serves, making each avoided request two avoided requests.
+// an HTTP range read, so fetching some slack beats a second round trip.
 //
 // The value sits in the gap between the two chunk spacings the writer produces (measured
 // on a 428k-cell element, 4096-row row groups): the four `bbox` leaves of one row group
@@ -104,7 +102,7 @@ export type Bbox = [number, number, number, number];
  * many small reads from becoming many HTTP requests.
  *
  * `byteLength` comes from the sidecar rather than from the zip's central directory:
- * `ZipFileStore` doesn't expose per-entry sizes, and the report already carries the
+ * the zip store doesn't expose per-entry sizes, and the report already carries the
  * number.
  */
 class EntryBuffer implements AsyncBuffer {
@@ -170,7 +168,7 @@ export interface ShapeReader {
 }
 
 /**
- * `store` must be the raw `ZipFileStore`, not the consolidated-metadata wrapper: the
+ * `store` must be the raw zip store, not the consolidated-metadata wrapper: the
  * parquet is a plain zip entry, not a zarr node.
  *
  * `affines` is per element — the sidecar's `shapes_transform[element][table]`, which the

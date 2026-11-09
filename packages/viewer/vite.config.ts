@@ -17,6 +17,7 @@ const EXTERNAL = [
   /^@geoarrow\//,
   /^@zarrita\//,
   /^zarrita($|\/)/,
+  /^unzipit($|\/)/,
   /^apache-arrow($|\/)/,
   /^zod($|\/)/,
 ];
@@ -34,4 +35,9 @@ export default defineConfig({
     rollupOptions: { external: EXTERNAL },
     sourcemap: true,
   },
+  // The expression-matrix worker is emitted beside the bundle and found relative to it
+  // (`new URL(..., import.meta.url)`), wherever the package is installed. It loads
+  // zarrita's codecs on demand, which an iife worker can't split out.
+  base: './',
+  worker: { format: 'es' },
 });

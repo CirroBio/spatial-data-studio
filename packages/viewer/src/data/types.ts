@@ -81,8 +81,9 @@ export interface DataSource {
 
   // The table's whole expression matrix, gene-major, for statistics over every gene
   // (markers, spatially variable genes) without a request per gene. Optional: a live
-  // session computes those on its backend.
-  getExpressionMatrix?(): Promise<ExpressionMatrix>;
+  // session computes those on its backend. A checkpoint reads it in a worker, calling
+  // `onProgress` with the fraction of its chunks read so far.
+  getExpressionMatrix?(onProgress?: (fraction: number) => void): Promise<ExpressionMatrix>;
 
   // A drawn plot's rendered figure, as a blob typed for the format. The live session
   // serves it from the render (or the checkpoint it was loaded from); a checkpoint

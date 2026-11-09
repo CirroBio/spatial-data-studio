@@ -39,9 +39,11 @@ that column has groups (at least two, and no more than 100); choose another as y
 The gene analyses need the store's expression matrix. Stores saved without one still
 offer labelling, neighborhoods, niches and figures, and the drawer names the analyses they
 can't run. An analysis shows that it is running, with **Cancel**, from the moment you
-start it: reading a large store's expression matrix can take most of a minute the first
-time. Clustering is the slowest: seconds for tens of thousands of cells, about half a
-minute for 200,000.
+start it. The first gene analysis on a store reads its expression matrix, with a
+progress bar: for the larger public examples that is around 100 MB, about ten seconds on
+a good connection. The page stays usable while it reads, and later analyses of the same
+store reuse it. Clustering is the slowest: seconds for tens of thousands of cells, about
+half a minute for 200,000.
 
 ## Compare composition
 

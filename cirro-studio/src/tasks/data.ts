@@ -36,18 +36,27 @@ export async function readCoords(handle: CheckpointHandle, field: string): Promi
 }
 
 // The matrix is the same for every version of a dataset this app writes (it never edits
-// X), so it is read once per opened dataset.
-const matrices = new Map<string, Promise<ExpressionMatrix>>();
+// X), so it is read once per opened dataset; everyone waiting on that read hears how far
+// it has got.
+const matrices = new Map<string, { matrix: Promise<ExpressionMatrix>; listeners: Set<(fraction: number) => void> }>();
 
-export function readMatrix(key: string, handle: CheckpointHandle): Promise<ExpressionMatrix> {
-  let pending = matrices.get(key);
-  if (!pending) {
+export function readMatrix(key: string, handle: CheckpointHandle, onProgress?: (fraction: number) => void): Promise<ExpressionMatrix> {
+  let read = matrices.get(key);
+  if (!read) {
     if (!handle.source.getExpressionMatrix) return Promise.reject(new Error('This store\'s reader can\'t give the expression matrix.'));
-    pending = handle.source.getExpressionMatrix();
-    matrices.set(key, pending);
-    pending.catch(() => matrices.delete(key));
+    const listeners = new Set<(fraction: number) => void>();
+    const matrix = handle.source.getExpressionMatrix((fraction) => listeners.forEach((l) => l(fraction)));
+    read = { matrix, listeners };
+    matrices.set(key, read);
+    matrix.catch(() => matrices.delete(key));
   }
-  return pending;
+  if (onProgress) {
+    const { listeners } = read;
+    listeners.add(onProgress);
+    const stop = () => listeners.delete(onProgress);
+    read.matrix.then(stop, stop);
+  }
+  return read.matrix;
 }
 
 /** A column name not taken yet: `base`, else `base_2`, `base_3`… */
