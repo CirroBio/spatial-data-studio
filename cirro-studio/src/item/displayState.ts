@@ -175,7 +175,8 @@ export function updateEncoding(key: string, slot: keyof Displays, patch: Record<
   e.listeners.forEach((l) => l());
 }
 
-/** Show a display exactly as saved (a figure), camera included. */
+/** Show a display exactly as given, camera included: a figure as saved, or the display
+ * with no camera to fit the canvas to its data. */
 export function showDisplay(key: string, display: DisplaySpec) {
   const e = entries.get(key);
   if (!e) return;

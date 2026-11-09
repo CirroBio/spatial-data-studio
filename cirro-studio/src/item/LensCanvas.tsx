@@ -9,7 +9,7 @@ import {
   CanvasHostProvider, DataSourceProvider, type CanvasHost, type CheckpointHandle, type DisplaySpec,
   type EmbeddingDisplaySpec, type OverlayInset, type SpatialDisplaySpec,
 } from '@cirrobio/spatial-viewer';
-import { currentDisplay, setDisplay, setViewCanvas, setWorldPerPixel, takeFit, type Displays } from './displayState';
+import { currentDisplay, setDisplay, setViewCanvas, setWorldPerPixel, showDisplay, takeFit, type Displays } from './displayState';
 import { regionHost, useSelection } from './selection';
 import { EmbeddingTools, SpatialTools } from './ViewTools';
 
@@ -61,7 +61,9 @@ export function DatasetCanvases({ wbKey, handle, dataVersions, selecting, inset,
 export interface ControlSlots { settings: HTMLElement | null; tools: HTMLElement | null }
 
 /** Fits the canvas to its data when `showDisplay` asks, once the canvas has drawn the
- * display it was asked for. */
+ * display it was asked for. The panels' Fit to data asks the same way, so the camera the
+ * app keeps for the canvas (what Save as a figure keeps) is the fitted one, not the one
+ * before the fit. */
 function FitWhenAsked({ wbKey, slot, fit }: { wbKey: string; slot: keyof Displays; fit: () => void }) {
   useEffect(() => {
     if (takeFit(wbKey, slot)) fit();
@@ -75,13 +77,16 @@ export function SpatialLens({ display, wbKey, selecting, slots, unit }: {
   return (
     <div className="lens-canvas" ref={(el) => setViewCanvas(wbKey, 'spatial', el)}>
       <SpatialCanvas display={display} sessionId={wbKey} canvasMode={selecting ? 'regions' : null} annotationTarget={null} followDisplayViewport
-        controls={(api) => (
-          <>
-            <FitWhenAsked wbKey={wbKey} slot="spatial" fit={api.onFit} />
-            {slots.settings && createPortal(<SpatialSettings api={api} docked />, slots.settings)}
-            {slots.tools && createPortal(<SpatialTools api={api} wbKey={wbKey} unit={unit} />, slots.tools)}
-          </>
-        )} />
+        controls={(api) => {
+          const panels = { ...api, onFit: () => showDisplay(wbKey, { ...display, viewport: null }) };
+          return (
+            <>
+              <FitWhenAsked wbKey={wbKey} slot="spatial" fit={api.onFit} />
+              {slots.settings && createPortal(<SpatialSettings api={panels} docked />, slots.settings)}
+              {slots.tools && createPortal(<SpatialTools api={panels} wbKey={wbKey} unit={unit} />, slots.tools)}
+            </>
+          );
+        }} />
     </div>
   );
 }
@@ -93,13 +98,16 @@ export function EmbeddingLens({ display, wbKey, handle, selecting, slots }: {
     <div className="lens-canvas" ref={(el) => setViewCanvas(wbKey, 'embedding', el)}>
       <EmbeddingCanvas display={display} sessionId={wbKey} obsmFields={handle.fields.obsm} obsFields={handle.fields.obs}
         layerNames={handle.fields.layers} canvasMode={selecting ? 'regions' : null} annotationTarget={null} followDisplayViewport
-        controls={(api) => (
-          <>
-            <FitWhenAsked wbKey={wbKey} slot="embedding" fit={api.onFit} />
-            {slots.settings && createPortal(<EmbeddingSettings api={api} docked />, slots.settings)}
-            {slots.tools && createPortal(<EmbeddingTools api={api} />, slots.tools)}
-          </>
-        )} />
+        controls={(api) => {
+          const panels = { ...api, onFit: () => showDisplay(wbKey, { ...display, viewport: null }) };
+          return (
+            <>
+              <FitWhenAsked wbKey={wbKey} slot="embedding" fit={api.onFit} />
+              {slots.settings && createPortal(<EmbeddingSettings api={panels} docked />, slots.settings)}
+              {slots.tools && createPortal(<EmbeddingTools api={panels} />, slots.tools)}
+            </>
+          );
+        }} />
     </div>
   );
 }

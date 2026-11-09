@@ -37,6 +37,17 @@ describe('showing a figure on the canvas', () => {
     expect(takeFit(key, 'spatial')).toBe(false);
   });
 
+  it('keeps the canvas as fit after Fit to data, over the camera a figure brought', async () => {
+    const key = 'fit-over-camera';
+    const tissue = await open(key);
+    showDisplay(key, { ...tissue, viewport: { target: [1, 2], zoom: 4 } });
+    expect(takeFit(key, 'spatial')).toBe(false);
+
+    showDisplay(key, { ...tissue, viewport: null });
+    expect(currentDisplay(key, tissue).viewport).toBeNull();
+    expect(takeFit(key, 'spatial')).toBe(true);
+  });
+
   it('moves the canvas to a figure camera of its own without fitting', async () => {
     const key = 'own-camera';
     const tissue = await open(key);
