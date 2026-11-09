@@ -26,12 +26,13 @@ describe('userTags', () => {
     tags, folders: [], sourceIds: [], share: null,
   });
 
-  it('leaves out the app\'s own tags, as it writes them now and as it once did, and folders', () => {
+  it('leaves out the app\'s own tags, as it writes them now and as it once did, folders and lineage', () => {
     expect(userTags(record([
       { key: '', value: 'spatial-data-studio' },
       { key: 'cirro-app', value: 'spatial-data-studio' },
       { key: 'spatial-data-studio.kind', value: 'version' },
       { key: '', value: 'folder://lung/2026' },
+      { key: '', value: 'lineage.from: cirro::p:dataset:d' },
       { key: '', value: 'tumor' },
       { key: 'site', value: 'Seattle' },
     ]))).toEqual(['tumor', 'site: Seattle']);

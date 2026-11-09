@@ -5,7 +5,7 @@ import { APP_TAG } from '../app/appInfo';
 import type { CatalogState } from '../app/catalog';
 import type { Library, StageId } from '../app/library';
 import type { DatasetRecord, ImageItem, RunItem } from '../data/model';
-import { CREDIT_TAG_PREFIX, FOLDER_PREFIX } from '../data/model';
+import { CREDIT_TAG_PREFIX, FOLDER_PREFIX, LINEAGE_TAG_PREFIX } from '../data/model';
 import type { Fact } from './browse';
 
 export interface StageNode {
@@ -30,12 +30,13 @@ export interface StageNode {
   facts: Fact[];
 }
 
-/** Tags a person gave the dataset: not the app's own bookkeeping, not folders, not the
- * credit tags it already shows as its credit. */
+/** Tags a person gave the dataset: not the app's own bookkeeping, not folders, not a
+ * publisher's lineage record, not the credit tags it already shows as its credit. */
 export function userTags(d: DatasetRecord | undefined): string[] {
   return (d?.tags ?? [])
     // Versions saved before tags became plain values also carry keyed `spatial-data-studio.*` ones.
     .filter((t) => t.value !== APP_TAG.value && !t.key.startsWith(`${APP_TAG.value}.`) && !t.value.startsWith(FOLDER_PREFIX))
+    .filter((t) => !t.value.startsWith(LINEAGE_TAG_PREFIX))
     .filter((t) => !(d?.credit && t.value.startsWith(CREDIT_TAG_PREFIX)))
     .map((t) => (t.key ? `${t.key}: ${t.value}` : t.value));
 }
