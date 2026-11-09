@@ -177,7 +177,11 @@ export async function applyEdit(key: string, edit: (editor: StackEditor) => Prom
   // beneath holds is deleted from it, so that is recorded even when the draft had
   // replaced the node first.
   const addedHere = change.op.startsWith('delete-') && !b.opened!.beneath.has(node);
-  emit(b, { changes: addedHere ? kept : [...kept, change] });
+  const changes = addedHere ? kept : [...kept, change];
+  // With every change taken back, the draft holds only what those edits left behind (the
+  // empty groups they made), which nobody asked to save.
+  if (!changes.length) b.draft = new MemoryLayer();
+  emit(b, { changes });
   // Kept before the reopen, so a store that then fails to open loses no work.
   await persist(b);
   await reopen(b, staleFields(change));

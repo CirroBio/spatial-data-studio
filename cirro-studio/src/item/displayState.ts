@@ -1,6 +1,7 @@
 // How an opened dataset is being looked at: the spatial and embedding display specs the
 // canvases draw, kept per dataset for the life of the page. Camera moves are kept out
-// of React (they arrive every frame); every other edit re-renders the page.
+// of React (they arrive every frame), save for what `useFreshDisplay` reads from them;
+// every other edit re-renders the page.
 import { useCallback, useSyncExternalStore } from 'react';
 import {
   boundarySets, isEmbeddingDisplay, isSpatialDisplay, type CheckpointHandle, type DisplaySpec, type EmbeddingDisplaySpec,
@@ -17,6 +18,8 @@ interface Entry {
   displays: Displays;
   viewports: Record<string, Viewport | null>;
   listeners: Set<() => void>;
+  // Told of every camera move as well.
+  cameraListeners: Set<() => void>;
 }
 
 const entries = new Map<string, Entry>();
@@ -97,7 +100,7 @@ function chooseBackdrop(key: string, handle: CheckpointHandle) {
 function entryFor(key: string, handle: CheckpointHandle | null): Entry | null {
   let e = entries.get(key);
   if (!e && handle) {
-    e = { displays: fromHandle(handle), viewports: {}, listeners: new Set() };
+    e = { displays: fromHandle(handle), viewports: {}, listeners: new Set(), cameraListeners: new Set() };
     entries.set(key, e);
     chooseBackdrop(key, handle);
     // A column that can't be read keeps the store's color; the canvas reports it.
@@ -126,6 +129,7 @@ export function setDisplay(key: string, next: DisplaySpec) {
   const slot = isSpatialDisplay(next) ? 'spatial' : 'embedding';
   const current = e.displays[slot];
   e.viewports[slot] = next.viewport;
+  e.cameraListeners.forEach((l) => l());
   if (current && JSON.stringify(current.encoding) === JSON.stringify(next.encoding)) return;
   e.displays = shareColor({ ...e.displays, [slot]: { ...next } }, slot);
   e.listeners.forEach((l) => l());
@@ -138,6 +142,26 @@ export function currentDisplay<T extends DisplaySpec>(key: string, display: T): 
   const slot = isSpatialDisplay(display) ? 'spatial' : 'embedding';
   const latest = (e.displays[slot] ?? display) as T;
   return { ...latest, viewport: e.viewports[slot] ?? latest.viewport };
+}
+
+/** What `read` makes of the freshest spec in `slot`, camera included, read again as the
+ * camera moves. The page re-renders only when that changes, so `read` returns a value
+ * that compares equal while it means the same: a string, or an object it already had. */
+export function useFreshDisplay<T>(key: string, slot: keyof Displays, read: (display: DisplaySpec | null) => T): T {
+  const e = entries.get(key) ?? null;
+  const subscribe = useCallback((l: () => void) => {
+    if (!e) return () => undefined;
+    e.listeners.add(l);
+    e.cameraListeners.add(l);
+    return () => {
+      e.listeners.delete(l);
+      e.cameraListeners.delete(l);
+    };
+  }, [e]);
+  return useSyncExternalStore(subscribe, () => {
+    const display = e?.displays[slot];
+    return read(display ? currentDisplay(key, display) : null);
+  });
 }
 
 /** Patch the spatial (or embedding) encoding, e.g. to color by another field. */
@@ -166,7 +190,7 @@ export function showDisplay(key: string, display: DisplaySpec) {
 export function carryDisplays(fromKey: string, toKey: string) {
   const e = entries.get(fromKey);
   if (!e) return;
-  entries.set(toKey, { displays: e.displays, viewports: { ...e.viewports }, listeners: new Set() });
+  entries.set(toKey, { displays: e.displays, viewports: { ...e.viewports }, listeners: new Set(), cameraListeners: new Set() });
 }
 
 // World units per screen pixel of each dataset's spatial canvas, as the canvas reports it:

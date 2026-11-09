@@ -11,17 +11,18 @@ import { refOfItem } from '../app/library';
 import { OPEN_DOCS_URL } from '../app/appInfo';
 import { ACROSS_PARAM, LENS_PARAM, navigate, openedStore, stepBack, TASK_PARAM, useRoute } from '../app/route';
 import { useStudio } from '../app/studio';
-import { formatCount, plural, SettingsIcon, tint } from '../app/ui';
+import { formatCount, plural, RemoveButton, SettingsIcon, tint } from '../app/ui';
+import { describeError } from '../cirro/session';
 import type { StoreItem, VersionItem } from '../data/model';
 import { ChartFigure } from '../figures/ChartFigure';
 import { coordinateUnit, storeReader } from '../figures/scaleBar';
-import { readFigures, type FigureSpec } from '../figures/spec';
+import { readFigures, removeFigure, type FigureSpec } from '../figures/spec';
 import { REPORT_LENS } from '../reports/parts';
 import { ReportView } from '../reports/ReportView';
 import { readResults, type KeptResult } from '../reports/store';
 import { TaskList, TASKS } from '../tasks/TaskList';
 import TaskPanel from '../tasks/TaskPanel';
-import { storeOf, useWorkbench } from '../workbench/workbench';
+import { storeOf, useWorkbench, type Workbench } from '../workbench/workbench';
 import { Composition } from './Composition';
 import { DraftBar } from './DraftBar';
 import { Facts, kinOf } from './Facts';
@@ -52,6 +53,32 @@ function summary(fields: SessionFields, unit: string): string {
     ? ` · ${formatCount(fields.var_names_count)} genes${fields.has_x ? '' : ' · no expression matrix'}`
     : '';
   return `${formatCount(fields.n_obs)} ${unit}s${genes}`;
+}
+
+/** The open figure's caption, and Remove…: out of the draft, or for a figure saved in a
+ * version, out of the next one. */
+function FigureCaption({ figure, wb }: { figure: FigureSpec; wb: Workbench }) {
+  const [problem, setProblem] = useState<string | null>(null);
+  const unsaved = wb.changes.some((c) => c.op === 'set-figure' && c.id === figure.id);
+  const remove = async () => {
+    setProblem(null);
+    try {
+      await removeFigure(wb.key, wb.handle!.tableKey, figure);
+      navigate({ [LENS_PARAM]: null }, { replace: true });
+    } catch (e) {
+      setProblem(describeError(e));
+    }
+  };
+  return (
+    <>
+      <p className="caption-figure">{figure.caption || figure.title}</p>
+      <div className="button-row">
+        {unsaved && <span className="chip chip-static">In the unsaved changes</span>}
+        <RemoveButton onRemove={() => void remove()} />
+      </div>
+      {problem && <p className="notice notice-danger">{problem}</p>}
+    </>
+  );
 }
 
 export function StorePage({ item, entity }: { item: StoreItem | VersionItem; entity: SpatialEntity | null }) {
@@ -255,7 +282,7 @@ export function StorePage({ item, entity }: { item: StoreItem | VersionItem; ent
             left={{
               label: 'Tasks',
               content: taskDef ? (
-                <TaskPanel task={taskDef} wb={wb} name={title} inset={drawers.inset} unit={unit} reports={reports} />
+                <TaskPanel task={taskDef} wb={wb} name={title} inset={drawers.inset} unit={unit} reports={reports} figures={figures} />
               ) : (
                 <TaskList hasCells={hasCells} hasGenes={Boolean(fields?.has_x)} reports={reports} figures={figures} onFigure={(id) => chooseLens(`figure:${id}`)} />
               ),
@@ -266,7 +293,7 @@ export function StorePage({ item, entity }: { item: StoreItem | VersionItem; ent
               icon: <SettingsIcon />,
               content: (
                 <>
-                  {figureOpen && <p className="caption-figure">{figureOpen.caption || figureOpen.title}</p>}
+                  {figureOpen && <FigureCaption figure={figureOpen} wb={wb} />}
                   {displayBody}
                 </>
               ),

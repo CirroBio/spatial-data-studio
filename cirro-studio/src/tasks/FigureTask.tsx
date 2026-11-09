@@ -2,8 +2,8 @@
 // colors, camera) goes into the draft's `uns`, so the version redraws it from its own data.
 // Export draws it now, at print size, as SVG, PDF or a 300 dpi PNG: the canvas as an image,
 // with the title, legend and (on the tissue) a scale bar as vectors.
-import { useEffect, useState } from 'react';
-import { colorByLabel, downloadBlob, plotCanvas, VIRIDIS_CSS_STOPS } from '@cirrobio/spatial-viewer';
+import { useMemo, useState } from 'react';
+import { colorByLabel, downloadBlob, plotCanvas, VIRIDIS_CSS_STOPS, type DisplaySpec } from '@cirrobio/spatial-viewer';
 import { LENS_PARAM, useRoute } from '../app/route';
 import { useStudio } from '../app/studio';
 import { plural } from '../app/ui';
@@ -11,8 +11,8 @@ import { describeError } from '../cirro/session';
 import { pdfBlob, pngBlob, svgBlob } from '../figures/export';
 import { figureLayout, figureSvg, SIZE_PRESETS, type FigureLegend, type SizePreset } from '../figures/layout';
 import { coordinateUnit, scaleBar, storeReader } from '../figures/scaleBar';
-import { keepFigure } from '../figures/spec';
-import { currentDisplay, useDisplays, viewCanvasOf, worldPerPixelOf } from '../item/displayState';
+import { figureContent, keepFigure, removeFigure, type FigureSpec } from '../figures/spec';
+import { currentDisplay, useDisplays, useFreshDisplay, viewCanvasOf, worldPerPixelOf } from '../item/displayState';
 import { useColorKey, type ColorKey } from '../item/useColorField';
 import { storeOf } from '../workbench/workbench';
 import type { TaskProps } from './TaskPanel';
@@ -41,7 +41,7 @@ function visiblePart(canvas: HTMLCanvasElement, inset: { left: number; right: nu
 
 const slug = (s: string) => s.trim().replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').toLowerCase() || 'figure';
 
-export default function FigureTask({ wb, name, inset }: TaskProps) {
+export default function FigureTask({ wb, name, inset, figures }: TaskProps) {
   const { session } = useStudio();
   const displays = useDisplays(wb.key, wb.handle);
   const slot = useRoute().params.get(LENS_PARAM) === 'cells' && displays.embedding ? 'embedding' : 'spatial';
@@ -55,12 +55,23 @@ export default function FigureTask({ wb, name, inset }: TaskProps) {
   const title = titleEdit ?? (colorBy ? `${name}: ${colorByLabel(colorBy)}` : name);
   const caption = captionEdit ?? (colorBy ? `Cells of ${name} on ${where}, colored by ${colorByLabel(colorBy)}.` : `${name} on ${where}.`);
   const [preset, setPreset] = useState<SizePreset>('single');
-  const [saved, setSaved] = useState<string | null>(null);
+  const widthMm = SIZE_PRESETS[preset].widthMm;
+  const [keeping, setKeeping] = useState(false);
+  // The figure kept last, known here before the figures are read again.
+  const [lastKept, setLastKept] = useState<FigureSpec | null>(null);
+  const inDraft = (f: FigureSpec) => wb.changes.some((c) => c.op === 'set-figure' && c.id === f.id);
+  const lastInDraft = lastKept !== null && inDraft(lastKept);
+  const kept = useMemo(
+    () => new Map((lastInDraft ? [...figures, lastKept] : figures).map((f) => [figureContent(f), f])),
+    [figures, lastKept, lastInDraft],
+  );
+  // The figure that keeping now would make again: the view, camera included, the words
+  // and the size. Until one of them changes, there is nothing new to keep.
+  const contentNow = (display: DisplaySpec) => figureContent({
+    title: title.trim(), caption: caption.trim(), width_mm: widthMm, view: { kind: 'canvas', display },
+  });
+  const keptAs = useFreshDisplay(wb.key, slot, (d) => (d ? kept.get(contentNow(d)) ?? null : null));
   const [downloaded, setDownloaded] = useState<string | null>(null);
-  // Discarded or saved as a version, the kept figure is no longer waiting in the draft.
-  useEffect(() => {
-    if (!wb.changes.length) setSaved(null);
-  }, [wb.changes.length]);
   const [problem, setProblem] = useState<string | null>(null);
   // Legend categories the last download had no room for.
   const [omitted, setOmitted] = useState(0);
@@ -69,13 +80,24 @@ export default function FigureTask({ wb, name, inset }: TaskProps) {
   const keep = async () => {
     if (!display) return;
     setProblem(null);
+    setKeeping(true);
     try {
-      const spec = await keepFigure(wb.key, wb.handle!.tableKey, {
+      setLastKept(await keepFigure(wb.key, wb.handle!.tableKey, {
         title: title.trim(), caption: caption.trim(), created_by: session?.displayName ?? '',
         view: { kind: 'canvas', display: currentDisplay(wb.key, display) },
-        width_mm: SIZE_PRESETS[preset].widthMm,
-      });
-      setSaved(spec.title);
+        width_mm: widthMm,
+      }));
+    } catch (e) {
+      setProblem(describeError(e));
+    } finally {
+      setKeeping(false);
+    }
+  };
+
+  const takeOut = async (figure: FigureSpec) => {
+    setProblem(null);
+    try {
+      await removeFigure(wb.key, wb.handle!.tableKey, figure);
     } catch (e) {
       setProblem(describeError(e));
     }
@@ -143,9 +165,19 @@ export default function FigureTask({ wb, name, inset }: TaskProps) {
         ))}
       </div>
       {downloaded && <p className="notice notice-info">Downloaded {downloaded}.</p>}
-      <button type="button" className="button" disabled={!display || !title.trim()} onClick={() => void keep()}>Keep with the data</button>
-      {saved && <p className="notice notice-info">“{saved}” is in the unsaved changes. Save a version to keep it.</p>}
-      <p className="muted task-about">A kept figure redraws from the data when its version is opened again. Downloads on the tissue carry a scale bar when the data is in microns.</p>
+      <button type="button" className="button" disabled={!display || !title.trim() || keeping || keptAs !== null} onClick={() => void keep()}>
+        {keptAs ? 'Kept with the data' : 'Keep with the data'}
+      </button>
+      {keptAs && (inDraft(keptAs) ? (
+        <p className="notice notice-info">
+          “{keptAs.title}” is in the unsaved changes. Save a version to keep it.{' '}
+          <button type="button" className="link-button" onClick={() => void takeOut(keptAs)}>Take it out</button>
+        </p>
+      ) : <p className="notice notice-info">“{keptAs.title}” is kept with the data.</p>)}
+      <p className="muted task-about">
+        A kept figure redraws from the data when its version is opened again. To keep another, move the view or change its title,
+        caption or size. Downloads on the tissue carry a scale bar when the data is in microns.
+      </p>
     </div>
   );
 }

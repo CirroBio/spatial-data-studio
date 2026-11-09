@@ -15,6 +15,14 @@ describe('suggestTitle', () => {
   it('names one without results for its first change', () => {
     expect(suggestTitle([groups('labels')])).toBe('Groups labels');
     expect(suggestTitle([groups('labels'), groups('niche')])).toBe('Groups labels and 1 more');
-    expect(suggestTitle([{ op: 'delete-obs', table: 't', column: 'x' }])).toBe('Removed results');
+  });
+
+  it('names one that only removes for what it removes', () => {
+    expect(suggestTitle([{ op: 'delete-obs', table: 't', column: 'x' }])).toBe('Removed x');
+    expect(suggestTitle([{ op: 'delete-figure', table: 't', id: 'fig_1', title: 'Clusters' }])).toBe('Removed figure Clusters');
+    expect(suggestTitle([
+      { op: 'delete-figure', table: 't', id: 'fig_1', title: 'Clusters' },
+      { op: 'delete-uns', table: 't', path: ['spatial_data_studio', 'results', 'markers_1'] },
+    ])).toBe('Removed figure Clusters and 1 more');
   });
 });

@@ -115,8 +115,16 @@ instead. A long legend takes more columns before the page grows, and a page stop
 240 mm: groups that still don't fit are left out of the legend, and the task says how many.
 A color of more than 100 groups has no legend.
 
+Once a view is kept, the button reads **Kept with the data** until you pan or zoom, change
+how the view is drawn, or change the title, caption or size, so the same figure can't be
+kept twice. While the figure is only in the unsaved changes, **Take it out**, in the note
+under the button, takes it back out and leaves the rest of the changes as they are.
+
 A kept figure is saved with the version, listed under the **Figures** tab and on the
-map's Figures stage, and opens framed as it was.
+map's Figures stage, and opens framed as it was. With a figure open, **Remove…** under
+its caption in the Display drawer takes it out: out of the unsaved changes, or, for a
+figure saved in an earlier version, out of the next version you save. The version that
+kept it still has it, under **Versions**, but the map's Figures stage no longer lists it.
 
 ## How the results compare with scanpy and squidpy
 

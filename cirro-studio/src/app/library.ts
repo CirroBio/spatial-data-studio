@@ -105,9 +105,12 @@ export function buildLibrary(state: Pick<CatalogState, 'items' | 'byId'>): Libra
     e.size += e.versions.reduce((s, v) => s + v.size, 0);
   }
 
+  // A figure a later version removed is left out, though the version that kept it still
+  // has it. Figure ids are made unique, so a removal names one figure.
+  const removed = new Set(versions.flatMap((v) => v.changes.flatMap((c) => (c.op === 'delete-figure' ? [c.id] : []))));
   const figures: FigureEntry[] = versions.flatMap((v) => {
     const entityKey = keyOfRef(v.base) ?? '';
-    return v.changes.flatMap((c) => (c.op === 'set-figure'
+    return v.changes.flatMap((c) => (c.op === 'set-figure' && !removed.has(c.id)
       ? [{ key: `${v.key}#${c.id}`, id: c.id, title: c.title, version: v, entityKey }]
       : []));
   });

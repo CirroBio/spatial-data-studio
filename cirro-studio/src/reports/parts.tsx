@@ -6,7 +6,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { downloadBlob, type CheckpointHandle, type ExpressionMatrix } from '@cirrobio/spatial-viewer';
 import { geneIndex } from '../analysis/matrix';
 import { LENS_PARAM, navigate } from '../app/route';
-import { formatCount, formatDate } from '../app/ui';
+import { formatCount, formatDate, RemoveButton } from '../app/ui';
 import { tissueOf, type Tissue } from '../charts/TissueThumb';
 import { describeError } from '../cirro/session';
 import { updateEncoding } from '../item/displayState';
@@ -30,7 +30,6 @@ export function ReportHeader({ result, unsaved, onRemove, children }: {
   result: KeptResult; unsaved: boolean; onRemove: () => void; children?: ReactNode;
 }) {
   const { meta } = result;
-  const [confirm, setConfirm] = useState(false);
   const when = new Date(meta.created_at);
   return (
     <header className="report-head">
@@ -46,14 +45,7 @@ export function ReportHeader({ result, unsaved, onRemove, children }: {
       </div>
       <div className="report-actions">
         {children}
-        {confirm ? (
-          <span className="button-row">
-            <button type="button" className="button" onClick={() => setConfirm(false)}>Keep</button>
-            <button type="button" className="button button-danger" onClick={onRemove}>Remove</button>
-          </span>
-        ) : (
-          <button type="button" className="button" onClick={() => setConfirm(true)}>Remove…</button>
-        )}
+        <RemoveButton onRemove={onRemove} />
       </div>
     </header>
   );

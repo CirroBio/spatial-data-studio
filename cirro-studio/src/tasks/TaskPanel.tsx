@@ -1,6 +1,7 @@
 // An open task, in the tasks drawer, with the reports its earlier runs left.
 import { Suspense } from 'react';
 import { stepBack, TASK_PARAM } from '../app/route';
+import type { FigureSpec } from '../figures/spec';
 import { ReportLinks } from '../reports/parts';
 import type { KeptResult } from '../reports/store';
 import type { Workbench } from '../workbench/workbench';
@@ -14,9 +15,11 @@ export interface TaskProps {
   inset: { left: number; right: number };
   // What the store's observations are: cells, or capture spots.
   unit: string;
+  // The figures kept with the store, saved or in the draft.
+  figures: FigureSpec[];
 }
 
-export default function TaskPanel({ task, wb, name, inset, unit, reports }: { task: TaskDef; reports: KeptResult[] } & TaskProps) {
+export default function TaskPanel({ task, wb, name, inset, unit, figures, reports }: { task: TaskDef; reports: KeptResult[] } & TaskProps) {
   const Panel = task.panel;
   // A task opened by its URL never passed the list's check that it can run here.
   const { fields } = wb.handle!;
@@ -29,7 +32,7 @@ export default function TaskPanel({ task, wb, name, inset, unit, reports }: { ta
       </header>
       {taskRuns(task, hasCells, fields.has_x) ? (
         <Suspense fallback={<p className="muted">Loading…</p>}>
-          <Panel wb={wb} name={name} inset={inset} unit={unit} />
+          <Panel wb={wb} name={name} inset={inset} unit={unit} figures={figures} />
         </Suspense>
       ) : <Unavailable tasks={[task]} hasCells={hasCells} />}
       {task.report && <ReportLinks title="Earlier runs" reports={reports.filter((r) => r.meta.kind === task.report).reverse()} />}

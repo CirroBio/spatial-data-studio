@@ -98,10 +98,11 @@ writes them as a new dataset in the project, holding only what changed: a new co
 labels is kilobytes, beside a store of gigabytes that is not copied. The dataset is
 tagged as this app's, filed in the store's Cirro folder, and carries a note saying what
 was saved and by whom; the top bar says the catalog is updating while the project is
-read again to list it. **Discard** throws the changes away. Until you do one or the
-other they are kept in this browser, so a reload loses nothing. Logging out, or logging
-in to another Cirro, discards a project's unsaved changes (the app asks first), so the
-next person to log in on the same browser can't open them. On a project you can only read
+read again to list it. **Discard** throws the changes away; **Remove…** on a report or a
+figure takes out just that one ([Analyze in the browser](analyze.md) says where). Until
+you do one or the other they are kept in this browser, so a reload loses nothing. Logging
+out, or logging in to another Cirro, discards a project's unsaved changes (the app asks
+first), so the next person to log in on the same browser can't open them. On a project you can only read
 (a public one, or one where you are a Collaborator) a version is kept in this browser
 instead, filed under *Saved in this browser*; it is not on other computers, and nobody else
 can see it.
