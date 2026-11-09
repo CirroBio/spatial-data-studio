@@ -94,6 +94,13 @@
         "additionalProperties": { "type": "string" }
       }
     },
+    "color_limits": {
+      "type": "object",
+      "description": "color_by field path -> [low, high], the range a numeric coloring spans; values beyond it take the end color. A field without an entry spans the 1st to 99th percentile of its non-zero values, and zero when any cell is zero.",
+      "additionalProperties": {
+        "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2
+      }
+    },
     "spatial_canvas_encoding": {
       "type": "object",
       "required": ["coords", "color_by", "image_layer", "shapes_layer", "point_size", "opacity", "colormap"],
@@ -122,6 +129,7 @@
         "show_minimap": { "type": "boolean" },
         "isolated_category": { "type": ["string", "null"] },
         "category_colors": { "$ref": "#/$defs/category_colors" },
+        "color_limits": { "$ref": "#/$defs/color_limits" },
         "render_mode": { "enum": ["points", "points+shapes", "shapes"] },
         "boundary_style": { "enum": ["filled", "outline"] },
         "boundary_line_width": { "type": "number" },
@@ -149,7 +157,8 @@
         "legend_title": { "type": "string" },
         "legend_scale": { "type": "number", "exclusiveMinimum": 0 },
         "lock_view": { "type": "boolean" },
-        "category_colors": { "$ref": "#/$defs/category_colors" }
+        "category_colors": { "$ref": "#/$defs/category_colors" },
+        "color_limits": { "$ref": "#/$defs/color_limits" }
       }
     },
     "viewport": {

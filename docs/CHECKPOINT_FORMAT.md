@@ -245,6 +245,7 @@ Common envelope:
 | `lock_view` | boolean | no | freezes the camera (no zoom/pan/rotate); defaults to false |
 | `isolated_category` | string \| null | no | dim every category except this one |
 | `category_colors` | object | no | `{color_by_path: {category_label: "#rrggbb"}}` |
+| `color_limits` | object | no | `{color_by_path: [low, high]}`, the range a numeric `color_by` spans; values beyond it take the end color. A field with no entry spans the 1st–99th percentile of its non-zero values, widened to take in zero when any cell is zero |
 | `render_mode` | enum | no | `points` \| `points+shapes` \| `shapes` |
 | `boundary_style` | enum | no | `filled` \| `outline` |
 | `boundary_line_width` | number | no | |
@@ -262,7 +263,7 @@ Common envelope:
 | `color_by` | string \| null | yes | |
 | `point_size`, `opacity` | number | yes | |
 | `colormap` | string | yes | |
-| `legend_visible`, `legend_title`, `legend_scale`, `lock_view`, `category_colors` | — | no | same as spatial canvas |
+| `legend_visible`, `legend_title`, `legend_scale`, `lock_view`, `category_colors`, `color_limits` | — | no | same as spatial canvas |
 
 An embedding encoding never carries `image_layer`, `channels`,
 `render_mode`, or any of the spatial-only fields above — don't union the two

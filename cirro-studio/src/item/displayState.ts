@@ -26,9 +26,9 @@ const entries = new Map<string, Entry>();
 
 // The tissue and the cell map color their cells one way: a color chosen on either is the
 // color on the other, and the one Composition counts.
-type CellColor = Pick<EmbeddingEncoding, 'color_by' | 'colormap' | 'legend_title' | 'category_colors'>;
-const cellColor = ({ color_by, colormap, legend_title, category_colors }: CellColor): CellColor =>
-  ({ color_by, colormap, legend_title, category_colors });
+type CellColor = Pick<EmbeddingEncoding, 'color_by' | 'colormap' | 'legend_title' | 'category_colors' | 'color_limits'>;
+const cellColor = ({ color_by, colormap, legend_title, category_colors, color_limits }: CellColor): CellColor =>
+  ({ color_by, colormap, legend_title, category_colors, color_limits });
 
 function shareColor(d: Displays, from: keyof Displays): Displays {
   if (from === 'spatial') {

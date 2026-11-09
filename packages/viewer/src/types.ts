@@ -85,6 +85,11 @@ export interface DisplayEncoding {
   // path (obs:<col>, X:<gene>, ...) then by category level -> `#rrggbb`. Levels
   // without an entry fall back to the default categorical palette.
   category_colors?: Record<string, Record<string, string>>;
+  // The [low, high] range a numeric color-by's viridis ramp spans, keyed by the
+  // color_by path; values beyond it take the end color. A field without an entry
+  // spans the 1st to 99th percentile of its non-zero values, and zero when any cell
+  // is zero (`defaultColorLimits`).
+  color_limits?: Record<string, [number, number]>;
   // How the Cells layer renders. Points always draw (styled by `point_size` +
   // `point_marker`, overlaps merged not blended), visible at every zoom. 'points'
   // (default) is points only; 'points+shapes' additionally overlays cell-boundary
@@ -127,6 +132,7 @@ export interface EmbeddingEncoding {
   // Per-category color overrides for a categorical color-by, keyed by color_by path
   // then category level -> `#rrggbb`. Same shape/semantics as on DisplayEncoding.
   category_colors?: Record<string, Record<string, string>>;
+  color_limits?: Record<string, [number, number]>;  // see DisplayEncoding.color_limits
 }
 
 export interface SpatialDisplaySpec {

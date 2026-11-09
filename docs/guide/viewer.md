@@ -19,12 +19,12 @@ Studio's workflow made or an Analysis Workspace
 A saved checkpoint is a single `.zarr.zip` the viewer can read on its own. Open the viewer
 with `?checkpoint=<url>` and it reads that file directly over HTTP range requests: the
 tissue image, the cells, the cell-boundary shapes, the text and shape annotations drawn on
-the dataset, and every display setting (color by any annotation or gene, palettes and
-per-category colors, point size and shape, channel colors and contrast, legends, layer
-visibility, pan and zoom) work exactly as they do in an Analysis Workspace, with no
-backend and no server to run. It streams only what the current view needs rather than
-downloading the file — opening a 438 MB checkpoint and coloring by a gene costs under a
-megabyte, and zooming in far enough to draw real segmentation outlines fetches only the
+the dataset, and every display setting (color by any annotation or gene, palettes,
+per-category colors and color ranges, point size and shape, channel colors and contrast,
+legends, layer visibility, pan and zoom) work exactly as they do in an Analysis Workspace,
+with no backend and no server to run. It streams only what the current view needs rather
+than downloading the file — opening a 438 MB checkpoint and coloring by a gene costs under
+a megabyte, and zooming in far enough to draw real segmentation outlines fetches only the
 boundaries on screen (about a megabyte out of a 55 MB boundary set). Boundaries need a
 checkpoint saved by this version or later; open an older one in an Analysis Workspace and
 save it again to add them.
@@ -61,9 +61,9 @@ available this way.
 ## Share the exact view you're looking at
 
 Every display setting you change from what the checkpoint was saved with — color by,
-palettes and per-category colors, channels and contrast, point size and shape, legends,
-layer visibility, where you've panned and zoomed to, and which view (including a figure
-you've opened fullscreen) you're on — is kept in the page's address. **Copy link to this
+palettes, per-category colors and color ranges, channels and contrast, point size and
+shape, legends, layer visibility, where you've panned and zoomed to, and which view
+(including a figure you've opened fullscreen) you're on — is kept in the page's address. **Copy link to this
 view** in the menu hands you a URL that reopens the same checkpoint framed and styled
 exactly as you left it, so a collaborator sees your view rather than the saved one. Only
 your changes travel, so the link stays short.

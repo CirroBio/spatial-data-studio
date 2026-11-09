@@ -2001,6 +2001,50 @@ def run_viridis_lut_parity():
     print(f"[ok] viridis LUT agrees across canvas and figure renderer ({len(expected)} entries)")
 
 
+def run_color_limits_parity():
+    """A numeric coloring spans the same range in an exported figure as on the canvas,
+    by default and when the display sets one. The canvas's default range is the 1st to
+    99th percentile of the non-zero values (min to max let a few very high cells darken
+    every other one); the percentiles are parsed from colorUtils.ts, and the values and
+    expected range are those of colorUtils.test.ts, which checks the canvas side."""
+    import types
+    import anndata as ad
+    import numpy as np
+    import pandas as pd
+    from app import snapshots
+
+    ts_path = os.path.join(_REPO_ROOT, "packages", "viewer", "src", "canvas", "colorUtils.ts")
+    with open(ts_path) as fh:
+        ts = fh.read()
+    m = re.search(r"DEFAULT_COLOR_PERCENTILES: \[number, number\] = \[([\d.]+), ([\d.]+)\]", ts)
+    assert m, "DEFAULT_COLOR_PERCENTILES not found in packages/viewer/src/canvas/colorUtils.ts"
+    in_ts = (float(m.group(1)), float(m.group(2)))
+    assert in_ts == snapshots.DEFAULT_COLOR_PERCENTILES, (
+        f"canvas percentiles {in_ts} != figure renderer {snapshots.DEFAULT_COLOR_PERCENTILES}")
+
+    counts = np.array([0] * 5 + list(range(1, 100)) + [1000], dtype=np.float64)
+    low, high = snapshots.default_color_limits(counts)
+    assert low == 0 and abs(high - 108.01) < 1e-6, (low, high)
+    low, high = snapshots.default_color_limits(counts[counts != 0])
+    assert abs(low - 1.99) < 1e-6 and abs(high - 108.01) < 1e-6, (low, high)
+    assert snapshots.default_color_limits(np.array([0.0, 0.0])) == (0.0, 0.0)
+    assert snapshots.default_color_limits(np.array([np.nan])) is None
+
+    adata = ad.AnnData(obs=pd.DataFrame({"score": counts}, index=[str(i) for i in range(len(counts))]))
+    session = types.SimpleNamespace(active_table=lambda: adata)
+    lut = snapshots._viridis_lut() / 255.0
+    at_99 = int(np.flatnonzero(counts == 99)[0])
+    enc = {"color_by": "obs:score", "opacity": 1.0}
+    rgba = snapshots._cell_rgba(session, enc, len(counts))
+    assert np.allclose(rgba[at_99, :3], lut[int(np.floor(99 / high * 255))]), \
+        "default range: the figure does not color like the canvas"
+    assert np.allclose(rgba[-1, :3], lut[255]) and np.allclose(rgba[0, :3], lut[0])
+    rgba = snapshots._cell_rgba(session, {**enc, "color_limits": {"obs:score": [0, 1000]}}, len(counts))
+    assert np.allclose(rgba[at_99, :3], lut[int(np.floor(99 / 1000 * 255))]), \
+        "the display's color_limits are not honored"
+    print(f"[ok] numeric color range agrees across canvas and figure renderer ([0, {high:.2f}] by default)")
+
+
 def run_cirro_auth_flow(client):
     """Cirro's per-browser credential scoping and upload bundle (DESIGN §15), without
     talking to Cirro: the device-code flow itself needs a real domain and a human, so
@@ -3572,6 +3616,7 @@ def main():
         run_encoding_persistence_flow(client)
         run_encoding_defaults_parity()
         run_viridis_lut_parity()
+        run_color_limits_parity()
         run_inspector_flow(client)
         run_session_lock_flow(client)
         run_cirro_auth_flow(client)

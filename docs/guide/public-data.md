@@ -255,7 +255,8 @@ than 1,100 pixels only one is out at a time. The left one holds
 the analysis tasks ([Analyze in the browser](analyze.md)). The right one, **Display**,
 holds the display settings, the same panel with the same names as in an Analysis
 Workspace: **View** (cells and image on or off, mirroring, zoom, the overview, fit),
-**Cells** (first **Color by**, with the color legend and its title; then render mode,
+**Cells** (first **Color by**, with the color range when the color is a number, and the
+color legend and its title; then render mode,
 point size and shape, the cell boundaries and their style, opacity, and each category's
 color) and **Image** (which image, a light or dark backdrop, and each channel's color,
 contrast and name). **Color by** is one search box: click it to list the store's
@@ -268,7 +269,12 @@ one behind fluorescence, and the legends and overview take the backdrop's colors
 opens colored as it was saved, unless that color has a single group (a column every cell
 shares), in which case it opens colored by its first grouping with 2 to 50 groups. A
 store with no such grouping opens with its cells drawn as outlines (where it has cell
-boundaries), so the image shows through them. The tissue and the cell map share one
-color: choosing a color, its legend title or a group's color on one changes the other. On
+boundaries), so the image shows through them. A gene or other number is colored from the
+1st to the 99th percentile of the cells' non-zero values (from zero when some cells are
+zero), so a few cells with very high counts don't leave the rest of the tissue dark; cells
+past either end take its color, and the legend marks that end with ≥ or ≤. **Color
+range** sets the range by hand and **Reset** returns it. The tissue and the cell map share
+one color: choosing a color, its range, its legend title or a group's color on one changes
+the other. On
 **Composition** the drawer holds the color, which picks the groups counted, and
 **Across**, the column they are counted across.

@@ -17,7 +17,7 @@ import { useSnapshotHandler } from './useSnapshotHandler';
 import { buildLassoLayers } from './buildLassoLayers';
 import { buildShapeHandleLayer } from './buildShapeAnnotationLayers';
 import { useSelectionShape } from './useSelectionShape';
-import { useSpotColors, arrowToColorSource } from './useSpotColors';
+import { useSpotColors, arrowToColorSource, useColorRangeControl, type ColorRange } from './useSpotColors';
 import { buildSpotLayer } from './buildSpotLayer';
 import { colorByLabel } from './colorBy';
 import { SELECTION_COLORS } from './colorUtils';
@@ -46,6 +46,8 @@ export interface EmbeddingCanvasControls {
   colorByName: string;
   legendVisible: boolean;
   updateEncoding: (patch: Partial<EmbeddingDisplaySpec['encoding']>) => void;
+  colorRange: ColorRange | null;  // see SpatialCanvasControls
+  setColorLimits: (limits: [number, number] | null) => void;
   onFit: () => void;
 }
 
@@ -114,6 +116,7 @@ export default function EmbeddingCanvas({
     isolatedCategory,
     hiddenCells,
     categoryColors: display.encoding.category_colors?.[colorByPath],
+    colorLimits: display.encoding.color_limits?.[colorByPath],
   });
 
   useSnapshotHandler({
@@ -257,6 +260,8 @@ export default function EmbeddingCanvas({
   }, [lassoMode, is_3d, drawPolygons, drawRing, selection.ring, selection.stroke, selection.shape, selection.handles, canvasMode]);
 
   const { persistDisplay, currentSpec, updateEncoding } = useDisplayEditor(display, isEmbeddingDisplay);
+  const { colorRange, setColorLimits } = useColorRangeControl(
+    display.encoding.color_limits, colorByPath, colorLegend, updateEncoding);
 
   // Persist a camera move as the display's viewport; 3D keeps the orbit angles,
   // 2D just target + zoom.
@@ -418,6 +423,8 @@ export default function EmbeddingCanvas({
         colorByName,
         legendVisible,
         updateEncoding,
+        colorRange,
+        setColorLimits,
         onFit: () => { const fit = fitToData(); if (fit) setViewState(fit); },
       })}
 
