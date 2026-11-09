@@ -19,15 +19,16 @@ It reads Xenium, Visium, Visium HD, CosMx, MERSCOPE, and anything else
 
 Most people start with the [web app](https://spatial-studio.apps.cirro.bio/),
 which needs nothing installed. It opens straight onto Spatial Data Studio's public
-sections. All data lives in projects:
+sections. It has two kinds of data:
 
-- **Public projects** anyone can open with no account, starting with Spatial Data
-  Studio's own; Settings adds or drops others.
-- **Your Cirro projects**, once you log in to [Cirro](https://cirro.bio/), the data
+- **Public Data** anyone can open with no account, starting with Spatial Data Studio's
+  own examples; Settings adds or drops others.
+- **Your Data (Cirro)**, once you log in to [Cirro](https://cirro.bio/), the data
   platform Spatial Data Studio is built with. The app reads your data where Cirro stores
   it.
 
-Every project works the same way, and is either one you can add to or a read-only one.
+Both are organized into projects, each a collection of datasets. Every project works the
+same way, and is either one you can add to or a read-only one.
 In a project you can add to, what you make is saved back to it, where everyone on the
 project can open it and build on it. In a read-only one (every public project, and a
 Cirro project where your role lets you only view), the analyses still run, and what you
