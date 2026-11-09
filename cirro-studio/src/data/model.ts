@@ -104,4 +104,7 @@ export function itemsOf(dataset: DatasetRecord, scan: ScanRecord): CatalogItem[]
 // Credit tags are plain text, "credit.<field>: <value>" (cirro-publication.ts creditOf).
 export const CREDIT_TAG_PREFIX = 'credit.';
 
+// A publisher records what a dataset was made from as "lineage.from: cirro::<project>:dataset:<id>".
+export const LINEAGE_TAG_PREFIX = 'lineage.from:';
+
 export const FOLDER_PREFIX = 'folder://';

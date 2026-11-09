@@ -68,7 +68,8 @@ and, if you like, how the map shows it:
 `label` and `description` name and describe it, `folder` files it (a `/` nests folders),
 `from` draws its lineage from the stores it was made from, and `credit` says whose data it
 is. Anyone who adds the address sees the same project, and nothing about it passes
-through Spatial Data Studio. A pipeline run's `results/` folder already carries an
+through Spatial Data Studio. To show one store on its own, with no `index.json` and nothing
+to add in Settings, [link to it](link-a-dataset.md) instead. A pipeline run's `results/` folder already carries an
 `index.json` of this kind. [`CHECKPOINT_FORMAT.md`](../CHECKPOINT_FORMAT.md#8-indexjson--a-collection-of-checkpoints)
 lists every field.
 
@@ -189,7 +190,8 @@ bubbles, to open it as a list of its items, a row each, in their Cirro folders:
 
 - **A row** gives the item's full name and, under it, what it is in a few words: an
   image's format and whether spatial data was made from it, a run's platform, a spatial
-  dataset's kind, how many versions it has and what it was made from. Its size is the
+  dataset's kind, how many versions it has and what it was made from, and the spatial
+  dataset a figure draws. Its size is the
   number on the right and a dot on the stage's size scale (KB, MB, GB), and the date is
   when it was added. A folder's row gives what its items weigh together, with a tick on
   the scale for each one, so a closed folder still shows where its large items are.

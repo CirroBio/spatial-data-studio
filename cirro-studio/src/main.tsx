@@ -6,7 +6,8 @@ import '@fontsource-variable/geist-mono';
 import { REDIRECT_URI, forgetStoredUsers, isSignInReturn, signInError } from './signInState';
 import { PUBLIC_TENANT, chooseTenant, forgetTenant, homeUrl, loadTenants, showSignIn, startOf, takeSignInNow, type Tenant } from './tenants';
 import { FatalError, SignInPage, SignInStart } from './start/Start';
-import { App } from './app/App';
+import { App, OpenedStore } from './app/App';
+import { openedStore } from './app/route';
 import { APP_NAME } from './app/appInfo';
 import { accessOfRole, describeError, type CirroSession } from './cirro/session';
 import type { ProjectAccess } from './data/collection';
@@ -145,9 +146,16 @@ async function startTenant(tenant: Tenant) {
   render(<App session={session} />);
 }
 
+// A store opened by its address alone never starts a Cirro session nor reads a stored
+// login, so it may run in another site's frame: all a framing page could make a visitor
+// click through is a read-only view of the data it named itself. Logging in opens a tab
+// of its own.
+const opened = openedStore();
 // GitHub Pages can't send a frame-ancestors header, so the app refuses to run inside
 // another site's frame (clickjacking) and offers its own tab instead.
-if (window.top !== window.self) {
+if (opened !== null) {
+  render(<OpenedStore address={opened} />);
+} else if (window.top !== window.self) {
   root.render(
     <main className="centered-page">
       <div className="card start-card">

@@ -20,6 +20,13 @@ export const QUERY_PARAM = appKey('q');
 export const SORT_PARAM = appKey('sort');
 export const FLAT_PARAM = appKey('flat');
 export const FILTER_PARAM = appKey('only');
+// A store opened by its address alone (`?open=<url-encoded address>`), which a link from
+// any page can hand over: the page then shows that one dataset, read-only, with no
+// project around it. Kept through every step, like the tenant.
+export const OPEN_PARAM = 'open';
+
+/** The address of the store this page was opened on, when it was opened that way. */
+export const openedStore = (): string | null => new URLSearchParams(window.location.search).get(OPEN_PARAM);
 
 export interface Route {
   tenant: string | null;
@@ -69,7 +76,7 @@ function target(update: Record<string, string | null>): URL {
   const url = new URL(window.location.href);
   // A new project starts at its map: nothing opened in the old one carries over.
   if ('project' in update && update.project !== url.searchParams.get('project')) {
-    for (const key of [...url.searchParams.keys()]) if (key !== 'tenant' && key !== 'project') url.searchParams.delete(key);
+    for (const key of [...url.searchParams.keys()]) if (key !== 'tenant' && key !== 'project' && key !== OPEN_PARAM) url.searchParams.delete(key);
   }
   for (const [k, v] of Object.entries(update)) {
     if (v === null) url.searchParams.delete(k);

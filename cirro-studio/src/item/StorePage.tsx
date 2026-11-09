@@ -8,7 +8,8 @@ import { ColorBySelect } from '@cirrobio/studio-ui';
 import type { CheckpointHandle, SessionFields } from '@cirrobio/spatial-viewer';
 import type { SpatialEntity } from '../app/library';
 import { refOfItem } from '../app/library';
-import { LENS_PARAM, navigate, stepBack, TASK_PARAM, useRoute } from '../app/route';
+import { OPEN_DOCS_URL } from '../app/appInfo';
+import { LENS_PARAM, navigate, openedStore, stepBack, TASK_PARAM, useRoute } from '../app/route';
 import { useStudio } from '../app/studio';
 import { formatCount, plural, SettingsIcon, tint } from '../app/ui';
 import type { StoreItem, VersionItem } from '../data/model';
@@ -145,13 +146,18 @@ export function StorePage({ item, entity }: { item: StoreItem | VersionItem; ent
   const datasetName = catalog.byId.get(item.datasetId)?.name ?? item.label;
   const { from, into } = kinOf(entity?.base ?? item, library, (id) => catalog.byId.get(id)?.sourceIds ?? []);
   // A version is named by the dataset it was saved on, so it reads as that dataset still.
-  const title = entity?.label ?? item.label;
+  // A store opened by its address goes by the name it gives itself, when it gives one:
+  // its file name is only where it is kept.
+  const ownName = openedStore() !== null ? wb.handle?.appState.name : undefined;
+  const title = typeof ownName === 'string' && ownName.trim() ? ownName.trim() : entity?.label ?? item.label;
 
   if (wb.status === 'error') {
     return (
       <div className="page-message">
         <p className="notice notice-danger">This dataset couldn't be opened: {wb.error}</p>
-        <button type="button" className="button" onClick={() => stepBack({ section: 'home' })}>Back to the map</button>
+        {openedStore() !== null
+          ? <a href={OPEN_DOCS_URL} target="_blank" rel="noreferrer">What a link to a dataset needs ↗</a>
+          : <button type="button" className="button" onClick={() => stepBack({ section: 'home' })}>Back to the map</button>}
       </div>
     );
   }

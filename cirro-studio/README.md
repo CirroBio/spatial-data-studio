@@ -20,7 +20,12 @@ Studio being the Analysis Workspace's code: `frontend/` and `backend/`).
 ```bash
 npm install          # at the repo root: one workspace with packages/*, frontend and this app
 npm run dev:studio   # http://localhost:5171
+npm --prefix docs-site run docs:dev -- --port 5180   # optional: the docs the app links to
 ```
+
+The app links to its docs at `about/`, where the deployed site serves them. The dev server
+passes `/about/` on to the docs dev server on port 5180 (`vite.config.ts`), so with that
+running the links open this checkout's docs; without it they fail.
 
 The port is fixed because Cirro's development registration on dev.cirro.bio (the `dev`
 entry in `public/tenants.json`) lists `http://localhost:5171` as this app's redirect URI.
@@ -48,6 +53,16 @@ opens as a `PublicProject` (`src/data/publicProject.ts`), read-only, with versio
 this browser and filed under the project they were made in (`src/data/browserStore.ts`, which
 a Cirro project the user can only read uses too: see `Collection.access`). Publishing a dataset into
 Spatial Data Studio's publication is what makes it part of the default public data.
+
+**A store opened by its address** (`?open=<URL-encoded address of a .zarr.zip>`,
+`OPEN_PARAM` in `src/app/route.ts`, kept through every navigation) is a read-only project
+of that one store. `openedStoreProject` (`src/data/publicProjects.ts`) knows it by its
+address without the query, so a presigned link signed again finds the versions saved on
+it; `storeIndex` (`src/data/indexFolder.ts`) reads it as a folder of one checkpoint; and
+`OpenedStore` (`src/app/App.tsx`) shows only its item page, under a shell with no
+project picker, map or Settings, titled by the store's own `app_state.name` when it has
+one. It never starts a Cirro session, and logging in opens a tab of its own.
+[docs/guide/link-a-dataset.md](../docs/guide/link-a-dataset.md) is the user's side.
 `src/cirro/cirro-publication.ts` is that repository's publication shim, copied in
 unchanged (never edit the copy; change the canonical file there). Through it a
 publication answers the same calls as a Cirro project (`src/cirro/datasetReader.ts`), so a
@@ -75,7 +90,8 @@ as in CI.
 ## Layout
 
 ```
-src/main.tsx        boot: refuse to run framed, load tenants.json, sign in, start the app
+src/main.tsx        boot: a store opened by its address on its own; otherwise refuse to run
+                    framed, load tenants.json, sign in, start the app
 src/auth.ts         oidc-client-ts against the tenant's authorize page (openid scope,
                     PKCE, sessionStorage, client ID from the tenant by callback URL);
                     signInState.ts is what needs no library
@@ -113,7 +129,10 @@ src/tasks/          the task panels, each writing into the draft; an analysis ke
                     and opens its report
 src/reports/        each analysis's report, drawn from the result kept in uns (store.ts
                     writes and lists results; ReportView.tsx opens one by its kind)
-src/analysis/       the analyses, run in a Web Worker (ops.ts is the table of operations)
+src/analysis/       the analyses, run in a Web Worker (ops.ts is the table of operations;
+                    client.ts hands the expression matrix over as a transferred copy, which
+                    the worker normalizes in place: the tab holds it twice during a run, not
+                    three and a half times)
 src/charts/         SVG charts (volcano, heatmap, dot plot, bar list, histogram, scree) and
                     the tissue thumbnails reports draw
 src/figures/        figure specs in uns, and SVG/PNG/PDF export
@@ -186,7 +205,8 @@ tokens. Served from an origin of its own (a custom domain), the app kit allows k
 the login in localStorage, shared by every tab, once the tenant's admins have shortened
 the refresh-token lifetime on the app's client; the registration has no field for it.
 GitHub Pages can't send a `frame-ancestors` header, so `main.tsx` refuses to run inside
-another page's frame.
+another page's frame, except for a store opened by its address: that page starts no Cirro
+session and reads no stored login, so a page framing it has nothing to act on.
 
 ## Workspaces
 

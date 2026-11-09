@@ -4,6 +4,7 @@
 // publication, and Settings adds or drops any of them.
 import { useSyncExternalStore } from 'react';
 import { appKey } from '../app/appInfo';
+import { storeName } from './discover';
 
 // This app's own publication (Cirro-publish-data-objects, SPEC.md "Publication layout").
 export const DEFAULT_PUBLIC_PROJECT = 'https://published.cirrodata.io/published/spatial-data-studio';
@@ -16,7 +17,8 @@ const DEFAULT_ENTRY = 'default';
 const ROOT_URL = /^(https:\/\/[^/]+|http:\/\/(localhost|127\.0\.0\.1)(:\d+)?)(\/[^?#]*)?$/;
 
 export interface PublicProjectInfo {
-  kind: 'publication' | 'index';
+  // A store opened by its address alone is a project of that one store.
+  kind: 'publication' | 'index' | 'store';
   url: string;
   id: string;
   name: string;
@@ -37,11 +39,44 @@ export function publicationRoot(text: string): string {
   return url;
 }
 
-// A folder has no ID of its own: its address stands for one, hashed short (FNV-1a).
-function folderId(url: string): string {
+// A folder or a store has no ID of its own: its address stands for one, hashed short (FNV-1a).
+function addressId(prefix: string, url: string): string {
   let h = 0x811c9dc5;
   for (let i = 0; i < url.length; i++) h = Math.imul(h ^ url.charCodeAt(i), 0x01000193);
-  return `index-${(h >>> 0).toString(16).padStart(8, '0')}`;
+  return `${prefix}-${(h >>> 0).toString(16).padStart(8, '0')}`;
+}
+
+// The one dataset a store opened by its address is listed as.
+const OPENED_DATASET = 'store';
+
+export interface OpenedStoreProject {
+  project: PublicProjectInfo;
+  datasetId: string;
+  // The store's file name, which is the dataset's one path.
+  path: string;
+}
+
+/** A store opened by its address alone, as a read-only project of that one store. The
+ * address may carry a query (a presigned URL's signature); the project is known by the
+ * address without it, so a link signed afresh finds the versions saved on it here. */
+export function openedStoreProject(address: string): OpenedStoreProject {
+  const url = URL.canParse(address) ? new URL(address) : null;
+  const bare = url && `${url.origin}${url.pathname}`;
+  if (!url || !bare || !ROOT_URL.test(bare) || !/\.zarr\.zip$/i.test(url.pathname)) {
+    throw new Error('The link should name the https address of a .zarr.zip file, URL-encoded, after open=.');
+  }
+  const file = url.pathname.split('/').pop()!;
+  let path = file;
+  try {
+    path = decodeURIComponent(file);
+  } catch {
+    // A stray % that encodes nothing: the name as written.
+  }
+  return {
+    project: { kind: 'store', url: url.href, id: addressId('store', bare), name: storeName(path), description: '' },
+    datasetId: OPENED_DATASET,
+    path,
+  };
 }
 
 function readUrls(): string[] {
@@ -74,7 +109,7 @@ function describe(url: string): Promise<PublicProjectInfo> {
           console.warn(`Not a public project at ${url}:`, notPublication, e);
           throw new Error('Nothing at that address could be read as a public project: no Cirro publication, and no folder with an index.json.');
         });
-        return { kind: 'index', url, id: folderId(url), name: index.name ?? url.split('/').pop()!, description: index.description };
+        return { kind: 'index', url, id: addressId('index', url), name: index.name ?? url.split('/').pop()!, description: index.description };
       }
     })();
     described.set(url, pending);

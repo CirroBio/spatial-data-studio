@@ -8,6 +8,8 @@ export const REPO_URL = 'https://github.com/CirroBio/spatial-data-studio';
 // page of the app keeps the root's path and routes by query, so a relative link reaches
 // them from whatever domain serves the site.
 export const DOCS_URL = 'about/';
+// What a store opened by its address needs: how to prepare, host and link it.
+export const OPEN_DOCS_URL = `${DOCS_URL}docs/guide/link-a-dataset`;
 export const CIRRO_URL = 'https://cirro.bio';
 // A tag is a plain text label: Cirro deprecated its key, and its web app shows only the value.
 export const APP_TAG = { value: APP_ID };

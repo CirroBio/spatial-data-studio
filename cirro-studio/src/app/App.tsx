@@ -1,11 +1,11 @@
-import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { Project } from '@cirrobio/api-client';
 import { describeError, type CirroSession } from '../cirro/session';
 import type { ProjectAccess } from '../data/collection';
-import { usePublicProjects } from '../data/publicProjects';
+import { openedStoreProject, usePublicProjects } from '../data/publicProjects';
 import { PUBLIC_TENANT } from '../tenants';
-import { appKey } from './appInfo';
-import { navigate, useRoute } from './route';
+import { appKey, OPEN_DOCS_URL } from './appInfo';
+import { ITEM_PARAM, navigate, useRoute } from './route';
 import { Settings } from './Settings';
 import { Shell } from './Shell';
 import { collectionFor, refId, StudioProvider, type ProjectRef } from './studio';
@@ -110,5 +110,42 @@ export function App({ session }: { session: CirroSession | null }) {
       {page}
       {settings && <Settings onClose={() => setSettings(false)} />}
     </>
+  );
+}
+
+/** A store opened by its address alone (`?open=`): that one dataset, read-only, with no
+ * project around it and no account behind it. */
+export function OpenedStore({ address }: { address: string }) {
+  const route = useRoute();
+  const opened = useMemo(() => {
+    try {
+      return openedStoreProject(address);
+    } catch (e) {
+      return describeError(e);
+    }
+  }, [address]);
+  // The dataset, or a version saved on it here; the map and the project's other pages
+  // have nothing to show.
+  const onItem = (route.section === 'item' || route.section === 'task') && route.dataset !== null;
+  useEffect(() => {
+    if (typeof opened === 'string' || onItem) return;
+    navigate({ project: opened.project.id, section: 'item', dataset: opened.datasetId, [ITEM_PARAM]: opened.path }, { replace: true });
+  }, [opened, onItem]);
+  if (typeof opened === 'string') {
+    return (
+      <Shell session={null} projects={null}>
+        <div className="page-message">
+          <p className="notice notice-danger">{opened}</p>
+          <a href={OPEN_DOCS_URL} target="_blank" rel="noreferrer">How to make a link to a dataset ↗</a>
+        </div>
+      </Shell>
+    );
+  }
+  return (
+    <StudioProvider session={null} collection={collectionFor(null, { kind: 'public', project: opened.project })}>
+      <Shell session={null} projects={null}>
+        {onItem && <Suspense fallback={<p className="page-message muted">Loading…</p>}><ItemPage /></Suspense>}
+      </Shell>
+    </StudioProvider>
   );
 }

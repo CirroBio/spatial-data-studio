@@ -7,6 +7,13 @@ import react from '@vitejs/plugin-react';
 // port is fixed rather than picked from whatever is free.
 const DEV_PORT = 5171;
 
+// The docs are the deployed site's About section (/about/, docs.yml), built from docs-site/
+// under a base of their own. In development the app's links to them reach the docs dev
+// server (`npm --prefix docs-site run docs:dev -- --port 5180`) through this one: /about/ is rewritten to
+// that base, and the pages' own assets and live reload use the base itself.
+const DOCS_DEV = 'http://localhost:5180';
+const DOCS_BASE = '/spatial-data-studio/about';
+
 // Same single-copy rule as the Studio frontend: Viv pulls its own deck.gl/luma/math.gl
 // peers, and a second instance breaks layer registration and instanceof checks.
 const DEDUPE = ['@deck.gl/core', '@luma.gl/core', '@luma.gl/engine', '@luma.gl/webgl', '@math.gl/core'];
@@ -28,7 +35,15 @@ export default defineConfig({
   },
   optimizeDeps: { include: ['@vivjs/loaders', '@vivjs/layers'] },
   worker: { format: 'es' },
-  server: { port: DEV_PORT, strictPort: true, host: 'localhost' },
+  server: {
+    port: DEV_PORT,
+    strictPort: true,
+    host: 'localhost',
+    proxy: {
+      '^/about/': { target: DOCS_DEV, rewrite: (path) => path.replace(/^\/about/, DOCS_BASE) },
+      [DOCS_BASE]: { target: DOCS_DEV, ws: true },
+    },
+  },
   preview: { port: DEV_PORT, strictPort: true, host: 'localhost' },
   test: {
     environment: 'happy-dom',
