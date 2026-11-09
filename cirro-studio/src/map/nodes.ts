@@ -5,7 +5,7 @@ import { APP_TAG } from '../app/appInfo';
 import type { CatalogState } from '../app/catalog';
 import type { Library, StageId } from '../app/library';
 import type { DatasetRecord, ImageItem, RunItem } from '../data/model';
-import { CREDIT_TAG_PREFIX, FOLDER_PREFIX } from '../data/model';
+import { CREDIT_TAG_PREFIX, FOLDER_PREFIX, LINEAGE_TAG_PREFIX } from '../data/model';
 import type { Fact } from './browse';
 
 export interface StageNode {
@@ -30,12 +30,13 @@ export interface StageNode {
   facts: Fact[];
 }
 
-/** Tags a person gave the dataset: not the app's own bookkeeping, not folders, not the
- * credit tags it already shows as its credit. */
+/** Tags a person gave the dataset: not the app's own bookkeeping, not folders, not a
+ * publisher's lineage record, not the credit tags it already shows as its credit. */
 export function userTags(d: DatasetRecord | undefined): string[] {
   return (d?.tags ?? [])
     // Versions saved before tags became plain values also carry keyed `spatial-data-studio.*` ones.
     .filter((t) => t.value !== APP_TAG.value && !t.key.startsWith(`${APP_TAG.value}.`) && !t.value.startsWith(FOLDER_PREFIX))
+    .filter((t) => !t.value.startsWith(LINEAGE_TAG_PREFIX))
     .filter((t) => !(d?.credit && t.value.startsWith(CREDIT_TAG_PREFIX)))
     .map((t) => (t.key ? `${t.key}: ${t.value}` : t.value));
 }
@@ -73,11 +74,13 @@ export function stageNodes(library: Library, catalog: Pick<CatalogState, 'byId'>
         datasetName: ds(at.datasetId)?.name ?? (e.base ? e.base.datasetId : 'not in this project'),
       };
     }),
+    // A figure is named by the store it draws, as Spatial data names it; versions on a
+    // store are often all titled alike.
     figures: library.figures.map((f) => ({
       key: f.key, stage: 'figures', label: f.title, size: 0, versions: 0,
       target: { datasetId: f.version.datasetId, path: f.version.path, lens: `figure:${f.id}` },
       ...common(f.version.datasetId),
-      datasetName: f.version.title,
+      datasetName: library.spatial.find((e) => e.key === f.entityKey)?.label ?? f.version.title,
       date: f.version.createdAt,
     })),
   };

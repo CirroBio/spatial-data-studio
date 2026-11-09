@@ -157,11 +157,12 @@ says which Cirro datasets it reads.
   own Xenium archives (`cells.zarr.zip` and the like) aren't SpatialData, and aren't
   listed.
 - **What you can do.** See every cell over the image, the cell map (UMAP) and the
-  composition of groups, alone or across another grouping; label cells by drawing round them; find clusters, compare
-  groups, find marker genes and spatially variable genes, measure neighborhood
-  enrichment, find cellular niches and score gene sets, each with a report; keep a view
-  as a figure; save what you made as a version; or open it in an Analysis Workspace, with
-  every squidpy and scanpy function. The gene analyses need the expression matrix.
+  composition of groups, alone or across another grouping; label cells by drawing round
+  them; find clusters, compare groups, find marker genes and spatially variable genes,
+  measure neighborhood enrichment, find cellular niches and score gene sets, each with a
+  report; keep a view as a figure; save what you made as a version; or open it in an
+  Analysis Workspace, with every squidpy and scanpy function. The gene analyses need the
+  expression matrix.
   [Open a spatial dataset](#open-a-spatial-dataset) and
   [Analyze in the browser](analyze.md) have the details.
 
@@ -190,7 +191,8 @@ bubbles, to open it as a list of its items, a row each, in their Cirro folders:
 
 - **A row** gives the item's full name and, under it, what it is in a few words: an
   image's format and whether spatial data was made from it, a run's platform, a spatial
-  dataset's kind, how many versions it has and what it was made from. Its size is the
+  dataset's kind, how many versions it has and what it was made from, and the spatial
+  dataset a figure draws. Its size is the
   number on the right and a dot on the stage's size scale (KB, MB, GB), and the date is
   when it was added. A folder's row gives what its items weigh together, with a tick on
   the scale for each one, so a closed folder still shows where its large items are.
