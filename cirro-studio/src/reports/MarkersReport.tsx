@@ -34,11 +34,14 @@ const TABLE_COLUMNS: Column<GeneTest>[] = [
 // The table shows a group at a time; its file holds every group's, one after another.
 const CSV_COLUMNS: Column<GeneTest & { group: string }>[] = [{ key: 'group', label: 'Group' }, ...TABLE_COLUMNS];
 
-function GroupCard({ wb, handle, column, label, size, total, color, tests, significant, tissue, member, matrix, unit }: {
+function GroupCard({ wb, handle, column, label, size, total, color, tests, significant, tissue, member, unit }: {
   wb: Workbench; handle: ReportProps['handle']; column: string; label: string; size: number; total: number; color: string;
   tests: GeneTest[]; significant: GeneTest[]; tissue: Tissue | null; member: ((c: number) => boolean) | null;
-  matrix: ReturnType<typeof useMatrix>; unit: string;
+  unit: string;
 }) {
+  // Read here, not handed down: React's development build lists every value of a changed
+  // prop, and the matrix has tens of millions of them.
+  const matrix = useMatrix(wb);
   const [gene, setGene] = useState<string | null>(null);
   const values = useMemo(() => (gene && matrix ? geneValues(matrix, gene) : null), [gene, matrix]);
   const paint = useMemo((): Paint | null => (values ? { kind: 'values', values } : member ? { kind: 'group', member, color } : null), [values, member, color]);
@@ -102,7 +105,6 @@ export default function MarkersReport({ result, table, wb, handle, unit, width }
   const field = `obs:${column}`;
   const displays = useDisplays(wb.key, wb.handle);
   const tissue = useTissue(wb, displays.spatial?.encoding.coords ?? 'obsm:spatial');
-  const matrix = useMatrix(wb);
   const { key } = useColorKey(field, wb.dataVersions[field] ?? 0, displays.spatial?.encoding.category_colors?.[field]);
   const colorOf = (label: string) => (key?.kind === 'categorical' ? key.items.find((i) => i.label === label)?.color : undefined) ?? NO_COLOR;
 
@@ -197,7 +199,7 @@ export default function MarkersReport({ result, table, wb, handle, unit, width }
             const member = codes && code !== undefined ? (c: number) => codes.codes[c] === code : null;
             return (
               <GroupCard key={g} wb={wb} handle={handle} column={column} label={g} size={sizes[i]} total={total} color={colorOf(g)}
-                tests={byGroup[i]} significant={significant[i]} tissue={tissue} member={member} matrix={matrix} unit={unit} />
+                tests={byGroup[i]} significant={significant[i]} tissue={tissue} member={member} unit={unit} />
             );
           })}
         </div>

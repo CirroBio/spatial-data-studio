@@ -20,7 +20,12 @@ Studio being the Analysis Workspace's code: `frontend/` and `backend/`).
 ```bash
 npm install          # at the repo root: one workspace with packages/*, frontend and this app
 npm run dev:studio   # http://localhost:5171
+npm --prefix docs-site run docs:dev -- --port 5180   # optional: the docs the app links to
 ```
+
+The app links to its docs at `about/`, where the deployed site serves them. The dev server
+passes `/about/` on to the docs dev server on port 5180 (`vite.config.ts`), so with that
+running the links open this checkout's docs; without it they fail.
 
 The port is fixed because Cirro's development registration on dev.cirro.bio (the `dev`
 entry in `public/tenants.json`) lists `http://localhost:5171` as this app's redirect URI.
@@ -124,7 +129,10 @@ src/tasks/          the task panels, each writing into the draft; an analysis ke
                     and opens its report
 src/reports/        each analysis's report, drawn from the result kept in uns (store.ts
                     writes and lists results; ReportView.tsx opens one by its kind)
-src/analysis/       the analyses, run in a Web Worker (ops.ts is the table of operations)
+src/analysis/       the analyses, run in a Web Worker (ops.ts is the table of operations;
+                    client.ts hands the expression matrix over as a transferred copy, which
+                    the worker normalizes in place: the tab holds it twice during a run, not
+                    three and a half times)
 src/charts/         SVG charts (volcano, heatmap, dot plot, bar list, histogram, scree) and
                     the tissue thumbnails reports draw
 src/figures/        figure specs in uns, and SVG/PNG/PDF export

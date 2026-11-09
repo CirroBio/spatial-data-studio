@@ -26,7 +26,9 @@ const MAX_BIN_PX = 6;
 // The tile size, in pixels, for estimating how much of the box the section covers.
 const AREA_TILE = 8;
 
-/** The section's extent, for laying thumbnails out before they draw. */
+/** The section's extent, for laying thumbnails out before they draw. The positions are not
+ * enumerable: React's development build lists every enumerable value of a changed prop,
+ * and a card handed the section would cost a pass over every cell each time. */
 export function tissueOf(xy: Float32Array): Tissue {
   let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
   for (let i = 0; i < xy.length; i += 2) {
@@ -38,7 +40,9 @@ export function tissueOf(xy: Float32Array): Tissue {
     if (y < y0) y0 = y;
     if (y > y1) y1 = y;
   }
-  return { xy, bounds: [x0, y0, x1, y1] };
+  const tissue = { bounds: [x0, y0, x1, y1] } as Tissue;
+  Object.defineProperty(tissue, 'xy', { value: xy, enumerable: false });
+  return tissue;
 }
 
 const hexRgb = (hex: string) => {

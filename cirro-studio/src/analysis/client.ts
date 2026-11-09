@@ -1,5 +1,6 @@
 // Main-thread side of the analysis worker. Only types come from the op table, so the
 // analysis code itself is bundled into the worker chunk alone.
+import type { ExpressionMatrix } from '@cirrobio/spatial-viewer';
 import type { AnalysisMessage, AnalysisRequest, OpArgs, OpName, OpResult } from './ops';
 import { transferables } from './transfer';
 
@@ -11,6 +12,15 @@ export interface RunOptions {
   // longer needs. Results always come back by transfer.
   transferInputs?: boolean;
 }
+
+// An expression matrix goes to the worker as a copy made here and transferred, which the
+// worker owns (and normalizes in place, ops.ts). Cloned instead, it would sit three times
+// in the tab at once (the page's, the serialized message, the worker's), on top of the
+// normalized values: about a gigabyte for a 5K Xenium panel, which runs the tab out of
+// memory.
+const ownedCopy = (m: ExpressionMatrix): ExpressionMatrix => ({
+  ...m, indptr: m.indptr.slice(), indices: m.indices.slice(), data: m.data.slice(),
+});
 
 /** Runs one analysis in a fresh module worker. Aborting the signal terminates the worker
  * and rejects with an AbortError. */
@@ -49,8 +59,10 @@ export function runInWorker<O extends OpName>(op: O, args: OpArgs<O>, options: R
       finish();
       reject(new Error(`The ${op} analysis result could not be received.`));
     };
-    const request: AnalysisRequest<O> = { op, args };
-    worker.postMessage(request, transferInputs ? transferables(args) : []);
+    const matrix = (args as { matrix?: ExpressionMatrix }).matrix;
+    const sent = matrix ? { ...args, matrix: ownedCopy(matrix) } : args;
+    const request: AnalysisRequest<O> = { op, args: sent };
+    worker.postMessage(request, transferables(transferInputs ? sent : (sent as { matrix?: ExpressionMatrix }).matrix));
   });
 }
 

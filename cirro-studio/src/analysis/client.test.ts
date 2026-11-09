@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runInWorker } from './client';
 import { handleRequest, type AnalysisMessage, type AnalysisRequest } from './ops';
+import { cscFromDense } from './testData';
 
 // Stands in for a module Worker: runs the request with the worker's own handler on a
 // later tick, passing data through structuredClone as postMessage would.
@@ -59,6 +60,23 @@ describe('runInWorker', () => {
     expect(xy).toHaveLength(200);
     await runInWorker('spatialKnn', { xy, k: 4 }, { transferInputs: true });
     expect(xy).toHaveLength(0);
+  });
+
+  it('sends a matrix as a transferred copy, leaving the caller\'s whole and unnormalized', async () => {
+    const counts = [[3, 0, 1], [0, 2, 5], [4, 1, 0], [1, 1, 1]];
+    const matrix = cscFromDense(counts);
+    const before = Float32Array.from(matrix.data);
+    let sent: Transferable[] = [];
+    const post = FakeWorker.prototype.postMessage;
+    vi.spyOn(FakeWorker.prototype, 'postMessage').mockImplementation(function (this: FakeWorker, data, transfer) {
+      sent = transfer;
+      post.call(this, data, transfer);
+    });
+    const scores = await runInWorker('scoreGenes', { matrix, genes: [0] });
+    expect(scores).toHaveLength(4);
+    expect(sent).toHaveLength(3);
+    expect(sent).not.toContain(matrix.data.buffer);
+    expect(matrix.data).toEqual(before);
   });
 
   it('rejects with the worker’s error message', async () => {
