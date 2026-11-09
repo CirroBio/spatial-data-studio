@@ -76,4 +76,21 @@ describe('stageNodes', () => {
     const [figure] = stageNodes(buildLibrary({ items: [store, version], byId }), { byId }).figures;
     expect(figure.facts.find((f) => f.key === 'in')?.text).toBe('in “Xenium human lung”');
   });
+
+  it('leaves out a figure a later version removed', () => {
+    const ref = datasetRef('s', 'lung.sdata.zarr.zip');
+    const version = (id: string, depth: number, changes: VersionItem['changes']): VersionItem => ({
+      kind: 'version', key: itemKey(id, 'layer.json'), datasetId: id, path: 'layer.json', label: id, size: 1,
+      parent: depth === 1 ? ref : datasetRef('v1', 'layer.json'), base: ref, depth, title: id, message: '', createdAt: `2026-11-0${depth}`, createdBy: '',
+      changes,
+    });
+    const library = buildLibrary({
+      items: [
+        version('v1', 1, [{ op: 'set-figure', table: 'table', id: 'fig_1', title: 'Clusters' }, { op: 'set-figure', table: 'table', id: 'fig_2', title: 'Niches' }]),
+        version('v2', 2, [{ op: 'delete-figure', table: 'table', id: 'fig_1', title: 'Clusters' }]),
+      ],
+      byId: new Map(),
+    });
+    expect(library.figures.map((f) => f.title)).toEqual(['Niches']);
+  });
 });

@@ -75,3 +75,22 @@ export async function keepFigure(
   });
   return spec;
 }
+
+/** Take a figure out of the draft (or, saved in a version, out of the next one). */
+export function removeFigure(wbKey: string, table: string, figure: FigureSpec): Promise<void> {
+  return applyEdit(wbKey, async (e) => {
+    await e.deleteUns(table, [UNS_ROOT, FIGURES, figure.id]);
+    return { op: 'delete-figure', table, id: figure.id, title: figure.title };
+  });
+}
+
+/** What a figure shows and says, without who kept it or when: two figures alike in this
+ * are the same figure. Keys are sorted, since a display's key order follows the edits that
+ * made it, and a kept spec has been through JSON. */
+export function figureContent(f: Pick<FigureSpec, 'title' | 'caption' | 'view' | 'width_mm'>): string {
+  return JSON.stringify([f.title, f.caption, f.width_mm, f.view], (_key, value: unknown) => (
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+      : value
+  ));
+}

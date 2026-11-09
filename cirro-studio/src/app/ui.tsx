@@ -49,6 +49,19 @@ export function Popover({ label, children, align = 'left', className = '' }: {
   );
 }
 
+/** Remove…, which asks before it calls `onRemove`. */
+export function RemoveButton({ onRemove }: { onRemove: () => void }) {
+  const [confirm, setConfirm] = useState(false);
+  return confirm ? (
+    <span className="button-row">
+      <button type="button" className="button" onClick={() => setConfirm(false)}>Keep</button>
+      <button type="button" className="button button-danger" onClick={onRemove}>Remove</button>
+    </span>
+  ) : (
+    <button type="button" className="button" onClick={() => setConfirm(true)}>Remove…</button>
+  );
+}
+
 const stroke = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round' } as const;
 
 // The Studio's display-settings gear (packages/studio-ui CanvasSettingsShell), on the tab
