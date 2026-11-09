@@ -20,7 +20,7 @@ import { useVivImageLayer } from './useVivImageLayer';
 import { useCanvasViewState, shapesFetchZoomThreshold } from './useCanvasViewState';
 import { useFollowDisplayViewport, near } from './useFollowDisplayViewport';
 import { ZOOM_LIMITS, ZOOM_STEP, effectiveZoom } from './viewFit';
-import { useSpotColors, arrowToColorSource } from './useSpotColors';
+import { useSpotColors, arrowToColorSource, useColorRangeControl, type ColorRange } from './useSpotColors';
 import { Matrix4 } from '@math.gl/core';
 import { worldToPixelAffine, affineScale, wx, wy } from './imageAffine';
 import { buildSpotLayer, estimateMeanSpacing } from './buildSpotLayer';
@@ -80,6 +80,10 @@ export interface SpatialCanvasControls {
   hasCategoryOverrides: boolean;
   setCategoryColor: (label: string, color: string) => void;
   resetCategoryColors: () => void;
+  // The range a numeric color-by spans; null unless the field is numeric. A range
+  // passed to `setColorLimits` fixes it, null returns it to the default.
+  colorRange: ColorRange | null;
+  setColorLimits: (limits: [number, number] | null) => void;
   showPoints: boolean;
   showImage: boolean;
   invertX: boolean;
@@ -508,7 +512,10 @@ export default function SpatialCanvas({
     isolatedCategory,
     hiddenCells,
     categoryColors,
+    colorLimits: display.encoding.color_limits?.[colorByPath],
   });
+  const { colorRange, setColorLimits } = useColorRangeControl(
+    display.encoding.color_limits, colorByPath, colorLegend, updateEncoding);
 
   // Categorical levels + their effective hex color, for the per-category color
   // controls. Null unless the current field is categorical (within the level cap).
@@ -842,6 +849,8 @@ export default function SpatialCanvas({
         hasCategoryOverrides: !!categoryColors && Object.keys(categoryColors).length > 0,
         setCategoryColor,
         resetCategoryColors,
+        colorRange,
+        setColorLimits,
         showPoints,
         showImage,
         invertX,

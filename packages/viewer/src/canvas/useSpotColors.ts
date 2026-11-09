@@ -1,7 +1,7 @@
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import * as arrow from 'apache-arrow';
 import type { ScatterPositions } from './useArrowPositions';
-import { buildCategoricalPalette, buildNumericColormap, hexToRgb } from './colorUtils';
+import { buildCategoricalPalette, buildNumericColormap, defaultColorLimits, hexToRgb } from './colorUtils';
 
 // Above this many distinct levels a categorical coloring is meaningless (the
 // palette only has 15 colors) and rendering one legend row per level can hang or
@@ -18,7 +18,9 @@ type ColorSource =
 export type ColorLegend =
   | { kind: 'categorical'; items: { label: string; color: [number, number, number] }[] }
   | { kind: 'too-many-categories'; count: number; limit: number }
-  | { kind: 'numeric'; min: number; max: number };
+  // `min`..`max` is the range the colors span (values beyond it take the end color);
+  // `dataMin`..`dataMax` is the range of the values themselves.
+  | { kind: 'numeric'; min: number; max: number; dataMin: number; dataMax: number };
 
 // Adapt a color-by Arrow field (schema metadata 'kind'/'categories' + a 'code' or
 // 'value' column) into a ColorSource.
@@ -56,6 +58,8 @@ interface Params {
   // Per-category `#rrggbb` overrides for the current categorical field; a level
   // absent here falls back to the default palette. Undefined for numeric fields.
   categoryColors?: Record<string, string>;
+  // The range a numeric field's colors span; absent, `defaultColorLimits`.
+  colorLimits?: [number, number];
 }
 
 // Resolve each category's effective RGB: a user override if present, else the
@@ -72,8 +76,16 @@ function resolveCategoryColors(
 }
 
 export function useSpotColors(
-  { colorSource, positions, opacity, isolatedCategory, categoryColors, hiddenCells }: Params,
+  { colorSource, positions, opacity, isolatedCategory, categoryColors, colorLimits, hiddenCells }: Params,
 ): { colors: Uint8Array | null; colorLegend: ColorLegend | null } {
+  // Computed first: a numeric coloring draws over the range its legend states.
+  const colorLegend = useMemo(
+    () => colorSource && buildColorLegend(colorSource, categoryColors, colorLimits),
+    [colorSource, categoryColors, colorLimits],
+  );
+  const rangeMin = colorLegend?.kind === 'numeric' ? colorLegend.min : 0;
+  const rangeMax = colorLegend?.kind === 'numeric' ? colorLegend.max : 0;
+
   // Build color array — respects isolated category by dimming non-matching points
   const colors = useMemo((): Uint8Array | null => {
     if (!positions) return null;
@@ -136,7 +148,7 @@ export function useSpotColors(
         result[i * 4 + 3] = hiddenCells?.has(i) ? 0 : dimmed ? 30 : alpha;
       }
     } else {
-      const rgba = buildNumericColormap(colorSource.values);
+      const rgba = buildNumericColormap(colorSource.values, [rangeMin, rangeMax]);
       for (let i = 0; i < n; i++) {
         result[i * 4] = rgba[i * 4];
         result[i * 4 + 1] = rgba[i * 4 + 1];
@@ -145,23 +157,43 @@ export function useSpotColors(
       }
     }
     return result;
-  }, [colorSource, positions, opacity, isolatedCategory, categoryColors, hiddenCells]);
-
-  const colorLegend = useMemo(
-    () => colorSource && buildColorLegend(colorSource, categoryColors),
-    [colorSource, categoryColors],
-  );
+  }, [colorSource, positions, opacity, isolatedCategory, categoryColors, hiddenCells, rangeMin, rangeMax]);
 
   return { colors, colorLegend };
 }
 
+/** A numeric coloring's range, for the control that adjusts it: `custom` when the
+ * display sets it rather than taking the default. */
+export type ColorRange = Extract<ColorLegend, { kind: 'numeric' }> & { custom: boolean };
+
+/** The numeric color range a canvas's control panel shows, and its setter: a range
+ * becomes the field's `color_limits` entry, null drops the entry (the default range).
+ * Null range unless the field is numeric. */
+export function useColorRangeControl(
+  colorLimits: Record<string, [number, number]> | undefined,
+  colorByPath: string,
+  colorLegend: ColorLegend | null,
+  updateEncoding: (patch: { color_limits: Record<string, [number, number]> }) => void,
+): { colorRange: ColorRange | null; setColorLimits: (limits: [number, number] | null) => void } {
+  const colorRange = useMemo(
+    () => (colorLegend?.kind === 'numeric' ? { ...colorLegend, custom: !!colorLimits?.[colorByPath] } : null),
+    [colorLegend, colorLimits, colorByPath],
+  );
+  const setColorLimits = useCallback((limits: [number, number] | null) => {
+    const { [colorByPath]: _drop, ...rest } = colorLimits ?? {};
+    updateEncoding({ color_limits: limits ? { ...rest, [colorByPath]: limits } : rest });
+  }, [colorLimits, colorByPath, updateEncoding]);
+  return { colorRange, setColorLimits };
+}
+
 // Legend for a cell coloring: category swatches (categorical) or a colorbar with the
-// value range (numeric). Mirrors the palette/ramp useSpotColors draws with, cap
-// included, so a legend drawn outside the canvas keys exactly what the canvas shows.
-// Null for a numeric field with no values.
+// range its colors span (numeric). Mirrors the palette/ramp useSpotColors draws with,
+// cap and range included, so a legend drawn outside the canvas keys exactly what the
+// canvas shows. Null for a numeric field with no values.
 export function buildColorLegend(
   colorSource: ColorSource,
   categoryColors: Record<string, string> | undefined,
+  colorLimits?: [number, number],
 ): ColorLegend | null {
   if (colorSource.kind === 'categorical') {
     const { categories } = colorSource;
@@ -174,14 +206,16 @@ export function buildColorLegend(
       items: categories.map((c, i) => ({ label: c, color: resolved[i] })),
     };
   }
-  let min = Infinity;
-  let max = -Infinity;
+  let dataMin = Infinity;
+  let dataMax = -Infinity;
   for (const v of colorSource.values) {
     if (!Number.isNaN(v)) {
-      if (v < min) min = v;
-      if (v > max) max = v;
+      if (v < dataMin) dataMin = v;
+      if (v > dataMax) dataMax = v;
     }
   }
-  if (!Number.isFinite(min)) return null;
-  return { kind: 'numeric' as const, min, max };
+  if (!Number.isFinite(dataMin)) return null;
+  // Non-null: the field has a finite value, so it has a default range.
+  const [min, max] = colorLimits ?? defaultColorLimits(colorSource.values)!;
+  return { kind: 'numeric' as const, min, max, dataMin, dataMax };
 }

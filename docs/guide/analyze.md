@@ -113,7 +113,8 @@ wide, and the task names the file it downloaded; a download of the tissue has a 
 when the data is in microns. **Keep with the data** saves the figure with the version
 instead. A long legend takes more columns before the page grows, and a page stops at
 240 mm: groups that still don't fit are left out of the legend, and the task says how many.
-A color of more than 100 groups has no legend.
+A color of more than 100 groups has no legend. A color by a number has a colorbar over the
+same range as the view, with ≥ or ≤ at an end the values run past.
 
 A kept figure is saved with the version, listed under the **Figures** tab and on the
 map's Figures stage, and opens framed as it was.

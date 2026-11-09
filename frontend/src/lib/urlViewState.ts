@@ -82,6 +82,7 @@ const spatialEncodingSchema = z.object({
   show_minimap: z.boolean(),
   isolated_category: z.string().nullable(),
   category_colors: z.record(z.record(z.string())),
+  color_limits: z.record(z.tuple([z.number(), z.number()])),
   render_mode: z.enum(['points', 'points+shapes', 'shapes']),
   boundary_style: z.enum(['filled', 'outline']),
   boundary_line_width: z.number(),
@@ -106,6 +107,7 @@ const embeddingEncodingSchema = z.object({
   legend_scale: z.number(),
   lock_view: z.boolean(),
   category_colors: z.record(z.record(z.string())),
+  color_limits: z.record(z.tuple([z.number(), z.number()])),
 } satisfies Record<keyof EmbeddingEncoding, z.ZodTypeAny>).partial();
 
 const overlaySchema = z.object({
@@ -174,7 +176,7 @@ function normalizeEmbedding(e: EmbeddingEncoding): Record<string, unknown> {
 }
 
 /** Keys whose normalized value differs, carrying the *current* value.
- * `channels` and `category_colors` are nested maps, so they replace wholesale — a
+ * `channels`, `category_colors` and `color_limits` are nested maps, so they replace wholesale — a
  * per-key merge would need tombstones to say "the user removed this override". */
 function diffEncoding(
   current: Record<string, unknown>, baseline: Record<string, unknown>,

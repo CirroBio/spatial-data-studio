@@ -142,8 +142,9 @@ export function CellColorLegend({
             display: 'flex', justifyContent: 'space-between',
             fontSize: 10, color: themeColor('muted'), fontVariantNumeric: 'tabular-nums',
           }}>
-            <span>{legend.min.toLocaleString(undefined, { maximumSignificantDigits: 3 })}</span>
-            <span>{legend.max.toLocaleString(undefined, { maximumSignificantDigits: 3 })}</span>
+            {/* An end the values run past says so: every cell beyond it has its color. */}
+            <span>{legend.dataMin < legend.min && '≤ '}{legend.min.toLocaleString(undefined, { maximumSignificantDigits: 3 })}</span>
+            <span>{legend.dataMax > legend.max && '≥ '}{legend.max.toLocaleString(undefined, { maximumSignificantDigits: 3 })}</span>
           </div>
         </div>
       )}

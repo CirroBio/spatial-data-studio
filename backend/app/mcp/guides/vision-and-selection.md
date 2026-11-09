@@ -59,7 +59,10 @@ inspect count. Expected, not an error.
 A render only shows what the encoding shows. Before hunting for a pattern:
 
 - `update_display(color_by="X:<gene>")` for expression; `"obs:<col>"` for labels/QC.
-- Numeric coloring uses viridis (dark→bright = low→high, min–max scaled).
+- Numeric coloring uses viridis (dark→bright = low→high) over the 1st–99th
+  percentile of the non-zero values (zero included when any cell is zero); values
+  beyond take the end color, so a few very high cells don't darken the rest.
+  `color_limits: {"X:<gene>": [low, high]}` sets the range by hand.
   Categorical uses a fixed 15-color palette; `category_colors` can pin colors.
 - Sparse imaging panels: single-gene plots are speckly — expect salt-and-pepper;
   judge density patterns, not individual dots. Consider `sc.tl.score_genes` for a

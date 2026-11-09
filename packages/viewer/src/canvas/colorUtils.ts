@@ -142,25 +142,59 @@ export const VIRIDIS_CSS_STOPS: string[] = VIRIDIS.map(([r, g, b]) => `rgb(${r},
 // numeric color legend's colorbar.
 export const VIRIDIS_CSS_GRADIENT = `linear-gradient(to right, ${VIRIDIS_CSS_STOPS.join(',')})`;
 
+// The percentiles of a numeric field's non-zero values its colors span by default.
+// A few cells with very high counts would otherwise stretch the ramp so far that every
+// other cell lands at its dark end. backend/app/snapshots.py's `default_color_limits`
+// computes the same range, so an exported figure matches the canvas.
+const DEFAULT_COLOR_PERCENTILES: [number, number] = [0.01, 0.99];
+
+// Linear interpolation between the closest ranks, numpy's default `quantile` method.
+function quantileOfSorted(sorted: Float32Array, q: number): number {
+  const at = q * (sorted.length - 1);
+  const lo = Math.floor(at);
+  const hi = Math.min(lo + 1, sorted.length - 1);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (at - lo);
+}
+
 /**
- * Build RGBA Uint8Array for N points, mapping normalized values to viridis colormap.
- * values: Float64Array or Float32Array with raw values
+ * The range a numeric field's colors span when the display sets none: the 1st to 99th
+ * percentile of its non-zero values, widened to take in zero when any cell is zero, so
+ * a gene's unexpressing cells stay at the dark end. Non-zero values because most cells
+ * express a given gene not at all, and percentiles over all of them would collapse the
+ * range to zero. Null when the field has no values.
+ */
+export function defaultColorLimits(values: Float32Array): [number, number] | null {
+  let nonZero = 0;
+  let hasZero = false;
+  for (const v of values) {
+    if (v === 0) hasZero = true;
+    else if (Number.isFinite(v)) nonZero += 1;
+  }
+  if (nonZero === 0) return hasZero ? [0, 0] : null;
+  const sorted = new Float32Array(nonZero);
+  let k = 0;
+  for (const v of values) if (v !== 0 && Number.isFinite(v)) sorted[k++] = v;
+  sorted.sort();
+  let low = quantileOfSorted(sorted, DEFAULT_COLOR_PERCENTILES[0]);
+  let high = quantileOfSorted(sorted, DEFAULT_COLOR_PERCENTILES[1]);
+  if (hasZero) {
+    low = Math.min(low, 0);
+    high = Math.max(high, 0);
+  }
+  return [low, high];
+}
+
+/**
+ * Build RGBA Uint8Array for N points, mapping values to the viridis colormap over
+ * `[min, max]`; values beyond it take the end color. NaN is fully transparent.
  * Returns Uint8Array of length N*4 (RGBA)
  */
 export function buildNumericColormap(
-  values: Float32Array | Float64Array
+  values: Float32Array | Float64Array,
+  [min, max]: [number, number],
 ): Uint8Array {
   const n = values.length;
   const result = new Uint8Array(n * 4);
-  let min = Infinity;
-  let max = -Infinity;
-  for (let i = 0; i < n; i++) {
-    const v = values[i];
-    if (!isNaN(v)) {
-      if (v < min) min = v;
-      if (v > max) max = v;
-    }
-  }
   const range = max - min;
   for (let i = 0; i < n; i++) {
     const v = values[i];

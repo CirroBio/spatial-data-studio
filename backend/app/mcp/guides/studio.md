@@ -78,6 +78,7 @@ A session has one or more **displays**:
   `color_by` (`obs:<col>` or `X:<gene>`), `image_layer`, `point_size`, `opacity`,
   `colormap`, `render_mode` (`points` | `points+shapes` = boundary polygons when
   zoomed in), `background` (`dark`|`light`), `category_colors` overrides,
+  `color_limits` (`{"X:<gene>": [low, high]}`, the range a numeric coloring spans),
   `invert_x`/`invert_y`.
 - `embedding_canvas` — a 2D/3D scatter of an `obsm` embedding (`obsm_key`,
   `x_component`, `y_component`, `color_by`, …).

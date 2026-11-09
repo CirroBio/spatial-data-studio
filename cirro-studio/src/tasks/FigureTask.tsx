@@ -24,7 +24,12 @@ function legendOf(key: ColorKey | null, title: string): FigureLegend | null {
   // Past the category cap the canvas draws every cell grey: there is nothing to key.
   if (!key || key.kind === 'too-many-categories') return null;
   // The canvas draws every value field in viridis, whatever the display's `colormap` says.
-  if (key.kind === 'numeric') return { kind: 'numeric', title, min: key.min, max: key.max, stops: VIRIDIS_CSS_STOPS };
+  if (key.kind === 'numeric') {
+    return {
+      kind: 'numeric', title, min: key.min, max: key.max,
+      beyondMin: key.dataMin < key.min, beyondMax: key.dataMax > key.max, stops: VIRIDIS_CSS_STOPS,
+    };
+  }
   return { kind: 'categorical', title, items: key.items.map((i) => ({ label: i.label, color: i.color })) };
 }
 
@@ -48,7 +53,9 @@ export default function FigureTask({ wb, name, inset }: TaskProps) {
   const display = displays[slot];
   const where = slot === 'embedding' ? 'the cell map' : 'the tissue';
   const colorBy = display?.encoding.color_by ?? null;
-  const { key } = useColorKey(colorBy, wb.dataVersions[colorBy ?? ''] ?? 0, display?.encoding.category_colors?.[colorBy ?? '']);
+  const { key } = useColorKey(
+    colorBy, wb.dataVersions[colorBy ?? ''] ?? 0,
+    display?.encoding.category_colors?.[colorBy ?? ''], display?.encoding.color_limits?.[colorBy ?? '']);
   // Until edited, the title and caption follow what the tissue is colored by.
   const [titleEdit, setTitle] = useState<string | null>(null);
   const [captionEdit, setCaption] = useState<string | null>(null);

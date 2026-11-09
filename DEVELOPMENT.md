@@ -238,6 +238,7 @@ Component-level notes: [`backend/README.md`](backend/README.md),
 | Publish or version the canvas library | `packages/viewer/package.json` + [packages/viewer/README.md](packages/viewer/README.md) ("Releasing") | — |
 | Change how a display setting is persisted (the debounced PUT, the edit gate, the refetch flush) | `frontend/src/hooks/useDisplayPersistence.ts` | below |
 | Retune the palette, theme tokens, fonts, or the Cirro mark | `frontend/src/index.css` (tokens) + `packages/studio-ui/tailwind.preset.js` (names) + `packages/viewer/src/canvas/overlayStyles.ts` (the library overlays' fallbacks) + `frontend/src/components/CirroMark.tsx` / `public/favicon.svg` (logo) + `docs-site/.vitepress/theme/style.css` and the `CIRRO_MARK` in `docs-site/.vitepress/config.mts` (the docs site's copy of the same palette and mark) | [frontend/README.md](frontend/README.md) |
+| Change how a numeric color-by is colored (its default range, the legend's ends, the **Color range** control) | `packages/viewer/src/canvas/colorUtils.ts` (`defaultColorLimits`, `buildNumericColormap`) + `useSpotColors.ts` (`buildColorLegend`, `useColorRangeControl`) + `packages/studio-ui/src/canvas/ColorRangeControls.tsx`; the web app's figure legend in `cirro-studio/src/tasks/FigureTask.tsx` + `figures/layout.ts`; the server-side figure in `backend/app/snapshots.py` (`default_color_limits`, `_cell_rgba`), held to the canvas by `test_e2e.run_color_limits_parity` | [DESIGN.md](DESIGN.md) §9.9 |
 | Change the canvas minimap (overview inset) | `packages/viewer/src/canvas/Minimap.tsx` (overlay + navigation) + `SpatialCanvas.tsx` (extent/thumbnail wiring) + `backend/app/snapshots.py` `_draw_minimap` (figure inset) | [DESIGN.md](DESIGN.md) §9.11 |
 | Change how the browser reads raw image data (client-side Viv compositing) | `backend/app/routers/imaging.py` raster route + `/image/{element}/info` fields; `rasters.py` `raster_stores` map | [docs/CONTRACT.md](docs/CONTRACT.md) |
 | Change the parameter-form UI | `frontend/src/components/forms/` (`FunctionFields` renders the widgets incl. the `FsPicker` filesystem picker; `FunctionForm` adds the submit footer; the New Session dialog reuses `FunctionFields` as the reader's input form) | — |
@@ -691,8 +692,8 @@ a URL (DESIGN §14.2). `lib/urlViewState.ts` owns the schema and the diff;
   `defaults.ts` and asserts the two agree, because they had already drifted (the renderer
   used `point_size` 6 / `opacity` 1.0 against the canvas's 4 / 0.85, so an exported figure
   of an older checkpoint did not match the canvas). Add a shared default to both tables.
-- **Nested maps replace wholesale.** `channels` and `category_colors` are two-level
-  records; a per-key merge would need tombstones to express "the user removed this
+- **Nested maps replace wholesale.** `channels`, `category_colors` and `color_limits` are
+  two-level records; a per-key merge would need tombstones to express "the user removed this
   override".
 - **`ui` carries what the recipient is looking at**, not just how it is styled: `view`
   (which main view), `menu` (sidebar), and `plot` — the `plots[].id` open fullscreen, so a
@@ -1079,8 +1080,9 @@ A snapshot is a **rendered figure**, not a re-openable view. `backend/app/snapsh
 renders a display server-side with matplotlib into a vector PDF and/or raster PNG:
 the microscopy image (when shown) is rasterized as an image layer (reusing
 `imaging`'s per-channel compositing), cell points are emitted as vector markers
-colored by the same palette/colormap the frontend uses (ported in `snapshots.py` so a
-figure matches the canvas without shipping a per-cell buffer). When the display is in
+colored by the same palette/colormap the frontend uses, over the same numeric color range
+(ported in `snapshots.py` so a figure matches the canvas without shipping a per-cell
+buffer). When the display is in
 `render_mode: 'points+shapes'` and zoomed in past the same gate the canvas applies
 (`SHAPES_MIN_CELL_PX`, and a `POLYGON_LIMIT` cells-in-view cap), the point markers are
 replaced by the actual cell-boundary polygons — the viewport-clipped world-space

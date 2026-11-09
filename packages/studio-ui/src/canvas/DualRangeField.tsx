@@ -10,6 +10,16 @@ interface Props {
   onChange: (value: [number, number]) => void;
 }
 
+// Slider granularity for a domain: fine steps for a small (e.g. normalized/float)
+// range, unit steps for a wide integer-like one.
+export function rangeStep(range: [number, number]): number {
+  const span = range[1] - range[0];
+  return span <= 10 ? span / 100 || 0.01 : 1;
+}
+export function rangeDigits(range: [number, number]): number {
+  return range[1] - range[0] <= 10 ? 2 : 0;
+}
+
 /** Labelled two-thumb range slider — the min/max variant of RangeField. Radix keeps
  * the value array sorted, so the low thumb can never pass the high one (min <= max is
  * guaranteed without any clamping in the caller). */

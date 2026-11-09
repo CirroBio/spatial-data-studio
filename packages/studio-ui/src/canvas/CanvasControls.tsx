@@ -6,10 +6,11 @@ import ColorSwatchPicker from '../ColorSwatchPicker';
 import CanvasSettingsShell from './CanvasSettingsShell';
 import LegendControls from './LegendControls';
 import RangeField from './RangeField';
-import DualRangeField from './DualRangeField';
+import DualRangeField, { rangeDigits, rangeStep } from './DualRangeField';
+import ColorRangeControls from './ColorRangeControls';
 import {
   CATEGORY_SWATCHES, CHANNEL_COLORS, SPATIAL_ENCODING_DEFAULTS, ZOOM_LIMITS,
-  type Channel, type ObsField, type SpatialDisplaySpec,
+  type Channel, type ColorRange, type ObsField, type SpatialDisplaySpec,
 } from '@cirrobio/spatial-viewer';
 
 interface CanvasControlsProps {
@@ -26,6 +27,8 @@ interface CanvasControlsProps {
   hasCategoryOverrides: boolean;
   setCategoryColor: (label: string, color: string) => void;
   resetCategoryColors: () => void;
+  colorRange: ColorRange | null;
+  setColorLimits: (limits: [number, number] | null) => void;
   showPoints: boolean;
   setShowPoints: (v: boolean) => void;
   showImage: boolean;
@@ -108,16 +111,6 @@ function IconButton({
 const FIELD_LABEL = 'text-[10px] text-muted font-mono uppercase tracking-wide';
 const SELECT_CLASS = 'bg-bg border border-border rounded px-1 py-0.5 text-xs text-text focus:outline-none focus:border-accent';
 
-// Slider granularity for a channel's contrast domain: fine steps for a small
-// (e.g. normalized/float) range, unit steps for a wide integer-like one.
-function contrastStep(range: [number, number]): number {
-  const span = range[1] - range[0];
-  return span <= 10 ? span / 100 || 0.01 : 1;
-}
-function contrastDigits(range: [number, number]): number {
-  return range[1] - range[0] <= 10 ? 2 : 0;
-}
-
 export default function CanvasControls({
   display,
   obsFields,
@@ -130,6 +123,8 @@ export default function CanvasControls({
   hasCategoryOverrides,
   setCategoryColor,
   resetCategoryColors,
+  colorRange,
+  setColorLimits,
   showPoints,
   setShowPoints,
   showImage,
@@ -317,6 +312,8 @@ export default function CanvasControls({
               onChange={(color_by) => updateEncoding({ color_by })}
             />
           </div>
+
+          {colorRange && <ColorRangeControls range={colorRange} onChange={setColorLimits} />}
 
           <LegendControls
             legendVisible={legendVisible}
@@ -597,7 +594,7 @@ export default function CanvasControls({
                         </div>
                         <DualRangeField
                           label="Contrast" value={c.contrastLimits} min={c.contrastRange[0]} max={c.contrastRange[1]}
-                          step={contrastStep(c.contrastRange)} digits={contrastDigits(c.contrastRange)}
+                          step={rangeStep(c.contrastRange)} digits={rangeDigits(c.contrastRange)}
                           onChange={(v) => setChannel(c.index, { contrastLimits: v })}
                         />
                       </div>

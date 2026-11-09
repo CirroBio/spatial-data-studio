@@ -15,7 +15,8 @@ export const SIZE_PRESETS: Record<SizePreset, { label: string; widthMm: number; 
 
 export type FigureLegend =
   | { kind: 'categorical'; title: string; items: { label: string; color: string }[] }
-  | { kind: 'numeric'; title: string; min: number; max: number; stops: string[] };
+  // `beyondMin`/`beyondMax`: some cells' values lie past that end and take its color.
+  | { kind: 'numeric'; title: string; min: number; max: number; beyondMin: boolean; beyondMax: boolean; stops: string[] };
 
 export interface FigureCapture {
   /** PNG data URL of the canvas. */
@@ -156,8 +157,8 @@ function legendSvg(legend: FigureLegend, box: LegendBox, x: number, y: number, f
     const stops = legend.stops.map((c, i) => `<stop offset="${num(i / (legend.stops.length - 1))}" stop-color="${c}"/>`).join('');
     parts.push(`<defs><linearGradient id="${id}" x1="0" y1="1" x2="0" y2="0">${stops}</linearGradient></defs>`);
     parts.push(`<rect x="${pt(x)}" y="${pt(top)}" width="${pt(3)}" height="${pt(COLORBAR_MM)}" fill="url(#${id})" stroke="#666666" stroke-width="${pt(0.1)}"/>`);
-    parts.push(text(x + 4.2, top + fontMm * 0.8, formatTick(legend.max)));
-    parts.push(text(x + 4.2, top + COLORBAR_MM, formatTick(legend.min)));
+    parts.push(text(x + 4.2, top + fontMm * 0.8, `${legend.beyondMax ? '≥ ' : ''}${formatTick(legend.max)}`));
+    parts.push(text(x + 4.2, top + COLORBAR_MM, `${legend.beyondMin ? '≤ ' : ''}${formatTick(legend.min)}`));
   }
   return parts.join('');
 }

@@ -158,8 +158,14 @@ the cells at the top of the **Image** tab, or **None** for no image at all; each
 brings its own channels. When cells are colored by a categorical value, each group's
 color can be overridden individually (and reset to the default palette) at the bottom
 of the **Cells** tab, and the legend on the canvas lists every group, in columns when
-there are many. (Text and shape annotations that persist with the dataset are drawn
-from the left panel's **Annotations** tab.)*
+there are many. When they are colored by a number (a gene, a score, a QC metric), the
+colors run from the 1st to the 99th percentile of the cells' non-zero values, from zero
+when some cells are zero, so the few cells with the very highest counts don't push the
+rest of the tissue to the dark end; cells past either end take its color, and the
+legend marks that end with ≥ or ≤. **Color range**, under **Color by**, sets the range
+by hand for that gene or column, and **Reset** returns it to the default. (Text and shape
+annotations that persist with the dataset are drawn from the left panel's
+**Annotations** tab.)*
 
 ![A Xenium section zoomed in, each cell drawn as its true segmentation outline and colored by its cellular neighborhood, over the morphology image.](../images/cell-outlines.jpg)
 

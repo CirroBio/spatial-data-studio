@@ -139,6 +139,38 @@ def _viridis_lut() -> np.ndarray:
     return _VIRIDIS
 
 
+# The percentiles of a numeric field's non-zero values its colors span by default.
+# Mirrors DEFAULT_COLOR_PERCENTILES in packages/viewer/src/canvas/colorUtils.ts.
+DEFAULT_COLOR_PERCENTILES = (0.01, 0.99)
+
+
+def default_color_limits(vals: np.ndarray) -> tuple[float, float] | None:
+    """The range a numeric coloring spans when the display sets no `color_limits`: the
+    1st to 99th percentile of the non-zero values, widened to take in zero when any cell
+    is zero. Computed exactly as colorUtils.ts `defaultColorLimits` (float32 values,
+    numpy's linear interpolation between ranks), so a figure keys its colors over the
+    same range as the canvas. None when there are no finite values."""
+    vals = np.asarray(vals, dtype=np.float32)
+    finite = vals[np.isfinite(vals)]
+    if finite.size == 0:
+        return None
+    has_zero = bool((finite == 0).any())
+    nonzero = np.sort(finite[finite != 0])
+    if nonzero.size == 0:
+        return (0.0, 0.0)
+
+    def quantile(q: float) -> float:
+        at = q * (nonzero.size - 1)
+        lo = math.floor(at)
+        hi = min(lo + 1, nonzero.size - 1)
+        return float(nonzero[lo]) + (float(nonzero[hi]) - float(nonzero[lo])) * (at - lo)
+
+    low, high = quantile(DEFAULT_COLOR_PERCENTILES[0]), quantile(DEFAULT_COLOR_PERCENTILES[1])
+    if has_zero:
+        low, high = min(low, 0.0), max(high, 0.0)
+    return (low, high)
+
+
 def resolve_display(session, display_id: str | None):
     """The display to render: by id, else the spatial canvas, else the first.
     Public: also the resolver mcp/server.py's display-addressed tools use."""
@@ -259,13 +291,14 @@ def _cell_rgba(session, enc: dict, n: int) -> np.ndarray:
             dim |= missing  # an unlabeled cell is never the isolated category
             rgba[dim, 3] = DIM_ALPHA / 255.0
     else:
-        vals = np.asarray(batch.column("value"), dtype=np.float64)
-        finite = vals[np.isfinite(vals)]
+        # Rounded to float32 first, as the canvas holds every value it colors.
+        vals = np.asarray(batch.column("value"), dtype=np.float32).astype(np.float64)
         lut = _viridis_lut()
-        if finite.size == 0:
+        limits = (enc.get("color_limits") or {}).get(color_by) or default_color_limits(vals)
+        if limits is None:
             rgba[:, :3] = 0.5
         else:
-            vmin, vmax = float(finite.min()), float(finite.max())
+            vmin, vmax = float(limits[0]), float(limits[1])
             rng = vmax - vmin
             t = np.where(np.isfinite(vals), 0.5 if rng == 0 else np.clip((vals - vmin) / (rng or 1), 0, 1), 0.0)
             idx = np.clip(np.floor(t * 255).astype(int), 0, 255)

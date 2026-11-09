@@ -1,9 +1,10 @@
 import { useId } from 'react';
 import ColorBySelect from './ColorBySelect';
+import ColorRangeControls from './ColorRangeControls';
 import CanvasSettingsShell from './CanvasSettingsShell';
 import LegendControls from './LegendControls';
 import PointStyleControls from './PointStyleControls';
-import type { EmbeddingDisplaySpec, ObsField, ObsmField } from '@cirrobio/spatial-viewer';
+import type { ColorRange, EmbeddingDisplaySpec, ObsField, ObsmField } from '@cirrobio/spatial-viewer';
 
 interface Props {
   display: EmbeddingDisplaySpec;
@@ -14,6 +15,8 @@ interface Props {
   colorByName: string;
   legendVisible: boolean;
   updateEncoding: (patch: Partial<EmbeddingDisplaySpec['encoding']>) => void;
+  colorRange: ColorRange | null;
+  setColorLimits: (limits: [number, number] | null) => void;
   panelCollapsed: boolean;
   setPanelCollapsed: (v: boolean) => void;
   docked?: boolean;
@@ -59,6 +62,8 @@ export default function EmbeddingControls({
   colorByName,
   legendVisible,
   updateEncoding,
+  colorRange,
+  setColorLimits,
   panelCollapsed,
   setPanelCollapsed,
   docked,
@@ -95,6 +100,8 @@ export default function EmbeddingControls({
           onChange={(color_by) => updateEncoding({ color_by })}
         />
       </div>
+
+      {colorRange && <ColorRangeControls range={colorRange} onChange={setColorLimits} />}
 
       <LegendControls
         legendVisible={legendVisible}

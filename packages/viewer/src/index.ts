@@ -62,7 +62,7 @@ export {
   MAX_VISIBLE_CHANNELS, useImageChannels, type Channel, type ChannelPatch,
 } from './canvas/useImageChannels';
 export {
-  arrowToColorSource, buildColorLegend, useSpotColors, type ColorLegend,
+  arrowToColorSource, buildColorLegend, useSpotColors, type ColorLegend, type ColorRange,
 } from './canvas/useSpotColors';
 export { useArrowPositions, type ScatterPositions } from './canvas/useArrowPositions';
 

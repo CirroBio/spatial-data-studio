@@ -963,8 +963,17 @@ structural diff). The view never silently shows data that no longer matches the 
 ### 9.9 Cell-color legend and data inspector
 
 - **Cell-color legend** (bottom-right, togglable) reflects the current **Color by** — a
-  viridis colorbar with the value range for numeric columns, category swatches for
-  categorical ones — with an editable title defaulting to the column/gene name.
+  viridis colorbar with the range its colors span for numeric columns (an end the values
+  run past is marked `≤`/`≥`), category swatches for categorical ones — with an editable
+  title defaulting to the column/gene name.
+- **Numeric color range** — a numeric field's ramp spans the 1st to 99th percentile of
+  its non-zero values, widened to take in zero when any cell is zero, and values beyond
+  take the end color: min to max let a few cells with very high counts push every other
+  cell to the dark end. The encoding's `color_limits` (keyed by `color_by` path, like
+  `category_colors`) overrides it per field; the Cells tab's **Color range** slider sets
+  it. `defaultColorLimits` (`colorUtils.ts`) is the one definition the canvas, its legend
+  and the web app's figure legend use; `snapshots.default_color_limits` mirrors it for the
+  server-side figure renderer (`test_e2e.run_color_limits_parity` holds them together).
 - **Data inspector** — a Spatial/Tables switch opens a paginated browser over the
   `SpatialData` elements: each table's `obs`/`var`, `shapes` GeoDataFrames (geometry as
   WKT), `points`, and image metadata + thumbnail. Served by `GET
@@ -1283,7 +1292,7 @@ looked on the canvas at the chosen framing.
   color + `[min,max]` contrast window; RGB passthrough for H&E). Cell **points** are
   emitted as **vector** markers (circle/square/hexagon), colored by the same
   deterministic palette (categorical: 15-color CB-friendly palette over the sorted
-  categories) / colormap (numeric: viridis over the data range) the frontend uses —
+  categories) / colormap (numeric: viridis over the display's color range, §9.9) the frontend uses —
   the palette/LUT are ported into `snapshots.py`, so a figure matches the canvas
   without the client shipping a per-cell color buffer. When the display is in
   `render_mode` `points+shapes` and zoomed in past the same gate the canvas applies
