@@ -74,11 +74,13 @@ export function stageNodes(library: Library, catalog: Pick<CatalogState, 'byId'>
         datasetName: ds(at.datasetId)?.name ?? (e.base ? e.base.datasetId : 'not in this project'),
       };
     }),
+    // A figure is named by the store it draws, as Spatial data names it; versions on a
+    // store are often all titled alike.
     figures: library.figures.map((f) => ({
       key: f.key, stage: 'figures', label: f.title, size: 0, versions: 0,
       target: { datasetId: f.version.datasetId, path: f.version.path, lens: `figure:${f.id}` },
       ...common(f.version.datasetId),
-      datasetName: f.version.title,
+      datasetName: library.spatial.find((e) => e.key === f.entityKey)?.label ?? f.version.title,
       date: f.version.createdAt,
     })),
   };

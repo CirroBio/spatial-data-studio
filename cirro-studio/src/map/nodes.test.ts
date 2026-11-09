@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { buildLibrary } from '../app/library';
 import { creditOf } from '../cirro/cirro-publication';
-import type { DatasetRecord } from '../data/model';
-import { labelLines, userTags } from './nodes';
+import { itemKey, type DatasetRecord, type StoreItem, type VersionItem } from '../data/model';
+import { datasetRef } from '../stack/cirroRef';
+import { labelLines, stageNodes, userTags } from './nodes';
 
 describe('labelLines', () => {
   it('keeps the words that tell two names apart', () => {
@@ -50,5 +52,28 @@ describe('userTags', () => {
     const uncredited = record([{ key: '', value: 'credit.by: 10x Genomics' }]);
     expect(creditOf(uncredited.tags)).toBeNull();
     expect(userTags(uncredited)).toEqual(['credit.by: 10x Genomics']);
+  });
+});
+
+describe('stageNodes', () => {
+  const dataset = (id: string, name: string): DatasetRecord => ({
+    id, name, description: '', processId: 'custom_dataset', processName: 'Files', status: 'COMPLETED', createdAt: '', createdBy: '',
+    tags: [], folders: [], sourceIds: [], share: null,
+  });
+
+  it('says which store a figure draws, not the title of the version it was kept in', () => {
+    const store: StoreItem = {
+      kind: 'store', key: itemKey('s', 'lung.sdata.zarr.zip'), datasetId: 's', path: 'lung.sdata.zarr.zip', label: 'lung.sdata.zarr.zip',
+      size: 1, isFolder: false, checkpoint: true,
+    };
+    const ref = datasetRef('s', 'lung.sdata.zarr.zip');
+    const version: VersionItem = {
+      kind: 'version', key: itemKey('v', 'layer.json'), datasetId: 'v', path: 'layer.json', label: 'Example figures', size: 1,
+      parent: ref, base: ref, depth: 1, title: 'Example figures', message: '', createdAt: '', createdBy: '',
+      changes: [{ op: 'set-figure', table: 'table', id: 'fig_1', title: 'Clusters' }],
+    };
+    const byId = new Map([['s', dataset('s', 'Xenium human lung')], ['v', dataset('v', 'Xenium human lung · Example figures')]]);
+    const [figure] = stageNodes(buildLibrary({ items: [store, version], byId }), { byId }).figures;
+    expect(figure.facts.find((f) => f.key === 'in')?.text).toBe('in “Xenium human lung”');
   });
 });
