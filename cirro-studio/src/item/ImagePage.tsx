@@ -8,7 +8,7 @@ import { describeError } from '../cirro/session';
 import type { ImageItem } from '../data/model';
 import { Facts, kinOf } from './Facts';
 import { MAX_CHANNELS, OmeTiffLens, openOmeTiff, type ImageChannel, type OpenedImage } from './OmeTiffLens';
-import { PipelineLinks } from './PipelineLinks';
+import { PipelineLinks, ReadOnlyPipelines } from './PipelineLinks';
 import { useDrawers, ViewFrame } from './ViewFrame';
 
 export function ImagePage({ item }: { item: ImageItem }) {
@@ -42,7 +42,9 @@ export function ImagePage({ item }: { item: ImageItem }) {
           content: (
             <>
               <p className="task-heading">Make something new</p>
-              <PipelineLinks datasetId={item.datasetId} purpose="segment" about="Find the cells in this image: the result is a SpatialData store, linked back to it." />
+              {collection.access === 'read'
+                ? <ReadOnlyPipelines what="Finding the cells in this image" />
+                : <PipelineLinks datasetId={item.datasetId} purpose="segment" about="Find the cells in this image: the result is a SpatialData store, linked back to it." />}
             </>
           ),
         }}

@@ -90,7 +90,8 @@ your Cirro that take them further: cell segmentation for an image (Cellpose, Sta
 nf-core/sopa), and Spatial Data Studio's workflow for a run. These open Cirro's own
 launch form for the dataset, so the pipeline's options, cost and permissions are Cirro's
 to show. Their output appears on the map as spatial data, linked back to what it was
-made from.
+made from. In a project you can only read, the drawer says that running one would add a
+dataset there, in place of the list.
 
 Spatial Data Studio's workflow reads each run with its platform's reader, runs the
 standard analysis for its kind of data (for Xenium: quality control, normalization, a
