@@ -331,7 +331,7 @@ export default function CanvasControls({
                 value={mode}
                 onChange={(e) => setRenderMode(e.target.value as 'points' | 'points+shapes')}
                 className={SELECT_CLASS}
-                title="Points draws the cell scatter at every zoom; Points + Shapes additionally overlays cell-boundary fills — right away for a boundary set small enough to fetch whole, otherwise once zoomed in far enough that the viewport holds few enough of them."
+                title="Points draws the cell scatter at every zoom; Points + Shapes draws each cell's boundary in place of its point — right away for a boundary set small enough to fetch whole, otherwise once zoomed in far enough that the viewport holds few enough of them, with the points shown until then."
               >
                 <option value="points">Points</option>
                 <option value="points+shapes">Points + Shapes</option>

@@ -29,7 +29,7 @@ An Analysis Workspace is also one Docker image, which needs nothing but Docker a
 folder of your own data:
 
 ```bash
-docker run -d -p 8080:8888 \
+docker run -d -p 127.0.0.1:8080:8888 \
   -v "$(pwd)/data":/data -e SDS_DATA_DIR=/data \
   public.ecr.aws/cirrobio/spatial-data-studio:v1
 ```

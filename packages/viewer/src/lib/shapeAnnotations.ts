@@ -263,8 +263,9 @@ export function applyHandleDrag(geometry: ShapeGeometry, handleId: string, newPo
     return { ...geometry, radiusY: Math.abs(local[1] - geometry.center[1]) };
   }
   // Vertex handles are keyed by vertex index. Every id reaching here comes from
-  // `shapeHandles`, so anything else is a wiring bug — and it used to fall through as a
-  // drag that changed nothing at all, which the user can only read as a dead handle.
+  // `shapeHandles`, so anything else is a wiring bug. It throws rather than falling
+  // through as a drag that changes nothing, which the user could only read as a dead
+  // handle.
   const vertices = geometry.vertices as Point[];
   const i = Number(handleId);
   if (!Number.isInteger(i) || i < 0 || i >= vertices.length) {

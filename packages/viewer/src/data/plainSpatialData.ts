@@ -18,6 +18,7 @@
 import * as zarr from 'zarrita';
 import type { AsyncReadable } from '@zarrita/storage';
 import type { FileMetaData } from 'hyparquet';
+import { boxThrough, invertAffine } from '../canvas/imageAffine';
 import type { ImageInfo } from '../types';
 import { SHAPE_ANNOTATIONS_ELEMENT } from '../lib/shapeAnnotations';
 import type { ShapeIndexEntry } from './parquetShapes';
@@ -40,10 +41,10 @@ export function multiply(m: Affine3, n: Affine3): Affine3 {
   return out;
 }
 
-export function invert([a, b, c, d, e, f]: Affine3): Affine3 {
-  const det = a * e - b * d;
-  if (det === 0) throw new Error('singular coordinate transform');
-  return [e / det, -b / det, (b * f - c * e) / det, -d / det, a / det, (c * d - a * f) / det, 0, 0, 1];
+export function invert(m: Affine3): Affine3 {
+  const inverse = invertAffine(m);
+  if (!inverse) throw new Error('singular coordinate transform');
+  return [...inverse, 0, 0, 1];
 }
 
 export function toAffine6([a, b, c, d, e, f]: Affine3): number[] {
@@ -51,17 +52,6 @@ export function toAffine6([a, b, c, d, e, f]: Affine3): number[] {
 }
 
 type Box = [number, number, number, number];
-
-/** `box` pushed through `m`, as the axis-aligned box of all four corners (`bbox_aabb`). */
-export function boxThrough(m: Affine3, [x0, y0, x1, y1]: Box): Box {
-  const xs: number[] = [];
-  const ys: number[] = [];
-  for (const [x, y] of [[x0, y0], [x1, y0], [x0, y1], [x1, y1]]) {
-    xs.push(m[0] * x + m[1] * y + m[2]);
-    ys.push(m[3] * x + m[4] * y + m[5]);
-  }
-  return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
-}
 
 export function iou(a: Box, b: Box): number {
   const inter = Math.max(0, Math.min(a[2], b[2]) - Math.max(a[0], b[0]))
@@ -146,7 +136,7 @@ async function groupAttrs(root: Root, path: string): Promise<Record<string, unkn
   return (await (await zarr.open.v3(root.resolve(path), { kind: 'group' })).attrs) as Record<string, unknown>;
 }
 
-// Upper contrast bound from the coarsest level, as `imaging._channel_norm` computes it:
+// Upper contrast bound from the coarsest level, as `imaging.channel_norm` computes it:
 // 255 for uint8, else the 99.9th percentile. Sampled past this many values; the
 // percentile of a strided sample of a smooth image is the same to display precision.
 const MAX_PERCENTILE_SAMPLES = 1_000_000;

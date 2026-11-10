@@ -4,7 +4,9 @@ import type { AsyncReadable } from '@zarrita/storage';
 import ZipFileStore from '@zarrita/storage/zip';
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
+import type { ExpressionMatrix } from '@cirrobio/spatial-viewer';
 import { describe, expect, it, vi } from 'vitest';
+import type { NewVersion } from '../data/collection';
 import { PublicProject } from '../data/publicProject';
 import { FIGURE_FORMAT, keepFigure, readFigures, removeFigure, type FigureSpec } from '../figures/spec';
 import { readResults } from '../reports/store';
@@ -13,7 +15,8 @@ import { StackEditor } from '../stack/editor';
 import { LayeredStore, MemoryLayer } from '../stack/layeredStore';
 import { FIGURES, LAYER_MANIFEST, RESULTS, UNS_ROOT } from '../stack/manifest';
 import { versionFiles } from '../stack/version';
-import { applyEdit, storeOf, useWorkbench, type Workbench } from './workbench';
+import { readMatrix } from '../tasks/data';
+import { applyEdit, discardDraft, saveDraft, storeOf, useWorkbench, type Workbench } from './workbench';
 
 // The draft is kept in IndexedDB, which the test DOM doesn't have.
 vi.mock('../data/idb', () => {
@@ -83,6 +86,24 @@ class ChunklessVersionCollection extends DemoCollection {
     if (!file || !path.endsWith('zarr.json')) throw new Error(`Reading ${path} from Cirro failed: HTTP 403.`);
     return file.bytes;
   }
+}
+
+// The demo with a save that holds until `release` is called, so a test can act while
+// the version is uploading.
+function heldSave() {
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const saved: NewVersion[] = [];
+  class HeldSaveCollection extends DemoCollection {
+    override async saveVersion(version: NewVersion) {
+      saved.push(version);
+      await held;
+      return { datasetId: 'held-save-version', notice: null };
+    }
+  }
+  return { Collection: HeldSaveCollection, saved, release };
 }
 
 // Opened through its hook, as the page opens it; `seen.wb` follows its state.
@@ -175,5 +196,55 @@ describe('removing a kept figure', () => {
     await removeFigure(key, 'table', SAVED_FIGURE);
     expect(seen.wb!.changes).toEqual([{ op: 'delete-figure', table: 'table', id: SAVED_FIGURE.id, title: SAVED_FIGURE.title }]);
     expect(await readFigures(storeOf(key), 'table')).toEqual({ kept: [], unreadable: [] });
+  }, OPEN_TIMEOUT_MS);
+});
+
+describe('edits, discards and saves on one dataset', () => {
+  it('puts an edit asked for while a save uploads into the draft the save leaves', async () => {
+    const save = heldSave();
+    const seen = await openDemo('edit-during-save', save.Collection);
+    const { key } = seen.wb!;
+    const before = await keep(key, 'Before the save');
+    const saving = saveDraft(key, { title: 'Saved', message: '', createdBy: '', name: 'Saved' });
+    await vi.waitFor(() => expect(save.saved).toHaveLength(1));
+    const keeping = keep(key, 'During the save');
+    save.release();
+    await saving;
+    const during = await keeping;
+    expect(save.saved[0].note.parameters.changes).toEqual([{ op: 'set-figure', table: 'table', id: before.id, title: 'Before the save' }]);
+    expect(seen.wb!.changes).toEqual([{ op: 'set-figure', table: 'table', id: during.id, title: 'During the save' }]);
+    expect((await readFigures(storeOf(key), 'table')).kept.map((f) => f.id)).toEqual([during.id]);
+  }, OPEN_TIMEOUT_MS);
+
+  it('takes back an edit still being written when the draft is discarded', async () => {
+    const seen = await openDemo('discard-during-edit');
+    const { key } = seen.wb!;
+    const keeping = keep(key, 'Being written');
+    await discardDraft(key);
+    await keeping;
+    expect(seen.wb!.changes).toEqual([]);
+    expect(seen.wb!.draftBytes).toBe(0);
+    expect(await readFigures(storeOf(key), 'table')).toEqual({ kept: [], unreadable: [] });
+  }, OPEN_TIMEOUT_MS);
+});
+
+describe('reading the expression matrix', () => {
+  it('reads it once for a store and every version on it', async () => {
+    // The version's store is the demo opened as `chunkless-base`. Each handle's read is
+    // replaced below, so the chunks it refuses don't come into it.
+    const store = await openDemo('chunkless-base');
+    const version = await openDemo('matrix-version', ChunklessVersionCollection, 'version');
+    const matrix: ExpressionMatrix = { nCells: 0, genes: [], indptr: new Float64Array(1), indices: new Int32Array(0), data: new Float32Array(0) };
+    const reads: string[] = [];
+    for (const seen of [store, version]) {
+      const { key, handle } = seen.wb!;
+      handle!.source.getExpressionMatrix = async () => {
+        reads.push(key);
+        return matrix;
+      };
+    }
+    expect(await readMatrix(store.wb!.key, store.wb!.handle!)).toBe(matrix);
+    expect(await readMatrix(version.wb!.key, version.wb!.handle!)).toBe(matrix);
+    expect(reads).toEqual([store.wb!.key]);
   }, OPEN_TIMEOUT_MS);
 });

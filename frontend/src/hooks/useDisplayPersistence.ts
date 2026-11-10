@@ -4,7 +4,7 @@ import { useAppStore } from '../store/sessionStore';
 import type { DisplaySpec } from '@cirrobio/spatial-viewer';
 
 /** What display persistence means in the Studio app — the `onDisplayChange` /
- * `currentSpec` half of the canvas host (components/canvas/canvas-host.tsx).
+ * `currentSpec` half of the canvas host (packages/viewer/src/canvas/canvas-host.tsx).
  *
  * `onDisplayChange` mirrors the change into the store immediately, then debounces the
  * PUT (500ms) so a slider drag or pan/rotate collapses into one write; a ref holds the

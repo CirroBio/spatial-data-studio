@@ -6,6 +6,7 @@ from __future__ import annotations
 import pandas as pd
 
 from ..base import CallResult, Function, ParamSpec, missing_obs_column, run_compute, run_plot
+from ._docs import custom_doc
 
 _COMPUTE_DOC = """Cellular Neighborhoods
 
@@ -76,8 +77,6 @@ class _CNResultView:
         self.mean_composition = mean_composition
         self.celltype_order = celltype_order
 
-
-from ._docs import custom_doc
 
 _CITATION = ("Schurch, C.M. et al. Coordinated Cellular Neighborhoods Orchestrate Antitumoral "
              "Immunity at the Colorectal Cancer Invasive Front. Cell 182, 1341-1359 (2020). "

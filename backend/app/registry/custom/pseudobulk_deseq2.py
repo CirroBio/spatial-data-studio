@@ -13,6 +13,7 @@ from __future__ import annotations
 from ..base import CallResult, Function, ParamSpec, missing_layer, missing_obs_column, \
     missing_uns_key, \
     resolve_per_celltype, run_compute, run_plot
+from ._docs import custom_doc
 
 _SAMPLE_PARAM = ParamSpec(
     "sample_key", {"type": "string"}, "obs_categorical", None, required=True,
@@ -27,8 +28,6 @@ _KEY_ADDED_PARAM = ParamSpec(
     "key_added", {"type": "string", "default": "pseudobulk_de"}, "text", None,
     required=True, tooltip="uns key to store the differential-expression results under", role="output")
 
-
-from ._docs import custom_doc
 
 _CITATION = ("Love, M.I., Huber, W. & Anders, S. Moderated estimation of fold change and dispersion "
              "for RNA-seq data with DESeq2. Genome Biol 15, 550 (2014). doi:10.1186/s13059-014-0550-8; "

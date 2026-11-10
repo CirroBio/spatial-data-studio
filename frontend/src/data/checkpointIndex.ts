@@ -9,20 +9,21 @@
 //     "title": "Mouse brain atlas",            // optional, names the collection
 //     "checkpoints": [
 //       { "path": "visium_hne.sdata.zarr.zip",
-//         "label": "Visium H&E",               // optional, defaults to the file name
+//         "label": "Visium H&E",               // optional, defaults to "visium_hne"
 //         "description": "Coronal section" }   // optional
 //     ]
 //   }
 //
 // `path` is resolved against the index's own URL, so a listing can point at a
 // sibling file, a subfolder, or an absolute URL on another host.
+import { storeName } from '@cirrobio/spatial-viewer';
 
 export const CHECKPOINT_INDEX_FILE = 'index.json';
 
 // Query parameter naming the checkpoint to open, resolved against the page URL so a
 // checkpoint sitting next to index.html can be referenced relatively. Lives in this
-// leaf module so the store can read it at initialization without importing anything
-// that imports the store back.
+// module, which imports nothing of the app's, so the store can read it at
+// initialization without importing anything that imports the store back.
 export const CHECKPOINT_PARAM = 'checkpoint';
 
 export function checkpointUrlFromLocation(): string | null {
@@ -84,18 +85,6 @@ export interface CheckpointIndex {
 
 const EMPTY: CheckpointIndex = { entries: [] };
 
-function fileName(path: string): string {
-  const last = (path.split('/').pop() ?? path).split('?')[0];
-  // A manifest is hand-written, so a path can carry a bare '%' that decodeURIComponent
-  // throws on. The decode only prettifies the fallback label, so a bad escape falls back
-  // to the raw segment — one malformed entry must not abort the whole listing.
-  try {
-    return decodeURIComponent(last) || path;
-  } catch {
-    return last || path;
-  }
-}
-
 /** Read `index.json` from alongside the page. Returns an empty index when there is
  * none, when it is unreadable, or when it lists nothing usable — its absence is the
  * normal case for a live deployment, not an error. */
@@ -120,7 +109,7 @@ export async function fetchCheckpointIndex(): Promise<CheckpointIndex> {
     entries.push({
       path: item.path,
       url: new URL(item.path, indexUrl).href,
-      label: typeof item.label === 'string' && item.label ? item.label : fileName(item.path),
+      label: typeof item.label === 'string' && item.label ? item.label : storeName(item.path) || item.path,
       description: typeof item.description === 'string' ? item.description : undefined,
     });
   }

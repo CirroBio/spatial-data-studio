@@ -5,8 +5,8 @@ import {
   type CirroProject, type DatasetEntry,
 } from '../api';
 import { formatError, reportError } from '@cirrobio/spatial-viewer';
+import { CHECKPOINT_EXT } from '../lib/checkpointExt';
 import { ModalOverlay, ModalHeader } from './DetailModal';
-import { CHECKPOINT_EXT } from './SaveCheckpointDialog';
 
 interface Props {
   onClose: () => void;

@@ -7,6 +7,7 @@ import {
   formatError, isEmbeddingDisplay, isSpatialDisplay, reportError,
 } from '@cirrobio/spatial-viewer';
 import { useAppStore } from '../store/sessionStore';
+import { CHECKPOINT_EXT } from '../lib/checkpointExt';
 import { figureBytes, figureFormats } from '../lib/figures';
 import type { SessionState } from '../types';
 import { ModalHeader, ModalOverlay } from './DetailModal';
@@ -99,10 +100,6 @@ function formatSize(mb: number | null): string {
 }
 
 const formatDims = (l: ImageLevel) => `${l.width.toLocaleString()} × ${l.height.toLocaleString()} px`;
-
-// The extension every checkpoint carries, between the stem's content hash and the end
-// of the name (backend: persistence/store.CHECKPOINT_EXT). Shown in the filename preview.
-export const CHECKPOINT_EXT = '.sdata.zarr.zip';
 
 /** A session name turned into the filename stem it suggests. Only characters that make
  * a filename awkward to handle are folded away — the backend rejects a prefix with a

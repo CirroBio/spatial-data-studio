@@ -18,7 +18,7 @@ from .sessions.presence import PRESENCE
 # The process-wide manager, bound by lifespan once the registry is built. Public
 # (not underscore) because it is the canonical live-manager handle for out-of-request
 # readers too — e.g. the e2e harness inspects `deps.MANAGER` after startup. Routes go
-# through `_mgr()` for the not-ready guard.
+# through `get_manager()` for the not-ready guard.
 MANAGER: SessionManager | None = None
 
 
@@ -28,14 +28,14 @@ def set_manager(m: SessionManager) -> None:
     MANAGER = m
 
 
-def _mgr() -> SessionManager:
+def get_manager() -> SessionManager:
     if MANAGER is None:
         raise HTTPException(503, "not ready")
     return MANAGER
 
 
 @contextlib.contextmanager
-def _bad_request():
+def bad_request():
     """Map the domain errors a rejected request raises onto 400.
 
     The session/registry layers signal a caller mistake — a path outside DATA_DIR, an
@@ -48,27 +48,27 @@ def _bad_request():
         raise HTTPException(400, str(e))
 
 
-def _session(sid: str):
-    s = _mgr().get(sid)
+def get_session(sid: str):
+    s = get_manager().get(sid)
     if s is None:
         raise HTTPException(404, "session not found")
     return s
 
 
-def _writable_session(sid: str):
-    """Same lookup as `_session`, plus a 403 if the session was opened read-only
+def get_writable_session(sid: str):
+    """Same lookup as `get_session`, plus a 403 if the session was opened read-only
     (`create_from_load(read_only=True)`) and a 423 if another viewer holds its edit
-    lock. Every mutating route uses this instead of `_session` so a frozen or
+    lock. Every mutating route uses this instead of `get_session` so a frozen or
     someone-else's session stays that way even against a buggy or malicious client,
     not just an unwired UI."""
-    s = _session(sid)
+    s = get_session(sid)
     if s.read_only:
         raise HTTPException(403, "session is read-only")
-    _claim_lock(sid)
+    claim_lock(sid)
     return s
 
 
-def _claim_lock(sid: str):
+def claim_lock(sid: str):
     """The edit-lock half of the mutating-route guard (sessions/presence.py): refuse
     the write while another viewer holds the session's lock, and otherwise take the
     lock for this client, so the window after a deliberate unlock can't have two
@@ -94,7 +94,7 @@ async def bind_client_id(x_sds_client_id: str | None = Header(default=None)) -> 
     CLIENT_ID.set(x_sds_client_id)
 
 
-async def _in_executor(fn, *a):
+async def in_executor(fn, *a):
     return await asyncio.get_running_loop().run_in_executor(None, fn, *a)
 
 
@@ -131,10 +131,10 @@ async def search_var_names(sess, q: str = "", limit: int = 50) -> list[str]:
         contains = [s for s in names if ql in s.lower() and not s.lower().startswith(ql)]
         return (starts + contains)[:limit]
 
-    return await _read_locked(sess, _search)
+    return await read_locked(sess, _search)
 
 
-async def _read_locked(sess, fn, *a):
+async def read_locked(sess, fn, *a):
     """Run `fn(*a)` in the executor under the session's read lock — the shape every
     read-only endpoint needs to serve a field/manifest/preview off a session that a
     queued job may be mutating concurrently. A compute/plot job holds the write lock for
@@ -152,7 +152,7 @@ async def _read_locked(sess, fn, *a):
             return fn(*a)
         finally:
             sess.lock.release_read()
-    return await _in_executor(_run)
+    return await in_executor(_run)
 
 
 # Global cap on concurrent image compositing. deck.gl fires a burst of tile requests on
@@ -162,12 +162,12 @@ async def _read_locked(sess, fn, *a):
 _IMAGE_RENDER_SEM = asyncio.Semaphore(config.IMAGE_RENDER_CONCURRENCY)
 
 
-async def _render_image(sess, fn):
+async def render_image(sess, fn):
     """Composite a tile/thumbnail under the render semaphore, refusing once RSS is past
     the admission boundary so a zoom burst can't push an already-loaded container into
     OOM. 503 lets the frontend keep its coarse base layer and retry as memory frees
     (BitmapLayer just re-requests on the next viewport change)."""
     async with _IMAGE_RENDER_SEM:
-        if _mgr().over_memory_boundary():
+        if get_manager().over_memory_boundary():
             raise HTTPException(503, "image render deferred: memory boundary reached")
-        return await _read_locked(sess, fn)
+        return await read_locked(sess, fn)

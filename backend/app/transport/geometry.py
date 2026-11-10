@@ -105,11 +105,11 @@ def element_to_world(sdata, table, element: str, gdf) -> np.ndarray:
       for the same reason.
     - Otherwise world space is not a declared coordinate system at all (Xenium's spots are
       microns while its 'global' is image pixels), so the element is reconciled against
-      the points exactly as an image is: `imaging._spots_to_system`'s best-overlaying
+      the points exactly as an image is: `imaging.spots_to_system`'s best-overlaying
       spots->system fit, inverted to land back in the points' space. On Xenium that
       divides out the 4.7x micron->pixel scale `cell_boundaries` declares, leaving the
-      polygons where the borrowed region affine used to put them (which is what `test_e2e`
-      pins), while a store whose boundaries and region really do differ now follows the
+      polygons where the region affine alone would put them (which is what `test_e2e`
+      pins), while a store whose boundaries and region really do differ follows the
       boundaries.
 
     The reference footprint is the element's own bounds rather than
@@ -134,28 +134,27 @@ def element_to_world(sdata, table, element: str, gdf) -> np.ndarray:
 
     world_system = transform.world_space(sdata, table)[1]
     if world_system is not None:
-        bridge = imaging._affine_xy(gdf, world_system)
+        bridge = imaging.affine_xy(gdf, world_system)
         if bridge is None:
             raise KeyError(f"shapes element '{element}' declares no transform into "
                            f"'{world_system}', the coordinate system this table's cells "
                            "are placed in")
     else:
         bridge, best_iou = None, 0.0
-        for cs in imaging._system_order(sdata):
-            a = imaging._affine_xy(gdf, cs)
+        for cs in imaging.system_order(sdata):
+            a = imaging.affine_xy(gdf, cs)
             if a is None:
                 continue
-            spots, iou = imaging._spots_to_system(
+            spots, iou = imaging.spots_to_system(
                 sdata, table, cs, imaging.bbox_aabb(a, gdf.total_bounds))
             if iou > best_iou:
                 bridge, best_iou = np.linalg.inv(spots) @ a, iou
         if bridge is None:
             # Nothing overlaid the points: the element maps into no system the object
             # declares, or there are no spot coordinates to reconcile it against. Fall
-            # back to the standing assumption that its vertices are already in the
-            # points' own space — what the region affine alone used to encode — rather
-            # than refuse to draw a store that reconciliation simply has nothing to say
-            # about.
+            # back to assuming its vertices are already in the points' own space, so the
+            # region affine alone places them, rather than refuse to draw a store that
+            # reconciliation simply has nothing to say about.
             bridge = np.eye(3)
     return transform.matrix3x3(transform.get_affine6(sdata, table)) @ bridge
 
@@ -173,14 +172,14 @@ def clipped_polygons(sdata, table, element: str, bbox, limit: int | None = None)
     GeoArrow transport and the snapshot figure renderer."""
     from ..sessions import shape_annotations
 
-    if element not in getattr(sdata, "shapes", {}):
+    if element not in sdata.shapes:
         raise KeyError(f"shapes element '{element}' not found")
     gdf = sdata.shapes[element]
     if element == shape_annotations.ELEMENT:
         # Polygonal, but not a boundary set, and its vertices are already world
         # coordinates carrying a placeholder identity 'global' transform (see
         # sessions/shape_annotations.py) — no element->world derivation describes it, and
-        # the old one silently re-applied the points->global affine to shapes the user
+        # applying one would silently re-apply the points->global affine to shapes the user
         # drew where they already are. Every other boundary consumer excludes it
         # (snapshots._shapes_element, SpatialCanvas' polygonElements); refusing it here
         # makes the one remaining path that can still ask for it say so.

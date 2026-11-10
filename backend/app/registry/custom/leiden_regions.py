@@ -3,6 +3,7 @@ write the cluster index to a user-named obs column."""
 from __future__ import annotations
 
 from ..base import Function, ParamSpec, CallResult, run_compute, resolve_obsm_or_result
+from ._docs import custom_doc
 from ._leiden import leiden_labels, resolve_connectivities
 
 _HELP = """Identify Regions (Leiden)
@@ -25,8 +26,6 @@ key_added
     Name of the obs column to write the region labels into.
 """
 
-
-from ._docs import custom_doc
 
 _CITATION = ("Leiden community detection (Traag, Waltman & van Eck, Sci Rep 9:5233, 2019) applied "
              "to spatial coordinates; spatial-region variant original to this repository.")

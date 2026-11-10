@@ -3,8 +3,10 @@
 // decoding (a mis-parsed offset yields plausible-looking garbage). Both are checked
 // against an independent brute-force implementation rather than against themselves.
 import { describe, expect, it } from 'vitest';
+import type { AsyncReadable } from '@zarrita/storage';
+import { boxThrough, invertAffine } from '../canvas/imageAffine';
 import {
-  type Bbox, asFiniteBox, intersects, invertAffine6, selectRowRuns, transformBboxAabb, wkbRowBoxes,
+  type Bbox, type ShapeIndexEntry, asFiniteBox, createShapeReader, intersects, selectRowRuns, wkbRowBoxes,
 } from './parquetShapes';
 import { decodeWkbPolygons, polygonTable } from './wkbGeoArrow';
 
@@ -101,18 +103,20 @@ describe('selectRowRuns', () => {
   });
 });
 
-describe('transformBboxAabb', () => {
+describe('the query window transform', () => {
   it('bounds a rotated box by all four corners, not two', () => {
     // 90-degree rotation: transforming only (x0,y0) and (x1,y1) would give an inverted,
     // wrong box. [a,b,c,d,e,f] with x' = a*x + b*y + c.
     const rotate90 = [0, -1, 0, 1, 0, 0];
-    expect(transformBboxAabb([0, 0, 2, 4], rotate90)).toEqual([-4, 0, 0, 2]);
+    expect(boxThrough(rotate90, [0, 0, 2, 4])).toEqual([-4, 0, 0, 2]);
   });
 
   it('round-trips a window through an affine and its inverse', () => {
     const affine = [2, 0.5, 10, -0.25, 3, -5];
+    const inverse = invertAffine(affine);
+    expect(inverse).not.toBeNull();
     const box: Bbox = [1, 2, 7, 11];
-    const back = transformBboxAabb(transformBboxAabb(box, affine), invertAffine6(affine));
+    const back = boxThrough(inverse!, boxThrough(affine, box));
     // The AABB of a rotated AABB only grows, so the round trip must *contain* the
     // original — that containment is what makes the pruning conservative.
     expect(back[0]).toBeLessThanOrEqual(box[0] + 1e-9);
@@ -121,8 +125,17 @@ describe('transformBboxAabb', () => {
     expect(back[3]).toBeGreaterThanOrEqual(box[3] - 1e-9);
   });
 
-  it('refuses a degenerate transform instead of producing silent NaNs', () => {
-    expect(() => invertAffine6([0, 0, 0, 0, 0, 0])).toThrow(/not invertible/);
+  it('refuses a degenerate transform instead of producing silent NaNs', async () => {
+    expect(invertAffine([0, 0, 0, 0, 0, 0])).toBeNull();
+    // The reader turns that into an error before it reads a byte, so no store is needed.
+    const entry: ShapeIndexEntry = {
+      geometry_types: ['Polygon'], num_rows: 1, row_groups: 1, file_bytes: 1, footer_bytes: 1,
+      bounds: [0, 0, 1, 1], selectivity: 1,
+    };
+    const reader = createShapeReader(
+      {} as Required<AsyncReadable>, { cells: entry }, { cells: [0, 0, 0, 0, 0, 0] },
+      async () => new Int32Array(0));
+    await expect(reader.query('cells', [0, 0, 1, 1])).rejects.toThrow(/not invertible/);
   });
 });
 

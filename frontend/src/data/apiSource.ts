@@ -1,5 +1,5 @@
-// DataSource backed by a live session's HTTP API — the existing behavior, moved
-// behind the interface so the canvas can be pointed at a checkpoint instead.
+// DataSource backed by a live session's HTTP API. The canvas reads only through the
+// DataSource interface, so the same canvas can be pointed at a checkpoint instead.
 import { useMemo } from 'react';
 import { loadOmeZarr } from '@vivjs/loaders';
 import type { DataSource, ImageLoader } from '@cirrobio/spatial-viewer';

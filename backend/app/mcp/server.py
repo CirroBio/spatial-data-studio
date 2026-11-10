@@ -35,10 +35,11 @@ from .. import datasets, recipes, snapshots
 from ..config import config, data_roots
 from ..registry.introspect import REGISTRY
 from ..registry.reader_paths import reader_namespace
+from ..sessions.session import TERMINAL_JOB_STATUSES
 from ..transport import tables
 from ..transport.sse import BUS
 from .. import deps
-from ..deps import _in_executor, _read_locked, default_save_path, search_var_names
+from ..deps import in_executor, read_locked, default_save_path, search_var_names
 
 GUIDES_DIR = Path(__file__).parent / "guides"
 GUIDE_TOPICS = {
@@ -121,15 +122,12 @@ def _writable(session_id: str | None = None):
     """The mutating-tool guard: same checks as the REST routes (read-only + edit
     lock), with the HTTPException translated into an agent-actionable error."""
     try:
-        return deps._writable_session(_sid(session_id))
+        return deps.get_writable_session(_sid(session_id))
     except HTTPException as e:
         hint = (" — call set_active_session(session_id, take_control=True) to take the "
                 "edit lock (tell the user first; they keep watching read-only)"
                 if e.status_code == 423 else "")
         raise RuntimeError(f"{e.detail}{hint}")
-
-
-_TERMINAL = ("completed", "failed", "cancelled", "drawn", "invalidated")
 
 
 async def _await_job(sess, job_id: str, timeout_s: float) -> str:
@@ -138,7 +136,7 @@ async def _await_job(sess, job_id: str, timeout_s: float) -> str:
     t0 = time.monotonic()
     while time.monotonic() - t0 < timeout_s:
         status = sess.job_status(job_id)
-        if status is None or status in _TERMINAL:
+        if status is None or status in TERMINAL_JOB_STATUSES:
             return status or "completed"
         agent.touch()
         await asyncio.sleep(0.4)
@@ -247,7 +245,7 @@ async def get_session(session_id: str | None = None, history_limit: int = 25) ->
     log)."""
     agent.bind_agent()
     sess = _sess(session_id)
-    state = await _read_locked(sess, _mgr().state, sess)
+    state = await read_locked(sess, _mgr().state, sess)
     app_state = state["app_state"]
     history = app_state.get("compute_history", [])
     return {
@@ -279,7 +277,7 @@ async def create_session(checkpoint_path: str | None = None, reader: dict | None
         raise ValueError("give exactly one of checkpoint_path or reader")
     try:
         if checkpoint_path is not None:
-            sess = await _in_executor(_mgr().create_from_load, checkpoint_path, name, None)
+            sess = await in_executor(_mgr().create_from_load, checkpoint_path, name, None)
         else:
             descriptor = {"namespace": reader_namespace(reader),
                           "function": reader["function"], "params": reader.get("params", {})}
@@ -354,12 +352,12 @@ async def close_session(session_id: str, save: bool = False) -> dict:
         _writable(session_id)
     else:
         try:
-            deps._claim_lock(session_id)
+            deps.claim_lock(session_id)
         except HTTPException as e:
             raise RuntimeError(str(e.detail))
     # A failed save raises here with the session still open, and the assistant stays
     # attached to it.
-    await _in_executor(_mgr().close, session_id, save)
+    await in_executor(_mgr().close, session_id, save)
     if agent.active_session_id() == session_id:
         agent.release()
     return {"ok": True}
@@ -371,7 +369,7 @@ async def list_datasets() -> dict:
     saved, found under the data roots — the inputs create_session(checkpoint_path=...)
     accepts. Raw (unconverted) data folders are found with browse_data_dir instead."""
     agent.bind_agent()
-    found = await _in_executor(datasets.list_datasets, data_roots())
+    found = await in_executor(datasets.list_datasets, data_roots())
     return {"datasets": found}
 
 
@@ -382,7 +380,7 @@ async def browse_data_dir(path: str | None = None, include_files: bool = False) 
     — with include_files — plain files. Use to locate a raw vendor bundle for a reader
     import."""
     agent.bind_agent()
-    return await _in_executor(datasets.browse, data_roots(), path, include_files)
+    return await in_executor(datasets.browse, data_roots(), path, include_files)
 
 
 @mcp_server.tool()
@@ -468,7 +466,7 @@ async def list_jobs(session_id: str | None = None, limit: int = 30) -> dict:
     (pending|queued|running|completed|drawn|invalidated|failed)."""
     agent.bind_agent()
     sess = _sess(session_id)
-    state = await _read_locked(sess, _mgr().state, sess)
+    state = await read_locked(sess, _mgr().state, sess)
     history = state["app_state"].get("compute_history", [])
     return {"queue": state["queue"],
             "compute_history": history[-limit:], "compute_history_total": len(history),
@@ -514,7 +512,7 @@ async def run_recipe(name: str, param_values: dict | None = None,
     if mode != "run" or not wait:
         return result
     drained = await _await_queue_drain(sess, timeout_s)
-    state = await _read_locked(sess, _mgr().state, sess)
+    state = await read_locked(sess, _mgr().state, sess)
     steps = [{"id": r["id"], "function": f"{r['namespace']}.{r['function']}", "status": r["status"]}
              for r in (state["app_state"].get("compute_history", []) + state["app_state"].get("plots", []))
              if r["id"] not in pre]
@@ -530,7 +528,7 @@ async def list_plots(session_id: str | None = None) -> dict:
     the checkpoint it was loaded from carries)."""
     agent.bind_agent()
     sess = _sess(session_id)
-    state = await _read_locked(sess, _mgr().state, sess)
+    state = await read_locked(sess, _mgr().state, sess)
     available = state["figures"]
     plots = [{**p, "figure_available": "png" in available.get(p["id"], {})}
              for p in state["app_state"].get("plots", [])]
@@ -587,7 +585,7 @@ async def view_display(session_id: str | None = None, display_id: str | None = N
     'vision-and-selection' guide first."""
     agent.bind_agent()
     sess = _sess(session_id)
-    png, meta = await _in_executor(
+    png, meta = await in_executor(
         lambda: vision.render_view(sess, display_id, viewport, width_px, height_px,
                                    include_grid, mark_points, mark_polygons))
     return [Image(data=png, format="png"), _meta_block(meta)]
@@ -610,7 +608,8 @@ async def update_display(encoding: dict | None = None, viewport: dict | None = N
     spec = {**display, "encoding": {**display.get("encoding", {}), **(encoding or {})}}
     if viewport is not None:
         spec["viewport"] = viewport
-    if not sess.update_display(display["id"], spec):
+    # Off the event loop: it waits on the session's write lock (see main.update_display).
+    if not await in_executor(sess.update_display, display["id"], spec):
         raise ValueError("display not found")
     BUS.publish("display.updated", {"session_id": sess.id, "display_id": display["id"],
                                     "spec": spec})
@@ -626,7 +625,8 @@ async def add_display(type: str, encoding: dict, session_id: str | None = None) 
     if type not in ("spatial_canvas", "embedding_canvas"):
         raise ValueError("type must be spatial_canvas or embedding_canvas")
     sess = _writable(session_id)
-    spec = sess.add_display({"type": type, "encoding": encoding, "viewport": None})
+    spec = await in_executor(sess.add_display,
+                              {"type": type, "encoding": encoding, "viewport": None})
     BUS.publish("display.updated", {"session_id": sess.id, "display_id": spec["id"],
                                     "spec": spec})
     return {"display": spec}
@@ -645,7 +645,7 @@ async def _selection_payload(sess, polygons: list | None, cell_indices: list | N
         return {"cell_indices": [int(i) for i in cell_indices]}
     if space == "embedding":
         display = snapshots.resolve_display(sess, display_id)
-        mask = await _read_locked(sess, vision.cells_in_polygons, sess, display, polygons, "embedding")
+        mask = await read_locked(sess, vision.cells_in_polygons, sess, display, polygons, "embedding")
         return {"cell_indices": [int(i) for i in mask.nonzero()[0]]}
     return {"polygons": polygons}
 
@@ -667,7 +667,7 @@ async def inspect_region(polygons: list, space: str = "spatial",
         mask = vision.cells_in_polygons(sess, display, polygons, space)
         return vision.region_stats(sess, mask, by, genes)
 
-    return await _read_locked(sess, _run)
+    return await read_locked(sess, _run)
 
 
 @mcp_server.tool()
@@ -695,7 +695,7 @@ async def annotate_region(region_set: str, category: str, polygons: list | None 
         def _counts():
             col = sess.active_table().obs[region_set].astype(str)
             return {v: int(n) for v, n in col.value_counts().items()}
-        out["region_set_counts"] = await _read_locked(sess, _counts)
+        out["region_set_counts"] = await read_locked(sess, _counts)
         out["note"] = "all displays now color by this region set"
     return out
 
@@ -739,7 +739,7 @@ async def list_shape_annotations(session_id: str | None = None) -> dict:
     # Aliased: the bare name `annotations` is already bound module-wide by
     # `from __future__ import annotations` at the top of this file.
     from ..transport import annotations as shape_annotations
-    return {"shapes": await _read_locked(sess, shape_annotations.list_shape_annotations, sess)}
+    return {"shapes": await read_locked(sess, shape_annotations.list_shape_annotations, sess)}
 
 
 _STROKE_DEFAULTS = {"color": "#ffcc00", "width": 2.0, "dash": "solid",
@@ -801,7 +801,7 @@ async def get_obs_summary(column: str, session_id: str | None = None) -> dict:
                 "n_nan": int(vals.isna().sum())}
 
     try:
-        return await _read_locked(sess, _summarize)
+        return await read_locked(sess, _summarize)
     except KeyError as e:
         raise ValueError(str(e))
 
@@ -821,7 +821,7 @@ async def get_table(path: str, offset: int = 0, limit: int = 50,
         return tables.table_preview(sess.active_table(), sess.sdata, path, offset, limit)
 
     try:
-        return await _read_locked(sess, _page)
+        return await read_locked(sess, _page)
     except (KeyError, ValueError) as e:
         raise ValueError(str(e))
 
@@ -851,7 +851,7 @@ async def export_figure(session_id: str | None = None, display_id: str | None = 
     spec = {"viewport": viewport, "width_px": width_px, "height_px": height_px,
             "dpi": dpi, "formats": formats or ["pdf", "png"], "label": label,
             "display_id": display_id, "include_minimap": include_minimap}
-    result = await _in_executor(snapshots.save_snapshot, sess, spec)
+    result = await in_executor(snapshots.save_snapshot, sess, spec)
     if result.get("status") == "failed":
         raise ValueError(result.get("error", "snapshot failed"))
     return result

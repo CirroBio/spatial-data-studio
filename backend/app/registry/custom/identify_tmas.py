@@ -3,6 +3,7 @@ cell with the core it falls in."""
 from __future__ import annotations
 
 from ..base import Function, ParamSpec, CallResult, run_compute, resolve_obsm_or_result
+from ._docs import custom_doc
 from .tma_detect import assign_cores, NAMING_SCHEMES
 
 _HELP = """Identify TMAs
@@ -27,8 +28,6 @@ key_added
     Name of the obs column to write the core labels into.
 """
 
-
-from ._docs import custom_doc
 
 _CITATION = ("Original tissue-microarray core detector implemented in this repository "
              "(clustering of cell coordinates into cores).")

@@ -12,7 +12,7 @@ from fastapi import APIRouter, Header, HTTPException
 
 from ..cirro import CREDENTIALS, UPLOADS, CirroAuthError, Credential
 from ..config import config, within_data_dir
-from ..deps import _in_executor
+from ..deps import in_executor
 
 _log = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ async def cirro_auth_start(body: dict, x_sds_cirro_token: str | None = Header(de
         # format only, never whether anything was reachable.
         raise HTTPException(400, str(e))
     try:
-        token, cred = await _in_executor(cirro.start_login, domain)
+        token, cred = await in_executor(cirro.start_login, domain)
     except Exception as e:
         # Never echo the failure detail (or the domain) back to the client — for an
         # attacker-supplied domain it would act as a reachability oracle. The real
@@ -92,7 +92,7 @@ async def cirro_projects(x_sds_cirro_token: str | None = Header(default=None)):
     from .. import cirro
     cred = _require(x_sds_cirro_token)
     try:
-        return {"projects": await _in_executor(cirro.list_projects, cred)}
+        return {"projects": await in_executor(cirro.list_projects, cred)}
     except CirroAuthError as e:
         raise HTTPException(401, str(e))
 
@@ -103,7 +103,7 @@ async def cirro_folders(project_id: str, refresh: bool = False,
     from .. import cirro
     cred = _require(x_sds_cirro_token)
     try:
-        folders = await _in_executor(cirro.list_folders, cred, project_id, refresh)
+        folders = await in_executor(cirro.list_folders, cred, project_id, refresh)
     except CirroAuthError as e:
         raise HTTPException(401, str(e))
     return {"folders": folders}

@@ -7,8 +7,9 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as zarr from 'zarrita';
 import type { AbsolutePath, RangeQuery } from '@zarrita/storage';
+import { boxThrough } from '../canvas/imageAffine';
 import {
-  IDENTITY, autoDisplays, boxThrough, cellIndexOf, deriveSidecar, elementTransforms, invert,
+  IDENTITY, autoDisplays, cellIndexOf, deriveSidecar, elementTransforms, invert,
   multiply, reconcileImage, transformToAffine, UnrenderableStoreError, type Affine3, type Contents,
 } from './plainSpatialData';
 import { openCheckpoint } from './checkpointSource';

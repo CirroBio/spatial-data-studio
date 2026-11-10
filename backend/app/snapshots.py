@@ -187,7 +187,7 @@ def resolve_display(session, display_id: str | None):
 
 
 # ---- geometry: viewport window -> figure coordinates -------------------------
-def _point_coords(session, enc: dict, kind: str) -> np.ndarray:
+def point_coords(session, enc: dict, kind: str) -> np.ndarray:
     """Nx2 point coordinates in the canvas' coordinate space (spot/world space).
     For a spatial display this honors the editable points->global affine, matching
     the `/data/obsm:spatial` endpoint; for an embedding it reads the chosen obsm
@@ -197,6 +197,8 @@ def _point_coords(session, enc: dict, kind: str) -> np.ndarray:
     table = session.active_table()
     if kind == "embedding":
         key = enc.get("obsm_key") or "X_umap"
+        if key not in table.obsm:
+            raise ValueError(f"table has no obsm['{key}'] for an embedding display")
         xi, yi = int(enc.get("x_component", 0)), int(enc.get("y_component", 1))
         arr = np.asarray(table.obsm[key])
         return np.column_stack([arr[:, xi], arr[:, yi]]).astype(np.float64)
@@ -216,6 +218,21 @@ def _image_element(session, enc: dict) -> str | None:
     if el and el in getattr(session.sdata, "images", {}):
         return el
     return None
+
+
+def view_frame(session, display: dict):
+    """The space a display renders in, as (kind, element, p2w, w2p). `kind` is
+    "embedding" or "spatial", and `element` the image a spatial display composites, if
+    any. With an image the view is its level-0 pixel space (points carry a world->pixel
+    transform) and `p2w`/`w2p` map it to world and back; without one the view is
+    world/spot (or embedding) space itself and both are None. mcp/vision.py builds its
+    pixel->world contract on the same frame, so the two cannot disagree about it."""
+    kind = "embedding" if display.get("type") == "embedding_canvas" else "spatial"
+    element = _image_element(session, display.get("encoding", {})) if kind == "spatial" else None
+    if element is None:
+        return kind, None, None, None
+    p2w = imaging.pixel_to_world(session.sdata, element, session.active_table())
+    return kind, element, p2w, np.linalg.inv(p2w)
 
 
 def _shapes_element(session, enc: dict) -> str | None:
@@ -324,7 +341,7 @@ def _composite_window(session, element: str, enc: dict, px_bbox) -> tuple[np.nda
     # Pick a pyramid level whose windowed resolution is near the output size: the
     # finest level that still keeps the read modest. levels are a 2x pyramid.
     # (TARGET_READ_PX caps the composited read; it supersamples typical output sizes.)
-    levels = imaging._scale_names(el) if imaging._is_multiscale(el) else ["scale0"]
+    levels = imaging.scale_names(el) if imaging.is_multiscale(el) else ["scale0"]
     win_px = max(x1 - x0, y1 - y0)
     # The FINEST level whose windowed read is within the cap, falling back to the coarsest
     # when even that is over it — stated as one expression because the previous loop
@@ -332,7 +349,7 @@ def _composite_window(session, element: str, enc: dict, px_bbox) -> tuple[np.nda
     # the two it meant readable only by simulating it.
     level = next((lv for lv in range(len(levels)) if win_px / (2 ** lv) <= TARGET_READ_PX),
                  len(levels) - 1)
-    arr = imaging._level_array(el, level)
+    arr = imaging.level_array(el, level)
     factor = 2 ** level
     lx0, ly0, lx1, ly1 = x0 // factor, y0 // factor, -(-x1 // factor), -(-y1 // factor)
     # Slice with an ellipsis so a genuinely 2-D (single-channel) element works: indexing
@@ -343,7 +360,7 @@ def _composite_window(session, element: str, enc: dict, px_bbox) -> tuple[np.nda
         data = data[None]
 
     names = imaging.channel_names(el)
-    is_rgb = imaging._is_rgb(sdata, element)
+    is_rgb = imaging.is_rgb(sdata, element)
     if is_rgb:
         rgb = np.moveaxis(data[:3], 0, -1).astype(np.uint8)
     else:
@@ -358,7 +375,7 @@ def _tint_channels(data_cyx, names, enc, sdata, element) -> np.ndarray:
     default channel palette + percentile norm when the encoding doesn't override."""
     nch, h, w = data_cyx.shape
     channels = enc.get("channels") or {}
-    default_norm = imaging._channel_norm(sdata, element)
+    default_norm = imaging.channel_norm(sdata, element)
     out = np.zeros((h, w, 3), dtype=np.float32)
     any_visible = False
     for c in range(nch):
@@ -526,32 +543,27 @@ def _render_figure(session, spec: dict):
     if display is None:
         raise ValueError("no display to snapshot")
     enc = display.get("encoding", {})
-    kind = "embedding" if display.get("type") == "embedding_canvas" else "spatial"
 
     width_px = int(spec["width_px"]); height_px = int(spec["height_px"])
     dpi = int(spec.get("dpi", 150))
     vp = spec.get("viewport") or display.get("viewport") or {}
     target = vp.get("target", [0, 0]); zoom = float(vp.get("zoom", 0))
 
-    xy = _point_coords(session, enc, kind)
     # A table subset can select nothing, and every downstream step assumes at least one
-    # cell: the spacing reduction below takes `.max()` of an empty axis, and `_cell_rgba`
-    # would build its `dim` mask from an empty list comprehension, which numpy types
-    # float64 and then refuses as an index. The `len(pts)` guard further down is too late
-    # for both. ValueError so `routers/snapshots._snapshot_errors` answers 400 — an empty
-    # selection is a bad request, not a server fault.
-    if not len(xy):
+    # cell: the image's pixel->world reconciliation in `view_frame` and the spacing
+    # reduction below take the min/max of an empty axis, and `_cell_rgba` would build its
+    # `dim` mask from an empty list comprehension, which numpy types float64 and then
+    # refuses as an index. The `len(pts)` guard further down is too late for all three.
+    # ValueError so `routers/snapshots._snapshot_errors` answers 400 — an empty selection
+    # is a bad request, not a server fault.
+    if not session.active_table().n_obs:
         raise ValueError("nothing to render: this table has no cells "
                          "(a filter or subset selected none)")
-    element = _image_element(session, enc) if kind == "spatial" else None
+    kind, element, p2w, w2p = view_frame(session, display)
+    xy = point_coords(session, enc, kind)
 
-    # Coordinate regime: with an image the canvas works in level-0 pixel space (points
-    # carry a world->pixel transform); otherwise pure world/spot space.
     affine_scale = 1.0
-    p2w = w2p = None
     if element is not None:
-        p2w = imaging.pixel_to_world(session.sdata, element, session.active_table())
-        w2p = np.linalg.inv(p2w)
         pts = (w2p[:2, :2] @ xy.T).T + w2p[:2, 2]
         affine_scale = float(np.sqrt(abs(np.linalg.det(p2w[:2, :2]))))
     else:
@@ -560,7 +572,7 @@ def _render_figure(session, spec: dict):
     bbox = _window(target, zoom, width_px, height_px)
 
     # mean inter-point spacing (full dataset bounds) -> world radius, matching
-    # useArrowPositions.estimateMeanSpacing + pointWorldRadius.
+    # buildSpotLayer.estimateMeanSpacing + pointWorldRadius.
     area = max(1.0, (xy[:, 0].max() - xy[:, 0].min()) * (xy[:, 1].max() - xy[:, 1].min()))
     spacing = np.sqrt(area / max(1, len(xy)))
     world_radius = (float(encoding_default(enc, "point_size")) / 8.0) * spacing
@@ -677,7 +689,7 @@ def save_snapshot(session, spec: dict) -> dict:
     formats = [f for f in (spec.get("formats") or ["pdf"]) if f in ("pdf", "png")] or ["pdf"]
 
     # Only the render and the metadata read the live object, so only they need the lock —
-    # and it is bounded like every other read path (deps._read_locked) instead of blocking
+    # and it is bounded like every other read path (deps.read_locked) instead of blocking
     # past a proxy's origin timeout into a 504. The figure is self-contained once drawn, so
     # the file writes happen after releasing: this lock is writer-preferring, and holding it
     # across several multi-MB savefig calls stalls a pending compute commit for their whole

@@ -19,8 +19,9 @@ type FetchShapes = NonNullable<DataSource['getShapesGeoArrow']>;
 // stall on a pathological bbox. The source returns an EMPTY table when the
 // viewport holds more than this — so the shapes overlay stays absent (the points
 // remain the view) until the user zooms in far enough that the visible set fits,
-// rather than showing a partial subset. A source with no boundary support at all
-// (a checkpoint, whose shapes are GeoParquet) is the same no-layer case.
+// rather than showing a partial subset. A source with no boundary support (a checkpoint
+// with no shape index, or a v1 sidecar with no boundary placement) is the same
+// no-layer case.
 export const POLYGON_LIMIT = 20000;
 // Debounce viewport moves before firing a fetch, and pad the fetched bbox past the
 // viewport so a small pan reuses the cached table instead of refetching.

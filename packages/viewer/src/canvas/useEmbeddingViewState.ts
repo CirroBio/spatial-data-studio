@@ -56,15 +56,15 @@ export function useEmbeddingViewState(
   // Frames the data on first load, and re-frames whenever the data occupies a different
   // extent — the camera IS in the plotted coordinate space, so one framed for a UMAP's
   // single digits points somewhere arbitrary once the same canvas plots a PCA's tens or
-  // pixel coordinates in the thousands. This used to fit only while there was no camera
-  // at all, which held for the Studio (a canvas per session) but left any host that
-  // switches coordinates in place — or any switch of the plotted key here — pointed at
-  // the wrong place.
+  // pixel coordinates in the thousands. Fitting only when there is no camera at all
+  // would hold for the Studio (a canvas per session) but leave any host that switches
+  // coordinates in place — or any switch of the plotted key here — pointed at the
+  // wrong place.
   //
   // Keyed on the extent rather than on the obsm key, because only the extent is in step
   // with `positions`: the key changes on the pick, the fetch is marked in flight a render
-  // later, and the positions arrive a commit after the table does. Every key-derived
-  // identity tried here fitted the outgoing data and then refused the incoming. Panning
+  // later, and the positions arrive a commit after the table does. A key-derived identity
+  // fits the outgoing data and then refuses the incoming. Panning
   // and recolouring leave the extent alone, so neither re-frames; recomputed coordinates
   // legitimately do.
   const framedExtent = useRef<string | null>(null);

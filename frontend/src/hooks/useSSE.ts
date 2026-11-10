@@ -103,7 +103,8 @@ export function useSSE(enabled = true): void {
         if (summary.id === activeSession()) void refreshSessionState(summary.id);
       },
 
-      // Progress of a synchronous checkpoint load, before any session id exists. The
+      // Progress of an asynchronous checkpoint load (Session._run_load, on the session's
+      // worker), routed by the client-minted load_id rather than the session id. The
       // New Session dialog mints the load_id, subscribes via the store, and clears it.
       // A `log` chunk is the reader's live output (appended); a milestone event (no
       // `log`) carries the stage message/pct.

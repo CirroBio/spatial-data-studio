@@ -103,10 +103,10 @@ def _multiregion_system(sdata, table) -> str | None:
         return None
     shared = set.intersection(
         *(set(get_transformation(el, get_all=True)) for el in elements.values()))
-    # `_system_order` puts the most-populated system first, which is the one holding the
+    # `system_order` puts the most-populated system first, which is the one holding the
     # whole section rather than a per-kind subset (CosMx declares 'global' over images
     # and labels both, plus 'global_only_image'/'global_only_labels' over one each).
-    return next((cs for cs in imaging._system_order(sdata) if cs in shared), None)
+    return next((cs for cs in imaging.system_order(sdata) if cs in shared), None)
 
 
 def _multiregion_world_xy(sdata, table, system: str) -> np.ndarray | None:
@@ -133,7 +133,7 @@ def _multiregion_world_xy(sdata, table, system: str) -> np.ndarray | None:
     out = np.empty_like(xy)
     placed = np.zeros(len(xy), dtype=bool)
     for name, elem in elements.items():
-        a = imaging._affine_xy(elem, system)
+        a = imaging.affine_xy(elem, system)
         if a is None:
             return None
         mask = rows == name

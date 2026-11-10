@@ -8,19 +8,13 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from '../store/sessionStore';
 import {
-  formatError, isEmbeddingDisplay, isSpatialDisplay, openCheckpoint,
+  formatError, isEmbeddingDisplay, isSpatialDisplay, openCheckpoint, storeName,
   type CheckpointUrlRefresher, type DataSource, type FolderAccess,
 } from '@cirrobio/spatial-viewer';
 import type { AppState, SessionState } from '../types';
 import {
   applyBackgroundFromUrl, applyOverlayToAppState, setViewBaseline, urlViewOverlay,
 } from '../lib/urlViewState';
-
-function displayName(url: string): string {
-  // A `.zarr/` folder URL ends in `/`; name it by the folder.
-  const last = url.split('?')[0].replace(/\/+$/, '').split('/').pop() ?? url;
-  return decodeURIComponent(last.split('?')[0]) || 'Checkpoint';
-}
 
 export interface CheckpointSession {
   source: DataSource | null;
@@ -59,7 +53,7 @@ export function useCheckpointSession(
           id: opened.id,
           // The name the session was saved under, which a save can write to any
           // filename; only a file that carries none falls back to what it is called.
-          name: saved.name || displayName(typeof target === 'string' ? target : target.name),
+          name: saved.name || storeName(typeof target === 'string' ? target : target.name) || 'Checkpoint',
           status: 'ready' as const,
           resident_mb: 0,
           parent_id: null,

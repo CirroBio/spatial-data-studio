@@ -141,8 +141,8 @@ def describe_fields(adata, sdata) -> dict:
     """Field inventory for SessionState.fields (frontend pickers)."""
     from .. import imaging
     obs = [{"name": c, "kind": field_kind(adata, "obs", c)} for c in adata.obs.columns]
-    images = list(getattr(sdata, "images", {}).keys()) if sdata is not None else []
-    shapes = list(getattr(sdata, "shapes", {}).keys()) if sdata is not None else []
+    images = list(sdata.images.keys()) if sdata is not None else []
+    shapes = list(sdata.shapes.keys()) if sdata is not None else []
     image_dims = [{"name": n, "width": w, "height": h}
                   for n in images for (w, h) in [imaging.image_dims(sdata, n)]]
     obsm = []

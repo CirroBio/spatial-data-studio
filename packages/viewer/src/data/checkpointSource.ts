@@ -21,6 +21,7 @@ import {
   type FigureFormat, type FigureIndex, type ImageInfo, type ObsField, type ObsmField,
   type SessionFields,
 } from '../types';
+import { applyAffineXy } from '../canvas/imageAffine';
 import { afterThisTask } from '../lib/afterThisTask';
 import { SHAPE_ANNOTATIONS_ELEMENT } from '../lib/shapeAnnotations';
 import type { ShapeAnnotation } from '../schemas/annotations';
@@ -769,24 +770,8 @@ async function readObsm(
   // A 6-element affine is a map of the xy plane, so it needs both columns; a 1-D
   // world key (the `d = 1` case above) has no d1 to pass and is left as stored rather
   // than dereferencing undefined.
-  if (key === worldKey && d >= 2 && affine && !isIdentityAffine(affine)) {
-    applyAffineXy(columns.d0, columns.d1, affine);
-  }
+  if (key === worldKey && d >= 2 && affine) applyAffineXy(affine, columns.d0, columns.d1);
   return makeTable(columns);
-}
-
-function isIdentityAffine([a, b, c, d, e, f]: number[]): boolean {
-  return a === 1 && b === 0 && c === 0 && d === 0 && e === 1 && f === 0;
-}
-
-// x' = a*x + b*y + c, y' = d*x + e*y + f — `transform.apply_affine6_xy`, in place.
-function applyAffineXy(xs: Float32Array, ys: Float32Array, [a, b, c, d, e, f]: number[]): void {
-  for (let i = 0; i < xs.length; i++) {
-    const x = xs[i];
-    const y = ys[i];
-    xs[i] = a * x + b * y + c;
-    ys[i] = d * x + e * y + f;
-  }
 }
 
 // AnnData's nullable arrays: a group of `values` plus a boolean `mask` (true = missing).

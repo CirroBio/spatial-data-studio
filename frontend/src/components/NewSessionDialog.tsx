@@ -3,7 +3,7 @@ import { useForm } from 'react-hook-form';
 import * as Dialog from '@radix-ui/react-dialog';
 import { createSession, getDatasets } from '../api';
 import { useAppStore } from '../store/sessionStore';
-import { formatError } from '@cirrobio/spatial-viewer';
+import { formatError, storeName } from '@cirrobio/spatial-viewer';
 import AnsiLog from './AnsiLog';
 import FunctionFields, { coerceParams } from './forms/FunctionFields';
 import { EMPTY_FIELDS } from '../hooks/useRerunEditor';
@@ -24,21 +24,6 @@ function readerLabel(r: FunctionEntry): string {
 function readerPathParam(r: FunctionEntry): string {
   const req = ((r.json_schema as { required?: string[] }).required) ?? [];
   return req.find((p) => ['path', 'input', 'image_path'].includes(p)) ?? req[0] ?? 'path';
-}
-
-// Default session name derived from a selected path: the basename with any store
-// extension and the auto-appended content-hash suffix ("-<12 hex>", see backend
-// persistence.store.strip_content_hash) stripped — matches what the backend would
-// derive from a checkpoint filename, and gives folder imports the folder's name.
-function deriveSessionName(path: string): string {
-  const base = path.replace(/\/+$/, '').split('/').pop() ?? '';
-  const stem = base
-    .replace(/\.sdata\.zarr\.zip$/, '')
-    .replace(/\.zarr\.tar\.gz$/, '')
-    .replace(/\.zarr\.tgz$/, '')
-    .replace(/\.zarr\.zip$/, '')
-    .replace(/\.zarr$/, '');
-  return stem.replace(/-[0-9a-f]{12}$/, '');
 }
 
 // Save time of a dataset/session file as a sortable "YYYY-MM-DD HH:mm" prefix.
@@ -104,7 +89,7 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
 
   // Import mode: autofill the name from the picked primary path (folder basename).
   useEffect(() => {
-    if (mode === 'import' && importPath && !nameEdited) setName(deriveSessionName(importPath));
+    if (mode === 'import' && importPath && !nameEdited) setName(storeName(importPath));
   }, [importPath, mode, nameEdited]);
 
   function switchMode(m: 'load' | 'import') {
@@ -145,7 +130,7 @@ export default function NewSessionDialog({ onClose, onCreated }: Props) {
     try {
       // A read has no name to inherit, so it gets one derived from the path; a load
       // sends only a name the user typed, leaving the checkpoint's own name to stand.
-      const finalName = name.trim() || (mode === 'import' ? deriveSessionName(chosen) : '');
+      const finalName = name.trim() || (mode === 'import' ? storeName(chosen) : '');
       const session = await createSession({ name: finalName || undefined, source, load_id: id });
       if (mode === 'import') {
         // Read bootstrap: the session is created and its data loads in the background;

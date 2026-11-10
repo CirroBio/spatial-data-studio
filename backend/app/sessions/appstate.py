@@ -59,6 +59,31 @@ def fresh() -> dict:
     return copy.deepcopy(EMPTY)
 
 
+# The record collections whose entries carry a worker log.
+LOGGED_COLLECTIONS = ("compute_history", "plots")
+
+
+def split_logs(app_state: dict) -> tuple[dict, dict[str, str]]:
+    """Return (app_state without any record `_log`, {record_id: log}). Copies only
+    the two record collections and the records that carry a log, so the caller's
+    live app_state keeps its in-memory logs."""
+    logs: dict[str, str] = {}
+    out = dict(app_state)
+    for coll_key in LOGGED_COLLECTIONS:
+        recs = app_state.get(coll_key) or []
+        new_recs = []
+        for rec in recs:
+            if isinstance(rec, dict) and "_log" in rec:
+                # Strip `_log` unconditionally (even an empty string) - only a
+                # non-empty one is worth relocating to logs/<id>.log.gz.
+                if rec["_log"]:
+                    logs[rec["id"]] = rec["_log"]
+                rec = {k: v for k, v in rec.items() if k != "_log"}
+            new_recs.append(rec)
+        out[coll_key] = new_recs
+    return out, logs
+
+
 def migrate(st: dict) -> dict:
     """Upgrade older blobs to `SCHEMA_VERSION`; a newer-than-app blob is left intact
     (caller may warn). Raises ValueError when the result does not actually conform.
@@ -74,7 +99,7 @@ def migrate(st: dict) -> dict:
 
     What is validated is the blob's *persisted projection*, not the blob: the schema
     describes what reaches disk, and a live record's `_log` is stripped into
-    logs/<id>.log.gz on the way there (`store._split_logs`), so a session in memory — and
+    logs/<id>.log.gz on the way there (`split_logs`), so a session in memory — and
     a checkpoint old enough to still carry its logs inline — legitimately fails the schema
     as-is. Reusing the save path's own splitter keeps the two from drifting into a state
     where a load rejects a blob a save would happily have written.
@@ -92,11 +117,10 @@ def migrate(st: dict) -> dict:
         st.setdefault("regions", [])
     if v <= SCHEMA_VERSION:
         import jsonschema
-        from ..persistence.store import _split_logs
         from ..schemas import checkpoint as checkpoint_schemas
         st["schema_version"] = SCHEMA_VERSION
         try:
-            checkpoint_schemas.validate_app_state(_split_logs(st)[0])
+            checkpoint_schemas.validate_app_state(split_logs(st)[0])
         except jsonschema.ValidationError as e:
             where = "/".join(str(p) for p in e.absolute_path) or "(root)"
             raise ValueError(

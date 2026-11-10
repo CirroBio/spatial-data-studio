@@ -1,18 +1,18 @@
-"""Image tiles + raw raster zarr serving (client-side Viv compositing)."""
+"""Image info, thumbnails + raw raster zarr serving (client-side Viv compositing)."""
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request, Response
 
 from .. import imaging
-from ..config import _within_dir, config
-from ..deps import _session, _read_locked, _render_image
+from ..config import config, within_dir
+from ..deps import get_session, read_locked, render_image
 
 router = APIRouter()
 
 
 @router.get("/api/sessions/{sid}/image/{element}/info")
 async def image_info(sid: str, element: str):
-    sess = _session(sid)
+    sess = get_session(sid)
 
     def _info():
         table = sess.active_table() if sess.active_table_key else None
@@ -35,21 +35,21 @@ async def image_info(sid: str, element: str):
         return info
 
     try:
-        return await _read_locked(sess, _info)
+        return await read_locked(sess, _info)
     except KeyError as e:
         raise HTTPException(404, str(e))
 
 
 @router.get("/api/sessions/{sid}/image/{element}/thumbnail")
 async def image_thumbnail(sid: str, element: str, max_px: int = 2048, channels: str | None = None):
-    sess = _session(sid)
+    sess = get_session(sid)
     channel_colors = imaging.parse_channel_colors(channels)
 
     def _render():
         return imaging.thumbnail_image(sess.sdata, element, max_px, channel_colors)
 
     try:
-        image = await _render_image(sess, _render)
+        image = await render_image(sess, _render)
     except KeyError as e:
         raise HTTPException(404, str(e))
     return Response(content=image, media_type=imaging.TILE_IMAGE_MEDIA_TYPE,
@@ -58,18 +58,18 @@ async def image_thumbnail(sid: str, element: str, max_px: int = 2048, channels: 
 
 # Serves the session's on-disk normalized raster zarr store so the browser (zarrita
 # FetchStore rooted at .../raster/{element}) can read raw per-channel chunks and
-# composite on the GPU, instead of fetching server-composited PNG tiles. The PNG tile
-# path above stays the fallback. See image_info's client_compositing field.
+# composite on the GPU — the only canvas image path (no server-composited fallback).
+# See image_info's client_compositing field.
 def _raster_file(store_dir: str, rel: str) -> Path | None:
     """Resolve zarr key `rel` under `store_dir`, or None if it escapes the store
-    (absolute, backslash, or `..`) — containment via the shared config._within_dir
+    (absolute, backslash, or `..`) — containment via the shared config.within_dir
     guard. The store dir is under DATA_DIR but this bounds reads to the one
     element's store."""
     if rel.startswith("/") or "\\" in rel or ".." in rel.split("/"):
         return None
     root = Path(store_dir).resolve()
     target = (root / rel).resolve()
-    if not _within_dir(target, root):
+    if not within_dir(target, root):
         return None
     return target
 
@@ -112,12 +112,12 @@ def _byte_range_response(data: bytes, media: str, range_header: str | None, is_h
 
 @router.api_route("/api/sessions/{sid}/raster/{element}/{path:path}", methods=["GET", "HEAD"])
 async def raster_store(sid: str, element: str, path: str, request: Request):
-    sess = _session(sid)
+    sess = get_session(sid)
     is_head = request.method == "HEAD"
     range_header = request.headers.get("range")
 
     def _read():
-        # Resolve AND read while holding the read lock (via _read_locked): object-adoption
+        # Resolve AND read while holding the read lock (via read_locked): object-adoption
         # (session.py::_run_call), perform_subset, and close() all rmtree/replace the
         # raster cache dir under the write lock, so reading the bytes into memory here
         # (rather than streaming a FileResponse lazily after the handler returns) is what
@@ -141,7 +141,7 @@ async def raster_store(sid: str, element: str, path: str, request: Request):
         imaging.raster_chunk_put(sess.sdata, element, path, data)
         return data, media, etag
 
-    result = await _read_locked(sess, _read)
+    result = await read_locked(sess, _read)
     if result is None:
         raise HTTPException(404, "not found")
     data, media, etag = result

@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 
 from .. import snapshots
 from ..config import config, within_data_dir
-from ..deps import _session, _writable_session, _in_executor
+from ..deps import get_session, get_writable_session, in_executor
 
 router = APIRouter()
 
@@ -18,7 +18,7 @@ def _snapshot_errors():
     """Map a render's failure modes onto status codes, shared by save and preview — the
     two run the same `_render_figure` and previously disagreed, the save endpoint letting
     a bad `obsm_key` escape as a 500 where the preview answered 400. A read-lock timeout is
-    the same retryable 503 every other read path returns (deps._read_locked)."""
+    the same retryable 503 every other read path returns (deps.read_locked)."""
     try:
         yield
     except TimeoutError:
@@ -32,9 +32,9 @@ async def save_snapshot_endpoint(sid: str, body: dict):
     """Render and save a high-quality figure snapshot (vector PDF and/or raster PNG) of
     a display. body: {viewport:{target,zoom}, width_px, height_px, dpi,
     formats:['pdf'|'png'], label?, display_id?, include_minimap?}."""
-    sess = _writable_session(sid)
+    sess = get_writable_session(sid)
     with _snapshot_errors():
-        result = await _in_executor(snapshots.save_snapshot, sess, body)
+        result = await in_executor(snapshots.save_snapshot, sess, body)
     if result.get("status") == "failed":
         raise HTTPException(400, result.get("error", "snapshot failed"))
     return result
@@ -44,9 +44,9 @@ async def save_snapshot_endpoint(sid: str, body: dict):
 async def snapshot_preview_endpoint(sid: str, body: dict):
     """A low-cost PNG preview of the snapshot framing for the export modal. Same body as
     the save endpoint; renders small and returns image bytes, writing nothing."""
-    sess = _session(sid)
+    sess = get_session(sid)
     with _snapshot_errors():
-        png = await _in_executor(snapshots.render_preview, sess, body)
+        png = await in_executor(snapshots.render_preview, sess, body)
     return Response(content=png, media_type="image/png")
 
 
@@ -84,7 +84,7 @@ async def get_snapshot_thumbnail(name: str):
 @router.delete("/api/snapshots/{name}")
 async def delete_snapshot_endpoint(name: str):
     try:
-        removed = await _in_executor(snapshots.delete_snapshot, name)
+        removed = await in_executor(snapshots.delete_snapshot, name)
     except ValueError as e:
         raise HTTPException(400, str(e))
     if not removed:

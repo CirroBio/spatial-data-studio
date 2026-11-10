@@ -4,7 +4,7 @@ The assistant is a first-class viewer in the same presence/edit-lock system the
 browser clients use (sessions/presence.py): one fixed client id, a human-readable
 name every other viewer sees in the LockBadge, and a 5 s heartbeat that runs as an
 asyncio task while the assistant has an *active session*. Mutating MCP tools bind
-`deps.CLIENT_ID` to this id, so the ordinary lock guard (`deps._claim_lock`)
+`deps.CLIENT_ID` to this id, so the ordinary lock guard (`deps.claim_lock`)
 attributes their writes to the assistant with no special-casing.
 
 Lock etiquette: a browser viewer auto-holds the lock of the session it watches, so

@@ -3,7 +3,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import config, data_roots, within_data_dir
@@ -11,6 +11,7 @@ from .registry.introspect import REGISTRY
 from .registry.reader_paths import reader_namespace
 from .sessions.manager import SessionManager
 from .sessions.presence import PRESENCE, clean_name
+from .sessions.session import SessionLoadingError
 from .transport.sse import BUS
 from .transport import arrow
 from .transport import tables
@@ -18,8 +19,8 @@ from .transport.compression import SelectiveGZipMiddleware
 from .prewarm import PREWARM
 from . import datasets
 from . import deps
-from .deps import (_session, _writable_session, _claim_lock, _mgr, _in_executor,
-                   _read_locked, _bad_request, bind_client_id, CLIENT_ID,
+from .deps import (get_session, get_writable_session, claim_lock, get_manager, in_executor,
+                   read_locked, bad_request, bind_client_id, CLIENT_ID,
                    default_save_path, search_var_names)
 from .routers import imaging as imaging_router, cirro as cirro_router
 from .routers import snapshots as snapshots_router, recipes as recipes_router
@@ -73,7 +74,7 @@ async def _resource_loop():
             # busy host add up to milliseconds — enough to be visible as a periodic hitch
             # in every client's request latency if run inline on the loop. Take it in a
             # worker thread and publish the finished sample.
-            sample = await _in_executor(deps._mgr().resource_sample)
+            sample = await in_executor(get_manager().resource_sample)
             BUS._publish_inloop("resource.sample", sample)
             failing = 0
         except Exception:
@@ -94,10 +95,19 @@ app = FastAPI(title="Spatial Data Studio", lifespan=lifespan,
               dependencies=[Depends(bind_client_id)])
 app.add_middleware(SelectiveGZipMiddleware)
 
+
+@app.exception_handler(SessionLoadingError)
+async def _session_still_loading(request: Request, exc: SessionLoadingError):
+    """A history/display mutation sent before the session's first object landed
+    (`Session._refuse_while_loading`) is a conflict with its state, not a bad request:
+    409, retryable once it is ready. App-wide so every route that reaches one — here
+    and in routers/ — answers the same way."""
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
+
 # Self-contained route domains live in routers/ (imports above); the rest — sessions,
 # jobs, staging, plots, displays, subset/save, shape annotations, the data path, and
-# SSE — stay here where they share the session/job wiring. Shared helpers (_session,
-# _read_locked, _render_image, …) live in deps.py so both sides use one copy.
+# SSE — stay here where they share the session/job wiring. Shared helpers (get_session,
+# read_locked, render_image, …) live in deps.py so both sides use one copy.
 app.include_router(imaging_router.router)
 app.include_router(cirro_router.router)
 app.include_router(snapshots_router.router)
@@ -132,7 +142,7 @@ async def coverage():
 # ---- sessions --------------------------------------------------------------
 @app.get("/api/sessions")
 async def sessions():
-    return {"sessions": _mgr().list_summaries()}
+    return {"sessions": get_manager().list_summaries()}
 
 
 @app.post("/api/sessions")
@@ -142,22 +152,20 @@ async def create_session(body: dict):
     # `load_id` is a client-minted nonce the New Session dialog subscribes to on the
     # SSE bus: the checkpoint load runs on the session's worker (Session._run_load), so
     # its `session.loading` progress + terminal (done/hash_check) events are routed by
-    # this nonce. Absent for older clients, in which case the load emits nothing.
+    # this nonce. A caller that polls the session instead omits it, and the load then
+    # emits none of them.
     load_id = body.get("load_id")
 
-    with _bad_request():
+    with bad_request():
         if source.get("kind") == "load":
-            sess = await _in_executor(_mgr().create_from_load, source["path"], name, load_id)
+            sess = await in_executor(get_manager().create_from_load, source["path"], name, load_id)
         elif source.get("kind") == "read":
-            sess = _mgr().create_from_read(
+            sess = get_manager().create_from_read(
                 {"namespace": reader_namespace(source), "function": source["function"],
                  "params": source.get("params", {})}, name)
         else:
             raise HTTPException(400, "source.kind must be 'load' or 'read'")
-    # `hash_check` now rides the terminal `session.loading` event, since the checkpoint
-    # load runs asynchronously (Session._run_load) — the shell returned here always has
-    # it None. Kept in the response shape for the read / older-client paths.
-    return {**_mgr().summary(sess), "hash_check": sess.hash_check}
+    return get_manager().summary(sess)
 
 
 # ---- filesystem browse (for the New Session path typeahead) ----------------
@@ -167,7 +175,7 @@ async def fs_browse(path: str | None = None, include_files: bool = False):
     itself is `datasets.browse` (shared with the MCP browse_data_dir tool); this
     boundary only maps its plain exceptions onto HTTP statuses."""
     try:
-        return await _in_executor(datasets.browse, data_roots(), path, include_files)
+        return await in_executor(datasets.browse, data_roots(), path, include_files)
     except ValueError as e:
         raise HTTPException(400, str(e))
     except PermissionError as e:
@@ -184,21 +192,21 @@ async def fs_datasets():
     New Session load picker and the Cirro upload session picker show these on click,
     no typing needed. Served from the prewarmed cache (datasets.py); rescanned only
     after a save invalidates it."""
-    found = await _in_executor(datasets.list_datasets, data_roots())
+    found = await in_executor(datasets.list_datasets, data_roots())
     return {"datasets": found}
 
 
 @app.get("/api/sessions/{sid}")
 async def session_state(sid: str):
-    sess = _session(sid)
-    return await _read_locked(sess, _mgr().state, sess)
+    sess = get_session(sid)
+    return await read_locked(sess, get_manager().state, sess)
 
 
 @app.get("/api/sessions/{sid}/obs/{column}/values")
 async def obs_values(sid: str, column: str):
     """Unique values (+counts) of a categorical obs column, for the Edit
     Annotations widget."""
-    sess = _session(sid)
+    sess = get_session(sid)
 
     def _values():
         obs = sess.active_table().obs
@@ -208,7 +216,7 @@ async def obs_values(sid: str, column: str):
         return [{"value": str(v), "count": int(n)} for v, n in counts.items()]
 
     try:
-        values = await _read_locked(sess, _values)
+        values = await read_locked(sess, _values)
     except (KeyError, RuntimeError) as e:
         raise HTTPException(404, str(e))
     return {"column": column, "values": values}
@@ -218,11 +226,11 @@ async def obs_values(sid: str, column: str):
 async def close_session(sid: str, body: dict | None = None):
     save = bool((body or {}).get("save"))
     if save:
-        _writable_session(sid)  # closing read-only is fine; overwriting its checkpoint is not
+        get_writable_session(sid)  # closing read-only is fine; overwriting its checkpoint is not
     else:
-        _claim_lock(sid)  # ...but never close a session another viewer holds the lock on
+        claim_lock(sid)  # ...but never close a session another viewer holds the lock on
     try:
-        await _in_executor(_mgr().close, sid, save)
+        await in_executor(get_manager().close, sid, save)
     except RuntimeError as e:  # the save failed and close() left the session open
         raise HTTPException(409, str(e))
     return {"ok": True}
@@ -240,7 +248,7 @@ async def presence_heartbeat(body: dict):
     if not client_id:
         raise HTTPException(400, "client_id is required")
     session_id = body.get("session_id")
-    if session_id is not None and _mgr().get(session_id) is None:
+    if session_id is not None and get_manager().get(session_id) is None:
         session_id = None  # the client is still showing a session that has since closed
     return PRESENCE.heartbeat(client_id, clean_name(body.get("name"), client_id), session_id)
 
@@ -256,7 +264,7 @@ def _client_id_or_400() -> str:
 async def take_lock(sid: str):
     """Take an unlocked session's edit lock. 409 while another viewer holds it — the
     holder has to release it first (that is the whole point of the lock)."""
-    _session(sid)
+    get_session(sid)
     holder = PRESENCE.claim(sid, _client_id_or_400())
     if holder is not None:
         raise HTTPException(409, f"session is locked by {holder.name}")
@@ -266,7 +274,7 @@ async def take_lock(sid: str):
 @app.delete("/api/sessions/{sid}/lock")
 async def release_lock(sid: str):
     """Give up the lock so another viewer can take it. Only the holder may."""
-    _session(sid)
+    get_session(sid)
     if not PRESENCE.release(sid, _client_id_or_400()):
         raise HTTPException(403, "you do not hold this session's lock")
     return {"ok": True}
@@ -282,16 +290,16 @@ def _require_known(descriptor: dict):
 
 @app.post("/api/sessions/{sid}/jobs")
 async def enqueue_job(sid: str, descriptor: dict):
-    sess = _writable_session(sid)
+    sess = get_writable_session(sid)
     _require_known(descriptor)
-    with _bad_request():
+    with bad_request():
         job_id = sess.enqueue_descriptor(descriptor)
     return {"job_id": job_id, "status": "queued"}
 
 
 @app.delete("/api/sessions/{sid}/jobs/{job_id}")
 async def cancel_job(sid: str, job_id: str):
-    ok = _writable_session(sid).cancel(job_id)
+    ok = get_writable_session(sid).cancel(job_id)
     if not ok:
         raise HTTPException(409, "job not cancellable (running or finished)")
     return {"ok": True}
@@ -302,7 +310,7 @@ async def job_state(sid: str, job_id: str):
     """Poll a job's status. The live frontend learns status over SSE, but "special"
     jobs (save/subset/annotate/cirro_upload/set_transform) have no
     app_state record, so this is the only way a non-SSE client can await them."""
-    status = _session(sid).job_status(job_id)
+    status = get_session(sid).job_status(job_id)
     if status is None:
         raise HTTPException(404, "job not found")
     return {"job_id": job_id, "status": status}
@@ -310,7 +318,7 @@ async def job_state(sid: str, job_id: str):
 
 @app.get("/api/sessions/{sid}/jobs/{job_id}/log")
 async def job_log(sid: str, job_id: str):
-    log, status = _session(sid).get_log(job_id)
+    log, status = get_session(sid).get_log(job_id)
     if log is None:
         raise HTTPException(404, "no log")
     return {"log": log, "status": status}
@@ -320,27 +328,27 @@ async def job_log(sid: str, job_id: str):
 @app.post("/api/sessions/{sid}/jobs/stage")
 async def stage_job(sid: str, descriptor: dict):
     _require_known(descriptor)
-    with _bad_request():
-        step_id = _writable_session(sid).stage_descriptor(descriptor)
+    with bad_request():
+        step_id = get_writable_session(sid).stage_descriptor(descriptor)
     return {"step_id": step_id, "status": "pending"}
 
 
 @app.post("/api/sessions/{sid}/pending/run-all")
 async def run_all_pending(sid: str):
-    return {"queued": _writable_session(sid).run_all_pending()}
+    return {"queued": get_writable_session(sid).run_all_pending()}
 
 
 @app.post("/api/sessions/{sid}/pending/{step_id}/run")
 async def run_pending(sid: str, step_id: str):
-    if not _writable_session(sid).run_pending(step_id):
+    if not get_writable_session(sid).run_pending(step_id):
         raise HTTPException(409, "not a pending step")
     return {"ok": True}
 
 
 @app.put("/api/sessions/{sid}/pending/{step_id}")
 async def edit_pending(sid: str, step_id: str, body: dict):
-    with _bad_request():
-        edited = _writable_session(sid).edit_pending(step_id, body.get("params", {}))
+    with bad_request():
+        edited = get_writable_session(sid).edit_pending(step_id, body.get("params", {}))
     if not edited:
         raise HTTPException(409, "not a pending step")
     return {"ok": True}
@@ -350,7 +358,7 @@ async def edit_pending(sid: str, step_id: str, body: dict):
 async def delete_history_entry(sid: str, entry_id: str):
     """Delete a compute/plot history entry the user chose to remove (e.g. a kept
     failure, v3 Part 2). Queued/running entries can't be deleted."""
-    if not _writable_session(sid).delete_entry(entry_id):
+    if not get_writable_session(sid).delete_entry(entry_id):
         raise HTTPException(409, "entry not found or still queued/running")
     return {"ok": True}
 
@@ -358,7 +366,7 @@ async def delete_history_entry(sid: str, entry_id: str):
 # ---- plots -----------------------------------------------------------------
 @app.post("/api/sessions/{sid}/plots/{plot_id}/redraw")
 async def redraw(sid: str, plot_id: str):
-    if not _writable_session(sid).redraw_plot(plot_id):
+    if not get_writable_session(sid).redraw_plot(plot_id):
         raise HTTPException(409, "plot not redrawable")
     return {"ok": True}
 
@@ -370,23 +378,26 @@ async def figure(sid: str, plot_id: str, fmt: str = "svg"):
         raise HTTPException(400, "fmt must be svg, pdf, or png")
     # Served from this session's render, or read back from the checkpoint it was loaded
     # from — a drawn plot reloads drawn when its figure came with the file.
-    blob = _session(sid).figure(plot_id, fmt)
+    blob = get_session(sid).figure(plot_id, fmt)
     if blob is None:
         raise HTTPException(404, "figure not drawn")
     return Response(content=blob, media_type=media)
 
 
 # ---- displays --------------------------------------------------------------
+# Both take the session's write lock, which a save holds the read side of for a whole
+# multi-GB zip and a raster re-tile holds for minutes: off the event loop, or one
+# display edit stalls every route and the SSE stream until it is granted.
 @app.post("/api/sessions/{sid}/displays")
 async def add_display(sid: str, spec: dict):
-    spec = _writable_session(sid).add_display(spec)
+    spec = await in_executor(get_writable_session(sid).add_display, spec)
     BUS.publish("display.updated", {"session_id": sid, "display_id": spec["id"], "spec": spec})
     return spec
 
 
 @app.put("/api/sessions/{sid}/displays/{display_id}")
 async def update_display(sid: str, display_id: str, spec: dict):
-    if not _writable_session(sid).update_display(display_id, spec):
+    if not await in_executor(get_writable_session(sid).update_display, display_id, spec):
         raise HTTPException(404, "display not found")
     BUS.publish("display.updated", {"session_id": sid, "display_id": display_id, "spec": spec})
     return {"ok": True}
@@ -395,7 +406,7 @@ async def update_display(sid: str, display_id: str, spec: dict):
 # ---- subset / save ---------------------------------------------------------
 @app.post("/api/sessions/{sid}/subset")
 async def subset(sid: str, body: dict):
-    job_id = _writable_session(sid).enqueue_special("subset", body)
+    job_id = get_writable_session(sid).enqueue_special("subset", body)
     return {"job_id": job_id}
 
 
@@ -403,40 +414,40 @@ async def subset(sid: str, body: dict):
 async def annotate(sid: str, body: dict):
     """Label the cells inside the drawn lasso into a region set (a categorical obs
     column), in place (spec §3.1). Body: {polygons, region_set, category, color?}."""
-    job_id = _writable_session(sid).enqueue_special("annotate", body)
+    job_id = get_writable_session(sid).enqueue_special("annotate", body)
     return {"job_id": job_id}
 
 
 # ---- shape annotations (arrows/lines/boxes/polygons/ellipses) -----------
 @app.get("/api/sessions/{sid}/shape-annotations")
 async def list_shape_annotations(sid: str):
-    sess = _session(sid)
+    sess = get_session(sid)
 
     def _list():
         from .transport import annotations
         return annotations.list_shape_annotations(sess)
 
-    return {"shapes": await _read_locked(sess, _list)}
+    return {"shapes": await read_locked(sess, _list)}
 
 
 @app.post("/api/sessions/{sid}/shape-annotations")
 async def create_shape_annotation(sid: str, body: dict):
     """Create one shape (spec: shape annotations editor). Body: a ShapeAnnotation
     (geometry/stroke/fill?/label?), persisted into `sdata.shapes["annotations"]`."""
-    job_id = _writable_session(sid).enqueue_special("shape_annotate", {"op": "create", "shape": body})
+    job_id = get_writable_session(sid).enqueue_special("shape_annotate", {"op": "create", "shape": body})
     return {"job_id": job_id}
 
 
 @app.put("/api/sessions/{sid}/shape-annotations/{shape_id}")
 async def update_shape_annotation(sid: str, shape_id: str, body: dict):
-    job_id = _writable_session(sid).enqueue_special(
+    job_id = get_writable_session(sid).enqueue_special(
         "shape_annotate", {"op": "update", "shape_id": shape_id, "shape": body})
     return {"job_id": job_id}
 
 
 @app.delete("/api/sessions/{sid}/shape-annotations/{shape_id}")
 async def delete_shape_annotation(sid: str, shape_id: str):
-    job_id = _writable_session(sid).enqueue_special("shape_annotate", {"op": "delete", "shape_id": shape_id})
+    job_id = get_writable_session(sid).enqueue_special("shape_annotate", {"op": "delete", "shape_id": shape_id})
     return {"job_id": job_id}
 
 
@@ -620,7 +631,7 @@ def _validated_destination(sess, body) -> tuple[str, bool]:
 
 @app.post("/api/sessions/{sid}/save")
 async def save(sid: str, body: dict | None = None):
-    sess = _writable_session(sid)
+    sess = get_writable_session(sid)
     body = body or {}
     name = _validated_name(body)
     # The stem `prefix` falls back to is the session's name as it stands now; the rename
@@ -642,20 +653,20 @@ async def save(sid: str, body: dict | None = None):
 @app.get("/api/sessions/{sid}/points-transform")
 async def get_points_transform(sid: str):
     """Current points->global affine (6 floats) of the active table's region element."""
-    sess = _session(sid)
+    sess = get_session(sid)
     from .sessions import transform
 
     def _fields():
         return {"affine": transform.get_affine6(sess.sdata, sess.active_table()),
                 "element": transform.region_name(sess.active_table())}
 
-    return await _read_locked(sess, _fields)
+    return await read_locked(sess, _fields)
 
 
 @app.post("/api/sessions/{sid}/points-transform")
 async def set_points_transform(sid: str, body: dict):
     """Set the points->global affine and persist to disk. body: {affine: [a,b,c,d,e,f]}."""
-    sess = _writable_session(sid)
+    sess = get_writable_session(sid)
     affine = body["affine"]
     if not (isinstance(affine, list) and len(affine) == 6):
         raise HTTPException(400, "affine must be 6 floats [a, b, c, d, e, f]")
@@ -668,7 +679,7 @@ async def set_points_transform(sid: str, body: dict):
 # ---- Arrow data path -------------------------------------------------------
 @app.get("/api/sessions/{sid}/data/{field_path:path}")
 async def data(sid: str, field_path: str):
-    sess = _session(sid)
+    sess = get_session(sid)
 
     def _resolve():
         from .sessions import transform
@@ -678,7 +689,7 @@ async def data(sid: str, field_path: str):
         # key that affine belongs to is `world_key`'s to say, not the literal 'spatial':
         # a multi-region table draws its stitched key instead, and its 'spatial' is then
         # region-local coordinates the affine has no business touching (the same
-        # resolution snapshots._point_coords does). The identity test goes first because
+        # resolution snapshots.point_coords does). The identity test goes first because
         # it settles the outcome on its own, and `world_key` costs a per-region pass over
         # the table that no obs/X/var request should be paying.
         affine6 = transform.get_affine6(sess.sdata, table)
@@ -688,7 +699,7 @@ async def data(sid: str, field_path: str):
         return arrow.to_ipc_bytes(batch)
 
     try:
-        payload = await _read_locked(sess, _resolve)
+        payload = await read_locked(sess, _resolve)
     except (KeyError, ValueError) as e:
         raise HTTPException(404, str(e))
     return Response(content=payload, media_type="application/vnd.apache.arrow.stream")
@@ -700,7 +711,7 @@ async def shapes_geoarrow(sid: str, element: str, bbox: str, limit: int | None =
     (geometry + int32 cell_index), transformed into the coords world space. `bbox`
     is `minx,miny,maxx,maxy` in that world space. 404 if the element is absent or
     not polygonal."""
-    sess = _session(sid)
+    sess = get_session(sid)
     try:
         parts = [float(x) for x in bbox.split(",")]
     except ValueError:
@@ -713,7 +724,7 @@ async def shapes_geoarrow(sid: str, element: str, bbox: str, limit: int | None =
         return geometry.polygons_geoarrow(sess.sdata, sess.active_table(), element, parts, limit)
 
     try:
-        payload = await _read_locked(sess, _build)
+        payload = await read_locked(sess, _build)
     except (KeyError, RuntimeError) as e:
         raise HTTPException(404, str(e))
     return Response(content=payload, media_type="application/vnd.apache.arrow.stream")
@@ -723,24 +734,24 @@ async def shapes_geoarrow(sid: str, element: str, bbox: str, limit: int | None =
 async def var_names(sid: str, q: str = "", limit: int = 50):
     """Search var_names (genes) for the color-by gene picker — the matching lives in
     `deps.search_var_names`, shared with the MCP search_genes tool."""
-    return {"names": await search_var_names(_session(sid), q, limit)}
+    return {"names": await search_var_names(get_session(sid), q, limit)}
 
 
 # ---- data inspector: element inventory + dataframe previews ----------------
 @app.get("/api/sessions/{sid}/elements")
 async def elements(sid: str, sizes: bool = False):
-    sess = _session(sid)
+    sess = get_session(sid)
 
     def _build():
         return tables.describe_elements(sess.active_table(), sess.sdata, sess.active_table_key,
                                         sizes=sizes, stores=sess.raster_stores)
 
-    return await _read_locked(sess, _build)
+    return await read_locked(sess, _build)
 
 
 @app.get("/api/sessions/{sid}/table")
 async def table_preview(sid: str, path: str, offset: int = 0, limit: int = 50):
-    sess = _session(sid)
+    sess = get_session(sid)
     offset = max(0, offset)
     limit = max(1, min(limit, 200))
 
@@ -748,7 +759,7 @@ async def table_preview(sid: str, path: str, offset: int = 0, limit: int = 50):
         return tables.table_preview(sess.active_table(), sess.sdata, path, offset, limit)
 
     try:
-        return await _read_locked(sess, _build)
+        return await read_locked(sess, _build)
     except (KeyError, ValueError) as e:
         raise HTTPException(404, str(e))
 

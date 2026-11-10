@@ -102,9 +102,10 @@ def _now():
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
-# Non-mutating jobs (plots, extracts) run off the serial queue on this shared pool so
-# they don't wait behind a long compute (DESIGN §24). Each task blocks on the compute
-# pool, so a few threads suffice — extras just queue on the compute pool.
+# Extracts (`Function.read_lane`) run off the serial queue on this shared pool so they
+# don't wait behind a long compute (DESIGN §24). Plots stay on the queue: they cache
+# `uns['<col>_colors']` on the live table (see `_enqueue_job`). Each task blocks on the
+# compute pool, so a few threads suffice — extras just queue on the compute pool.
 _READ_LANE_WORKERS = 4
 _read_lane_pool: "ThreadPoolExecutor | None" = None
 _read_lane_lock = threading.Lock()
@@ -128,7 +129,7 @@ def _shallow_adata(adata):
     has independent obs/var/obsm/... containers. Compute commits only ever rebind
     container entries (`m[k] = v`, DESIGN §24), never mutate array contents in place, so
     this snapshot stays consistent while the live object keeps changing — safe to pickle
-    to the compute pool for a read-only plot/extract even as a concurrent compute commits.
+    to the compute pool for a read-lane extract even as a concurrent compute commits.
     (loky pickles args asynchronously on a feeder thread, so a read lock can't cover the
     pickle; a private snapshot is what makes it race-free.)"""
     import anndata as ad
@@ -148,7 +149,7 @@ def _shallow_adata(adata):
 
 
 class _ReadSnapshot:
-    """The read-only slice of the `session` surface a plot/extract `execute()` touches
+    """The read-only slice of the `session` surface an extract's `execute()` touches
     (active_table/sdata/active_image), backed by a shallow table snapshot. Read-lane jobs
     are adata-only, so sdata/image are None."""
     def __init__(self, adata):
@@ -162,6 +163,22 @@ class _ReadSnapshot:
         return None
 
 
+# The statuses `Session.job_status` reports once a job will not change again. A drawn
+# plot's durable record can later move to `invalidated`, but that is the record's status:
+# the job's own stays `drawn`, so `invalidated` never reaches a caller of job_status.
+TERMINAL_JOB_STATUSES = frozenset({"completed", "drawn", "failed", "cancelled"})
+
+_CLOSED_WHILE_LOADING = "the session was closed before it finished loading"
+_CANCELLED_WHILE_LOADING = "the load was cancelled before it finished"
+
+
+class SessionLoadingError(Exception):
+    """A mutation refused because the session is still `loading` (see
+    `Session._refuse_while_loading`). Not a RuntimeError: the routes' `bad_request`
+    maps those to 400, and this is a conflict with the session's state (main.py maps it
+    to 409)."""
+
+
 class Session:
     def __init__(self, sid, name, sdata, app_state, manager, parent_id=None, store_path=None,
                 read_only=False):
@@ -173,7 +190,7 @@ class Session:
         self.parent_id = parent_id
         self.store_path = store_path
         # True for a session opened frozen (create_from_load(read_only=True)): every
-        # mutating route rejects it (main.py::_writable_session) so it stays a
+        # mutating route rejects it (deps.py::get_writable_session) so it stays a
         # read-only view of its checkpoint.
         self.read_only = read_only
         # True when the in-memory object matches its saved checkpoint: set on load
@@ -182,7 +199,8 @@ class Session:
         self.saved = store_path is not None
         # Which parts of the object changed since the last save, so a save can rewrite
         # only those (see _write_checkpoint). `force_full` trips whenever a raster or
-        # other non-table element changed, since those can't be updated incrementally.
+        # other non-table element changed, since those can't be updated incrementally,
+        # and stays set once a full save has run (see _write_checkpoint).
         self.dirty_tables: set[str] = set()
         self.dirty_transforms: set[str] = set()
         self.force_full = False
@@ -195,7 +213,15 @@ class Session:
         self.raster_cache_dir = None  # temp store of tile-normalized rasters; cleaned on close
         self.raster_stores: dict[str, str] = {}  # element name -> its {i}.zarr store dir in raster_cache_dir
         self.raster_cache_mb = 0.0  # on-disk size of raster_cache_dir; computed once at load, surfaced in resource_sample
-        self.hash_check = None  # content-hash verification result when loaded from a hash-named checkpoint (store._hash_result)
+        # Set by manager.close under the write lock. A checkpoint load or read bootstrap
+        # computes with no lock held, so close() can run first and find no object; both
+        # adoption paths check this under their own write lock and discard what they
+        # staged instead of adopting it into a removed session.
+        self.closed = False
+        # The checkpoint load or read bootstrap that brings in the first object. While
+        # it is held at the memory boundary it can be cancelled, which must end the
+        # session `errored` rather than leave it loading with nothing coming.
+        self._first_job = None
         self.created_at = _now()
         self.status = "ready" if sdata is not None else "loading"
         self.error = None  # failure message when status == "errored"; surfaced in the session summary
@@ -210,7 +236,7 @@ class Session:
         self._book = threading.Lock()
         self._queue: "queue.Queue" = queue.Queue()
         self._jobs = {}                 # job_id -> {kind, descriptor, status}
-        self._failed_logs = {}          # job_id -> log (FAILED vanish from history; log still fetchable)
+        self._failed_logs = {}          # job_id -> log of a failure with no history record (special jobs: save, subset, load, …)
         # Jobs whose compute worker died mid-call (OOM kill, segfault) rather than raising.
         self._worker_killed = set()
         # plot_id -> {"svg":bytes,"pdf":bytes,"png":bytes} for the plots THIS session
@@ -224,7 +250,7 @@ class Session:
     def _default_table_key(self):
         if self.sdata is None:
             return None
-        keys = list(getattr(self.sdata, "tables", {}).keys())
+        keys = list(self.sdata.tables.keys())
         return keys[0] if keys else None
 
     def active_table(self):
@@ -249,6 +275,7 @@ class Session:
         """Append a display spec (assigning it an id) under the write lock, so displays
         are mutated on the same footing as every other app_state change rather than
         being spliced from the HTTP handler."""
+        self._refuse_while_loading(displays=True)
         spec["id"] = str(uuid.uuid4())
         with self.lock.writing():
             self.app_state["displays"].append(spec)
@@ -257,6 +284,7 @@ class Session:
     def update_display(self, display_id: str, spec: dict) -> bool:
         """Replace the display identified by `display_id` under the write lock. Returns
         False if no such display exists."""
+        self._refuse_while_loading(displays=True)
         with self.lock.writing():
             for i, d in enumerate(self.app_state["displays"]):
                 if d["id"] == display_id:
@@ -266,6 +294,19 @@ class Session:
         return False
 
     # ---- enqueue / staging (PENDING lifecycle, spec §5.4) -----------------
+    def _refuse_while_loading(self, *, displays: bool = False) -> None:
+        """Refuse an app_state mutation the first object's arrival would lose. A
+        checkpoint load (the one loading session with a `store_path`) replaces app_state
+        wholesale when it lands (`_run_load`), so a record or edit made against the
+        placeholder would silently vanish. A read bootstrap keeps app_state, so history
+        writes queue behind it and run on what it adopts. Display writes (`displays`) are
+        refused during either: until the object lands there is no table for a display to
+        resolve against, and one added early would stand in for the default displays
+        (`auto_displays`). Special jobs (save, annotate, …) need no check: they queue
+        behind the load and run against what it adopts."""
+        if self.status == "loading" and (displays or self.store_path is not None):
+            raise SessionLoadingError("the session is still loading; try again once it is ready")
+
     def _collection(self, ec: str) -> list:
         return self.app_state["plots"] if ec == "plot" else self.app_state["compute_history"]
 
@@ -310,18 +351,23 @@ class Session:
         if fn is not None and fn.effect_class == "read":
             validate_reader_params(descriptor.get("params", {}))
 
-    def enqueue_descriptor(self, descriptor: dict) -> str:
+    def enqueue_descriptor(self, descriptor: dict, *, bootstrap: bool = False) -> str:
         """Run-now fast path: record + submit immediately. A failed job stays in
-        history for the user to inspect or delete (audit-log model, DESIGN §6.1)."""
+        history for the user to inspect or delete (audit-log model, DESIGN §6.1).
+        `bootstrap` marks the read that creates the session (create_from_read)."""
+        self._refuse_while_loading()
         self._guard_reader_paths(descriptor)
         entry_id = str(uuid.uuid4())
         ec, rec = self._make_record(descriptor, entry_id, "queued")
         self._collection(ec).append(rec)
+        if bootstrap:
+            self._first_job = entry_id
         self._enqueue_job(entry_id, ec, descriptor)
         return entry_id
 
     def stage_descriptor(self, descriptor: dict) -> str:
         """Stage a PENDING step: visible + editable, not submitted (spec §5.4)."""
+        self._refuse_while_loading()
         self._guard_reader_paths(descriptor)
         entry_id = str(uuid.uuid4())
         ec, rec = self._make_record(descriptor, entry_id, "pending")
@@ -332,6 +378,7 @@ class Session:
         return {"namespace": rec["namespace"], "function": rec["function"], "params": rec["params"]}
 
     def run_pending(self, entry_id: str) -> bool:
+        self._refuse_while_loading()
         for ec in ("compute", "plot"):
             rec = self._find_record(entry_id, ec)
             if rec and rec["status"] == "pending":
@@ -341,6 +388,7 @@ class Session:
         return False
 
     def run_all_pending(self) -> int:
+        self._refuse_while_loading()
         n = 0
         for ec in ("compute", "plot"):
             for rec in list(self._collection(ec)):
@@ -349,6 +397,7 @@ class Session:
         return n
 
     def edit_pending(self, entry_id: str, params: dict) -> bool:
+        self._refuse_while_loading()
         for ec in ("compute", "plot"):
             rec = self._find_record(entry_id, ec)
             if rec and rec["status"] == "pending":
@@ -365,6 +414,7 @@ class Session:
     def delete_entry(self, entry_id: str) -> bool:
         """Remove a history entry the user chose to delete (e.g. a kept failure).
         Queued/running entries can't be deleted; cancel them first."""
+        self._refuse_while_loading()
         for ec in ("compute", "plot"):
             coll = self._collection(ec)
             for i, rec in enumerate(coll):
@@ -398,8 +448,9 @@ class Session:
         `adopt_name` lets the checkpoint's own recorded name (`app_state["name"]`, see
         `rename`) replace the filename-derived one the shell was created with; the caller
         clears it when the user named this session explicitly."""
-        return self.enqueue_special("load", {"path": path, "load_id": load_id,
-                                             "adopt_name": adopt_name})
+        self._first_job = self.enqueue_special("load", {"path": path, "load_id": load_id,
+                                                        "adopt_name": adopt_name})
+        return self._first_job
 
     def cancel(self, job_id: str) -> bool:
         """Cancel a QUEUED job only (RUNNING is non-interruptible, §6.1). Claims the
@@ -411,6 +462,10 @@ class Session:
                 return False
             job["status"] = "cancelled"  # worker skips cancelled entries
             self._drop_history(job_id, job.get("kind"))
+        if job_id == self._first_job:
+            # The load or bootstrap was claimed while held at the memory boundary: no
+            # object will ever arrive.
+            self._mark_errored(_CANCELLED_WHILE_LOADING)
         return True
 
     # ---- worker loop ------------------------------------------------------
@@ -423,8 +478,9 @@ class Session:
             # Claim the job atomically against cancel(): once it flips to "running"
             # here, a concurrent cancel() sees status != "queued" and refuses, so a
             # cancelled job can never still execute and mutate the object (§6.1 audit
-            # model). The old check-then-run left a window where a job cancelled after
-            # the check still ran while its history record was dropped.
+            # model). Checking the status and claiming the job in two separate steps
+            # would let a job cancelled in between still run with its history record
+            # dropped.
             with self._book:
                 job = self._jobs.get(job_id)
                 if job is None or job["status"] == "cancelled":
@@ -437,7 +493,7 @@ class Session:
             # For each wait the job is flipped back to "queued" so cancel() can still
             # claim it, then re-claimed — exactly one of cancel/run wins, as at dequeue.
             # admit_job publishes memory.warning per refused check, so the hold reports
-            # once per backoff interval (the cadence the old re-queue loop had).
+            # once per backoff interval.
             cancelled = False
             while not self.manager.admit_job(self):
                 with self._book:
@@ -501,7 +557,7 @@ class Session:
         durable record lives in app_state. Old terminal entries (and their logs) are
         dropped beyond a recent window."""
         terminal = [jid for jid, j in list(self._jobs.items())
-                    if j["status"] in ("completed", "drawn", "failed", "cancelled")]
+                    if j["status"] in TERMINAL_JOB_STATUSES]
         if len(terminal) <= self._TERMINAL_JOB_CAP:
             return
         for jid in terminal[:-self._TERMINAL_JOB_CAP]:  # all but the most recent CAP
@@ -562,14 +618,29 @@ class Session:
         if result.status == "failed":
             # A failed read bootstrap (no object ever adopted) leaves the session unusable.
             if self.sdata is None:
-                self.status = "errored"
-                self.error = result.error or "failed"
-                self._publish_summary()
+                self._mark_errored(result.error or "failed")
             self._fail(job_id, kind, result.error or "failed", log=result.log)
             return
 
+        # No object adopted before this call: it is the read bootstrap, and a failure to
+        # adopt its result leaves the session with nothing to show.
+        bootstrap = self.sdata is None
         try:
             with self.lock.writing():
+                if self.closed:
+                    # close() ran while the call computed (it holds no lock), so it found
+                    # nothing of this result to clean up. Adopting now would leave the
+                    # staged extract dir, and the raster cache _adopt_rasters builds, in
+                    # WORK_DIR with no owner, and the summary would put the removed
+                    # session back in every client's list.
+                    if result.extract_dir is not None:
+                        shutil.rmtree(result.extract_dir, ignore_errors=True)
+                    # Settled without an announcement, so a waiter still polling this
+                    # object (MCP run_function / create_session) stops.
+                    self._jobs[job_id]["status"] = "cancelled"
+                    if bootstrap:
+                        self.status, self.error = "errored", _CLOSED_WHILE_LOADING
+                    return
                 if result.new_object is not None:
                     new_object = result.new_object
                     import anndata
@@ -661,13 +732,19 @@ class Session:
                             # would keep the stale channel norm.
                             from .. import imaging
                             imaging.evict_caches(self.sdata)
-        except Exception:
+        except Exception as e:
             # Adoption failed before the staged dir was owned (self.extract_dir still
             # differs): nothing tracks it — close() cleans only self.extract_dir — so
             # drop it here or the unpacked archive leaks. A failure AFTER the swap
             # leaves the dir owned (equal), and close() handles it.
             if result.extract_dir is not None and result.extract_dir != self.extract_dir:
                 shutil.rmtree(result.extract_dir, ignore_errors=True)
+            if bootstrap:
+                # _dispatch only fails the job, and the status is what the UI and the MCP
+                # create_session tool wait on: without this the session reads "loading"
+                # forever. A half-adopted object stays bound with the dirs it owns, which
+                # close() removes.
+                self._mark_errored(str(e))
             raise
 
         self.saved = False  # a completed compute/plot changed the object or its cached state
@@ -787,9 +864,10 @@ class Session:
                 self.force_full = True
 
     def _clear_dirty(self) -> None:
+        # `force_full` is deliberately left alone: only the incremental route runs with
+        # it clear, and once a full save has set it, it stays set (_write_checkpoint).
         self.dirty_tables.clear()
         self.dirty_transforms.clear()
-        self.force_full = False
 
     def _write_checkpoint(self, path: str, hash_name: bool,
                           include: dict[str, list[str]] | None = None,
@@ -800,7 +878,8 @@ class Session:
         changed table/transform elements (reusing the on-disk rasters untouched) when
         the session is still backed by the writable directory store it loaded from and
         no raster changed; otherwise re-serialize the whole object. The caller holds
-        the read lock and updates saved-state after this returns.
+        the session lock — the read side for a save job, the write side for
+        close-with-save — and updates saved-state after this returns.
 
         `include` writes only the named elements, `levels` writes named images at
         reduced resolution, `slots` writes named tables without some of their parts. All
@@ -809,20 +888,31 @@ class Session:
         pyramid levels and table slots the caller asked to drop.
 
         `figures` is the complete set of rendered plots to end up in the file (see
-        `figures_to_persist`) — on both routes, whatever it omits is not in the file."""
+        `figures_to_persist`) — on both routes, whatever it omits is not in the file.
+        Logs travel the same way: the full route carries over the ones the session reads
+        lazily from the store it was loaded from (`get_log`)."""
         from ..persistence.store import (save_spatialdata, update_checkpoint,
                                           can_update_incrementally)
+        whole = include is None and not levels and not slots
         with self._save_lock:
-            if (include is None and not levels and not slots and path.endswith(".zarr.zip")
-                    and not self.force_full
+            if (whole and path.endswith(".zarr.zip") and not self.force_full
                     and can_update_incrementally(self.sdata, self.extract_dir)):
                 self._hold_dropped_figures(figures or {})
                 return update_checkpoint(self.sdata, path, self.app_state,
                                          tables=self.dirty_tables, transforms=self.dirty_transforms,
                                          hash_name=hash_name, figures=figures)
-            return save_spatialdata(self.sdata, path, self.app_state, hash_name=hash_name,
-                                    include=include, levels=levels, slots=slots,
-                                    figures=figures)
+            written = save_spatialdata(self.sdata, path, self.app_state, hash_name=hash_name,
+                                       include=include, levels=levels, slots=slots,
+                                       figures=figures,
+                                       log_store=self.extract_dir or self.store_path)
+            if whole:
+                # A full write leaves the live object backed by the store it was read from
+                # (`_save_zip` writes with update_sdata_path=False), and that store lacks
+                # every change this write just put in the file — not only rasters and
+                # shapes, but tables no longer dirty. An incremental save over it would
+                # quietly put the old elements back, so every later save takes this route.
+                self.force_full = True
+            return written
 
     def _hold_dropped_figures(self, keeping: dict[str, dict[str, bytes]]) -> None:
         """Read into memory any drawn plot's figure that the incremental save is about to
@@ -930,10 +1020,25 @@ class Session:
             with livelog.forward_load_logs(load_id):
                 sdata, app_state, newer, extract_dir, hash_check = load_spatialdata(payload["path"], report)
             with self.lock.writing():
+                if self.closed:
+                    # close() ran while the archive unpacked (the read holds no lock), found
+                    # no object, and so cleaned up nothing of this load's. Adopting now
+                    # would leave the extract dir, and the raster cache _adopt_rasters
+                    # builds, in WORK_DIR with no owner, and the summary would put the
+                    # removed session back in every client's list. The terminal event
+                    # still goes out: the New Session dialog waits on it.
+                    if extract_dir:
+                        shutil.rmtree(extract_dir, ignore_errors=True)
+                    self._jobs[job_id]["status"] = "cancelled"
+                    self.status, self.error = "errored", _CLOSED_WHILE_LOADING
+                    if load_id:
+                        BUS.publish("session.loading", {
+                            "load_id": load_id, "done": True, "status": "errored",
+                            "error": _CLOSED_WHILE_LOADING})
+                    return
                 self.sdata = sdata
                 self.app_state = app_state
                 self.extract_dir = extract_dir
-                self.hash_check = hash_check
                 # The file's own name (set by a save that renamed the session) beats the
                 # one derived from its filename — the two differ whenever the save used a
                 # different prefix. An explicitly named session keeps the caller's name.
@@ -953,9 +1058,7 @@ class Session:
             # Handle the failure here rather than letting it propagate to _dispatch: the
             # New Session dialog follows the load over `session.loading` (keyed by load_id),
             # not job.failed, so it needs the terminal event to surface the error.
-            self.status = "errored"
-            self.error = str(e)
-            self._publish_summary()
+            self._mark_errored(str(e))
             self._fail(job_id, "load", str(e))
             if load_id:
                 BUS.publish("session.loading", {"load_id": load_id, "done": True,
@@ -1008,6 +1111,17 @@ class Session:
         other live refresh path — it is not polled — so without this its row stays
         stuck on the initial loading status until a manual page reload."""
         BUS.publish("session.updated", {"session_id": self.id, "summary": self.manager.summary(self)})
+
+    def _mark_errored(self, error: str) -> None:
+        """Flip a session whose first object never arrived (or failed to adopt) to
+        `errored` and announce it. Under the write lock close() sets `closed` under, so a
+        session already removed is never re-announced into every client's list."""
+        with self.lock.writing():
+            if self.closed:
+                return
+            self.status = "errored"
+            self.error = error
+            self._publish_summary()
 
     def _set_status(self, job_id, kind, status, structural_diff=None, log=None):
         self._jobs[job_id]["status"] = status
@@ -1088,9 +1202,16 @@ class Session:
 
     def _invalidate_plots(self, changed_fields) -> list:
         changed = set(changed_fields)
+        # A plot references the genes it reads as `X:<gene>`, but a rewrite of the
+        # expression matrix reports only the coarse `X:` (registry/base.py keyset: X is
+        # tracked by whole-array identity), so a changed `X:` hits every gene reference —
+        # the same folding useColorField applies to gene colorings.
+        x_changed = "X:" in changed
         invalidated = []
         for p in list(self.app_state["plots"]):
-            if p["status"] == "drawn" and set(p.get("references", [])) & changed:
+            refs = set(p.get("references", []))
+            if p["status"] == "drawn" and (
+                    refs & changed or (x_changed and any(r.startswith("X:") for r in refs))):
                 p["status"] = "invalidated"
                 invalidated.append(p["id"])
         return invalidated
@@ -1157,13 +1278,14 @@ class Session:
         return out
 
     def redraw_plot(self, plot_id: str) -> bool:
+        self._refuse_while_loading()
         rec = self._find_record(plot_id, "plot")
         if not rec or rec["status"] not in ("invalidated", "failed", "drawn"):
             return False
         descriptor = {"namespace": rec["namespace"], "function": rec["function"], "params": rec["params"]}
         # redraw reuses the SAME plot id so the figure cache key stays stable
         rec["status"] = "queued"
-        self._enqueue_job(plot_id, "plot", descriptor)  # read-lane or serial, per the fn
+        self._enqueue_job(plot_id, "plot", descriptor)  # serial queue: a plot caches uns colors
         return True
 
     def job_status(self, job_id: str):

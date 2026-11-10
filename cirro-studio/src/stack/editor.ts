@@ -59,17 +59,23 @@ function checkName(name: string): string {
   return name;
 }
 
-export class StackEditor {
-  // Edits read and rewrite the same root document, so they run one at a time.
-  private queue: Promise<unknown> = Promise.resolve();
+/** Runs work one at a time, in the order it was asked for; work that fails still lets
+ * the next run, and its caller hears the failure. */
+export class SerialQueue {
+  private last: Promise<unknown> = Promise.resolve();
 
-  constructor(private readonly store: Required<AsyncReadable>, private readonly draft: MemoryLayer) {}
-
-  private serial<T>(work: () => Promise<T>): Promise<T> {
-    const next = this.queue.then(work, work);
-    this.queue = next.catch(() => undefined);
+  run<T>(work: () => Promise<T>): Promise<T> {
+    const next = this.last.then(work, work);
+    this.last = next.catch(() => undefined);
     return next;
   }
+}
+
+export class StackEditor {
+  // Edits read and rewrite the same root document, so they run one at a time.
+  private readonly queue = new SerialQueue();
+
+  constructor(private readonly store: Required<AsyncReadable>, private readonly draft: MemoryLayer) {}
 
   private async root(): Promise<RootDoc> {
     const bytes = await this.store.get('/zarr.json');
@@ -139,7 +145,7 @@ export class StackEditor {
 
   /** Add an `obs` column, or replace the one of that name. */
   setObs(table: string, name: string, column: ObsColumn): Promise<Change> {
-    return this.serial(async () => {
+    return this.queue.run(async () => {
       checkName(name);
       const n = await this.nObs(table);
       const length = column.kind === 'categorical' ? column.codes.length : column.values.length;
@@ -169,7 +175,7 @@ export class StackEditor {
   }
 
   deleteObs(table: string, name: string): Promise<Change> {
-    return this.serial(async () => {
+    return this.queue.run(async () => {
       const obs = await this.obsGroup(table);
       obs['column-order'] = ((obs['column-order'] as string[] | undefined) ?? []).filter((c) => c !== name);
       await this.deleteFromIndex(`tables/${table}/obs/${name}`, { path: `tables/${table}/obs`, attributes: obs });
@@ -179,7 +185,7 @@ export class StackEditor {
 
   /** Add an `obsm` entry (cells × `columns`, row-major), or replace the one of that name. */
   setObsm(table: string, key: string, values: Float32Array, columns: number): Promise<Change> {
-    return this.serial(async () => {
+    return this.queue.run(async () => {
       checkName(key);
       const n = await this.nObs(table);
       const path = `tables/${table}/obsm/${key}`;
@@ -192,7 +198,7 @@ export class StackEditor {
 
   /** Write a value at `uns/<path…>`, creating dict groups along the way. */
   setUns(table: string, path: string[], value: UnsValue): Promise<Change> {
-    return this.serial(async () => {
+    return this.queue.run(async () => {
       path.forEach(checkName);
       const entries = new Map<string, NodeDoc>();
       const objects: Objects = new Map();
@@ -236,7 +242,7 @@ export class StackEditor {
   }
 
   deleteUns(table: string, path: string[]): Promise<Change> {
-    return this.serial(async () => {
+    return this.queue.run(async () => {
       await this.deleteFromIndex(`tables/${table}/uns/${path.join('/')}`);
       return { op: 'delete-uns', table, path };
     });

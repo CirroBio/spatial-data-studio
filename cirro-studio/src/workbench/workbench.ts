@@ -9,7 +9,7 @@ import { describeError } from '../cirro/session';
 import type { Collection } from '../data/collection';
 import { kvDelete, kvDeleteWhere, kvGet, kvPut, kvValues } from '../data/idb';
 import { datasetRef } from '../stack/cirroRef';
-import { StackEditor } from '../stack/editor';
+import { SerialQueue, StackEditor } from '../stack/editor';
 import { LayeredStore, MemoryLayer } from '../stack/layeredStore';
 import { FIGURES, LAYER_MANIFEST, UNS_ROOT, type Change } from '../stack/manifest';
 import { baseRef, openBase, resolveChain, savedLayers, topRef, type StackLevel, type StackTop } from '../stack/openStack';
@@ -49,6 +49,9 @@ interface Internal {
   draft: MemoryLayer;
   store: LayeredStore | null;
   editor: StackEditor | null;
+  // Edits, discards and saves each read or replace the whole draft and reopen over it, so
+  // they run one at a time: an edit asked for during a save goes into the draft it leaves.
+  queue: SerialQueue;
 }
 
 const benches = new Map<string, Internal>();
@@ -135,7 +138,7 @@ function benchFor(collection: Collection, top: StackTop): Internal {
   if (!b) {
     b = {
       state: { key, status: 'opening', error: null, levels: [], handle: null, changes: [], draftBytes: 0, dataVersions: {}, revision: 0 },
-      listeners: new Set(), collection, opened: null, draft: new MemoryLayer(), store: null, editor: null,
+      listeners: new Set(), collection, opened: null, draft: new MemoryLayer(), store: null, editor: null, queue: new SerialQueue(),
     };
     benches.set(key, b);
     void open(b, top);
@@ -167,33 +170,48 @@ export function storeOf(key: string): Required<AsyncReadable> {
   return bench(key).store!;
 }
 
-/** Run an edit into the draft, record the change it returns, and reopen over it. */
-export async function applyEdit(key: string, edit: (editor: StackEditor) => Promise<Change>): Promise<void> {
-  const b = bench(key);
-  const change = await edit(b.editor!);
-  const node = changeNode(change);
-  const kept = b.state.changes.filter((c) => changeNode(c) !== node);
-  // Deleting what this draft itself added leaves nothing to record. A node the stack
-  // beneath holds is deleted from it, so that is recorded even when the draft had
-  // replaced the node first.
-  const addedHere = change.op.startsWith('delete-') && !b.opened!.beneath.has(node);
-  const changes = addedHere ? kept : [...kept, change];
-  // With every change taken back, the draft holds only what those edits left behind (the
-  // empty groups they made), which nobody asked to save.
-  if (!changes.length) b.draft = new MemoryLayer();
-  emit(b, { changes });
-  // Kept before the reopen, so a store that then fails to open loses no work.
-  await persist(b);
-  await reopen(b, staleFields(change));
+/** The reference to the store at the bottom of an opened stack: the same for every
+ * version on it. */
+export function baseOf(key: string): string {
+  return baseRef(bench(key).opened!.levels);
 }
 
-export async function discardDraft(key: string): Promise<void> {
+/** Run an edit into the draft, record the change it returns, and reopen over it. It runs
+ * after every edit, discard and save already asked for on this dataset, so `edit` must
+ * not ask for one itself: it would wait on its own turn. */
+export async function applyEdit(key: string, edit: (editor: StackEditor) => Promise<Change>): Promise<void> {
   const b = bench(key);
+  return b.queue.run(async () => {
+    const change = await edit(b.editor!);
+    const node = changeNode(change);
+    const kept = b.state.changes.filter((c) => changeNode(c) !== node);
+    // Deleting what this draft itself added leaves nothing to record. A node the stack
+    // beneath holds is deleted from it, so that is recorded even when the draft had
+    // replaced the node first.
+    const addedHere = change.op.startsWith('delete-') && !b.opened!.beneath.has(node);
+    const changes = addedHere ? kept : [...kept, change];
+    // With every change taken back, the draft holds only what those edits left behind (the
+    // empty groups they made), which nobody asked to save.
+    if (!changes.length) b.draft = new MemoryLayer();
+    emit(b, { changes });
+    // Kept before the reopen, so a store that then fails to open loses no work.
+    await persist(b);
+    await reopen(b, staleFields(change));
+  });
+}
+
+// For work already on the dataset's queue; queued again from there it would wait on itself.
+async function emptyDraft(b: Internal): Promise<void> {
   const stale = b.state.changes.flatMap(staleFields);
   b.draft = new MemoryLayer();
   emit(b, { changes: [] });
   await persist(b);
   await reopen(b, stale);
+}
+
+export async function discardDraft(key: string): Promise<void> {
+  const b = bench(key);
+  return b.queue.run(() => emptyDraft(b));
 }
 
 export interface SaveRequest {
@@ -209,30 +227,32 @@ export interface SaveRequest {
  * then empty: the version holds it. */
 export async function saveDraft(key: string, req: SaveRequest, onProgress?: (fraction: number) => void) {
   const b = bench(key);
-  const levels = b.opened!.levels;
-  const { manifest, files } = versionFiles(b.draft, {
-    parent: topRef(levels),
-    base: baseRef(levels),
-    depth: levels.length,
-    title: req.title,
-    message: req.message,
-    createdBy: req.createdBy,
-    changes: b.state.changes,
+  return b.queue.run(async () => {
+    const levels = b.opened!.levels;
+    const { manifest, files } = versionFiles(b.draft, {
+      parent: topRef(levels),
+      base: baseRef(levels),
+      depth: levels.length,
+      title: req.title,
+      message: req.message,
+      createdBy: req.createdBy,
+      changes: b.state.changes,
+    });
+    const top = levels[levels.length - 1];
+    const result = await b.collection.saveVersion({
+      name: req.name,
+      description: req.message || req.title,
+      files,
+      sourceIds: [top.datasetId],
+      note: {
+        what: `Version "${req.title}" of a SpatialData store, saved by Spatial Data Studio: only what changed, on top of ${manifest.parent}.`,
+        parameters: { parent: manifest.parent, base: manifest.base, depth: manifest.depth, changes: manifest.changes, objects: manifest.files.length },
+      },
+    }, onProgress);
+    // The version holds the draft now; keeping it here too would offer to save it twice.
+    await emptyDraft(b);
+    return { ...result, key: workbenchKey({ datasetId: result.datasetId, path: LAYER_MANIFEST, kind: 'version' }) };
   });
-  const top = levels[levels.length - 1];
-  const result = await b.collection.saveVersion({
-    name: req.name,
-    description: req.message || req.title,
-    files,
-    sourceIds: [top.datasetId],
-    note: {
-      what: `Version "${req.title}" of a SpatialData store, saved by Spatial Data Studio: only what changed, on top of ${manifest.parent}.`,
-      parameters: { parent: manifest.parent, base: manifest.base, depth: manifest.depth, changes: manifest.changes, objects: manifest.files.length },
-    },
-  }, onProgress);
-  // The version holds the draft now; keeping it here too would offer to save it twice.
-  await discardDraft(key);
-  return { ...result, key: workbenchKey({ datasetId: result.datasetId, path: LAYER_MANIFEST, kind: 'version' }) };
 }
 
 /** Forget an opened stack, so opening it again reads it afresh. */

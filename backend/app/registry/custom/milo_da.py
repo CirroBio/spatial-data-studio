@@ -11,6 +11,7 @@ import numpy as np
 
 from ..base import (CallResult, Function, ParamSpec, missing_obs_column, missing_uns_key,
                     resolve_obsm_key, run_compute, run_plot)
+from ._docs import custom_doc
 
 _SAMPLE_PARAM = ParamSpec(
     "sample_key", {"type": "string"}, "obs_categorical", None, required=True,
@@ -22,8 +23,6 @@ _KEY_ADDED_PARAM = ParamSpec(
     "key_added", {"type": "string", "default": "milo"}, "text", None,
     required=True, tooltip="uns key to store the differential-abundance results under", role="output")
 
-
-from ._docs import custom_doc
 
 _CITATION = ("Dann, E. et al. Differential abundance testing on single-cell data using k-nearest "
              "neighbor graphs. Nat Biotechnol 40, 245-253 (2022). doi:10.1038/s41587-021-01033-z (Milo).")

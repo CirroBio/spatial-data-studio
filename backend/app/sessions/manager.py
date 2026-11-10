@@ -13,7 +13,7 @@ from . import appstate, regions, transform
 from .presence import PRESENCE
 from .session import Session
 from ..config import cgroup_mem_usage, config, resolve_within_data_dir
-from ..persistence.store import carries_content_hash, estimate_resident_mb, save_spatialdata
+from ..persistence.store import carries_content_hash, estimate_resident_mb
 from ..registry.reader_paths import validate_reader_params
 from ..transport.sse import BUS
 
@@ -79,18 +79,18 @@ class SessionManager:
         sid = str(uuid.uuid4())
         sess = Session(sid, name or descriptor.get("function", "session"), None, appstate.fresh(), self)
         self.sessions[sid] = sess
-        sess.enqueue_descriptor(descriptor)  # read bootstrap is the first queue job (§12)
+        sess.enqueue_descriptor(descriptor, bootstrap=True)  # read bootstrap is the first queue job (§12)
         BUS.publish("session.created", {"session_id": sid, "summary": self.summary(sess)})
         return sess
 
     def auto_displays(self, sess: Session):
         """Generate the session's default displays (DESIGN §9.1): a spatial canvas, and
-        an embedding canvas once the table has an embedding to show. Called on session
-        creation from a saved store (create_from_load) and again once a read bootstrap
-        job adopts its SpatialData (Session._run_call), since the latter has no
-        sdata/table to build a display from until that job runs — and by the offline CLI
-        once its recipes have computed the embedding no reader ships. Adds only the
-        displays that are missing, so a later call cannot duplicate one."""
+        an embedding canvas once the table has an embedding to show. Called once a
+        checkpoint load (Session._run_load) or a read bootstrap (Session._run_call) has
+        adopted its object, since neither session has an sdata/table to build a display
+        from before then — and by the offline CLI once its recipes have computed the
+        embedding no reader ships. Adds only the displays that are missing, so a later
+        call cannot duplicate one."""
         try:
             ad = sess.active_table()
         except RuntimeError:
@@ -108,7 +108,7 @@ class SessionManager:
             # region on one origin (see sessions/transform.world_key).
             coords = (f"obsm:{transform.world_key(sess.sdata, ad)}" if "spatial" in ad.obsm
                       else (f"obsm:{next(iter(ad.obsm))}" if len(ad.obsm) else None))
-            images = list(getattr(sess.sdata, "images", {}).keys())
+            images = list(sess.sdata.images.keys())
             sess.app_state["displays"].append({
                 "id": str(uuid.uuid4()), "type": "spatial_canvas",
                 "encoding": {"coords": coords, "color_by": color,
@@ -148,7 +148,7 @@ class SessionManager:
         """Full session state for GET /api/sessions/{id} and the MCP tools.
 
         The CALLER must already hold `sess.lock`'s read side — every route reaches
-        here through deps._read_locked. The lock is deliberately not acquired here:
+        here through deps.read_locked. The lock is deliberately not acquired here:
         RWLock is non-reentrant and writer-preferring, so a nested acquire under the
         caller's read hold deadlocks the session permanently the moment a writer
         queues between the two acquires."""
@@ -354,27 +354,33 @@ class SessionManager:
         sess.shutdown()
         try:
             with sess.lock.writing():
-                # A session whose load is still in flight or errored has no object in
-                # memory (sess.sdata is None) even though store_path is set; there is
-                # nothing to save and the on-disk checkpoint is already its latest
-                # state, so skip the save — the temp-dir/presence/session.removed
+                # A session whose load is still in flight or errored has no object worth
+                # saving (none yet, or one half-adopted when the failure struck) even
+                # though store_path is set, and the on-disk checkpoint is already its
+                # latest state, so skip the save — the temp-dir/presence/session.removed
                 # cleanup below must still run.
-                if save and sess.store_path and sess.sdata is not None:
+                if save and sess.store_path and sess.status == "ready":
                     # Re-derive the content hash when the file's own name carries one:
                     # rewriting those bytes under the old digest makes the next load report
                     # "may have been modified" for a file this app itself wrote. The rename
                     # gives back a new path, which becomes this session's store_path for the
-                    # cleanup and events below.
+                    # cleanup and events below. The write path is a save job's, so a loaded
+                    # session takes the incremental route when it can and a full write
+                    # carries over the logs it reads from its source store. Its save lock
+                    # is free: a save job takes it only while holding the read lock, which
+                    # this write lock excludes.
                     hash_name = carries_content_hash(sess.store_path)
-                    sess.store_path = save_spatialdata(
-                        sess.sdata, sess.store_path, sess.app_state, hash_name=hash_name,
-                        figures=sess.figures_to_persist())
+                    sess.store_path = sess._write_checkpoint(
+                        sess.store_path, hash_name, figures=sess.figures_to_persist())
                 # Evict this object's image caches before releasing it — they key on
                 # id(sdata), which a later session's object could reuse (imaging.py).
                 if sess.sdata is not None:
                     from .. import imaging
                     imaging.evict_caches(sess.sdata)
                 sess.sdata = None
+                # A load or read bootstrap still in flight checks this under its own write
+                # lock before adopting, and discards what it staged (Session.closed).
+                sess.closed = True
         except Exception as e:
             # The save failed (read-only or unwritable store path, ...) before anything
             # was torn down: the object is still in memory and the session still owns

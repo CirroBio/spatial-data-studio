@@ -8,13 +8,12 @@ from types import SimpleNamespace
 
 from ..base import CallResult, Function, ParamSpec, missing_obs_column, missing_uns_key, run_compute, \
     run_plot, resolve_obsm_or_result
+from ._docs import custom_doc
 
 _KEY_ADDED_PARAM = ParamSpec(
     "key_added", {"type": "string", "default": "proximity"}, "text", None,
     required=True, tooltip="uns key to store/read the proximity result under", role="output")
 
-
-from ._docs import custom_doc
 
 _CITATION = ("Original permutation-based proximity/avoidance test implemented in this repository "
              "(nearest-neighbor distance between cell-type pairs vs a label-permutation null).")

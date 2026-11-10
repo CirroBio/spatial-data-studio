@@ -86,9 +86,9 @@ backend/    FastAPI app
                   zarr), cirro (device-code login, projects/folders, background uploads),
                   snapshots (figure save/preview/list/delete + checkpoint serving), recipes
   app/deps.py     shared FastAPI helpers used by main.py and every router: the MANAGER
-                  holder, session lookup (_session/_writable_session — the read-only + edit-lock
-                  guard every mutating route goes through), the per-request client id
-                  (bind_client_id/CLIENT_ID), the read-lock/executor wrappers, the
+                  holder, session lookup (get_session/get_writable_session — the read-only
+                  + edit-lock guard every mutating route goes through), the per-request
+                  client id (bind_client_id/CLIENT_ID), the read-lock/executor wrappers, the
                   image-render admission semaphore, and the business helpers shared by a
                   route and the MCP surface (default checkpoint path, var-name search)
   app/registry/   base.py (abstract Function + contract envelope), library_fn.py (one reflection
@@ -214,11 +214,11 @@ Component-level notes: [`backend/README.md`](backend/README.md),
 | Change the REST/SSE/Arrow API | `backend/app/main.py` (core routes) or `backend/app/routers/` (imaging/cirro/snapshots/recipes) + `backend/app/transport/` | [docs/CONTRACT.md](docs/CONTRACT.md) |
 | Change what streams live during import | `backend/app/transport/livelog.py` (+ `capture_log` in `registry/base.py`) | below |
 | Change session/queue/worker behavior | `backend/app/sessions/` | [DESIGN.md](DESIGN.md) §5–6 |
-| Change who may edit a session (presence, the edit lock, viewer names) | `backend/app/sessions/presence.py` + `deps.py` (`_claim_lock`) + `frontend/src/lib/presence.ts` (identity + gate) + `hooks/usePresence.ts` (heartbeat) + `components/LockBadge.tsx` | [DESIGN.md](DESIGN.md) §16.5 |
+| Change who may edit a session (presence, the edit lock, viewer names) | `backend/app/sessions/presence.py` + `deps.py` (`claim_lock`) + `frontend/src/lib/presence.ts` (identity + gate) + `hooks/usePresence.ts` (heartbeat) + `components/LockBadge.tsx` | [DESIGN.md](DESIGN.md) §16.5 |
 | Change the MCP assistant surface (tools, vision render, agent guidance) | `backend/app/mcp/server.py` (tools) + `vision.py` (render/coords/membership) + `agent.py` (presence/lock) + `guides/*.md` (guidance text); mounted in `main.py` | [DESIGN.md](DESIGN.md) §29 |
 | Change the checkpoint/persistence format | `backend/app/persistence/store.py` | [DESIGN.md](DESIGN.md) §3, §14.1, [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) |
 | Change which elements a save can leave out, which parts of a table it can leave out, at what resolution images are written, or how their sizes are estimated | `backend/app/persistence/store.py` (`select_elements`, `trim_pyramid`, `trim_table`, `element_size_mb`, `image_levels`, `table_slots`) + `sessions/appstate.py` (`prune_to_elements`, `prune_to_table_slots`) + `frontend/src/components/SaveCheckpointDialog.tsx` | below |
-| Change where a save writes, what the file is named, or what the session is called | `backend/app/main.py` (`_validated_destination`, `_validated_name`) + `deps.py` (`default_save_path`) + `sessions/session.py` (`rename`, `_run_load`) + `frontend/src/components/SaveCheckpointDialog.tsx` | below |
+| Change where a save writes, what the file is named, or what the session is called | `backend/app/main.py` (`_validated_destination`, `_validated_name`) + `deps.py` (`default_save_path`) + `sessions/session.py` (`rename`, `_run_load`) + `frontend/src/components/SaveCheckpointDialog.tsx` (the checkpoint extension itself is in `frontend/src/lib/checkpointExt.ts`, kept out of the dialog so its lazy chunk stays split) | below |
 | Change how rendered plot figures are stored, served or shown | `backend/app/persistence/store.py` (`_write_figures`, `read_figure`, `figure_index`) + `sessions/session.py` (`figure`, `figure_index`, `figures_to_persist`) + `frontend/src/lib/figures.ts` + `components/PlotGallery.tsx` / `FigureLightbox.tsx` / `PlotDetail.tsx` | below |
 | Change what the serverless viewer can read from a checkpoint | `backend/app/persistence/store.py` (`_write_viewer_sidecar`, the writer half) + `packages/viewer/src/data/checkpointSource.ts` (the reader half) — the two must move together | [DESIGN.md](DESIGN.md) §14.1–14.2, [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) §4 |
 | Change how a store without the sidecar (plain SpatialData) is read — which table, where images and boundaries sit, which cell each boundary belongs to, the default displays | `packages/viewer/src/data/plainSpatialData.ts` (its image placement ports `imaging.pixel_to_world`, its boundary placement `geometry.element_to_world`, its `cellIndexOf` `geometry.cell_index`, its displays `manager.auto_displays`; keep them agreeing) + `plainSpatialData.test.ts` | [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) §9 |
@@ -251,7 +251,7 @@ Component-level notes: [`backend/README.md`](backend/README.md),
 | Change the web app's version format (layer.json, the overlay, how a stack is read) | `cirro-studio/src/stack/` (`manifest.ts`, `layeredStore.ts`, `editor.ts`, `zarrWrite.ts`) + `backend/app/persistence/sds_layers.py` (the Python reader, which the Studio also opens versions through) + [docs/LAYER_FORMAT.md](docs/LAYER_FORMAT.md) in the same commit; `src/stack/python.test.ts` reads a written stack back with anndata, and `test_e2e.run_version_flow` opens a hand-written one in the Studio | [docs/LAYER_FORMAT.md](docs/LAYER_FORMAT.md) |
 | Change an analysis the web app runs in the browser | `cirro-studio/src/analysis/` (the method + its test), `ops.ts` (the worker's operation table) and `defaults.ts` (the parameters a panel records in a version's provenance); its panel in `cirro-studio/src/tasks/`, listed in `TASKS` in `TaskList.tsx` (with the kind of report it keeps) | [cirro-studio/README.md](cirro-studio/README.md) |
 | Change the web app's Composition view (cells per group, or counted across another column) | `cirro-studio/src/item/Composition.tsx` (the view, and Keep as a report) + the **Across** picker in `item/StorePage.tsx` (`ACROSS_PARAM` in `src/app/route.ts`) + `src/analysis/composition.ts` (the counts and the chi-square test of each pair, with `composition.test.ts` against scipy) + `src/reports/CompositionReport.tsx` (the sections the view and its kept report share) + `src/charts/StackedBars.tsx`, which a saved figure also draws (`ChartSpec` in `src/figures/spec.ts`, `ChartFigure.tsx`) | [docs/guide/analyze.md](docs/guide/analyze.md#compare-composition) |
-| Change how the web app reads a store's whole expression matrix (the gene analyses' input) | `packages/viewer/src/data/expressionMatrix.ts` (the read, from the `X_csc` mirror or `X`, and the page/worker exchange of chunk bytes; `expressionMatrix.test.ts`) + `matrixWorker.ts` + `getExpressionMatrix` in `checkpointSource.ts`; the zip reads under it in `zipStore.ts` and `RangeGetReader` (`zipStore.test.ts`, `rangeReader.test.ts`); the web app's one read per opened dataset, with progress for every task waiting on it, in `cirro-studio/src/tasks/data.ts` (`readMatrix`) | [DESIGN.md](DESIGN.md) §14.2 |
+| Change how the web app reads a store's whole expression matrix (the gene analyses' input) | `packages/viewer/src/data/expressionMatrix.ts` (the read, from the `X_csc` mirror or `X`, and the page/worker exchange of chunk bytes; `expressionMatrix.test.ts`) + `matrixWorker.ts` + `getExpressionMatrix` in `checkpointSource.ts`; the zip reads under it in `zipStore.ts` and `RangeGetReader` (`zipStore.test.ts`, `rangeReader.test.ts`); the web app's one read per base store, shared by every version on it, with progress for every task waiting on it, in `cirro-studio/src/tasks/data.ts` (`readMatrix`) | [DESIGN.md](DESIGN.md) §14.2 |
 | Change what an analysis's report shows in the web app | `cirro-studio/src/reports/<Kind>Report.tsx` (registered by kind in `ReportView.tsx`), drawn from what the task keeps with `keepResult` (`reports/store.ts`: the tables and `meta.summary`); shared parts (stat tiles, sections, the gene-set action, tissue thumbnails) in `reports/parts.tsx` and `src/charts/` | [docs/LAYER_FORMAT.md](docs/LAYER_FORMAT.md) |
 | Change the web app's public projects (the default list, adding or dropping one, how one is read) | `cirro-studio/src/data/publicProjects.ts` (the visitor's list in `localStorage`, `DEFAULT_PUBLIC_PROJECT`; tested in `publicProjects.test.ts`) + `publicProject.ts` (one opened: a publication through the shim, or a folder's `index.json` through `indexFolder.ts`, tested in `indexFolder.test.ts`) + `src/app/Settings.tsx` (the dialog); the `index.json` fields go in `backend/app/schemas/checkpoint/checkpoint_index.schema.json` and [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) §8 too | [docs/guide/public-data.md](docs/guide/public-data.md#public-projects) |
 | Change which datasets the web app recognizes, or what it finds in them | `cirro-studio/src/data/discover.ts` (stores, images, versions; runs come from `nextflow/data_types.json`) + `cirro-studio/src/cirro/cirroCollection.ts` (`worthScanning`) + `catalogSheet.ts` (the project catalog's columns) | [cirro-studio/README.md](cirro-studio/README.md) |
@@ -839,7 +839,8 @@ at `../viewer/`, so they are not copied twice. Pull requests build but do not pu
 
 - `npm run test:studio` — the web app's unit tests (vitest): the version stack (writing
   AnnData columns, embeddings and `uns` into a draft over a real checkpoint, and the
-  viewer reading the result), the draft's change list, the in-browser analyses against
+  viewer reading the result), the draft's change list, edits, discards and saves on one
+  dataset running in turn (`src/workbench/workbench.test.ts`), the in-browser analyses against
   reference values, figure export, where a page load starts and what the log-in box
   suggests (`src/tenants.test.ts`), and a workspace's folder names, machine sizes,
   folder map and Cirro's limit refusal (`src/workspaces/workspaces.test.ts`).
@@ -866,9 +867,17 @@ at `../viewer/`, so they are not copied twice. Pull requests build but do not pu
   content-hashed checkpoint naming, a close-with-save whose save fails leaving the
   session open with its temp dirs and edit lock (409, no `session.removed`) and the
   same close cleaning all of it up once a save elsewhere lets it succeed
-  (`run_close_save_failure_flow`), plot invalidation/redraw, the data-inspector
-  endpoints, cross-session isolation, saving a session that ran
-  `filter_rank_genes_groups` (whose `uns` record arrays carry NaN gene names), the
+  (`run_close_save_failure_flow`), a close-with-save over a `.zarr.tar.gz` refused with
+  the archive untouched (`run_archive_save_back_flow`), the loading window — the
+  history/display routes answering 409 while a gated checkpoint load runs, a close
+  mid-load or mid-read discarding what it staged without re-announcing the session, and
+  a bootstrap whose adoption raises ending `errored` (`run_loading_lifecycle_flow`) — a
+  full save keeping every later save full, so a shape annotation and the loaded records'
+  logs survive a second, table-only save (`run_full_save_stays_full_flow`), plot
+  invalidation/redraw (and a gene plot invalidated by a compute that rebinds `X`,
+  `run_gene_plot_invalidation_flow`), the data-inspector endpoints, cross-session
+  isolation, saving a session that ran `filter_rank_genes_groups` (whose `uns` record
+  arrays carry NaN gene names) on both the full and the incremental route, the
   eight spatial/multi-sample custom methods on `xenium_tma.zarr`, the
   cell-segmentation `/shapes/{element}/geoarrow` polygons on `xenium.zarr` (including
   `run_shape_index_check`: the saved checkpoint's boundary GeoParquet is spatially

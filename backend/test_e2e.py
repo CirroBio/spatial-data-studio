@@ -64,7 +64,7 @@ def poll(client, sid, predicate, timeout=180):
     while time.time() - t0 < timeout:
         r = client.get(f"/api/sessions/{sid}")
         if r.status_code == 503:
-            # "session busy: compute in progress, retry" — deps._read_locked gives up
+            # "session busy: compute in progress, retry" — deps.read_locked gives up
             # after READ_LOCK_TIMEOUT_S when a writer holds the session lock (a load's
             # write-locked raster adoption can exceed it on a slow machine) and
             # documents the 503 as retryable; the frontend re-issues exactly this
@@ -1465,6 +1465,59 @@ def run_incremental_save_flow(client, checkpoint_path):
     print("[ok] incremental-saved table change survived reload")
 
 
+def run_full_save_stays_full_flow(client, checkpoint_path):
+    """Once a save of a loaded checkpoint has taken the full route, every later save does
+    too. The full write leaves the live object backed by the store it was unpacked from,
+    which lacks what that write added, so an incremental save over it would drop those
+    changes: here a shape annotation (which forces the full route) made before the first
+    save must survive a second save that only changed a table. Both files must also keep
+    the logs of the records loaded from the checkpoint, which no inline `_log` carries."""
+    from app.deps import MANAGER
+    from app.persistence import store
+    sid = new_session(client, checkpoint_path)
+    sess = MANAGER.get(sid)
+    assert store.can_update_incrementally(sess.sdata, sess.extract_dir), \
+        "a checkpoint-loaded session should be incremental-capable"
+    st = client.get(f"/api/sessions/{sid}").json()
+    logged = [r["id"] for r in st["app_state"]["compute_history"] + st["app_state"]["plots"]
+              if client.get(f"/api/sessions/{sid}/jobs/{r['id']}/log").status_code == 200]
+    assert logged, "the source checkpoint carries no logs to follow"
+
+    shape = {"geometry": {"kind": "box", "vertices": [[0, 0], [5, 0], [5, 5], [0, 5]]},
+             "stroke": {"color": "#00ff00", "width": 2, "dash": "solid", "arrowStart": False,
+                        "arrowEnd": False, "arrowSize": 10, "z": 0},
+             "fill": {"enabled": True, "color": "#00ff00", "alpha": 0.25, "z": 0}}
+    job = client.post(f"/api/sessions/{sid}/shape-annotations", json=shape).json()
+    assert wait_job(client, sid, job["job_id"])["status"] == "completed"
+    first = os.path.join(str(config.DATA_DIR), "full_route_first.zarr.zip")
+    sv = client.post(f"/api/sessions/{sid}/save", json={"path": first}).json()
+    assert wait_job(client, sid, sv["job_id"])["status"] == "completed"
+    assert sess.force_full, "a full save left the next save free to go incremental"
+
+    client.post(f"/api/sessions/{sid}/jobs", json={
+        "namespace": "sc.pp", "function": "normalize_total", "params": {}})
+    poll(client, sid, lambda s: hist_status(s, "normalize_total")[0] == "completed")
+    second = os.path.join(str(config.DATA_DIR), "full_route_second.zarr.zip")
+    sv = client.post(f"/api/sessions/{sid}/save", json={"path": second}).json()
+    assert wait_job(client, sid, sv["job_id"])["status"] == "completed"
+
+    for path in (first, second):
+        name = os.path.basename(path)
+        rid = new_session(client, path)
+        shapes = client.get(f"/api/sessions/{rid}/shape-annotations").json()["shapes"]
+        assert len(shapes) == 1, f"{name} lost the shape annotation: {shapes}"
+        missing = [i for i in logged
+                   if client.get(f"/api/sessions/{rid}/jobs/{i}/log").status_code != 200]
+        assert not missing, f"{name} dropped the logs of records it was loaded with: {missing}"
+        if path == second:
+            assert hist_status(client.get(f"/api/sessions/{rid}").json(),
+                               "normalize_total")[0] == "completed"
+        assert client.delete(f"/api/sessions/{rid}").status_code == 200
+    assert client.delete(f"/api/sessions/{sid}").status_code == 200
+    print(f"[ok] a full save kept later saves full: the annotation and {len(logged)} loaded "
+          "logs survived a second, table-only save")
+
+
 def run_selective_save_flow(client, checkpoint_path):
     """A save can name which elements go in the file, at what resolution, and which
     slots of a table. Asserts the per-element (and per pyramid level, per table slot)
@@ -1793,6 +1846,221 @@ def run_close_save_failure_flow(client):
     print("[ok] close-with-save then succeeded and removed temp dirs, presence and the session")
 
 
+def run_archive_save_back_flow(client, checkpoint_path):
+    """A session opened from a `.zarr.tar.gz` can't be saved back into it: nothing
+    writes that archive, and the directory-store swap would move it aside and leave a
+    directory under its name. A close-with-save answers 409 telling the user to save a
+    new checkpoint, the archive is untouched, and a plain close still works."""
+    import tarfile
+    import zipfile
+    archive = os.path.join(str(config.DATA_DIR), "archive_session.zarr.tar.gz")
+    unpacked = tempfile.mkdtemp()
+    try:
+        with zipfile.ZipFile(checkpoint_path) as zf:
+            zf.extractall(unpacked)
+        with tarfile.open(archive, "w:gz") as tf:
+            tf.add(unpacked, arcname="archive_session.zarr")
+    finally:
+        shutil.rmtree(unpacked, ignore_errors=True)
+    size = os.path.getsize(archive)
+
+    r = client.post("/api/sessions", json={"source": {"kind": "load", "path": archive}})
+    assert r.status_code == 200, r.text
+    sid = r.json()["id"]
+    st = poll(client, sid, lambda s: s["summary"]["status"] in ("ready", "errored"))
+    assert st["summary"]["status"] == "ready", st["summary"]
+    r = client.request("DELETE", f"/api/sessions/{sid}", json={"save": True})
+    assert r.status_code == 409 and "new checkpoint" in r.json()["detail"], f"{r.status_code}: {r.text}"
+    assert os.path.isfile(archive) and tarfile.is_tarfile(archive) \
+        and os.path.getsize(archive) == size, "a refused save-back changed the archive"
+    assert not os.path.exists(archive + ".bak"), "a refused save-back left a .bak behind"
+    assert client.delete(f"/api/sessions/{sid}").status_code == 200
+    os.remove(archive)
+    print(f"[ok] close-with-save over a .zarr.tar.gz refused (409) and left it intact: "
+          f"{r.json()['detail']}")
+
+
+def run_loading_lifecycle_flow(client, checkpoint_path):
+    """The window between creating a session and its first object landing. A checkpoint
+    load replaces app_state wholesale when it lands, so every route that writes history
+    or displays answers 409 until then, and accepts once the session is ready; a read
+    bootstrap keeps app_state, so only display writes are refused during it. Closing a
+    session mid-load discards the archive the load unpacked and never re-announces the
+    session; a read bootstrap closed mid-call adopts nothing, so no raster cache appears
+    in WORK_DIR. A bootstrap whose adoption raises, or that is cancelled while held at
+    the memory boundary, ends `errored`, not `loading` forever. The load and the
+    bootstrap are held at a gate so the window can be acted in."""
+    import threading
+    from app.deps import MANAGER
+    from app.persistence import store
+    from app.sessions.adapter import ADAPTER
+    from app.transport.sse import BUS
+
+    events = []
+    orig_publish = BUS.publish
+
+    def _spy(event_type, data, _orig=orig_publish):
+        events.append((event_type, data))
+        return _orig(event_type, data)
+
+    def wait_for(predicate, what, timeout=180):
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            if predicate():
+                return
+            time.sleep(0.2)
+        raise TimeoutError(what)
+
+    def announced_after(sid, mark):
+        return [d for e, d in events[mark:] if e == "session.updated" and d["session_id"] == sid]
+
+    def raster_caches():
+        return {e for e in os.listdir(config.WORK_DIR) if e.endswith(".rasters")}
+
+    real_load = store.load_spatialdata
+    load_gate = threading.Event()
+    staged = []
+
+    def gated_load(path, progress=None):
+        loaded = real_load(path, progress)
+        staged.append(loaded[3])  # the extract dir the archive was unpacked into
+        load_gate.wait(180)
+        return loaded
+
+    load_source = {"kind": "load", "path": checkpoint_path}
+    read_source = {"kind": "read", "namespace": "io", "function": "read_zarr", "params": {"store": DATA}}
+    desc = {"namespace": "sc.pp", "function": "normalize_total", "params": {}}
+    display = {"type": "spatial_canvas", "encoding": {}, "viewport": None}
+    BUS.publish = _spy
+    store.load_spatialdata = gated_load
+    try:
+        r = client.post("/api/sessions", json={"source": load_source, "load_id": "e2e-lifecycle"})
+        assert r.status_code == 200, r.text
+        assert "hash_check" not in r.json(), r.json()
+        sid = r.json()["id"]
+        sess = MANAGER.get(sid)
+        wait_for(lambda: staged, "the gated load never unpacked the checkpoint")
+        assert sess.status == "loading"
+        refused = {
+            "POST /jobs": client.post(f"/api/sessions/{sid}/jobs", json=desc),
+            "POST /jobs/stage": client.post(f"/api/sessions/{sid}/jobs/stage", json=desc),
+            "POST /pending/run-all": client.post(f"/api/sessions/{sid}/pending/run-all"),
+            "POST /displays": client.post(f"/api/sessions/{sid}/displays", json=display),
+            "PUT /displays/{id}": client.put(f"/api/sessions/{sid}/displays/any", json=display),
+            "POST /recipe/run": client.post(f"/api/sessions/{sid}/recipe/run", json={"steps": [desc]}),
+        }
+        for route, resp in refused.items():
+            assert resp.status_code == 409 and "still loading" in resp.json()["detail"], \
+                f"{route} while loading: {resp.status_code} {resp.text}"
+        assert not sess.app_state["compute_history"] and not sess.app_state["displays"]
+        print(f"[ok] {len(refused)} history/display routes answer 409 while a checkpoint loads")
+
+        mark = len(events)
+        assert client.delete(f"/api/sessions/{sid}").status_code == 200
+        load_gate.set()
+        wait_for(lambda: any(e == "session.loading" and d.get("load_id") == "e2e-lifecycle"
+                             and d.get("done") for e, d in events[mark:]),
+                 "no terminal session.loading after closing mid-load")
+        terminal = next(d for e, d in events[mark:] if e == "session.loading" and d.get("done"))
+        assert terminal["status"] == "errored", terminal
+        assert not os.path.exists(staged[0]), f"closing mid-load leaked {staged[0]}"
+        assert not announced_after(sid, mark), "a session closed mid-load was re-announced"
+        assert sess.sdata is None
+        assert sess.status == "errored", "a session closed mid-load was left loading"
+        assert sid not in [s["id"] for s in client.get("/api/sessions").json()["sessions"]]
+        print("[ok] closing mid-load discarded the unpacked archive and kept the session closed")
+
+        load_gate.clear()
+        r = client.post("/api/sessions", json={"source": load_source})
+        sid2 = r.json()["id"]
+        wait_for(lambda: len(staged) == 2, "the second gated load never unpacked")
+        assert client.post(f"/api/sessions/{sid2}/jobs", json=desc).status_code == 409
+        load_gate.set()
+        poll(client, sid2, lambda s: s["summary"]["status"] == "ready")
+        job = client.post(f"/api/sessions/{sid2}/jobs", json=desc)
+        assert job.status_code == 200, job.text
+        assert wait_job(client, sid2, job.json()["job_id"])["status"] == "completed"
+        assert client.delete(f"/api/sessions/{sid2}").status_code == 200
+        print("[ok] the same routes accept once the load has landed")
+    finally:
+        store.load_spatialdata = real_load
+        load_gate.set()
+        BUS.publish = orig_publish
+
+    # A bootstrap whose adoption raises (here the default displays, as `world_key` does
+    # for a table annotating regions with no declared transform) must end errored.
+    def failing_displays(_sess):
+        raise ValueError("table annotates regions with no declared transform")
+    MANAGER.auto_displays = failing_displays
+    try:
+        sid3 = client.post("/api/sessions", json={"source": read_source}).json()["id"]
+        st = poll(client, sid3, lambda s: s["summary"]["status"] != "loading")
+    finally:
+        del MANAGER.auto_displays
+    assert st["summary"]["status"] == "errored" and "declared transform" in st["summary"]["error"], \
+        st["summary"]
+    sess3 = MANAGER.get(sid3)
+    owned = [d for d in (sess3.extract_dir, sess3.raster_cache_dir) if d]
+    assert client.delete(f"/api/sessions/{sid3}").status_code == 200
+    assert not any(os.path.exists(d) for d in owned), f"close left {owned} behind"
+    print("[ok] a bootstrap whose adoption raised ended errored, and closed clean")
+
+    real_execute = ADAPTER.execute
+    returned, call_gate = threading.Event(), threading.Event()
+
+    def gated_execute(descriptor, session):
+        result = real_execute(descriptor, session)
+        if descriptor.get("function") == "read_zarr":
+            returned.set()
+            call_gate.wait(180)
+        return result
+
+    ADAPTER.execute = gated_execute
+    BUS.publish = _spy
+    try:
+        sid4 = client.post("/api/sessions", json={"source": read_source}).json()["id"]
+        sess4 = MANAGER.get(sid4)
+        assert returned.wait(180), "the gated read never returned"
+        # A read bootstrap keeps app_state, so history writes queue behind it; a display
+        # has no table to resolve against until it lands.
+        queued = client.post(f"/api/sessions/{sid4}/jobs", json=desc)
+        assert queued.status_code == 200, f"POST /jobs during a read bootstrap: {queued.text}"
+        assert client.post(f"/api/sessions/{sid4}/displays", json=display).status_code == 409
+        bootstrap_job = sess4._first_job
+        caches = raster_caches()
+        mark = len(events)
+        assert client.delete(f"/api/sessions/{sid4}").status_code == 200
+        call_gate.set()
+        sess4._worker.join(180)
+    finally:
+        del ADAPTER.execute
+        call_gate.set()
+        BUS.publish = orig_publish
+    assert not sess4._worker.is_alive(), "the closed session's worker never finished the read"
+    assert sess4.sdata is None, "a session closed mid-read adopted the read's object"
+    assert not raster_caches() - caches, "a session closed mid-read built a raster cache"
+    assert not announced_after(sid4, mark), "a session closed mid-read was re-announced"
+    assert sess4.job_status(bootstrap_job) == "cancelled" and sess4.status == "errored", \
+        (sess4.job_status(bootstrap_job), sess4.status)
+    print("[ok] closing mid-read adopted nothing, built no raster cache, and settled the job")
+
+    # A bootstrap held at the memory boundary is claimable by cancel(); cancelling it
+    # means no object is coming, so the session must end errored, not loading forever.
+    MANAGER.admit_job = lambda _sess: False
+    try:
+        sid5 = client.post("/api/sessions", json={"source": read_source}).json()["id"]
+        sess5 = MANAGER.get(sid5)
+        wait_for(lambda: sess5._first_job and sess5.job_status(sess5._first_job) == "queued",
+                 "the bootstrap was never held at the memory boundary")
+        assert client.delete(f"/api/sessions/{sid5}/jobs/{sess5._first_job}").status_code == 200
+    finally:
+        del MANAGER.admit_job
+    st = poll(client, sid5, lambda s: s["summary"]["status"] != "loading")
+    assert st["summary"]["status"] == "errored", st["summary"]
+    assert client.delete(f"/api/sessions/{sid5}").status_code == 200
+    print("[ok] cancelling a held bootstrap ended the session errored")
+
+
 def run_invalidation_flow(client):
     """data_versions bump + plot invalidation + redraw, and reload turning a drawn
     plot into invalidated (recent invalidation wiring)."""
@@ -1849,6 +2117,34 @@ def run_invalidation_flow(client):
         [p["status"] for p in st2["app_state"]["plots"]]
     assert st2["figures"] == {}, st2["figures"]
     print("[ok] invalidated plots keep no figure and reload invalidated")
+
+
+def run_gene_plot_invalidation_flow(client):
+    """A plot drawn from a gene references it as `X:<gene>`, while a compute that rebinds
+    the expression matrix (sc.pp.scale here) reports only the coarse `X:` field: the
+    matrix is tracked by whole-array identity. That field must still invalidate the plot,
+    or it stays `drawn` over a figure of the old values."""
+    sid = new_session(client)
+    for namespace, fn, params in (
+            ("sc.tl", "rank_genes_groups", {"groupby": "leiden"}),
+            ("sc.pl", "rank_genes_groups_dotplot", {"groupby": "leiden", "var_names": ["Sox17"]})):
+        client.post(f"/api/sessions/{sid}/jobs",
+                    json={"namespace": namespace, "function": fn, "params": params})
+    st = poll(client, sid, lambda s: any(p["status"] in ("drawn", "failed")
+                                         for p in s["app_state"]["plots"]))
+    plot = st["app_state"]["plots"][0]
+    assert plot["status"] == "drawn", plot
+    assert "X:Sox17" in plot["references"], plot["references"]
+
+    job = client.post(f"/api/sessions/{sid}/jobs", json={
+        "namespace": "sc.pp", "function": "scale", "params": {}}).json()
+    assert wait_job(client, sid, job["job_id"])["status"] == "completed"
+    st = client.get(f"/api/sessions/{sid}").json()
+    assert st["data_versions"].get("X:"), "scale reported no X: change to invalidate against"
+    status = next(p["status"] for p in st["app_state"]["plots"] if p["id"] == plot["id"])
+    assert status == "invalidated", f"gene plot left {status} after X: changed"
+    assert client.delete(f"/api/sessions/{sid}").status_code == 200
+    print("[ok] a changed X: invalidated a plot drawn from a gene")
 
 
 def run_figure_persistence(client, sid, plot_id):
@@ -2043,6 +2339,35 @@ def run_color_limits_parity():
     assert np.allclose(rgba[at_99, :3], lut[int(np.floor(99 / 1000 * 255))]), \
         "the display's color_limits are not honored"
     print(f"[ok] numeric color range agrees across canvas and figure renderer ([0, {high:.2f}] by default)")
+
+
+def run_log_id_containment_check():
+    """A compute/plot record's id names its log file under the store's logs/, and a
+    loaded checkpoint's app_state only promises that id is a string. An id that would
+    land outside logs/ (relative escape or absolute path) must have its log left out
+    instead of written there, and must read back as "no log" instead of opening that
+    file: the MCP get_job tool hands its argument to read_log."""
+    import gzip
+    import uuid
+    from app.persistence.store import _write_logs, read_log
+
+    with tempfile.TemporaryDirectory() as tmp:
+        store = os.path.join(tmp, "store.zarr")
+        minted = str(uuid.uuid4())
+        _write_logs(store, {minted: "minted id"})
+        assert read_log(store, minted) == "minted id", "an app-minted uuid4 id must round-trip"
+
+        planted = os.path.join(tmp, "planted.log.gz")
+        with gzip.open(planted, "wt", encoding="utf-8") as f:
+            f.write("outside the store")
+        for escape in (os.path.join("..", "..", "planted"), os.path.join(tmp, "planted")):
+            assert read_log(store, escape) is None, f"read_log followed {escape!r} out of logs/"
+
+        for escape in (os.path.join("..", "..", "escaped"), os.path.join(tmp, "absolute"), "a/b"):
+            _write_logs(store, {escape: "x"})
+        written = {os.path.relpath(os.path.join(d, n), tmp) for d, _, names in os.walk(tmp) for n in names}
+        assert written == {os.path.join("store.zarr", "logs", f"{minted}.log.gz"), "planted.log.gz"}, written
+    print("[ok] log ids that leave logs/ are left out on write and read as no log")
 
 
 def run_cirro_auth_flow(client):
@@ -2675,32 +3000,60 @@ def run_filter_rank_genes_save_flow(client):
     """sc.tl.filter_rank_genes_groups marks dropped genes with np.nan (a float) in the
     object `names` record array of uns['rank_genes_groups_filtered']. anndata's zarr
     writer calls .encode() on that float (and hits a zero-length string dtype when a
-    whole group is filtered), so no such session could be saved. save_spatialdata now
-    coerces those fields to fixed-length unicode for the write only. Guards that a
-    rank-and-filter session saves, and that the live object keeps its NaNs afterward."""
+    whole group is filtered), so no such session could be saved. Both writers —
+    save_spatialdata and the incremental update_checkpoint — coerce those fields to
+    fixed-length unicode for the write only. Guards that a rank-and-filter session saves
+    on each route, and that the live object keeps its NaNs afterward."""
+    from app.deps import MANAGER
+    from app.persistence import store
+
     def nan_count(client, sid):
-        from app.deps import MANAGER
         names = MANAGER.get(sid).active_table().uns["rank_genes_groups_filtered"]["names"]
         return sum(1 for row in names for x in tuple(row) if not isinstance(x, str))
 
-    sid = new_session(client, DATA)  # visium_hne carries obs['leiden']
-    for fn, params in (("rank_genes_groups", {"groupby": "leiden"}),
-                       ("filter_rank_genes_groups", {})):
-        client.post(f"/api/sessions/{sid}/jobs",
-                    json={"namespace": "sc.tl", "function": fn, "params": params})
-        poll(client, sid, lambda s, fn=fn: hist_status(s, fn)[0] in ("completed", "failed"))
-        assert hist_status(client.get(f"/api/sessions/{sid}").json(), fn)[0] == "completed", \
-            f"{fn} did not complete"
+    def rank_and_filter(sid):
+        # By job id: a session reloaded from this flow's own file already holds
+        # completed records of both functions.
+        for fn, params in (("rank_genes_groups", {"groupby": "leiden"}),
+                           ("filter_rank_genes_groups", {})):
+            job = client.post(f"/api/sessions/{sid}/jobs",
+                              json={"namespace": "sc.tl", "function": fn, "params": params}).json()
+            assert wait_job(client, sid, job["job_id"])["status"] == "completed", \
+                f"{fn} did not complete"
 
+    def save(sid, path):
+        sv = client.post(f"/api/sessions/{sid}/save", json={"path": path}).json()
+        js = wait_job(client, sid, sv["job_id"])
+        assert js["status"] == "completed", \
+            f"save after filter_rank_genes_groups failed: {js.get('error')}"
+
+    sid = new_session(client, DATA)  # visium_hne carries obs['leiden']
+    rank_and_filter(sid)
     before = nan_count(client, sid)
     out = os.path.join(str(config.DATA_DIR), "rank_filter_session.zarr.zip")
-    sv = client.post(f"/api/sessions/{sid}/save", json={"path": out}).json()
-    js = wait_job(client, sid, sv["job_id"])
-    assert js["status"] == "completed", \
-        f"save after filter_rank_genes_groups failed: {js.get('error')}"
+    save(sid, out)
     assert nan_count(client, sid) == before, "save mutated the live uns names array"
     print(f"[ok] rank+filter session saved; live uns NaN markers preserved ({before})")
     assert client.delete(f"/api/sessions/{sid}").status_code == 200
+
+    # The reloaded file holds '' where the NaNs were, so filter again on it: the save
+    # below then rewrites the table in place with NaNs in uns.
+    sid = new_session(client, out)
+    sess = MANAGER.get(sid)
+    rank_and_filter(sid)
+    before = nan_count(client, sid)
+    assert before, "filter_rank_genes_groups marked no genes on the reloaded session"
+    assert store.can_update_incrementally(sess.sdata, sess.extract_dir) and not sess.force_full, \
+        "the reloaded rank+filter session should save incrementally"
+    out = os.path.join(str(config.DATA_DIR), "rank_filter_incremental.zarr.zip")
+    save(sid, out)
+    assert not sess.force_full, "the save took the full route, not the incremental one"
+    assert nan_count(client, sid) == before, "the incremental save mutated the live uns names array"
+    reloaded = new_session(client, out)
+    assert "rank_genes_groups_filtered" in MANAGER.get(reloaded).active_table().uns
+    print(f"[ok] rank+filter session saved incrementally; live uns NaN markers preserved ({before})")
+    for s in (sid, reloaded):
+        assert client.delete(f"/api/sessions/{s}").status_code == 200
 
 
 # ---- MCP assistant surface (app/mcp/) ---------------------------------------
@@ -3608,15 +3961,20 @@ def main():
         run_shape_annotations_flow(client)
         run_transform_flow(client)
         run_incremental_save_flow(client, out)
+        run_full_save_stays_full_flow(client, out)
         run_selective_save_flow(client, out)
         run_content_hash_flow(client)
         run_save_destination_flow(client)
         run_close_save_failure_flow(client)
+        run_archive_save_back_flow(client, out)
+        run_loading_lifecycle_flow(client, out)
         run_invalidation_flow(client)
+        run_gene_plot_invalidation_flow(client)
         run_encoding_persistence_flow(client)
         run_encoding_defaults_parity()
         run_viridis_lut_parity()
         run_color_limits_parity()
+        run_log_id_containment_check()
         run_inspector_flow(client)
         run_session_lock_flow(client)
         run_cirro_auth_flow(client)

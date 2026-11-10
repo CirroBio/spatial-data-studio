@@ -25,8 +25,10 @@ Shared contract between:
 ## Message envelope
 
 Every message is `postMessage`d with `targetOrigin='*'` for v1 (local testing;
-the dashboard side validates `event.source === iframe.contentWindow` and
-`event.data?.source` below; tighten origins later).
+tighten origins later). Each side checks the sender instead: the dashboard accepts
+only `event.source === iframe.contentWindow`, and the viewer accepts only
+`event.source === window.parent`, so the host must be the viewer's direct parent
+frame.
 
 - Viewer -> parent: `{ source: 'sds-embed', version: 1, type, ... }`
 - Parent -> viewer: `{ source: 'cirro-dashboard', version: 1, type, ... }`

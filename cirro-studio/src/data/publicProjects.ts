@@ -3,8 +3,8 @@
 // app lists is the visitor's own choice, kept in this browser: it starts with this app's
 // publication, and Settings adds or drops any of them.
 import { useSyncExternalStore } from 'react';
+import { storeName } from '@cirrobio/spatial-viewer';
 import { appKey } from '../app/appInfo';
-import { storeName } from './discover';
 
 // This app's own publication (Cirro-publish-data-objects, SPEC.md "Publication layout").
 export const DEFAULT_PUBLIC_PROJECT = 'https://published.cirrodata.io/published/spatial-data-studio';
@@ -72,8 +72,9 @@ export function openedStoreProject(address: string): OpenedStoreProject {
   } catch {
     // A stray % that encodes nothing: the name as written.
   }
+  // storeName decodes, so it is given the segment as written; `path` is decoded already.
   return {
-    project: { kind: 'store', url: url.href, id: addressId('store', bare), name: storeName(path), description: '' },
+    project: { kind: 'store', url: url.href, id: addressId('store', bare), name: storeName(file), description: '' },
     datasetId: OPENED_DATASET,
     path,
   };
