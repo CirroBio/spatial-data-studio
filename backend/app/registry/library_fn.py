@@ -13,7 +13,7 @@ from __future__ import annotations
 import inspect
 import typing
 
-from .base import Function, ParamSpec, CallResult
+from .base import Function, ParamSpec, CallResult, structural_diff
 from .dictionary import DICTIONARY
 from .reader_paths import classify_path_param, primary_path_param
 from . import kernel, library_meta
@@ -101,9 +101,9 @@ class LibraryFunction(Function):
             return CallResult(status=env["status"], log=log, changed_facets=facets,
                               figure_svg=env.get("figure_svg"), figure_pdf=env.get("figure_pdf"),
                               figure_png=env.get("figure_png"))
-        structural_diff = {facet: sorted(values) for facet, values in facets.items()}
         return CallResult(status="completed", log=log, changed_facets=facets,
-                          structural_diff=structural_diff, changed_fields=env.get("changed_fields", []))
+                          structural_diff=structural_diff(facets),
+                          changed_fields=env.get("changed_fields", []))
 
     def _bind_and_validate(self, params: dict, session) -> dict:
         bound = dict(self.pinned)  # pinned policy params first (DESIGN §16, can't be overridden)

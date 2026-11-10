@@ -515,6 +515,22 @@ This diff is fully introspectable (set comparison, no per-function knowledge) an
 2. broadcast over SSE so clients **refetch only the Arrow fields that changed**,
 3. used to invalidate any plot or display whose `references` intersect the changed keys.
 
+The snapshot is taken in the compute child, before and after the call, and only the
+changed entries travel back to be applied to the live object in the commit (§24).
+Keyed facets are compared by the `id()` of each stored column or array. The expression
+matrix `X` is a single matrix with no keys, and identity does not work for it: scanpy's
+`normalize_total` and `log1p` rescale a sparse `X`'s values in place, so no array
+changes id. So `X` is snapshotted by content: its format, shape, dtype, and a CRC32 over
+its value and index buffers (`registry/base.py` `_matrix_fingerprint`). That costs one
+read of `X` before the call and one after, at ~6.5 GB/s in the app image, against
+~0.4 GB/s to pickle the same buffers into the child, which every compute already does. A
+sampled checksum would cost less but could miss a compute that edits a few values. A
+changed `X` travels back whole, is assigned to the live table in the commit, and reports
+the coarse field path `X:`, which folds into every `X:<gene>` for plot invalidation and
+the canvas's gene coloring. It never appears in the stored diff itself (the checkpoint
+schema keeps `X` out). An `X`-only change therefore leaves the diff empty, and the save
+still rewrites the matrix because a compute always marks the active table dirty.
+
 ---
 
 ## 7. Plotting calls
@@ -1804,7 +1820,12 @@ structures). Therefore: **monitor closely, expose live, guard at boundaries.**
   worker, which across a core-count-sized pool invents gigabytes of pressure that isn't
   there. Reclaimable page cache is excluded — reading a multi-GB checkpoint fills it, but
   the kernel frees it rather than let us be OOM-killed. Outside a cgroup (local dev) it
-  falls back to this process's RSS, where the workers stay invisible.
+  falls back to this process's RSS, where the workers stay invisible. A compute that
+  rewrites `X` (§6.4) also ships the new matrix back through the same pickle transfer
+  that carried the table in, and until the commit swaps it in, the API process holds
+  the new `X` beside the old one that reads still serve. That is in-flight memory like
+  the child's copy: the cgroup reading counts it, and admission (below) is unchanged,
+  since it only gates new work.
 - **RAM-backed working set:** when `WORK_DIR` is a tmpfs mount (`SDS_WORK_DIR_IN_RAM=1`,
   §23.4), the unpacked archives and raster caches living there consume RAM that the
   cgroup/OOM killer counts but process RSS does not. So the boundary/admission math uses
