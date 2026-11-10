@@ -85,8 +85,11 @@ it there.
 
 ## Images and instrument runs
 
-An image opens across the page with its channels in the right drawer. A run opens with
-the metrics its instrument reported. Both list, in the left drawer, the pipelines in
+An image opens across the page with its channels in the right drawer. It is drawn as soon
+as the channels shown first (the first four, or a color slide's red, green and blue) have
+been read; the others are read in the background after that, and a channel switched on
+before it has been read says *reading…* until it joins the picture. A run opens with the
+metrics its instrument reported. Both list, in the left drawer, the pipelines in
 your Cirro that take them further: cell segmentation for an image (Cellpose, StarDist,
 nf-core/sopa), and Spatial Data Studio's workflow for a run. These open Cirro's own
 launch form for the dataset, so the pipeline's options, cost and permissions are Cirro's

@@ -7,7 +7,7 @@ import { SettingsIcon, tint } from '../app/ui';
 import { describeError } from '../cirro/session';
 import type { ImageItem } from '../data/model';
 import { Facts, kinOf } from './Facts';
-import { MAX_CHANNELS, OmeTiffLens, openOmeTiff, type ImageChannel, type OpenedImage } from './OmeTiffLens';
+import { channelLimits, MAX_CHANNELS, OmeTiffLens, openOmeTiff, type ImageChannel, type OpenedImage } from './OmeTiffLens';
 import { PipelineLinks } from './PipelineLinks';
 import { useDrawers, ViewFrame } from './ViewFrame';
 
@@ -26,6 +26,15 @@ export function ImagePage({ item }: { item: ImageItem }) {
         if (!live) return;
         setImage(img);
         setChannels(img.channels);
+        // The other channels' limits, once the image is up. All are asked for at once: the
+        // IFD walk reads them in order anyway, and each one's tile is read as its IFD arrives.
+        img.channels.forEach((channel, c) => {
+          if (channel.limits) return;
+          channelLimits(img.data, c).then(
+            (limits) => live && setChannels((cs) => cs.map((x, j) => (j === c ? { ...x, limits } : x))),
+            (e: unknown) => live && setProblem(describeError(e)),
+          );
+        });
       }, (e: unknown) => live && setProblem(describeError(e)));
     return () => {
       live = false;
@@ -61,7 +70,7 @@ export function ImagePage({ item }: { item: ImageItem }) {
                     <input type="checkbox" checked={c.visible} disabled={!c.visible && visible >= MAX_CHANNELS}
                       onChange={() => setChannels((cs) => cs.map((x, j) => (j === i ? { ...x, visible: !x.visible } : x)))} />
                     <span className="legend-swatch" style={{ background: c.color }} />
-                    <span>{c.name}</span>
+                    <span>{c.name}{c.visible && !c.limits && <span className="muted"> · reading…</span>}</span>
                   </label>
                 </li>
               ))}
