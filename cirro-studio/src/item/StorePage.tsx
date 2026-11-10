@@ -16,7 +16,7 @@ import { describeError } from '../cirro/session';
 import type { StoreItem, VersionItem } from '../data/model';
 import { ChartFigure } from '../figures/ChartFigure';
 import { coordinateUnit, storeReader } from '../figures/scaleBar';
-import { readFigures, removeFigure, type FigureSpec } from '../figures/spec';
+import { readFigures, removeFigure, type FigureSpec, type Kept, type Unreadable } from '../figures/spec';
 import { REPORT_LENS } from '../reports/parts';
 import { ReportView } from '../reports/ReportView';
 import { readResults, type KeptResult } from '../reports/store';
@@ -45,6 +45,8 @@ const BAR_GAP = 14;
 
 // Readers whose observations are capture spots rather than segmented cells.
 const SPOT_READERS = new Set(['visium']);
+
+const NOTHING_KEPT: Kept<never> = { kept: [], unreadable: [] };
 
 /** Cells (or spots) and genes, and whether the genes have values to analyse. */
 function summary(fields: SessionFields, unit: string): string {
@@ -118,17 +120,26 @@ export function StorePage({ item, entity }: { item: StoreItem | VersionItem; ent
     };
   }, [wb.key, wb.handle]);
 
-  const [figures, setFigures] = useState<FigureSpec[]>([]);
-  const [reports, setReports] = useState<KeptResult[]>([]);
+  const [keptFigures, setKeptFigures] = useState<Kept<FigureSpec>>(NOTHING_KEPT);
+  const [keptReports, setKeptReports] = useState<Kept<KeptResult>>(NOTHING_KEPT);
   useEffect(() => {
     if (!wb.handle || !wb.handle.tableKey) return;
     let live = true;
-    readFigures(storeOf(wb.key), wb.handle.tableKey).then((f) => live && setFigures(f), () => live && setFigures([]));
-    readResults(storeOf(wb.key), wb.handle.tableKey).then((r) => live && setReports(r), () => live && setReports([]));
+    readFigures(storeOf(wb.key), wb.handle.tableKey).then((f) => live && setKeptFigures(f), () => live && setKeptFigures(NOTHING_KEPT));
+    readResults(storeOf(wb.key), wb.handle.tableKey).then((r) => live && setKeptReports(r), () => live && setKeptReports(NOTHING_KEPT));
     return () => {
       live = false;
     };
   }, [wb.key, wb.handle, wb.revision]);
+  const figures = keptFigures.kept;
+  const reports = keptReports.kept;
+  // A figure or result that can't be read goes by the title its version saved it with.
+  const savedTitles = useMemo(() => new Map(wb.levels.flatMap((l) => l.manifest?.changes ?? []).flatMap((c): [string, string][] => {
+    if (c.op === 'set-figure') return [[c.id, c.title]];
+    if (c.op === 'set-uns' && c.note) return [[c.path[c.path.length - 1], c.note]];
+    return [];
+  })), [wb.levels]);
+  const unreadableView = (prefix: string) => (u: Unreadable): ViewDef => ({ id: `${prefix}${u.id}`, label: savedTitles.get(u.id) ?? u.id, problem: u.reason });
 
   const fields = wb.handle?.fields;
   const unit = reader && SPOT_READERS.has(reader) ? 'spot' : 'cell';
@@ -141,10 +152,14 @@ export function StorePage({ item, entity }: { item: StoreItem | VersionItem; ent
     ...(hasCells ? [{ id: 'composition', label: 'Composition' }] : []),
     { id: 'versions', label: saved ? `Versions · ${saved}` : 'Versions' },
   ];
-  const figureViews: ViewDef[] = figures.map((f) => ({ id: `figure:${f.id}`, label: f.title }));
-  const reportViews: ViewDef[] = reports.map((r) => ({ id: `${REPORT_LENS}${r.id}`, label: r.meta.title }));
+  const figureViews: ViewDef[] = [
+    ...figures.map((f) => ({ id: `figure:${f.id}`, label: f.title })), ...keptFigures.unreadable.map(unreadableView('figure:')),
+  ];
+  const reportViews: ViewDef[] = [
+    ...reports.map((r) => ({ id: `${REPORT_LENS}${r.id}`, label: r.meta.title })), ...keptReports.unreadable.map(unreadableView(REPORT_LENS)),
+  ];
   const asked = route.params.get(LENS_PARAM);
-  const lens = [...views, ...reportViews, ...figureViews].some((v) => v.id === asked) ? asked! : 'tissue';
+  const lens = [...views, ...reportViews, ...figureViews].some((v) => v.id === asked && !v.problem) ? asked! : 'tissue';
   const figureOpen = figures.find((f) => `figure:${f.id}` === lens) ?? null;
   const reportOpen = reports.find((r) => `${REPORT_LENS}${r.id}` === lens) ?? null;
   // A canvas figure opens on its saved view however it is reached (its tab, the map, a

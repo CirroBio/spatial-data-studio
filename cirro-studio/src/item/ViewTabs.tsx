@@ -5,7 +5,9 @@
 import type { KeyboardEvent } from 'react';
 import { Popover } from '../app/ui';
 
-export interface ViewDef { id: string; label: string }
+// `problem`: why a report or figure the store lists can't be read. It stays in the menu,
+// as a note rather than a choice, so it isn't missing without a word.
+export interface ViewDef { id: string; label: string; problem?: string }
 
 function ViewMenu({ items, current, one, many, onChoose }: {
   items: ViewDef[]; current: string; one: string; many: string; onChoose: (id: string) => void;
@@ -17,12 +19,14 @@ function ViewMenu({ items, current, one, many, onChoose }: {
       label={<>{open ? `${one} · ${open.label}` : `${many} · ${items.length}`} ▾</>}>
       {(close) => (
         <div className="menu" role="menu">
-          {items.map((f) => (
+          {items.map((f) => (f.problem ? (
+            <p key={f.id} className="menu-note muted">{f.label} couldn't be read: {f.problem}</p>
+          ) : (
             <button key={f.id} type="button" role="menuitemradio" aria-checked={f.id === current} className="menu-item"
               onClick={() => { close(); onChoose(f.id); }}>
               {f.label}
             </button>
-          ))}
+          )))}
         </div>
       )}
     </Popover>

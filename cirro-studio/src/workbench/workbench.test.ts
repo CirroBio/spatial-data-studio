@@ -7,9 +7,12 @@ import { createRoot } from 'react-dom/client';
 import { describe, expect, it, vi } from 'vitest';
 import { PublicProject } from '../data/publicProject';
 import { FIGURE_FORMAT, keepFigure, readFigures, removeFigure, type FigureSpec } from '../figures/spec';
+import { readResults } from '../reports/store';
+import { datasetRef } from '../stack/cirroRef';
 import { StackEditor } from '../stack/editor';
 import { LayeredStore, MemoryLayer } from '../stack/layeredStore';
-import { FIGURES, UNS_ROOT } from '../stack/manifest';
+import { FIGURES, LAYER_MANIFEST, RESULTS, UNS_ROOT } from '../stack/manifest';
+import { versionFiles } from '../stack/version';
 import { applyEdit, storeOf, useWorkbench, type Workbench } from './workbench';
 
 // The draft is kept in IndexedDB, which the test DOM doesn't have.
@@ -51,10 +54,41 @@ class FigureBeneathCollection extends DemoCollection {
   }
 }
 
+const UNREADABLE_FIGURE: FigureSpec = { ...SAVED_FIGURE, id: 'fig_unreadable', title: 'Unreadable figure' };
+const UNREADABLE_RESULT = 'compare_unreadable';
+const CHUNKLESS_BASE = datasetRef('chunkless-base', 'demo.zarr.zip');
+
+// A version on the demo holding a figure and a result, whose collection serves its
+// manifest and metadata but answers 403 for every chunk: what the public data's
+// publication answered for versions copied without their chunk files.
+class ChunklessVersionCollection extends DemoCollection {
+  private readonly version = (async () => {
+    const draft = new MemoryLayer();
+    const editor = new StackEditor(new LayeredStore(ZipFileStore.fromBlob(new Blob([readFileSync(DEMO)])), [draft]), draft);
+    const changes = [
+      await editor.setUns('table', [UNS_ROOT, FIGURES, UNREADABLE_FIGURE.id], { kind: 'string', value: JSON.stringify(UNREADABLE_FIGURE) }),
+      await editor.setUns('table', [UNS_ROOT, RESULTS, UNREADABLE_RESULT, 'meta'], {
+        kind: 'string', value: JSON.stringify({ kind: 'compare', title: 'Unreadable result', created_at: '' }),
+      }),
+    ];
+    return versionFiles(draft, { parent: CHUNKLESS_BASE, base: CHUNKLESS_BASE, depth: 1, title: 'Figures', message: '', createdBy: '', changes });
+  })();
+
+  override async manifest() {
+    return (await this.version).manifest;
+  }
+
+  override async readFile(_datasetId: string, path: string): Promise<Uint8Array> {
+    const file = (await this.version).files.find((f) => f.name === path);
+    if (!file || !path.endsWith('zarr.json')) throw new Error(`Reading ${path} from Cirro failed: HTTP 403.`);
+    return file.bytes;
+  }
+}
+
 // Opened through its hook, as the page opens it; `seen.wb` follows its state.
-async function openDemo(datasetId: string, Collection = DemoCollection) {
+async function openDemo(datasetId: string, Collection = DemoCollection, kind: 'store' | 'version' = 'store') {
   const seen: { wb: Workbench | null } = { wb: null };
-  const top = { datasetId, path: 'demo.zarr.zip', kind: 'store' as const };
+  const top = { datasetId, path: kind === 'store' ? 'demo.zarr.zip' : LAYER_MANIFEST, kind };
   const collection = new Collection({ kind: 'publication', url: 'https://example.invalid/published/demo', id: 'demo', name: 'Demo', description: '' });
   function Probe() {
     seen.wb = useWorkbench(collection, top);
@@ -91,12 +125,28 @@ describe('workbench draft changes', () => {
   }, OPEN_TIMEOUT_MS);
 });
 
-describe('removing a kept figure', () => {
-  const keep = (key: string, title: string) => keepFigure(key, 'table', {
-    title, caption: '', created_by: '', width_mm: 89,
-    view: { kind: 'chart', chart: { type: 'heatmap', result: 'spatial_data_studio/results/r/table' } },
-  });
+const keep = (key: string, title: string) => keepFigure(key, 'table', {
+  title, caption: '', created_by: '', width_mm: 89,
+  view: { kind: 'chart', chart: { type: 'heatmap', result: 'spatial_data_studio/results/r/table' } },
+});
 
+describe('reading kept figures and reports', () => {
+  it('names the ones a version holds but can\'t be read, and still lists one kept in the draft', async () => {
+    const seen = await openDemo('chunkless-version', ChunklessVersionCollection, 'version');
+    const { key } = seen.wb!;
+    const refused = (path: string) => `Reading overlay/tables/table/uns/${UNS_ROOT}/${path}/c from Cirro failed: HTTP 403.`;
+    const figureRefused = [{ id: UNREADABLE_FIGURE.id, reason: refused(`${FIGURES}/${UNREADABLE_FIGURE.id}`) }];
+    expect(await readFigures(storeOf(key), 'table')).toEqual({ kept: [], unreadable: figureRefused });
+    expect(await readResults(storeOf(key), 'table')).toEqual({
+      kept: [], unreadable: [{ id: UNREADABLE_RESULT, reason: refused(`${RESULTS}/${UNREADABLE_RESULT}/meta`) }],
+    });
+
+    const figure = await keep(key, 'Kept on top');
+    expect(await readFigures(storeOf(key), 'table')).toEqual({ kept: [figure], unreadable: figureRefused });
+  }, OPEN_TIMEOUT_MS);
+});
+
+describe('removing a kept figure', () => {
   it('takes one kept in the draft back out, and the draft with nothing else goes with it', async () => {
     const seen = await openDemo('keep-then-remove');
     const { key } = seen.wb!;
@@ -105,7 +155,7 @@ describe('removing a kept figure', () => {
     await removeFigure(key, 'table', figure);
     expect(seen.wb!.changes).toEqual([]);
     expect(seen.wb!.draftBytes).toBe(0);
-    expect(await readFigures(storeOf(key), 'table')).toEqual([]);
+    expect(await readFigures(storeOf(key), 'table')).toEqual({ kept: [], unreadable: [] });
   }, OPEN_TIMEOUT_MS);
 
   it('takes out one of two alike, leaving the other', async () => {
@@ -115,15 +165,15 @@ describe('removing a kept figure', () => {
     const second = await keep(key, 'Clusters');
     await removeFigure(key, 'table', first);
     expect(seen.wb!.changes).toEqual([{ op: 'set-figure', table: 'table', id: second.id, title: 'Clusters' }]);
-    expect((await readFigures(storeOf(key), 'table')).map((f) => f.id)).toEqual([second.id]);
+    expect((await readFigures(storeOf(key), 'table')).kept.map((f) => f.id)).toEqual([second.id]);
   }, OPEN_TIMEOUT_MS);
 
   it('records removing one a saved version holds', async () => {
     const seen = await openDemo('remove-saved-figure', FigureBeneathCollection);
     const { key } = seen.wb!;
-    expect((await readFigures(storeOf(key), 'table')).map((f) => f.id)).toEqual([SAVED_FIGURE.id]);
+    expect((await readFigures(storeOf(key), 'table')).kept.map((f) => f.id)).toEqual([SAVED_FIGURE.id]);
     await removeFigure(key, 'table', SAVED_FIGURE);
     expect(seen.wb!.changes).toEqual([{ op: 'delete-figure', table: 'table', id: SAVED_FIGURE.id, title: SAVED_FIGURE.title }]);
-    expect(await readFigures(storeOf(key), 'table')).toEqual([]);
+    expect(await readFigures(storeOf(key), 'table')).toEqual({ kept: [], unreadable: [] });
   }, OPEN_TIMEOUT_MS);
 });

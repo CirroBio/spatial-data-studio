@@ -29,6 +29,10 @@ Tabs over the top of the view switch what is shown:
 - **Versions**: the store's history, with the page to itself (it has nothing to set).
 - **Figures**: a menu of the figures saved with it, when there are any.
 
+A figure or report the store lists but whose data can't be read (a version copied
+somewhere without all of its files, say) stays in its menu, named with the reason, and
+can't be opened; the others open as usual.
+
 Beside the tabs are **Color by** (the same box as in the Display drawer, below: type a
 gene's or an annotation's name and pick it), a scale bar (when the store says its
 coordinates are microns), zoom out and in, and **Fit to data**, which stay in reach when
