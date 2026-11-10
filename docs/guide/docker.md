@@ -9,7 +9,7 @@ computer unless you [publish it to Cirro](analysis-workspaces.md#publish-to-cirr
 With [Docker](https://www.docker.com/) installed, run:
 
 ```bash
-docker run -d -p 8080:8888 \
+docker run -d -p 127.0.0.1:8080:8888 \
   -v "$(pwd)/data":/data -e SDS_DATA_DIR=/data \
   public.ecr.aws/cirrobio/spatial-data-studio:v1
 ```
@@ -22,8 +22,10 @@ has how to run from a clone instead.
 
 Everything in [Analysis Workspaces](analysis-workspaces.md#find-your-way-around) works
 the same here, including several people in one app at once. The app has no log-in of
-its own: anyone who can reach its port can open and change your sessions, so expose the
-port only to people you'd let do that.
+its own, so the command above publishes its port on this computer only (the
+`127.0.0.1:` before `8080`). Publishing it on other interfaces lets anyone who can reach
+it use the app and its data: open and change your sessions, and read and write the
+folder you mounted. Widen it only to people you'd let do that.
 
 ## Work with an AI assistant
 

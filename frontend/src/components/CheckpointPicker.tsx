@@ -1,4 +1,5 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import { storeName } from '@cirrobio/spatial-viewer';
 import { openCheckpointPath, type CheckpointIndex } from '../data/checkpointIndex';
 
 // Header switcher for a serverless deployment — the checkpoint counterpart of
@@ -8,7 +9,7 @@ export default function CheckpointPicker(
   { index, currentUrl }: { index: CheckpointIndex; currentUrl: string | null },
 ) {
   const active = index.entries.find((e) => e.url === currentUrl);
-  const label = active?.label ?? (currentUrl ? decodeURIComponent(currentUrl.split('/').pop() ?? '') : 'Checkpoints');
+  const label = active?.label ?? (currentUrl ? storeName(currentUrl) : 'Checkpoints');
 
   return (
     <DropdownMenu.Root>

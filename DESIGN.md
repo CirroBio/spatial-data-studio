@@ -982,27 +982,28 @@ structural diff). The view never silently shows data that no longer matches the 
 
 ### 9.10 Cell-segmentation display (display only)
 
-The point scatter always draws; cell-boundary fills optionally overlay on top of it. This
-is a **display** of existing segmentation — it never resegments or recomputes boundaries. A
-**Render mode** control persists on the display encoding (`render_mode`): `points` (scatter
-alone) vs `points+shapes` (scatter plus the cell-boundary overlay). The legacy value
-`shapes` maps to `points+shapes`.
+The point scatter is the Cells layer's base; cell-boundary fills optionally take its place
+once they can be drawn. This is a **display** of existing segmentation — it never
+resegments or recomputes boundaries. A **Render mode** control persists on the display
+encoding (`render_mode`): `points` (scatter alone) vs `points+shapes` (cell boundaries in
+place of the scatter, with the scatter as the fallback). The legacy value `shapes` maps to
+`points+shapes`.
 
-- **Point scatter (always on).** The instanced `MarkerScatterplotLayer` (size slider +
-  circle/square/hexagon glyph) covers every zoom, including the zoomed-out and
-  shapes-loading regimes, so the canvas never blanks. Overlapping glyphs **merge**, not
+- **Point scatter.** The instanced `MarkerScatterplotLayer` (size slider +
+  circle/square/hexagon glyph) draws at every zoom in `points`, and in `points+shapes`
+  covers the zoomed-out and shapes-loading regimes, so the canvas never blanks. Overlapping glyphs **merge**, not
   blend: a two-pass fragment-depth trick writes `gl_FragDepth` so the nearest centroid
   wins each pixel — touching same-color cells read as one contiguous region and overlaps
   don't darken at opacity < 1 (this replaced the separate nearest-cell "field" layer).
 - **Cell-boundary overlay (`render_mode: points+shapes`).** When the session has boundary
-  polygons, their real outlines stack on top of the points, from a `GeoArrowPolygonLayer`
+  polygons, their real outlines replace the points once loaded, from a `GeoArrowPolygonLayer`
   fed by viewport-clipped GeoArrow fetched from `GET
   /api/sessions/{id}/shapes/{element}/geoarrow?bbox=…` (`usePolygonBbox.ts`, LRU-cached per
   viewport bbox + data_version). A **Boundary style** control (`boundary_style`, default
   `filled`) chooses between filling each polygon with the per-cell color and drawing only
   its boundary stroke at `boundary_line_width` screen pixels (`outline`); either way the
-  color is the same per-cell stack as the points, so the overlap is seamless and the points
-  fill the gaps between cells. The composite layer's fill sublayer triangulates on the main
+  color is the same per-cell stack as the points, so switching between the two at the zoom
+  gate keeps every cell's color. The composite layer's fill sublayer triangulates on the main
   thread (`_subLayerProps.fill.earcutWorkerUrl = null`) so nothing is fetched from a CDN.
   The element is the display's `shapes_layer` when it still names an available boundary
   set, else the first one — where "available" is every polygonal shapes element *except*
@@ -1467,7 +1468,7 @@ reconciles them. A store with images and no tables at all derives an image-only 
 (`table_keys: []`, each image under the `""` key in its own coordinate system); one whose
 tables lack `obsm/spatial` is still refused, since an image-only view would drop its cells.
 The spatial canvas frames an image display from the image's extent alone
-(`useCanvasViewState`), so a display with no cells to wait for still gets a camera. Contrast defaults come from the coarsest level, as `_channel_norm` computes
+(`useCanvasViewState`), so a display with no cells to wait for still gets a camera. Contrast defaults come from the coarsest level, as `channel_norm` computes
 them. Its default displays follow `manager.auto_displays`. What the backend bakes and
 the browser cannot cheaply derive stays missing: the shapes spatial index (so no boundaries)
 and the CSC gene mirror (so a gene reads the whole CSR matrix).
@@ -1833,8 +1834,8 @@ Every viewer of a session shares one in-memory object and one audit log, and the
 undo — so two people editing at once is a data-integrity problem, not a merge problem.
 The **edit lock** makes exactly one viewer the editor while everyone else watches.
 Implemented in `sessions/presence.py` (process memory only; nothing persists to the
-checkpoint) and enforced in `deps._claim_lock`, which every mutating route reaches
-through `_writable_session`.
+checkpoint) and enforced in `deps.claim_lock`, which every mutating route reaches
+through `get_writable_session`.
 
 **Identity.** No accounts, no auth (that stays the deployment layer's concern). A browser
 mints a `client_id` (uuid) and a two-word display name (e.g. *gloomy socrates*) and keeps
@@ -1873,7 +1874,7 @@ contrast, render mode, minimap, isolated category). Those edits apply locally an
 `display.updated` broadcasts are ignored for the same reason. The frontend derives one
 gate from this (`lib/presence.editBlockReason`) which read-only snapshot sessions share, so
 both cases disable the same controls with a reason the user can read. The rule for adding a
-control: if its route takes `_writable_session`, it reads the gate — directly via
+control: if its route takes `get_writable_session`, it reads the gate — directly via
 `useEditGate`, or through whatever already owns its submit (`useRerunEditor` for the detail
 views, `FunctionForm`'s `blockedReason` for the picker and recipe forms) — since a live
 button whose write comes back 423 is a bug. Hiding the entry point is not enough on its own:
@@ -1898,6 +1899,18 @@ session picker's delete) keys off that row's own lock instead.
   proxy's origin timeout (a 504, §24.2); progress and a terminal `done` event stream over
   `session.loading` keyed by the client-minted `load_id`, and the checkpoint's `hash_check`
   rides that terminal event.
+- **The loading window.** Until the first object lands the session is `loading`. During a
+  checkpoint load the calls that write `app_state` directly — submitting, staging, editing
+  or deleting a history entry, a redraw, a display edit — are refused (409): the load
+  replaces `app_state` wholesale when it lands, so they would silently vanish. A read
+  bootstrap keeps `app_state`, so history writes queue behind it; only display edits are
+  refused, having no table to resolve against yet. Special jobs (save, annotate, subset,
+  …) queue behind either. An adoption that raises, or a cancel of the load or bootstrap
+  while it is held at the memory boundary, ends the session `errored`, never stuck in
+  `loading`. A close during the window marks the session
+  closed under the write lock; the load or bootstrap checks that before adopting, and
+  discards what it staged (the unpacked archive) rather than re-announcing the session or
+  leaving temp dirs nobody owns.
 - Loading must pass load-admission control (§16.3) before the object is materialized.
 - **Startup splash:** the frontend polls `GET /api/readyz` and shows a full-screen splash
   until the backend finishes importing `squidpy` and building the registry, so a slow
@@ -1926,9 +1939,14 @@ session picker's delete) keys off that row's own lock instead.
   raster or other non-table element, or a fresh import with no backing directory store
   yet, falls back to the full write (`save_spatialdata`). The session tracks which
   elements are dirty (`dirty_tables`, `dirty_transforms`, `force_full`) from each
-  mutation's `structural_diff`. Save staging happens next to the destination so the
-  final commit is a same-filesystem rename, and the auto-named content hash is
-  accumulated during the zip write rather than by re-reading the finished archive.
+  mutation's `structural_diff`. Once a full write has run, every later save of the session
+  takes it too: the full write leaves the object backed by the directory it was unpacked
+  into, which lacks what that write added, so updating that directory in place would
+  quietly put the old elements back. A full write also carries over the logs of records
+  the session was loaded with, read from that same directory. Save staging happens next
+  to the destination so the final commit is a same-filesystem rename, and the auto-named
+  content hash is accumulated during the zip write rather than by re-reading the finished
+  archive.
 - **Load:** open a `.zarr.zip` (or `.zarr`); hydrate the object and restore UI from
   `attrs` (§5). `attrs["app_state"]` runs through a **schema migration** keyed on
   `schema_version`, which validates its own result against `app_state.schema.json` and
@@ -2107,7 +2125,7 @@ closed (a 406 does not auto-reconnect), so SSE remains the path wherever it work
 10. A child session's `attrs` are deep-copied; its compute history starts empty.
 11. State-changing ops (compute, annotate, subset, save) are queued jobs under the write
     lock; region annotation and subset are queued mutating jobs.
-    Every route that starts one goes through `deps._writable_session`, so a frozen
+    Every route that starts one goes through `deps.get_writable_session`, so a frozen
     (read-only) session and a session another viewer has locked (§16.5) are refused at the
     boundary rather than relying on the UI to hide the control.
 12. The boundary-admission check is always active: new work is refused once effective
@@ -2271,7 +2289,7 @@ exclusivity. Everything below maximizes parallelism *around* that narrow window.
    last-committed object *throughout* a running job instead of stalling on it — the
    "one-operation-stale" read (the picture as of the job's start), reconciled when the
    client's `job.completed` handler refetches. A read still acquires the lock with a
-   `READ_LOCK_TIMEOUT_S` bound (`_read_locked`): a read that lands during the brief commit
+   `READ_LOCK_TIMEOUT_S` bound (`read_locked`): a read that lands during the brief commit
    gives up with a retryable **503** the client re-issues with backoff (`fetchWhenIdle`)
    rather than block past a fronting proxy's origin timeout — but that window is now
    sub-second, not the whole compute.

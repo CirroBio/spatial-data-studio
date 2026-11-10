@@ -43,7 +43,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from .config import config
-from .deps import _in_executor
+from .deps import in_executor
 from .schemas import checkpoint as checkpoint_schemas
 from .transport.sse import BUS
 
@@ -498,7 +498,7 @@ class UploadQueue:
             row["state"] = "uploading"
             self._publish()
             try:
-                await _in_executor(_do)
+                await in_executor(_do)
                 row["state"] = "completed"
             except Exception as e:
                 row["state"] = "failed"

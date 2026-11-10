@@ -5,8 +5,10 @@ services:
       dockerfile: docker/Dockerfile
     image: spatial-data-studio:latest
 
+    # Loopback only: the app has no sign-in, so a port published on every interface
+    # serves the data mount to anyone who can reach it (docs/guide/docker.md).
     ports:
-      - "8080:8888"
+      - "127.0.0.1:8080:8888"
 
     # Single read-write data mount (DESIGN §19.9): inputs + saved checkpoints +
     # snapshots share it. Defaults to ./test-data (ships with the repo) so demo

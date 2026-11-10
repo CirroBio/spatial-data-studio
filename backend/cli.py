@@ -125,10 +125,11 @@ def _wait(sess, job_id, timeout=7200, interval=0.2):
     """Block (in this thread, not the worker) until a Session job reaches a terminal
     status, returning it. Mirrors the server's job polling; no cap is meaningful for
     an offline single run, so the timeout is generous."""
+    from app.sessions.session import TERMINAL_JOB_STATUSES
     t0 = time.time()
     while time.time() - t0 < timeout:
         st = sess.job_status(job_id)
-        if st in ("completed", "drawn", "failed", "cancelled"):
+        if st in TERMINAL_JOB_STATUSES:
             return st
         time.sleep(interval)
     raise TimeoutError(f"job {job_id} did not finish within {timeout}s")
@@ -333,17 +334,22 @@ def main(argv=None) -> int:
         # wherever the caller asked.
         with sess.lock.reading():
             figures = sess.figures_to_persist()
+            # The records a loaded store came with carry no inline log; each save copies
+            # theirs over from that store, as Session._write_checkpoint does.
+            log_store = sess.extract_dir or sess.store_path
             # hash_name: these are auto-named checkpoints, so each carries a hash of its
             # own contents the way the app's saves do — a load then verifies the file was
             # not altered or truncated in transit. The written path comes back from the
             # save, since the hash is only known once the bytes are.
             written = [save_spatialdata(sess.sdata, str(out_dir / f"{name}.zarr.zip"),
-                                        sess.app_state, hash_name=True, figures=figures)]
+                                        sess.app_state, hash_name=True, figures=figures,
+                                        log_store=log_store)]
             if args.lowres_max_image_mb is not None:
                 lowres_name = args.lowres_name or f"{name}.lowres"
                 written.append(save_spatialdata(
                     sess.sdata, str(out_dir / f"{lowres_name}.zarr.zip"), sess.app_state,
-                    hash_name=True, max_image_mb=args.lowres_max_image_mb, figures=figures))
+                    hash_name=True, max_image_mb=args.lowres_max_image_mb, figures=figures,
+                    log_store=log_store))
     finally:
         sess.shutdown()
 

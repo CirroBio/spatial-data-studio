@@ -5,6 +5,7 @@ from __future__ import annotations
 from functools import lru_cache
 
 from ..base import CallResult, Function, ParamSpec, missing_layer, missing_obs_column, run_compute
+from ._docs import custom_doc
 from ._leiden import leiden_labels
 
 # The two general immune models lead the dropdown; the rest of CellTypist's
@@ -89,8 +90,6 @@ key_added
     Name of the obs column to write the predicted cell-type labels into.
 """
 
-
-from ._docs import custom_doc
 
 _CITATION = ("Dominguez Conde, C. et al. Cross-tissue immune cell analysis reveals tissue-specific "
              "features in humans. Science 376, eabl5197 (2022). doi:10.1126/science.abl5197 (CellTypist).")

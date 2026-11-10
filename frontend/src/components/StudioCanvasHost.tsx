@@ -6,8 +6,8 @@ import { CanvasHostProvider, type CanvasHost } from '@cirrobio/spatial-viewer';
 import TransformEditor from './TransformEditor';
 
 // The Studio app's implementation of the canvas host contract
-// (components/canvas/canvas-host.tsx). This adapter is the only place the app's store
-// and the canvas components meet: everything the canvases read or write goes through
+// (packages/viewer/src/canvas/canvas-host.tsx). This adapter is the only place the app's
+// store and the canvas components meet: everything the canvases read or write goes through
 // the object built here, so the canvas package itself stays host-agnostic and can also
 // be driven from a Cirro dashboard tile.
 //

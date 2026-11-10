@@ -1,7 +1,7 @@
 import { ApiError } from './apiError';
 
 // A read endpoint fast-fails with 503 while a job holds the session write lock
-// (backend: _read_locked / READ_LOCK_TIMEOUT_S) — most notably during the async
+// (backend: deps.read_locked / READ_LOCK_TIMEOUT_S) — most notably during the async
 // checkpoint load that runs as a session's first job, which 503s every canvas read
 // (coords, colors, image info, raster chunks) until it frees the lock. Retry with
 // backoff so state converges once the lock frees, without surfacing a transient

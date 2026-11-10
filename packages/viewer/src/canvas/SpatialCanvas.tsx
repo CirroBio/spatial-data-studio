@@ -224,7 +224,8 @@ export default function SpatialCanvas({
 
   // The lasso (a ring dragged out, or clicked out a vertex at a time) is shared by
   // region-labeling and subsetting; the shape-annotation editor (canvasMode === 'shapes')
-  // uses a separate drag/handle interaction — see useShapeAnnotations/ShapeAnnotationLayers.
+  // uses a separate drag/handle interaction — see buildShapeAnnotationLayers and the
+  // shape drag handlers below.
   const lassoMode = !!regions && (canvasMode === 'regions' || canvasMode === 'subset');
   const selectionTool = regions?.selectionTool ?? 'lasso';
   const setDrawShape = regions?.setDrawShape ?? NO_DRAW_SINK;
@@ -233,8 +234,8 @@ export default function SpatialCanvas({
   const drawMode = lassoMode || shapesMode;
   // Pan is suppressed only while actively drawing (a tool armed) or dragging a
   // handle (or hovering one, about to). With no tool armed and not over a handle,
-  // dragging pans the plot as usual — the Annotations tab being open no longer
-  // blocks panning on its own.
+  // dragging pans the plot as usual — the Annotations tab being open does not
+  // block panning on its own.
   const shapeInteracting = shapesMode && (activeShapeTool !== null || overHandle || overBody || shapeDragTarget !== null);
 
   const positions = useArrowPositions(coordsTable);
@@ -574,9 +575,9 @@ export default function SpatialCanvas({
     show: showImage,
   });
 
-  // How the Cells layer renders. Points always draw; 'points+shapes' additionally
-  // overlays the cell-boundary fills once zoomed in far enough that the viewport
-  // fits. The old 'shapes' value (points replaced by outlines) maps to 'points+shapes';
+  // How the Cells layer renders. 'points+shapes' draws the cell-boundary fills in place
+  // of the points once they load (whole set, or once the viewport fits), with the points
+  // as the fallback until then. The legacy 'shapes' value maps to 'points+shapes';
   // anything else (or a stale value from an older session) is points-only.
   const renderMode: 'points' | 'points+shapes' =
     display.encoding.render_mode === 'points+shapes' || display.encoding.render_mode === 'shapes'
@@ -588,7 +589,8 @@ export default function SpatialCanvas({
 
   // Polygon shape sets available for this session (elements inventory filtered to
   // polygonal geom types). Empty → the whole shapes path stays dormant, which is
-  // also what a source with no element inventory (a checkpoint) gets.
+  // also what a checkpoint gets with no shape index, or with a v1 sidecar that carries
+  // no boundary placement: its source then has no element inventory.
   // Name + row count: the count decides whether the whole element can be shipped in one
   // query, which is what the zoom gate below exists to avoid when it cannot.
   // The shape-annotation element is polygonal too but is never a boundary set — it holds
@@ -640,8 +642,8 @@ export default function SpatialCanvas({
     unitsPerPixel: worldPerScreenPixel,
   });
 
-  // Shapes overlay: cell-boundary fills drawn on top of the points once zoomed in.
-  // The outlines are viewport-culled and the backend serves nothing when the viewport
+  // Shapes overlay: cell-boundary fills drawn in place of the points once loaded.
+  // The outlines are viewport-culled and the source serves nothing when the viewport
   // holds more than it can ship, so the fetch is deferred until a cell is big enough
   // on screen (shapesFetchZoomThreshold); below that the points are the whole view.
   const meanSpacing = useMemo(() => (positions ? estimateMeanSpacing(positions) : 0), [positions]);

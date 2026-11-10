@@ -3,7 +3,7 @@
 // serves files to a browser, with no Cirro behind it. Each checkpoint is a dataset of
 // one file, named, described, filed and credited by its entry.
 import type { AsyncReadable } from '@zarrita/storage';
-import { openZarrStore } from '@cirrobio/spatial-viewer';
+import { openZarrStore, storeName } from '@cirrobio/spatial-viewer';
 import type { ListedFile } from './discover';
 import type { DatasetRecord } from './model';
 import type { PublicSource } from './publicProject';
@@ -86,7 +86,7 @@ export function parseIndex(body: unknown, indexUrl: string): FolderIndex {
       size: typeof e.size === 'number' && e.size >= 0 ? e.size : null,
       record: {
         id,
-        name: str(e.label) ?? file.replace(/\.sdata\.zarr\.zip$|\.zarr\.zip$/i, ''),
+        name: str(e.label) ?? storeName(path),
         description: str(e.description) ?? '',
         processId: 'index-json',
         processName: INDEX_FILE,

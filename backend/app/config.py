@@ -239,7 +239,7 @@ class Config:
     # (Viv's shader-pass limit; the channel picker caps it) and lets the user pick which
     # of a >6-channel image's channels to show. Default ON; disable with
     # SDS_CLIENT_IMAGE_COMPOSITING=0 only to turn the canvas image off entirely (there is
-    # no server-composited canvas fallback anymore). See DESIGN.md 9.4.
+    # no server-composited canvas fallback). See DESIGN.md 9.4.
     CLIENT_IMAGE_COMPOSITING = os.environ.get("SDS_CLIENT_IMAGE_COMPOSITING", "1") not in ("0", "false", "False")
 
     # Raster (image/label) tiling normalized at ingest (see rasters.py). Every
@@ -253,8 +253,9 @@ class Config:
     RASTER_REBUILD_WORKERS = int(os.environ.get("SDS_RASTER_REBUILD_WORKERS", str(_CPU_INT)))
 
     # Server-side LRU (MB) of raw Viv chunk bytes read by the client-compositing path
-    # (main.py raster_store). Caps repeat-view reads of the same chunk under the read
-    # lock; the bytes live in the API-process heap so they count against RSS/admission.
+    # (routers/imaging.py raster_store). Caps repeat-view reads of the same chunk under
+    # the read lock; the bytes live in the API-process heap so they count against
+    # RSS/admission.
     # 0 disables the cache. See imaging._raster_chunk_cache.
     RASTER_CHUNK_CACHE_MB = int(os.environ.get("SDS_RASTER_CHUNK_CACHE_MB", "256"))
 
@@ -307,7 +308,7 @@ class Config:
     # ---- Cirro upload. Each browser logs in with its own Cirro identity (device-code
     # flow, see cirro.py), so there is no server-side credential — this only prefills
     # the domain field in the connect dialog. ----
-    # Not the SDK's own `cirro.bio` default, which no longer answers
+    # Not the SDK's own `cirro.bio` default, which does not answer
     # `/api/info/system` (403) — the discovery call every login starts with.
     CIRRO_BASE_URL = os.environ.get("CIRRO_BASE_URL", "app.cirro.bio")
 
@@ -338,7 +339,7 @@ def data_roots() -> list[Path]:
     return [rp] if rp else []
 
 
-def _within_dir(target: Path, root: Path) -> bool:
+def within_dir(target: Path, root: Path) -> bool:
     root = root.resolve()
     return target == root or root in target.parents
 
@@ -346,7 +347,7 @@ def _within_dir(target: Path, root: Path) -> bool:
 def within_data_dir(target: Path) -> bool:
     """True if `target` is DATA_DIR or somewhere beneath it — the only on-disk
     location the app may read (imports/loads) or write (saves/snapshots)."""
-    return _within_dir(target, config.DATA_DIR)
+    return within_dir(target, config.DATA_DIR)
 
 
 def resolve_within_data_dir(path: str) -> Path:

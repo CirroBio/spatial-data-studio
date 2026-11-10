@@ -7,6 +7,7 @@ app does not ship; the partitioning runs on the MIT graspologic-native core.
 from __future__ import annotations
 
 from ..base import Function, ParamSpec, CallResult, run_compute
+from ._docs import custom_doc
 from ._leiden import leiden_labels, resolve_connectivities
 
 _HELP = """Leiden clustering
@@ -30,8 +31,6 @@ key_added
     Name of the obs column to write cluster labels into.
 """
 
-
-from ._docs import custom_doc
 
 _CITATION = ("Traag, V.A., Waltman, L. & van Eck, N.J. From Louvain to Leiden: guaranteeing "
              "well-connected communities. Sci Rep 9, 5233 (2019). doi:10.1038/s41598-019-41695-z "

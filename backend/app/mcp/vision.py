@@ -21,7 +21,7 @@ top of a human-facing figure:
 
 Locking: `render_view` takes `session.lock.reading()` itself (mirroring
 `snapshots.render_preview`); the membership/stats helpers read the table without
-acquiring anything and must be called under `deps._read_locked` (server.py does).
+acquiring anything and must be called under `deps.read_locked` (server.py does).
 """
 from __future__ import annotations
 
@@ -45,13 +45,12 @@ MARKER_COLOR = "#00e5ff"  # cyan: visible over viridis, H&E, and both backdrops
 
 
 # ---- viewports ----------------------------------------------------------------
-def _view_extent(session, enc: dict, kind: str) -> tuple[np.ndarray, np.ndarray]:
+def _view_extent(session, display: dict) -> tuple[np.ndarray, np.ndarray]:
     """(mins, maxs) of the display's content in its *view* space — image-pixel space
     when the display carries an image, else world/embedding space."""
-    xy = snapshots._point_coords(session, enc, kind)
-    element = snapshots._image_element(session, enc) if kind == "spatial" else None
+    kind, element, _, w2p = snapshots.view_frame(session, display)
+    xy = snapshots.point_coords(session, display.get("encoding", {}), kind)
     if element is not None:
-        w2p = np.linalg.inv(imaging.pixel_to_world(session.sdata, element, session.active_table()))
         pts = (w2p[:2, :2] @ xy.T).T + w2p[:2, 2] if len(xy) else xy
         w0, h0 = imaging.image_dims(session.sdata, element)
         corners = [pts] if len(pts) else []
@@ -67,9 +66,7 @@ def _view_extent(session, enc: dict, kind: str) -> tuple[np.ndarray, np.ndarray]
 def fit_viewport(session, display: dict, width_px: int, height_px: int) -> dict:
     """A viewport framing the whole display content with a 5% margin — the deck.gl
     convention: 2**zoom output pixels per view-space unit, centered on target."""
-    enc = display.get("encoding", {})
-    kind = "embedding" if display.get("type") == "embedding_canvas" else "spatial"
-    mins, maxs = _view_extent(session, enc, kind)
+    mins, maxs = _view_extent(session, display)
     spans = np.maximum(maxs - mins, 1e-9)
     zoom = math.log2(min(width_px / spans[0], height_px / spans[1]) * 0.95)
     center = (mins + maxs) / 2.0
@@ -209,7 +206,6 @@ def render_view(session, display_id: str | None = None, viewport=None,
         raise ValueError("session has no display to render" if display_id is None
                          else f"display {display_id} not found")
     enc = display.get("encoding", {})
-    kind = "embedding" if display.get("type") == "embedding_canvas" else "spatial"
 
     with session.lock.reading():
         if viewport == "fit" or (viewport is None and not display.get("viewport")):
@@ -226,10 +222,9 @@ def render_view(session, display_id: str | None = None, viewport=None,
         bbox = snapshots._window(target, zoom, width_px, height_px)
 
         # view -> world: identity unless the display renders in image-pixel space.
-        element = snapshots._image_element(session, enc) if kind == "spatial" else None
-        p2w = (imaging.pixel_to_world(session.sdata, element, session.active_table())
-               if element is not None else np.eye(3))
-        w2v = np.linalg.inv(p2w)
+        kind, _, p2w, w2v = snapshots.view_frame(session, display)
+        if p2w is None:
+            p2w = w2v = np.eye(3)
 
         grid_meta = None
         if include_grid:
@@ -308,13 +303,7 @@ def cells_in_polygons(session, display: dict | None, polygons, space: str = "spa
         return regions._membership(session.sdata, adata, {"polygons": polygons})
 
     from matplotlib.path import Path as MplPath
-    enc = (display or {}).get("encoding", {})
-    key = enc.get("obsm_key") or "X_umap"
-    if key not in adata.obsm:
-        raise ValueError(f"table has no obsm['{key}'] for an embedding selection")
-    arr = np.asarray(adata.obsm[key])
-    xi, yi = int(enc.get("x_component", 0)), int(enc.get("y_component", 1))
-    coords = np.column_stack([arr[:, xi], arr[:, yi]])
+    coords = snapshots.point_coords(session, (display or {}).get("encoding", {}), "embedding")
     inside = np.zeros(len(coords), dtype=bool)
     for ring in polygons:
         if len(ring) >= 3:

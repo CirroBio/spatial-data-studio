@@ -52,13 +52,13 @@ ui_schema widget values: `checkbox|number|text|select|multitext|obs_key|obs_cate
 | GET  | `/api/functions` | — | registry |
 | GET  | `/api/functions/coverage` | — | parameter-term coverage report (unmatched params ranked by reuse) |
 | GET  | `/api/sessions` | — | `{sessions:[SessionSummary]}` |
-| POST | `/api/sessions` | `{name?, source:{kind:"read"|"load", ...}, load_id?}` | `SessionSummary` — returned immediately with `status:"loading"` for both kinds; the checkpoint unzip/read/re-tile (`load`) and the reader bootstrap (`read`) run on the session's worker, so the load never blocks the request past a fronting proxy's origin timeout. `load_id` is a client nonce to receive `session.loading` progress + the terminal event during a `load`; the load's `hash_check` rides that terminal event (no longer in this response body). |
+| POST | `/api/sessions` | `{name?, source:{kind:"read"|"load", ...}, load_id?}` | `SessionSummary` — returned immediately with `status:"loading"` for both kinds; the checkpoint unzip/read/re-tile (`load`) and the reader bootstrap (`read`) run on the session's worker, so the load never blocks the request past a fronting proxy's origin timeout. `load_id` is a client nonce to receive `session.loading` progress + the terminal event during a `load`; the load's `hash_check` rides that terminal event, not this response. Until the session is `ready`, the routes that write its history or displays answer **409** (see [While a session is loading](#while-a-session-is-loading)). |
 | GET  | `/api/fs/datasets` | — | `{datasets:[{name, path, mtime}]}` (saved checkpoints `*.sdata.zarr.zip` and the folders of saved versions, see [LAYER_FORMAT.md](LAYER_FORMAT.md), found under the data dir; New Session picker) |
 | GET  | `/api/fs/browse?path=&include_files=` | — | `{path, parent, entries:[{name, path, kind:"dir"\|"dataset"\|"file"}]}` (folder navigation for raw-data import; a saved version's folder is a `dataset`) |
 | GET  | `/api/sessions/{id}` | — | `SessionState` |
 | GET  | `/api/sessions/{id}/obs/{column}/values` | — | `{column, values:[{value,count}]}` (unique values of a categorical column, for Edit Annotations) |
 | GET  | `/api/sessions/{id}/var-names?q=&limit=` | — | `{names:[str]}` (server-side gene-name search, prefix matches first; keeps type-to-search responsive on datasets with tens of thousands of genes) |
-| DELETE | `/api/sessions/{id}` | `{save?:bool}` | `{ok:true}`. `save:true` writes the session back to its checkpoint first; when that save fails the session is left open — still listed, its edit lock kept, no `session.removed` — and the call answers **409** with the reason, so it can be saved somewhere else |
+| DELETE | `/api/sessions/{id}` | `{save?:bool}` | `{ok:true}`. `save:true` writes the session back to its checkpoint first; when that save fails the session is left open — still listed, its edit lock kept, no `session.removed` — and the call answers **409** with the reason, so it can be saved somewhere else. A session opened from a `.zarr.tar.gz`/`.zarr.tgz` archive, or from a zip not named `.zarr.zip`, can't be written back into it and always fails this way. A session still `loading` (or `errored`) has nothing to save, so `save` is ignored and it just closes |
 | POST | `/api/presence` | `{client_id, name, session_id\|null}` | `PresenceView` — viewer heartbeat (every ~5 s); also the rename call and the client's initial fetch. Attaching to an unlocked session takes its lock; leaving one releases it. A `session_id` that no longer exists is treated as null |
 | POST | `/api/sessions/{id}/lock` | — | `{ok:true}` — take the edit lock; **409** while another viewer holds it; 400 without `X-SDS-Client-Id` |
 | DELETE | `/api/sessions/{id}/lock` | — | `{ok:true}` — release it; **403** if you don't hold it |
@@ -173,6 +173,23 @@ for 20 s drops out and releases its lock. Full rules: DESIGN §16.5.
     "<session-id>": { "lock": { "client_id": "uuid", "name": "gloomy socrates" },
                       "viewers": ["brave curie", "gloomy socrates"] } } }
 ```
+
+### While a session is loading
+A new session reports `status:"loading"` until its first object lands: the checkpoint
+load (`load`) or the reader bootstrap (`read`) runs on the session's worker. A checkpoint
+load replaces the session's `app_state` wholesale when it lands, so until the status
+leaves `loading` the routes that write history or displays — `POST /jobs`,
+`POST /jobs/stage`, `POST /pending/run-all`, `POST /pending/{stepId}/run`,
+`PUT /pending/{stepId}`, `DELETE /history/{entryId}`, `POST /plots/{plotId}/redraw`,
+`POST /displays`, `PUT /displays/{displayId}` and `POST /recipe/run` — answer **409**
+with `{"detail":"the session is still loading; try again once it is ready"}`. A reader
+bootstrap keeps `app_state`, so during one only the two display routes answer 409; the
+history routes queue their work behind the bootstrap. Retry once `session.updated` (or
+`GET /api/sessions`) reports `ready`. The queued special jobs (save, subset, annotate,
+shape annotations, points-transform) are accepted and run once the load has finished;
+the MCP tools wrapping the refused calls return the same message as a tool error.
+Cancelling the load or bootstrap itself (possible only while it is held at the memory
+boundary) ends the session `errored`.
 
 ### Session source on create
 - read:  `{kind:"read", namespace:"read", function:"visium", params:{path:"..."}}` — any `path`/`input`/`image_path`/`alignment_file` param must resolve under `DATA_DIR`, else 400. `namespace` is **required** and must be `read` (squidpy) or `io` (spatialdata-io): several reader names exist in both, so there is no safe default. The same containment check applies to a reader re-run on an already-open session (`POST /jobs`, `/jobs/stage`, `/pending/{id}`, `/recipe/run`, and the MCP `run_function`/`create_session` tools), not only at create time. A relative filename param (`counts_file`/`meta_file`/… — see `registry/reader_paths.py`) is checked joined onto the primary path; a path param given as an object or array instead of a string (merscope's `vpt_outputs`) has every string inside it checked as a complete path under `DATA_DIR`, so those values must be absolute, else 400.

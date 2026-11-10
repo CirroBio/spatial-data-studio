@@ -56,7 +56,7 @@ import spatialdata as sd
 import xarray
 import zarr
 
-from ..config import _within_dir, config, within_data_dir
+from ..config import config, within_data_dir, within_dir
 from ..schemas import checkpoint as checkpoint_schemas
 from ..sessions import appstate
 from . import sds_layers
@@ -317,12 +317,12 @@ def _extract_zip_verifying(path: str, extract_dir: str, expected: str,
         for arcname in sorted(zf.namelist()):
             h.update(arcname.encode())
             target = os.path.join(extract_dir, arcname)
-            # Zip-slip guard (shared config._within_dir containment check): reject any
+            # Zip-slip guard (shared config.within_dir containment check): reject any
             # entry that resolves outside extract_dir. Even though these are archives we
             # wrote, a hash-named drop-in could carry a `../` arcname, and the
             # content-hash check runs only AFTER the full extract.
             resolved = Path(target).resolve()
-            if not _within_dir(resolved, extract_root):
+            if not within_dir(resolved, extract_root):
                 raise ValueError(f"unsafe archive entry escapes extract dir: {arcname!r}")
             if arcname.endswith("/"):
                 os.makedirs(target, exist_ok=True)
@@ -402,9 +402,9 @@ def _coerce_object_string_fields(arr: np.ndarray) -> np.ndarray | None:
 def _stringify_uns_recarrays(sdata) -> list[tuple[dict, str, object]]:
     """Make every table's `uns` safe for anndata's zarr writer by replacing the
     non-string entries in object-dtype record arrays (see `_coerce_object_string_fields`)
-    for the write only. Returns [(mapping, key, original)] so `save_spatialdata` can
-    restore the live object's arrays — the NaNs are how scanpy marks filtered genes,
-    so the in-memory object must keep them."""
+    for the write only. Returns [(mapping, key, original)] so the writer
+    (`save_spatialdata`, `update_checkpoint`) can restore the live object's arrays — the
+    NaNs are how scanpy marks filtered genes, so the in-memory object must keep them."""
     swaps: list[tuple[dict, str, object]] = []
 
     def walk(mapping: dict) -> None:
@@ -417,7 +417,7 @@ def _stringify_uns_recarrays(sdata) -> list[tuple[dict, str, object]]:
                     mapping[key] = fixed
                     swaps.append((mapping, key, val))
 
-    for table in getattr(sdata, "tables", {}).values():
+    for table in sdata.tables.values():
         uns = getattr(table, "uns", None)
         if isinstance(uns, dict):
             walk(uns)
@@ -434,10 +434,10 @@ def trim_pyramid(el, finest: int):
     A single-scale image, or `finest == 0`, comes back untouched.
     """
     from .. import imaging
-    names = imaging._scale_names(el) if imaging._is_multiscale(el) else []
+    names = imaging.scale_names(el) if imaging.is_multiscale(el) else []
     if finest <= 0 or not names:
         return el
-    kept = {f"/scale{i}": xarray.Dataset({"image": imaging._level_array(el, level)})
+    kept = {f"/scale{i}": xarray.Dataset({"image": imaging.level_array(el, level)})
             for i, level in enumerate(range(finest, len(names)))}
     return xarray.DataTree.from_dict(kept)
 
@@ -576,10 +576,10 @@ def cap_image_levels(sdata, max_mb: float):
     pyramids = {}
     fixed_mb = 0.0
     for name, el in kept["images"].items():
-        if not imaging._is_multiscale(el):
-            fixed_mb += _level_stored_mb(imaging._level_array(el, 0))
+        if not imaging.is_multiscale(el):
+            fixed_mb += _level_stored_mb(imaging.level_array(el, 0))
             continue
-        pyramids[name] = [_level_stored_mb(el[s]["image"]) for s in imaging._scale_names(el)]
+        pyramids[name] = [_level_stored_mb(el[s]["image"]) for s in imaging.scale_names(el)]
 
     def total():
         return fixed_mb + sum(mb for levels in pyramids.values() for mb in levels)
@@ -608,12 +608,16 @@ def save_spatialdata(sdata, path: str, app_state: dict, hash_name: bool = False,
                      levels: dict[str, int] | None = None,
                      slots: dict[str, list[str]] | None = None,
                      max_image_mb: float | None = None,
-                     figures: dict[str, dict[str, bytes]] | None = None) -> str:
+                     figures: dict[str, dict[str, bytes]] | None = None,
+                     log_store: str | None = None) -> str:
     """`hash_name` renames a `.zarr.zip` checkpoint to embed a hash of its own
     contents once written (auto-managed saves only — explicit save-as paths are
     honored verbatim). Worker logs are stripped from the persisted `app_state` and
     written under `logs/` instead (see module docstring); the caller's live
-    `app_state` is left untouched.
+    `app_state` is left untouched. A record loaded from a checkpoint carries no inline
+    log — its log stays in that store's `logs/` — so `log_store` names the store to
+    copy those from (`Session.get_log` reads the same one); without it they are not in
+    the file.
 
     `include` (facet -> element names) writes only those elements — see
     `select_elements` for the absent-vs-present rule. Displays naming a dropped
@@ -639,11 +643,11 @@ def save_spatialdata(sdata, path: str, app_state: dict, hash_name: bool = False,
         # own table pick). Which table that is has to be read BEFORE the trim, because a
         # selection can change it — by leaving it out, or merely by listing another table
         # ahead of it, since the view's table order follows `include`.
-        displays_table = next(iter(getattr(sdata, "tables", {}) or {}), None)
+        displays_table = next(iter(sdata.tables), None)
         sdata = select_elements(sdata, include, levels, slots)
         app_state = appstate.prune_to_elements(
-            app_state, {f: set(getattr(sdata, f, {}) or {}) for f in sdata_facets()})
-        active = next(iter(getattr(sdata, "tables", {}) or {}), None)
+            app_state, {f: set(getattr(sdata, f)) for f in sdata_facets()})
+        active = next(iter(sdata.tables), None)
         if active != displays_table:
             # The file opens onto a different table (or none), so every coloring names a
             # slot of a table that isn't there: no slot survives.
@@ -652,7 +656,9 @@ def save_spatialdata(sdata, path: str, app_state: dict, hash_name: bool = False,
             app_state = appstate.prune_to_table_slots(app_state, set(slots[active]))
     if max_image_mb is not None:
         sdata = cap_image_levels(sdata, max_image_mb)
-    persisted, logs = _split_logs(app_state)
+    persisted, logs = appstate.split_logs(app_state)
+    if log_store:
+        logs.update(_loaded_logs(app_state, log_store))
     checkpoint_schemas.validate_app_state(persisted)
     original = sdata.attrs.get("app_state")
     sdata.attrs["app_state"] = persisted
@@ -675,6 +681,14 @@ def save_spatialdata(sdata, path: str, app_state: dict, hash_name: bool = False,
 def _save_dir(sdata, path: str, logs: dict[str, str],
               figures: dict[str, dict[str, bytes]] | None = None) -> str:
     p = Path(path)
+    if path.endswith((".zarr.tar.gz", ".zarr.tgz")) or (p.exists() and not p.is_dir()):
+        # An archive this writer can't produce: a `.zarr.tar.gz`/`.zarr.tgz`, or any other
+        # existing file (a zip not named `.zarr.zip`, the only name that routes to
+        # `_save_zip`). A directory under a tar name is a store no loader reads back, and
+        # over an existing file the swap below would move the archive aside to a `.bak`
+        # its rmtree can't remove, leaving a directory where the archive was.
+        raise RuntimeError(f"{path} is an archive a save can't write back to; "
+                           "save the session as a new checkpoint instead")
     if p.exists():
         if sds_layers.find_manifest(p) is not None:
             # A session opened from a version has it as its store path, so a save back
@@ -729,7 +743,9 @@ def can_update_incrementally(sdata, extract_dir: str | None) -> bool:
     """True when `sdata` is still backed by the writable directory store it was
     loaded from (`extract_dir`), so a checkpoint can be updated in place
     (`update_checkpoint`) instead of re-serialized whole. False for fresh imports, or
-    once the backing dir has gone away (e.g. after a full re-save)."""
+    once the backing dir has gone away. A full `.zarr.zip` re-save does not make it
+    False (the object stays backed by the extract dir), which is why the session keeps
+    `force_full` set after one (`Session._write_checkpoint`)."""
     if extract_dir is None or getattr(sdata, "path", None) is None:
         return False
     try:
@@ -759,10 +775,13 @@ def update_checkpoint(sdata, path: str, app_state: dict, *, tables: set[str],
     to a full `save_spatialdata` when a raster changed. Callers must confirm
     `can_update_incrementally` first."""
     work_dir = str(sdata.path)
-    persisted, logs = _split_logs(app_state)
+    persisted, logs = appstate.split_logs(app_state)
     checkpoint_schemas.validate_app_state(persisted)
     original = sdata.attrs.get("app_state")
     sdata.attrs["app_state"] = persisted
+    # Coerced before the loop deletes any table directory: a write_element that failed on
+    # the NaNs would leave the backing store without that table.
+    uns_swaps = _stringify_uns_recarrays(sdata)
     try:
         for key in tables:
             elem_dir = os.path.join(work_dir, "tables", key)
@@ -785,6 +804,8 @@ def update_checkpoint(sdata, path: str, app_state: dict, *, tables: set[str],
         written = _zip_from_dir(work_dir, path, hash_name)
     finally:
         sdata.attrs["app_state"] = original if original is not None else app_state
+        for mapping, key, orig in uns_swaps:
+            mapping[key] = orig
     _invalidate_dataset_scan()
     return written
 
@@ -902,7 +923,7 @@ def _write_viewer_sidecar(zarr_dir: str, sdata, tables: set[str] | None = None,
 
     root = zarr.open_group(zarr_dir, mode="r+", use_consolidated=False)
     group = root.require_group(VIEWER_GROUP)
-    table_keys = list(getattr(sdata, "tables", {}))
+    table_keys = list(sdata.tables)
     shape_report = shapes if shapes is not None else _index_shapes(zarr_dir, sdata)
     sidecar = {
         "sidecar_version": VIEWER_SIDECAR_VERSION,
@@ -912,7 +933,7 @@ def _write_viewer_sidecar(zarr_dir: str, sdata, tables: set[str] | None = None,
                 key: imaging.image_info(sdata, element, sdata.tables[key] if key else None)
                 for key in [""] + table_keys
             }
-            for element in getattr(sdata, "images", {})
+            for element in sdata.images
         },
         "coords_transform": {
             key: transform.get_affine6(sdata, sdata.tables[key]) for key in table_keys
@@ -1140,7 +1161,7 @@ def _index_shapes(zarr_dir: str, sdata) -> dict[str, dict]:
     from ..sessions import shape_annotations
     from ..transport import geometry
 
-    for element, gdf in getattr(sdata, "shapes", {}).items():
+    for element, gdf in sdata.shapes.items():
         path = os.path.join(zarr_dir, "shapes", element, "shapes.parquet")
         if element == shape_annotations.ELEMENT or not os.path.isfile(path):
             continue
@@ -1435,25 +1456,25 @@ def _read_meta(node_dir: str) -> dict:
 
 
 # ---- worker-log relocation --------------------------------------------------
-def _split_logs(app_state: dict) -> tuple[dict, dict[str, str]]:
-    """Return (app_state without any record `_log`, {record_id: log}). Copies only
-    the two record collections and the records that carry a log, so the caller's
-    live app_state keeps its in-memory logs."""
+def _loaded_logs(app_state: dict, log_store: str) -> dict[str, str]:
+    """{record_id: log} for the records loaded from a checkpoint, read back from
+    `log_store`'s `logs/`. Such a record carries no `_log` at all, so
+    `appstate.split_logs` finds nothing to relocate for it (see `save_spatialdata`)."""
     logs: dict[str, str] = {}
-    out = dict(app_state)
-    for coll_key in ("compute_history", "plots"):
-        recs = app_state.get(coll_key) or []
-        new_recs = []
-        for rec in recs:
-            if isinstance(rec, dict) and "_log" in rec:
-                # Strip `_log` unconditionally (even an empty string) - only a
-                # non-empty one is worth relocating to logs/<id>.log.gz.
-                if rec["_log"]:
-                    logs[rec["id"]] = rec["_log"]
-                rec = {k: v for k, v in rec.items() if k != "_log"}
-            new_recs.append(rec)
-        out[coll_key] = new_recs
-    return out, logs
+    for coll_key in appstate.LOGGED_COLLECTIONS:
+        for rec in app_state.get(coll_key) or []:
+            if isinstance(rec, dict) and "_log" not in rec:
+                stored = read_log(log_store, rec["id"])
+                if stored:
+                    logs[rec["id"]] = stored
+    return logs
+
+
+def _is_log_id(entry_id: str) -> bool:
+    """A record id names its log file under `logs/`. The app mints uuid4 strings, but a
+    loaded checkpoint's app_state only promises a string, so an id carrying a path
+    separator or `..` would reach outside the store."""
+    return re.fullmatch(r"[A-Za-z0-9_-]+", entry_id) is not None
 
 
 def _write_logs(zarr_dir: str, logs: dict[str, str]) -> None:
@@ -1462,6 +1483,11 @@ def _write_logs(zarr_dir: str, logs: dict[str, str]) -> None:
     d = os.path.join(zarr_dir, "logs")
     os.makedirs(d, exist_ok=True)
     for rec_id, text in logs.items():
+        # An id that can't name a file under logs/ has its log left out. Failing the
+        # save instead would come after the store is already written, and would fail
+        # every later save of a session opened from such a file.
+        if not _is_log_id(rec_id):
+            continue
         with gzip.open(os.path.join(d, f"{rec_id}.log.gz"), "wt", encoding="utf-8") as f:
             f.write(text)
 
@@ -1469,8 +1495,9 @@ def _write_logs(zarr_dir: str, logs: dict[str, str]) -> None:
 def read_log(store_root: str | None, entry_id: str) -> str | None:
     """Read a relocated compute/plot log (gzipped under `logs/`) from a loaded
     checkpoint's on-disk store (the extract dir for a `.zarr.zip`, or the store dir
-    itself). Returns None when there is no such log."""
-    if not store_root:
+    itself). Returns None when there is no such log, which includes an id that is not
+    a plain identifier (see `_is_log_id`)."""
+    if not store_root or not _is_log_id(entry_id):
         return None
     p = os.path.join(store_root, "logs", f"{entry_id}.log.gz")
     if not os.path.isfile(p):
@@ -1541,8 +1568,8 @@ def _level_nbytes(arr) -> int:
 def _raster_nbytes(el) -> int:
     """Uncompressed bytes across every pyramid level of an image/labels element."""
     from .. import imaging
-    levels = len(imaging._scale_names(el)) if imaging._is_multiscale(el) else 1
-    return sum(_level_nbytes(imaging._level_array(el, i)) for i in range(levels))
+    levels = len(imaging.scale_names(el)) if imaging.is_multiscale(el) else 1
+    return sum(_level_nbytes(imaging.level_array(el, i)) for i in range(levels))
 
 
 def _matrix_nbytes(m) -> int:
@@ -1654,7 +1681,7 @@ def image_levels(sdata, name: str, stores: dict[str, str] | None = None) -> list
         if dirs:
             mb = _dir_bytes(dirs[lv["level"]]) / 1e6
         else:
-            mb = _level_stored_mb(imaging._level_array(el, lv["level"]))
+            mb = _level_stored_mb(imaging.level_array(el, lv["level"]))
         out.append({**lv, "size_mb": round(mb, 1)})
     return out
 
@@ -1710,13 +1737,13 @@ def element_size_mb(sdata, facet: str, name: str,
     if facet == "tables":
         # Summed from the slot breakdown rather than the table's directory, so the two
         # numbers the save dialog shows for one table always agree.
-        if (getattr(sdata, "tables", None) or {}).get(name) is None:
+        if sdata.tables.get(name) is None:
             return None
         return round(sum(s["size_mb"] for s in table_slots(sdata, name, stores)), 1)
     if (d := _element_dir(sdata, facet, name, stores)) is not None:
         return round(_dir_bytes(d) / 1e6, 1)
 
-    el = (getattr(sdata, facet, None) or {}).get(name)
+    el = getattr(sdata, facet).get(name)
     if el is None:
         return None
     if facet in ("images", "labels"):

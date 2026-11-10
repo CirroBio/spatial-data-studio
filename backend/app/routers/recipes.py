@@ -4,7 +4,7 @@ from fastapi import APIRouter
 
 from .. import recipes
 from ..registry.introspect import REGISTRY
-from ..deps import _session, _writable_session, _bad_request
+from ..deps import get_session, get_writable_session, bad_request
 
 router = APIRouter()
 
@@ -17,7 +17,7 @@ async def list_bundled_recipes():
 
 @router.get("/api/sessions/{sid}/recipe")
 async def export_recipe(sid: str):
-    sess = _session(sid)
+    sess = get_session(sid)
     steps = recipes.steps_from_history(sess.app_state)
     return {"library_versions": REGISTRY.library_versions, "steps": steps}
 
@@ -27,9 +27,9 @@ async def run_recipe(sid: str, recipe: dict):
     """Import a recipe: run now (queue all steps) or stage as PENDING (spec §5.3). A
     recipe carrying declared `params` + caller `param_values` is resolved first ($param
     references filled in); an ad-hoc {steps} import resolves to itself."""
-    sess = _writable_session(sid)
+    sess = get_writable_session(sid)
     mode = recipe.get("mode") or "run"
-    with _bad_request():
+    with bad_request():
         steps = recipes.resolve_steps(recipe, recipe.get("param_values"))
         n = recipes.run_steps(sess, steps, mode)
     return {"staged" if mode == "stage" else "queued": n}
@@ -39,6 +39,6 @@ async def run_recipe(sid: str, recipe: dict):
 async def preflight_recipe(sid: str, recipe: dict):
     """Validate against the installed registry. Recipe params are resolved first so
     referenced-key checks reflect the caller's chosen `param_values`."""
-    _session(sid)
+    get_session(sid)
     steps = recipes.resolve_steps(recipe, recipe.get("param_values"))
     return recipes.preflight({"steps": steps})

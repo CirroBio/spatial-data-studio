@@ -1,5 +1,6 @@
 // What tasks read from an opened dataset, through the same reader the canvases use.
 import { arrowToColorSource, type CheckpointHandle, type ExpressionMatrix } from '@cirrobio/spatial-viewer';
+import { baseOf } from '../workbench/workbench';
 
 export type ObsValues =
   | { kind: 'categorical'; codes: Int32Array; categories: string[] }
@@ -35,20 +36,24 @@ export async function readCoords(handle: CheckpointHandle, field: string): Promi
   return xy;
 }
 
-// The matrix is the same for every version of a dataset this app writes (it never edits
-// X), so it is read once per opened dataset; everyone waiting on that read hears how far
+// No version writes a table's X or the viewer's mirror of it (edits are to obs, obsm and
+// uns), so the matrix is the same for every version on a store: it is read once per base
+// store, by whichever version asks first, and everyone waiting on that read hears how far
 // it has got.
 const matrices = new Map<string, { matrix: Promise<ExpressionMatrix>; listeners: Set<(fraction: number) => void> }>();
 
+/** The expression matrix of the opened dataset `key` (its workbench key), read through
+ * `handle` unless a version on the same store has read it already. */
 export function readMatrix(key: string, handle: CheckpointHandle, onProgress?: (fraction: number) => void): Promise<ExpressionMatrix> {
-  let read = matrices.get(key);
+  const base = baseOf(key);
+  let read = matrices.get(base);
   if (!read) {
     if (!handle.source.getExpressionMatrix) return Promise.reject(new Error('This store\'s reader can\'t give the expression matrix.'));
     const listeners = new Set<(fraction: number) => void>();
     const matrix = handle.source.getExpressionMatrix((fraction) => listeners.forEach((l) => l(fraction)));
     read = { matrix, listeners };
-    matrices.set(key, read);
-    matrix.catch(() => matrices.delete(key));
+    matrices.set(base, read);
+    matrix.catch(() => matrices.delete(base));
   }
   if (onProgress) {
     const { listeners } = read;

@@ -17,7 +17,7 @@ Lock rules, all implemented here:
 - A mutating request claims the lock the same way (`claim`), which is what stops
   two viewers from both writing during the window after a deliberate unlock.
 - While another viewer holds the lock, every mutating request is refused
-  (`deps._claim_lock` → 423). Read paths are never gated: a viewer without the
+  (`deps.claim_lock` → 423). Read paths are never gated: a viewer without the
   lock still gets the full session and changes their own display settings
   locally (the frontend skips the PUT).
 - Callers with no client id — the offline CLI, the e2e harness, scripts — write

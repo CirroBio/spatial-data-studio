@@ -566,7 +566,9 @@ to `logs/<record_id>.log.gz` (gzip-compressed UTF-8 text), one file per
 record `id` that produced output, only if there is any. A reader wanting a
 step's log looks it up by the record's `id` field from `compute_history[]` or
 `plots[]`; a record with no matching log file simply produced no captured
-output.
+output. The app mints ids as UUIDs; a log is written only for an id made of
+letters, digits, `-` and `_`, so a file can't name a path outside `logs/`, and
+a record whose id has any other character has no log file.
 
 ## 7. Content-hash filenames
 
@@ -614,7 +616,7 @@ Schema file: [`backend/app/schemas/checkpoint/checkpoint_index.schema.json`](../
   "checkpoints": [
     { "path": "sessions/foo.sdata.zarr.zip",   // required; resolved relative to this index.json's own URL
       "id": "foo",                             // optional; what `from` refers to; defaults to the path
-      "label": "Foo",                          // optional; falls back to the file's basename
+      "label": "Foo",                          // optional; falls back to the file's name without its extension or content hash
       "description": "…",                      // optional
       "folder": "Xenium/Lung",                 // optional; the web app's map files it here ("/" nests)
       "from": ["raw/foo.sdata.zarr.zip"],      // optional; the checkpoints it was made from, by id or path

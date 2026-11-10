@@ -110,7 +110,9 @@ writes them as a new dataset in the project, holding only what changed: a new co
 labels is kilobytes, beside a store of gigabytes that is not copied. The dataset is
 tagged as this app's, filed in the store's Cirro folder, and carries a note saying what
 was saved and by whom; the top bar says the catalog is updating while the project is
-read again to list it. **Discard** throws the changes away; **Remove…** on a report or a
+read again to list it. A task that finishes while a version is saving waits for the
+save, then goes into the unsaved changes rather than into that version. **Discard**
+throws the changes away; **Remove…** on a report or a
 figure takes out just that one ([Analyze in the browser](analyze.md) says where). Until
 you do one or the other they are kept in this browser, so a reload loses nothing. Logging
 out, or logging in to another Cirro, discards a project's unsaved changes (the app asks

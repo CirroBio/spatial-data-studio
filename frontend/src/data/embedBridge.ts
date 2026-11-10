@@ -61,7 +61,11 @@ type ParentMessage =
   | { type: 'search-vars'; requestId: string; query: string; limit?: number };
 
 function postToParent(message: ViewerMessage): void {
-  // targetOrigin '*' for v1 — the parent validates event.source (see the protocol doc).
+  // targetOrigin '*' for v1; each side checks `event.source` instead (see the protocol
+  // doc). The parent checks it is this frame, and this side's listeners drop anything not
+  // from `window.parent`: any window holding a reference to this frame can post to it, and
+  // the envelope and request ids are guessable, so a well-formed message proves nothing
+  // about its sender. Unframed, `window.parent` is the window itself.
   window.parent.postMessage(
     { source: EMBED_MESSAGE_SOURCE, version: PROTOCOL_VERSION, ...message },
     '*',
@@ -100,6 +104,7 @@ function requestFromHost<T>(
     const onMessage = (event: MessageEvent) => {
       const msg = event.data as Record<string, unknown> | null;
       if (
+        event.source !== window.parent ||
         !msg || msg.source !== PARENT_MESSAGE_SOURCE || msg.version !== PROTOCOL_VERSION ||
         msg.type !== replyType || msg.requestId !== requestId
       ) return;
@@ -316,7 +321,7 @@ export function useEmbedBridge(enabled: boolean, checkpoint: CheckpointSession):
     });
 
     const onMessage = (event: MessageEvent) => {
-      if (!isParentMessage(event.data)) return;
+      if (event.source !== window.parent || !isParentMessage(event.data)) return;
       const msg = event.data;
       if (msg.type === 'apply-display') {
         applyDisplay(msg.display);

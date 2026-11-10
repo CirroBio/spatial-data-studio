@@ -49,7 +49,7 @@ def _is_canonical(el, is_label: bool) -> bool:
     canonically shaped yet still backed by a slow original mount, so `normalize_rasters`
     additionally gates images on locality (see its `known_stores` param) before
     treating this as a no-op."""
-    arr = imaging._level_array(el, 0)
+    arr = imaging.level_array(el, 0)
     chunksize = getattr(getattr(arr, "data", None), "chunksize", None)
     if chunksize is None:  # eagerly-loaded numpy: not lazy/tiled, rebuild it
         return False
@@ -60,7 +60,7 @@ def _is_canonical(el, is_label: bool) -> bool:
     # N times. A 3D image array is (c, y, x); a store packing channels is not canonical.
     if not is_label and arr.ndim >= 3 and chunksize[0] != 1:
         return False
-    if is_label or imaging._is_multiscale(el):
+    if is_label or imaging.is_multiscale(el):
         return True
     return max(arr.shape[-1], arr.shape[-2]) <= config.RASTER_BASE_PX
 
@@ -74,7 +74,7 @@ def _scale_factors(max_dim: int) -> list[int] | None:
 
 
 def _rebuild(el, is_label: bool):
-    arr = imaging._level_array(el, 0)
+    arr = imaging.level_array(el, 0)
     dims = tuple(arr.dims)
     transforms = get_transformation(el, get_all=True)
     if is_label:
@@ -105,16 +105,16 @@ def _rebuild(el, is_label: bool):
 def _child_rebuild(el, kind: str, name: str, store: str) -> None:
     """Rebuild one element and write it to `store` — runs in the compute pool
     (registry/kernel.py's reasoning, applied to ingest): reading a raster, re-chunking
-    it and re-encoding every chunk is seconds to minutes of CPU that used to run in the
-    API process, where it holds the GIL in bursts long enough to stall every request in
-    flight — a user opening a checkpoint froze the canvas for everyone else. Only the
+    it and re-encoding every chunk is seconds to minutes of CPU, which in the API
+    process would hold the GIL in bursts long enough to stall every request in flight —
+    a user opening a checkpoint would freeze the canvas for everyone else. Only the
     element crosses the boundary; it is a lazy ref to its backing store (a few hundred
     kB of dask graph), and the rebuilt bytes come back through `store` on disk, which
     the caller reopens lazily.
 
     The rebuild's dask threads run here, in the child, for the same reason. Elements
     are submitted one at a time (see `normalize_rasters`), so peak memory is still
-    bounded by the largest single element — now in the worker rather than the API
+    bounded by the largest single element — in the worker rather than the API
     process."""
     with dask.config.set(scheduler="threads", num_workers=config.RASTER_REBUILD_WORKERS):
         rebuilt = _rebuild(el, is_label=(kind == "labels"))
@@ -135,7 +135,7 @@ def normalize_rasters(sdata, progress=None,
     local. The raster HTTP route resolves an element to its store via that map
     (spatialdata element names are globally unique across images/labels, so a single
     name-keyed map is unambiguous); labels never populate it since only images serve
-    client compositing (see `main.py::image_info`'s `client_compositing` gate).
+    client compositing (see `routers/imaging.py::image_info`'s `client_compositing` gate).
     `progress(message, pct)` (optional) reports per-element rebuild progress; see
     `create_from_load`.
 
@@ -160,16 +160,16 @@ def normalize_rasters(sdata, progress=None,
     backing_root = str(sdata.path) if getattr(sdata, "path", None) else None
     outside_workdir = backing_root is not None and not Path(backing_root).resolve().is_relative_to(
         config.WORK_DIR.resolve())
-    todo = [("images", n) for n, el in getattr(sdata, "images", {}).items()
+    todo = [("images", n) for n, el in sdata.images.items()
             if not _is_canonical(el, False) or (n not in known and outside_workdir)]
-    todo += [("labels", n) for n, el in getattr(sdata, "labels", {}).items() if not _is_canonical(el, True)]
+    todo += [("labels", n) for n, el in sdata.labels.items() if not _is_canonical(el, True)]
 
     # A canonical-and-already-local image (no rebuild needed — e.g. reloaded from
     # one of our own checkpoints) still needs a `stores` entry: the client-
-    # compositing endpoint (main.py::raster_store) serves chunks straight from an
-    # element's own backing store, keyed by this map. Without an entry here, `has_store`
-    # is false and every reopened checkpoint falls back to server-side WebP tiling even
-    # though nothing needed rebuilding. This doesn't create or own a new directory,
+    # compositing endpoint (routers/imaging.py::raster_store) serves chunks straight from
+    # an element's own backing store, keyed by this map. Without an entry here, `has_store`
+    # is false and every reopened checkpoint shows no canvas image even though nothing
+    # needed rebuilding. This doesn't create or own a new directory,
     # just points at one the session already keeps alive via `extract_dir`.
     #
     # `known.get(name)` takes priority over `backing_root`: `sdata.path` is the whole
@@ -180,7 +180,7 @@ def normalize_rasters(sdata, progress=None,
     # that element's real, current store dir forward.
     todo_names = {n for _, n in todo}
     stores: dict[str, str] = {}
-    for name in getattr(sdata, "images", {}):
+    for name in sdata.images:
         if name in todo_names:
             continue
         store = known.get(name) or backing_root

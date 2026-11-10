@@ -44,13 +44,15 @@ It is also the shortest way to run the app on your own machine — nothing to cl
 nothing to build, just a folder to point it at:
 
 ```
-docker run -d -p 8080:8888 \
+docker run -d -p 127.0.0.1:8080:8888 \
   -v "$(pwd)/data":/data -e SDS_DATA_DIR=/data \
   public.ecr.aws/cirrobio/spatial-data-studio:v1
 ```
 
 Then open `http://localhost:8080`; the app's dataset picker starts in the folder you
-mounted. With no memory hard-limit the app sizes itself against the host's total RAM
+mounted. The `127.0.0.1:` keeps the port on this machine: the app has no sign-in, so
+publishing it on other interfaces lets anyone who can reach it use the app and the
+mounted data. With no memory hard-limit the app sizes itself against the host's total RAM
 (see `SDS_CONTAINER_MEM_MB` below), which is the right default on a workstation — pass
 `--memory` as the manual form does when you want to cap it, and add the `/work` tmpfs to
 hold the working set in RAM.
@@ -88,7 +90,7 @@ docker compose down
 ```
 docker run -d \
   --name spatial-data-studio \
-  -p 8080:8888 \
+  -p 127.0.0.1:8080:8888 \
   -v "$(pwd)/test-data":/data \
   -e SDS_DATA_DIR=/data \
   -e SDS_CONTAINER_MEM_MB=12288 \

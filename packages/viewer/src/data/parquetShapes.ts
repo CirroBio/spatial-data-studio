@@ -31,6 +31,7 @@ import { parquetMetadata, parquetMetadataAsync, parquetRead } from 'hyparquet';
 import { compressors } from 'hyparquet-compressors';
 import type { AbsolutePath, AsyncReadable } from '@zarrita/storage';
 import type { Table } from 'apache-arrow';
+import { applyAffineXy, boxThrough, invertAffine } from '../canvas/imageAffine';
 import { type PolygonBuffers, decodeWkbPolygons, polygonTable } from './wkbGeoArrow';
 
 /** One entry of the viewer sidecar's `shapes` map — `store._index_shapes`' report.
@@ -198,11 +199,11 @@ export function createShapeReader(
   // The world->intrinsic direction, cached: it is inverted once per element, not once
   // per viewport.
   function inverseOf(element: string): number[] {
-    let inverse = inverses.get(element);
-    if (!inverse) {
-      inverse = invertAffine6(affines[element]);
-      inverses.set(element, inverse);
-    }
+    const cached = inverses.get(element);
+    if (cached) return cached;
+    const inverse = invertAffine(affines[element]);
+    if (!inverse) throw new Error('shapes transform is not invertible');
+    inverses.set(element, inverse);
     return inverse;
   }
 
@@ -251,7 +252,7 @@ export function createShapeReader(
       // The covering statistics are in the element's intrinsic space, so the query
       // window goes the other way: all four corners through the inverse affine, then
       // their AABB, because the affine may rotate.
-      const window = transformBboxAabb(bbox, inverseOf(element));
+      const window = boxThrough(inverseOf(element), bbox);
       if (!intersects(window, entry.bounds)) return empty('outside-bounds');
 
       const file = buffer(element);
@@ -319,7 +320,8 @@ export function createShapeReader(
 
       const blobs = await readGeometry();
       const buffers = decodeWkbPolygons(hits.map((i) => blobs.values[i]), multi);
-      applyAffineXy(buffers.xy, affines[element]);
+      // Intrinsic -> world, over the interleaved coordinate buffer.
+      applyAffineXy(affines[element], buffers.xy, buffers.xy.subarray(1), 2);
       const cellIndex = await gatherCellIndex(readCellIndex, element, kept, hits);
       return {
         table: polygonTable(buffers, cellIndex, multi),
@@ -636,34 +638,4 @@ export function asFiniteBox(box: Record<string, number | null> | null): Bbox | n
 
 export function intersects(a: Bbox, b: Bbox | number[]): boolean {
   return a[0] <= b[2] && a[2] >= b[0] && a[1] <= b[3] && a[3] >= b[1];
-}
-
-/** All four corners through the affine, then their AABB — the affine may rotate, so
- * transforming only two opposite corners would not bound the result. */
-export function transformBboxAabb([x0, y0, x1, y1]: Bbox, [a, b, c, d, e, f]: number[]): Bbox {
-  const xs: number[] = [];
-  const ys: number[] = [];
-  for (const [x, y] of [[x0, y0], [x1, y0], [x0, y1], [x1, y1]]) {
-    xs.push(a * x + b * y + c);
-    ys.push(d * x + e * y + f);
-  }
-  return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
-}
-
-export function invertAffine6([a, b, c, d, e, f]: number[]): number[] {
-  const det = a * e - b * d;
-  if (det === 0) throw new Error('shapes transform is not invertible');
-  return [e / det, -b / det, (b * f - c * e) / det,
-          -d / det, a / det, (c * d - a * f) / det];
-}
-
-// Intrinsic -> world, in place over the interleaved coordinate buffer.
-function applyAffineXy(xy: Float64Array, [a, b, c, d, e, f]: number[]): void {
-  if (a === 1 && b === 0 && c === 0 && d === 0 && e === 1 && f === 0) return;
-  for (let i = 0; i < xy.length; i += 2) {
-    const x = xy[i];
-    const y = xy[i + 1];
-    xy[i] = a * x + b * y + c;
-    xy[i + 1] = d * x + e * y + f;
-  }
 }

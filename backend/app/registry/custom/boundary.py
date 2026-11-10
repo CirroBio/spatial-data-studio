@@ -13,6 +13,7 @@ import pandas as pd
 
 from ..base import CallResult, Function, ParamSpec, missing_obs_column, missing_uns_key, run_compute, \
     run_plot, resolve_obsm_or_result
+from ._docs import custom_doc
 
 _NUMERIC_KWARGS = ("bin_size", "bandwidth", "threshold", "min_area", "radius", "margin_width")
 
@@ -21,8 +22,6 @@ def _bad_labels(adata, cell_type_key: str, labels: list) -> list:
     observed = set(adata.obs[cell_type_key].astype(str))
     return [v for v in labels if v not in observed]
 
-
-from ._docs import custom_doc
 
 _CITATION = ("Original method implemented in this repository (tissue region derived from cell-type "
              "labels; each cell's signed distance to the region margin, and the infiltration profile "

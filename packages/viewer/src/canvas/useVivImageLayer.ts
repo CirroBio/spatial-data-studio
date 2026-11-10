@@ -192,7 +192,7 @@ export function useVivImageLayer(
 
     // Color/visibility come from the (editable) channel state for every image, RGB
     // included: an H&E's channels default to red/green/blue (useImageChannels), so the
-    // additive tint reproduces true color out of the box, but the user can now recolor,
+    // additive tint reproduces true color out of the box, and the user can still recolor,
     // hide, or contrast-adjust them like any fluorescence channel.
     const channelsVisible = activeSelections.map((s) => channels[s.c]?.visible ?? true);
     const colors = activeSelections.map((s) => hexToRgb(channels[s.c]?.color ?? '#ffffff'));

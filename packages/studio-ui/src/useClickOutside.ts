@@ -4,9 +4,8 @@ import { useEffect, type RefObject } from 'react';
  *
  * The listener is only attached while `open`, so a closed dropdown costs nothing. Shared
  * by the components that open a panel over the page (the obs/var pickers, the lock
- * badge) — the effect was previously copied into each one, so any correction to it (the
- * event to listen for, the capture phase, handling portalled children) had to be made in
- * every copy to take effect. */
+ * badge), so a correction to it (the event to listen for, the capture phase, handling
+ * portalled children) is made once and reaches all of them. */
 export function useClickOutside(
   ref: RefObject<HTMLElement | null>,
   close: () => void,

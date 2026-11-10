@@ -8,6 +8,7 @@
 // - images: microscopy images the browser can open (OME-TIFF), and other slide formats
 //   Cirro lists but a browser can't decode;
 // - versions: versions this app saved (`layer.json` beside an `overlay/` folder).
+import { storeName } from '@cirrobio/spatial-viewer';
 import catalog from '../../../nextflow/data_types.json';
 import { LAYER_MANIFEST } from '../stack/manifest';
 
@@ -155,13 +156,6 @@ const ZARR_ROOT = '/zarr.json';
 // What makes a Zarr v3 folder a SpatialData store the viewer can draw: a table with
 // cell positions, or an image (image-only stores open too).
 const DRAWABLE = /^(.+)\/(tables\/[^/]+\/obsm\/spatial|images\/[^/]+)\/zarr\.json$/;
-
-/** The store's own name without its extension and content hash
- * (`results-07b1a290f7f2.sdata.zarr.zip` → `results`). */
-export function storeName(path: string): string {
-  const last = path.replace(/\/+$/, '').split('/').pop() ?? path;
-  return last.replace(/\.zarr(\.zip)?$/i, '').replace(/\.sdata$/i, '').replace(/-[0-9a-f]{12}$/i, '');
-}
 
 /** A store's name after its folder when it sits below the top level: workflows name
  * their outputs alike and tell them apart by folder

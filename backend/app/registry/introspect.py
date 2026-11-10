@@ -24,10 +24,10 @@ from .library_fn import build_library_function
 from .custom import CUSTOM_FUNCTIONS, check_custom_functions
 
 # Reflection touches every public attribute of squidpy/scanpy/spatialdata-io, which makes
-# the libraries emit their own deprecation and future warnings for members the app only
-# looks at and may never call — noise no operator can act on. Silence exactly those two
-# categories for the duration of a build (see `_reflecting`) rather than calling
-# `warnings.filterwarnings("ignore")` at import, which used to disable EVERY warning
+# the libraries emit their own deprecation, future and user warnings for members the app
+# only looks at and may never call — noise no operator can act on. Silence exactly those
+# categories for the duration of a build (see `_reflecting`) rather than with
+# `warnings.filterwarnings("ignore")` at import, which would disable EVERY warning
 # process-wide for the whole app, including ones from compute the user did ask for.
 _REFLECTION_WARNINGS = (DeprecationWarning, FutureWarning, UserWarning)
 

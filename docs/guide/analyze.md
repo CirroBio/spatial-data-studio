@@ -43,7 +43,7 @@ can't run. An analysis shows that it is running, with **Cancel**, from the momen
 start it. The first gene analysis on a store reads its expression matrix, with a
 progress bar: for the larger public examples that is around 100 MB, about ten seconds on
 a good connection. The page stays usable while it reads, and later analyses of the same
-store reuse it. Clustering is the slowest: seconds for tens of thousands of cells, about
+store, or of any version of it, reuse it. Clustering is the slowest: seconds for tens of thousands of cells, about
 half a minute for 200,000.
 
 ## Compare composition

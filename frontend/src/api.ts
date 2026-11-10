@@ -17,7 +17,6 @@ import type {
   SessionSummary,
   SessionState,
   UiFieldInfo,
-  HashCheck,
   PresenceView,
 } from './types';
 import { CLIENT_ID } from './lib/presence';
@@ -100,13 +99,13 @@ export type NewSessionSource =
 
 export async function createSession(
   params: { name?: string; source: NewSessionSource; load_id?: string },
-): Promise<SessionSummary & { hash_check: HashCheck | null }> {
+): Promise<SessionSummary> {
   const res = await apiFetch('/api/sessions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(params),
   });
-  return res.json() as Promise<SessionSummary & { hash_check: HashCheck | null }>;
+  return res.json() as Promise<SessionSummary>;
 }
 
 export interface FsEntry {

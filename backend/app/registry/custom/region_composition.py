@@ -6,6 +6,7 @@ bar — all existing deps, no new library per Part 6's constraint."""
 from __future__ import annotations
 
 from ..base import CallResult, Function, ParamSpec, missing_obs_column, run_plot
+from ._docs import custom_doc
 
 _REGION_PARAM = ParamSpec.obs_categorical(
     "region_key", required=True,
@@ -13,8 +14,6 @@ _REGION_PARAM = ParamSpec.obs_categorical(
 _CELL_TYPE_PARAM = ParamSpec.obs_categorical(
     "cell_type_key", required=True,
     tooltip="Categorical obs column (cell types/clusters) to break down by region")
-
-from ._docs import custom_doc
 
 _CITATION = ("Original method implemented in this repository (per-region cell-type crosstab with "
              "a chi-square test of independence).")

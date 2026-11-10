@@ -101,11 +101,11 @@ def raster_chunk_put(sdata, element: str, key: str, data: bytes) -> None:
 
 
 # ---- multiscale access -----------------------------------------------------
-def _is_multiscale(el) -> bool:
+def is_multiscale(el) -> bool:
     return hasattr(el, "children") or el.__class__.__name__ in ("DataTree", "Datatree")
 
 
-def _scale_names(el) -> list[str]:
+def scale_names(el) -> list[str]:
     """Multiscale level names, finest (scale0) first."""
     keys = el.children.keys() if hasattr(el, "children") else el.keys()
     # Numeric order, not lexical: plain sorted() puts 'scale10' before 'scale2',
@@ -113,11 +113,11 @@ def _scale_names(el) -> list[str]:
     return sorted(keys, key=lambda k: int(str(k).removeprefix("scale")))
 
 
-def _level_array(el, level: int):
+def level_array(el, level: int):
     """DataArray (c,y,x) for a given pyramid level; level 0 is the finest."""
-    if not _is_multiscale(el):
+    if not is_multiscale(el):
         return el
-    names = _scale_names(el)
+    names = scale_names(el)
     node = el[names[min(level, len(names) - 1)]]
     dv = getattr(node, "data_vars", {})
     return node["image"] if "image" in dv else next(iter(node.values()))
@@ -128,14 +128,14 @@ def _image_array(sdata, element):
     if element not in sdata.images:
         raise KeyError(f"image element '{element}' not found")
     el = sdata.images[element]
-    if _is_multiscale(el):
-        return _level_array(el, len(_scale_names(el)) - 1)
+    if is_multiscale(el):
+        return level_array(el, len(scale_names(el)) - 1)
     return el
 
 
 def image_dims(sdata, element) -> tuple[int, int]:
     """Level-0 (width, height) of an image element, from shape metadata only."""
-    arr = _level_array(sdata.images[element], 0)  # returns the element itself if single-scale
+    arr = level_array(sdata.images[element], 0)  # returns the element itself if single-scale
     return int(arr.shape[-1]), int(arr.shape[-2])
 
 
@@ -144,7 +144,7 @@ def channel_names(elem) -> list[str]:
     Falls back through the `c` coord, the `c` dim size, and finally a shape
     guess, since not every reader attaches explicit channel names/coords.
     """
-    arr = _level_array(elem, 0)
+    arr = level_array(elem, 0)
     try:
         return [str(c) for c in arr.coords["c"].values]
     except (KeyError, AttributeError):
@@ -198,7 +198,7 @@ def parse_channel_colors(spec: str | None) -> dict[int, tuple[int, int, int]] | 
 
 
 # ---- channel normalization (consistent across tiles) -----------------------
-def _channel_norm(sdata, element) -> np.ndarray:
+def channel_norm(sdata, element) -> np.ndarray:
     """Per-channel intensity scale, computed once from the coarsest level so every
     tile of an element uses the same scaling (per-tile maxima would make brightness
     jump between adjacent tiles). uint8 images use a fixed 255."""
@@ -224,11 +224,11 @@ def _channel_norm(sdata, element) -> np.ndarray:
 
 
 def channel_contrast_limits(sdata, element) -> list[float]:
-    """Per-channel upper contrast bound (the `_channel_norm` denominator) baked into
+    """Per-channel upper contrast bound (the `channel_norm` denominator) baked into
     a snapshot config so the browser compositor reproduces the server's brightness:
     displayed = clip(value / limit, 0, 1). Derived from the coarsest level, matching
     what the tile/thumbnail server uses."""
-    return [float(x) for x in _channel_norm(sdata, element)]
+    return [float(x) for x in channel_norm(sdata, element)]
 
 
 def channel_value_range(sdata, element) -> list[tuple[float, float]]:
@@ -242,12 +242,12 @@ def channel_value_range(sdata, element) -> list[tuple[float, float]]:
     return [(float(data[c].min()), float(data[c].max())) for c in range(data.shape[0])]
 
 
-def _is_rgb(sdata, element) -> bool:
+def is_rgb(sdata, element) -> bool:
     """True for a true-color RGB image that must be shown as-is, not tinted like a
     fluorescence stack. Heuristic: 3 uint8 channels whose labels are the RGB triple
     (spatialdata-io's Visium/H&E reader) or bare indices (an H&E imported as a plain
     (c, y, x) uint8 array with no channel coords)."""
-    arr = _level_array(sdata.images[element], 0)
+    arr = level_array(sdata.images[element], 0)
     if getattr(arr, "ndim", 0) != 3 or arr.shape[0] != 3 or getattr(arr, "dtype", None) != np.uint8:
         return False
     names = [n.lower() for n in channel_names(sdata.images[element])]
@@ -259,7 +259,7 @@ def _composite(data_cyx: np.ndarray, norm: np.ndarray,
                rgb: bool = False) -> np.ndarray:
     """Blend channels into an RGB uint8 HWC image. Fluorescence channels are
     normalized and additively tinted with their assigned color; a true-color RGB
-    image (`rgb=True`, see _is_rgb) is passed straight through so an H&E/brightfield
+    image (`rgb=True`, see is_rgb) is passed straight through so an H&E/brightfield
     image isn't false-colored."""
     if data_cyx.ndim == 2:
         data_cyx = data_cyx[None, :, :]
@@ -277,7 +277,7 @@ def _composite(data_cyx: np.ndarray, norm: np.ndarray,
 
 
 # ---- coordinate reconciliation (spots space vs image space) ----------------
-def _affine_xy(elem, cs: str):
+def affine_xy(elem, cs: str):
     """Element -> coordinate system `cs` transform as a 3x3 affine over (x, y), or None
     when the element does not map into `cs` (or maps by something no 2-D affine can
     express)."""
@@ -324,7 +324,7 @@ def _image_extent(sdata, element, cs: str) -> list[float]:
         # transform so the fallback stays in `cs`'s (spot) coordinates. Returning
         # coarse-level pixels here scores IOU ~0 against micron spots.
         w, h = image_dims(sdata, element)
-        a = _affine_xy(sdata.images[element], cs)
+        a = affine_xy(sdata.images[element], cs)
         if a is None:
             a = np.eye(3)
         return bbox_aabb(a, [0.0, 0.0, float(w), float(h)])
@@ -338,11 +338,11 @@ def pixel_to_world(sdata, element, table=None) -> np.ndarray:
     live in some element's intrinsic space. We can't trust the table's declared region
     (Xenium annotates labels in pixel space while its spots are in microns), so for every
     system the image maps into we take the best spots->system transform
-    (`_spots_to_system`) against the image's extent there, and compose image->system with
+    (`spots_to_system`) against the image's extent there, and compose image->system with
     the inverse of the overall winner.
 
     Searching the systems matters as much as searching the transforms within one: a store
-    need not declare a 'global' at all (see `_system_order`), and asking for that name by
+    need not declare a 'global' at all (see `system_order`), and asking for that name by
     default left a Visium H&E at identity — drawn at `tissue_hires_scalef` of its true
     size in the corner of the spot cloud.
 
@@ -359,19 +359,19 @@ def pixel_to_world(sdata, element, table=None) -> np.ndarray:
     from .sessions import transform
     world_system = transform.world_space(sdata, table)[1] if table is not None else None
     if world_system is not None:
-        known = _affine_xy(sdata.images[element], world_system)
+        known = affine_xy(sdata.images[element], world_system)
         if known is not None:
             return known
 
     placements = [(cs, a) for cs, a in
-                  ((cs, _affine_xy(sdata.images[element], cs)) for cs in _system_order(sdata))
+                  ((cs, affine_xy(sdata.images[element], cs)) for cs in system_order(sdata))
                   if a is not None]
     # No spots to reconcile against (or no usable system): leave the image in its own
     # first-choice system, which the canvas then treats as world space.
     fallback = placements[0][1] if placements else np.eye(3)
     best_spots, best_image, best_iou = np.eye(3), fallback, -1.0
     for cs, a_image in placements:
-        a, iou = _spots_to_system(sdata, table, cs, _image_extent(sdata, element, cs))
+        a, iou = spots_to_system(sdata, table, cs, _image_extent(sdata, element, cs))
         if iou > best_iou:
             best_spots, best_image, best_iou = a, a_image, iou
     if best_iou <= 0:
@@ -379,7 +379,7 @@ def pixel_to_world(sdata, element, table=None) -> np.ndarray:
     return np.linalg.inv(best_spots) @ best_image
 
 
-def _spots_to_system(sdata, table, cs: str, reference_bbox) -> tuple[np.ndarray, float]:
+def spots_to_system(sdata, table, cs: str, reference_bbox) -> tuple[np.ndarray, float]:
     """The spots->`cs` affine that best overlays `obsm["spatial"]` onto `reference_bbox`
     (a bbox already expressed in `cs`), with its IOU score — the shared half of the
     reconciliation `pixel_to_world` and `world_to_system` both do. Candidates are the
@@ -402,11 +402,11 @@ def _spots_to_system(sdata, table, cs: str, reference_bbox) -> tuple[np.ndarray,
     from .sessions.transform import region_name
     region = region_name(table)
     candidates = [np.eye(3)]
-    for group in (getattr(sdata, "shapes", {}), getattr(sdata, "labels", {})):
+    for group in (sdata.shapes, sdata.labels):
         for name, elem in group.items():
             if name == region:
                 continue
-            a = _affine_xy(elem, cs)
+            a = affine_xy(elem, cs)
             if a is not None:
                 candidates.append(a)
 
@@ -450,18 +450,18 @@ def world_to_system(sdata, table, coordinate_system: str | None = None) -> tuple
         world_system = transform.world_space(sdata, table)[1] if table is not None else None
         if world_system is not None:
             return world_system, np.eye(3)
-    systems = [coordinate_system] if coordinate_system else _system_order(sdata)
+    systems = [coordinate_system] if coordinate_system else system_order(sdata)
     if not systems:
         raise ValueError("object has no coordinate system to query in")
     best_cs, best_a, best_iou = systems[0], np.eye(3), -1.0
     for cs in systems:
-        a, iou = _spots_to_system(sdata, table, cs, system_extent(sdata, cs))
+        a, iou = spots_to_system(sdata, table, cs, system_extent(sdata, cs))
         if iou > best_iou:
             best_cs, best_a, best_iou = cs, a, iou
     return best_cs, best_a
 
 
-def _system_order(sdata) -> list[str]:
+def system_order(sdata) -> list[str]:
     """The object's coordinate systems, most-populated first then by name. An element
     maps into as many systems as it declares and 'global' need not be one of them —
     spatialdata-io's Visium readers name them after the dataset (`<id>`,
@@ -469,7 +469,7 @@ def _system_order(sdata) -> list[str]:
     from spatialdata.transformations import get_transformation
     counts: dict[str, int] = {}
     for kind in ("images", "labels", "shapes", "points"):
-        for elem in getattr(sdata, kind, {}).values():
+        for elem in getattr(sdata, kind).values():
             for cs in get_transformation(elem, get_all=True):
                 counts[cs] = counts.get(cs, 0) + 1
     return sorted(sdata.coordinate_systems, key=lambda cs: (-counts.get(cs, 0), cs))
@@ -484,12 +484,12 @@ def _world_bounds(m: np.ndarray, width: int, height: int) -> list[float]:
 def image_levels(sdata, element) -> list[dict]:
     """Per pyramid level: index + native pixel (width=x, height=y), finest first."""
     el = sdata.images[element]
-    if not _is_multiscale(el):
+    if not is_multiscale(el):
         arr = el
         return [{"level": 0, "width": int(arr.shape[-1]), "height": int(arr.shape[-2])}]
     out = []
-    for i, _ in enumerate(_scale_names(el)):
-        arr = _level_array(el, i)
+    for i, _ in enumerate(scale_names(el)):
+        arr = level_array(el, i)
         out.append({"level": i, "width": int(arr.shape[-1]), "height": int(arr.shape[-2])})
     return out
 
@@ -502,7 +502,7 @@ def image_info(sdata, element, table=None) -> dict:
     sidecar (`persistence.store._write_viewer_sidecar`) bakes this dict as-is."""
     from .sessions import transform
 
-    arr = _level_array(sdata.images[element], 0)
+    arr = level_array(sdata.images[element], 0)
     w, h = int(arr.shape[-1]), int(arr.shape[-2])
     m = pixel_to_world(sdata, element, table)
     # 6-float affine [a,b,c,d,e,f]: world_x = a*px + b*py + c, world_y = d*px + e*py + f,
@@ -518,7 +518,7 @@ def image_info(sdata, element, table=None) -> dict:
             "tile_size": TILE_SIZE,
             "contrast_limits": [[0.0, hi] for hi in channel_contrast_limits(sdata, element)],
             "contrast_range": [[lo, hi] for lo, hi in channel_value_range(sdata, element)],
-            "is_rgb": _is_rgb(sdata, element)}
+            "is_rgb": is_rgb(sdata, element)}
 
 
 def thumbnail_image(
@@ -528,7 +528,7 @@ def thumbnail_image(
     from PIL import Image
     arr = _image_array(sdata, element)
     data = np.asarray(arr.data if hasattr(arr, "data") else arr)
-    hwc = _composite(data, _channel_norm(sdata, element), channel_colors, rgb=_is_rgb(sdata, element))
+    hwc = _composite(data, channel_norm(sdata, element), channel_colors, rgb=is_rgb(sdata, element))
     img = Image.fromarray(hwc)
     img.thumbnail((max_px, max_px))
     buf = io.BytesIO()

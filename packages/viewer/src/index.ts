@@ -17,6 +17,7 @@ export {
   isFolderUrl, openCheckpoint, openCheckpointStore, openZarrStore, RangeGetReader,
   type CheckpointHandle, type CheckpointUrlRefresher,
 } from './data/checkpointSource';
+export { storeName } from './lib/storeName';
 export { HostSignedFolderStore, type FolderAccess } from './data/folderStore';
 export { UnrenderableStoreError } from './data/plainSpatialData';
 export { useArrowField } from './data/useArrowField';
