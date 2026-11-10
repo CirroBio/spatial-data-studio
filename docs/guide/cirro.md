@@ -29,8 +29,9 @@ to the public projects. Each browser tab logs in on its own, so a new tab asks a
 
 Your role in a project decides what the app offers there. With Cirro's **Collaborator**
 role, which can only view, the project is read-only to you, exactly like a public project:
-a **Read-only** badge sits beside its name, there is no **Add Data**, no workspaces and no
-pipelines, and the analyses still run, with the versions you save kept in this browser.
+a **Read-only** badge sits beside its name, there is no **Add Data** and no workspaces,
+the pipelines are shown switched off, and the analyses still run, with the versions you
+save kept in this browser.
 The app reads your role when you log in; if Cirro didn't say and a save is refused, it
 saves that version in this browser and says so.
 
@@ -90,7 +91,10 @@ your Cirro that take them further: cell segmentation for an image (Cellpose, Sta
 nf-core/sopa), and Spatial Data Studio's workflow for a run. These open Cirro's own
 launch form for the dataset, so the pipeline's options, cost and permissions are Cirro's
 to show. Their output appears on the map as spatial data, linked back to what it was
-made from.
+made from. Running one adds a dataset to the project, so in a
+[read-only](#projects-you-can-only-read) project each is shown switched off: before you
+log in, it says to log in to Cirro to run it in your own projects; after, that running it
+would add a dataset to a project you can only read.
 
 Spatial Data Studio's workflow reads each run with its platform's reader, runs the
 standard analysis for its kind of data (for Xenium: quality control, normalization, a
