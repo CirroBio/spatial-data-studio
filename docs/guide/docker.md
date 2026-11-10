@@ -14,9 +14,9 @@ docker run -d -p 8080:8888 \
   public.ecr.aws/cirrobio/spatial-data-studio:v1
 ```
 
-Open `http://localhost:8080` and start a session on anything in the `data` folder you
-mounted. With no memory limit set, the app sizes itself against your computer's total
-memory. [`docker/README.md`](../../docker/README.md) has the compose file, the memory
+Open `http://localhost:8080` and start a [session](glossary.md#session) on anything in
+the `data` folder you mounted. With no memory limit set, the app sizes itself against your
+computer's total memory. [`docker/README.md`](../../docker/README.md) has the compose file, the memory
 limits and the full environment; [`DEVELOPMENT.md`](../../DEVELOPMENT.md#local-dev-environment)
 has how to run from a clone instead.
 

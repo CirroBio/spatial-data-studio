@@ -27,7 +27,7 @@ link = "https://spatial-studio.apps.cirro.bio/?open=" + quote(file_url, safe="")
 
 Whoever follows the link sees that dataset on its tissue view, read-only:
 
-- Every analysis and display setting works, as in any [read-only project](public-data.md#projects).
+- Every analysis and display setting works, as in any [read-only project](find-a-dataset.md#projects).
   What they save stays in their browser.
 - There is no project picker or map. **Spatial Data Studio** in the corner opens the full
   app in a new tab, and so does **Log In (Cirro)**.
@@ -96,8 +96,8 @@ it, use [the viewer](viewer.md#embed-it-in-another-page) instead.
 
 ## Prepare the file
 
-The file is a [SpatialData](https://spatialdata.scverse.org/) store, zipped. There are
-two ways to make one.
+The file is a [SpatialData](https://spatialdata.scverse.org/)
+[store](glossary.md#store), zipped. There are two ways to make one.
 
 ### With the workflow
 

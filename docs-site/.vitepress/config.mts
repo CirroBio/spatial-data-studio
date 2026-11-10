@@ -134,8 +134,10 @@ export default defineConfig({
         text: 'Guide',
         items: [
           { text: 'Introduction', link: '/docs/guide/README' },
-          { text: 'Explore public data', link: '/docs/guide/public-data' },
-          { text: 'Your data in Cirro', link: '/docs/guide/cirro' },
+          { text: 'Public Data', link: '/docs/guide/public-data' },
+          { text: 'Your Data (Cirro)', link: '/docs/guide/cirro' },
+          { text: 'Find a dataset', link: '/docs/guide/find-a-dataset' },
+          { text: 'Look at a section', link: '/docs/guide/look-at-a-section' },
           { text: 'Analyze in the browser', link: '/docs/guide/analyze' },
           { text: 'Link to your own dataset', link: '/docs/guide/link-a-dataset' },
           {
@@ -146,6 +148,7 @@ export default defineConfig({
             ],
           },
           { text: 'Run it with Docker', link: '/docs/guide/docker' },
+          { text: 'Words this guide uses', link: '/docs/guide/glossary' },
         ],
       },
       {

@@ -1,9 +1,10 @@
 # Analyze in the browser
 
-The left drawer of an [opened spatial dataset](public-data.md#open-a-spatial-dataset)
-lists the analyses. Each one runs in your browser, on the data in view, and nothing is
-sent anywhere to compute it. What it makes is kept with the data: in the unsaved changes
-until you [save a version](cirro.md#save-a-version), then in the version.
+The left drawer of an [opened section](look-at-a-section.md#drawers) lists the analyses.
+Each one runs in your browser, on the data in view, and nothing is sent anywhere to
+compute it. What it makes is kept with the data: in the
+[unsaved changes](glossary.md#unsaved-changes) until you
+[save a version](cirro.md#save-a-version), then in the version.
 
 ## The analyses
 

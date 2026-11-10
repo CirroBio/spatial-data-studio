@@ -61,8 +61,8 @@ const embedSnippet = '<iframe src="viewer/index.html\n    ?checkpoint=my-run.sda
           <figcaption>A Xenium human pancreas section from Spatial Data Studio's public data, each cell colored by its
           cellular neighborhood over the immunofluorescence image. The analyses are in the drawer on the left and the
           display settings in the drawer on the right.
-          <a :href="withBase('/docs/guide/public-data')">Explore public data</a> walks through
-          it.</figcaption>
+          <a :href="withBase('/docs/guide/look-at-a-section')">Look at a section</a> walks
+          through it.</figcaption>
         </figure>
       </section>
 
@@ -93,7 +93,7 @@ const embedSnippet = '<iframe src="viewer/index.html\n    ?checkpoint=my-run.sda
             <p>A view kept as a figure, saved inside the version it was made in.</p>
           </li>
         </ol>
-        <p class="note"><a :href="withBase('/docs/guide/public-data#four-stages-of-data')">Four
+        <p class="note"><a :href="withBase('/docs/guide/find-a-dataset#four-stages-of-data')">Four
         stages of data</a> has which Cirro datasets and files each stage reads, and what you can
         do at each.</p>
 
@@ -115,7 +115,7 @@ const embedSnippet = '<iframe src="viewer/index.html\n    ?checkpoint=my-run.sda
             <h3>Work as a team</h3>
             <p>In Cirro, each version is a dataset in the project, with a note of what was saved
             and by whom. Anyone on the project can open it and save their own version on top.
-            <a :href="withBase('/docs/guide/cirro')">Your data in Cirro</a>.</p>
+            <a :href="withBase('/docs/guide/cirro')">Your Data (Cirro)</a>.</p>
           </div>
           <div>
             <h3>Figures you can publish</h3>

@@ -770,6 +770,8 @@ and the application are the same product on sight. The brand mark in the nav bar
 `CIRRO_MARK` in `config.mts` — the geometry of `frontend/public/favicon.svg`, inlined as
 a data URI because VitePress only serves a public directory at `<srcDir>/public`, which
 here is the repo root. A change to the app's palette, typefaces or mark moves both.
+`style.css` is shared with prompt-nb's site; `.vitepress/theme/guide.css` is this site's
+own, and styles the raw `<details>` blocks the guide folds file-level detail into.
 
 **The landing page** at the site's root is the one presentation-first page on it:
 `docs-site/index.md` (a `layout: page` with no sidebar) rendering

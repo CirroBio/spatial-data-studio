@@ -4,7 +4,7 @@ Spatial Data Studio's web app: a static site, and a front-end-only Cirro OAuth a
 opens public examples with no account or signs users in with Cirro, reads their
 projects' SpatialData stores in place, runs analyses in the browser, and saves each
 result as a light version on top of the store. What it does for users is in the guide,
-from [Explore public data](../docs/guide/public-data.md) on;
+from [Public Data](../docs/guide/public-data.md) on;
 the version format is [`docs/LAYER_FORMAT.md`](../docs/LAYER_FORMAT.md). This file is
 for working on it.
 

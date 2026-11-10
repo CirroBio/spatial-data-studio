@@ -1,5 +1,6 @@
 import DefaultTheme from 'vitepress/theme';
 import './style.css';
+import './guide.css';
 import type { Theme } from 'vitepress';
 import Layout from './components/Layout.vue';
 import LandingPage from './components/LandingPage.vue';
