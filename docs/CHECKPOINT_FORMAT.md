@@ -26,7 +26,7 @@ Python's.
 
 - [1. File-level structure](#1-file-level-structure)
 - [2. SpatialData / Zarr conventions (not app-defined)](#2-spatialdata--zarr-conventions-not-app-defined)
-- [3. `attrs["app_state"]` — application state](#3-appstateapp_state--application-state)
+- [3. `attrs["app_state"]` — application state](#3-attrsapp_state--application-state)
 - [4. The `viewer/` sidecar group](#4-the-viewer-sidecar-group)
 - [5. Raster sharding](#5-raster-sharding)
 - [6. Worker logs (`logs/`)](#6-worker-logs-logs)

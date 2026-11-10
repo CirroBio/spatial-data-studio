@@ -31,6 +31,14 @@ const CIRRO_MARK = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-103.9 -134
 // of its own pages (the web app is outside `base`).
 const PUBLISHED_AT = 'https://spatial-studio.apps.cirro.bio/';
 
+// GitHub's heading anchors (github-slugger's rule): lowercase, drop everything but
+// letters, marks, numbers, `_`, `-` and spaces, then turn each space into a hyphen. The
+// docs link sections by GitHub's anchors, the one form that works on GitHub too;
+// VitePress's own slugs differ wherever a heading has a number, a dot or a dash in it.
+// Repeats get `-1`, `-2`, as on GitHub, from markdown-it-anchor itself.
+const githubSlug = (heading: string) =>
+  heading.toLowerCase().replace(/[^\p{L}\p{M}\p{N}\p{Pc} -]/gu, '').replace(/ /g, '-');
+
 export default defineConfig({
   srcDir: '..',
   // The docs are the Pages site's About section: the Cirro app is the site's root, and the
@@ -88,6 +96,7 @@ export default defineConfig({
   },
 
   markdown: {
+    anchor: { slugify: githubSlug },
     config: (md) => {
       md.core.ruler.push('relative_site_links', (state) => {
         // Only a page's own render carries its path; the others (titles, headers) are not
@@ -134,8 +143,10 @@ export default defineConfig({
         text: 'Guide',
         items: [
           { text: 'Introduction', link: '/docs/guide/README' },
-          { text: 'Explore public data', link: '/docs/guide/public-data' },
-          { text: 'Your data in Cirro', link: '/docs/guide/cirro' },
+          { text: 'Public Data', link: '/docs/guide/public-data' },
+          { text: 'Your Data (Cirro)', link: '/docs/guide/cirro' },
+          { text: 'Find a dataset', link: '/docs/guide/find-a-dataset' },
+          { text: 'Look at a section', link: '/docs/guide/look-at-a-section' },
           { text: 'Analyze in the browser', link: '/docs/guide/analyze' },
           { text: 'Link to your own dataset', link: '/docs/guide/link-a-dataset' },
           {
@@ -146,6 +157,7 @@ export default defineConfig({
             ],
           },
           { text: 'Run it with Docker', link: '/docs/guide/docker' },
+          { text: 'Words this guide uses', link: '/docs/guide/glossary' },
         ],
       },
       {

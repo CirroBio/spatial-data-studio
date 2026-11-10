@@ -1,13 +1,15 @@
-# Your data in Cirro
+# Your Data (Cirro)
 
 [Cirro](https://cirro.bio/) is the data platform Spatial Data Studio is built with. A
-Cirro project holds a team's datasets: instrument runs, images, pipeline results. The web
+Cirro [project](glossary.md#project) holds a team's datasets: instrument runs, images,
+pipeline results. The web
 app opens a project, reads its spatial data where Cirro stores it, and saves what you
 make back into the project as new datasets, so everyone on the project can open them.
 Nothing is downloaded to your computer.
 
-Everything in [Explore public data](public-data.md) works the same here. This page covers
-what is different about your own data.
+Finding a dataset and looking at it work the same as for [Public Data](public-data.md):
+[Find a dataset](find-a-dataset.md) and [Look at a section](look-at-a-section.md) cover
+them. This page covers what is different about your own data.
 
 ## Log in
 
@@ -34,15 +36,21 @@ saves that version in this browser and says so.
 
 ## What the app finds in a project
 
-A project opens as the [map](public-data.md#the-map) of the
-[four stages of data](public-data.md#four-stages-of-data). The app finds the items on it
+A project opens as the [map](find-a-dataset.md#the-map) of the
+[four stages of data](find-a-dataset.md#four-stages-of-data). The app finds the items on it
 by reading the file list of every finished dataset in the project that a spatial or
 imaging pipeline or data type made, that was uploaded as plain files (Cirro's **Files**
-type), or that the app saved itself. Pipelines and data types are matched by their name
-or ID, which differ between Cirros: names containing spatial, Xenium, Visium, Space
-Ranger, CosMx, MERSCOPE, sopa, Proseg, segment, Cellpose, StarDist, MCMICRO, CODEX,
-OME-TIFF, image, QuPath or ARTIST. Within a dataset, its files decide the stage, and one
+type), or that the app saved itself. Within a dataset, its files decide the stage, and one
 dataset can hold items of several stages.
+
+<details>
+<summary>Which pipelines and data types count</summary>
+
+Pipelines and data types are matched by their name or ID, which differ between Cirros:
+names containing spatial, Xenium, Visium, Space Ranger, CosMx, MERSCOPE, sopa, Proseg,
+segment, Cellpose, StarDist, MCMICRO, CODEX, OME-TIFF, image, QuPath or ARTIST.
+
+</details>
 
 The app reads each dataset's file list once. It keeps what it found in a sheet in the
 project (*Spatial Data Studio catalog*), so the next visit, by anyone, reads only the
@@ -54,7 +62,7 @@ browser and the top bar says so.
 Spatial data is too large to send through a web page, so it reaches a project one of two
 ways: uploaded from your computer with Cirro's command-line tool, or made by a pipeline
 in Cirro from data already in the project. **Add Data** at the top of every page opens a
-page that sets out both for each [stage](public-data.md#four-stages-of-data):
+page that sets out both for each [stage](find-a-dataset.md#four-stages-of-data):
 
 - **Upload from your computer.** Choose the data type (the ones this Cirro offers for
   that stage come first, then plain Files), name the dataset and give the folder to

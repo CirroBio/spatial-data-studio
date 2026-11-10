@@ -1,9 +1,9 @@
 # Share and embed the viewer
 
 The viewer is the part of Spatial Data Studio that draws a section. It also works on its
-own: point it at a saved checkpoint and the section opens in any browser, with nothing
-running behind it. This page is for showing a saved section to people who don't use the
-app, and for putting it on a web page of your own.
+own: point it at a saved [checkpoint](glossary.md#checkpoint) and the section opens in
+any browser, with nothing running behind it. This page is for showing a saved section to
+people who don't use the app, and for putting it on a web page of your own.
 
 To show one dataset with the web app's analyses rather than the viewer alone,
 [link to it](link-a-dataset.md) instead: the web app opens a single `.zarr.zip` by its

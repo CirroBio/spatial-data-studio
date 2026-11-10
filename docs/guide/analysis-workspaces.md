@@ -57,8 +57,9 @@ for the workspace: shared **Read-Write**, anyone on the project can connect to i
 [Sharing a workspace](https://docs.cirro.bio/features/workspaces/overview/#sharing-a-workspace)
 has the options).
 
-Whoever opens a session holds its edit lock; everyone else can watch, and each analysis
-the lock-holder runs appears on their screens as it finishes rather than on a reload.
+Whoever opens a [session](glossary.md#session) holds its edit lock; everyone else can
+watch, and each analysis the lock-holder runs appears on their screens as it finishes
+rather than on a reload.
 What you are *looking* at stays yours: color by a different gene, change the channels,
 zoom somewhere else, while someone else drives the analysis, and the padlock hands the
 lock over when you want a turn. Sessions are independent of each other, so two people

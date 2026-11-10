@@ -263,8 +263,8 @@ Component-level notes: [`backend/README.md`](backend/README.md),
 | Change a web app task's running state, or what Save as a figure captures | `cirro-studio/src/tasks/useJob.ts` (`prepare` shows a job running while its inputs are read, `prepareProgress` moves its bar, then `run`) + `src/tasks/parts.tsx` (`JobStatus`); `src/tasks/FigureTask.tsx` with the canvases `item/displayState.ts` registers (`setViewCanvas` / `viewCanvasOf`, the tissue or the cell map) | [docs/guide/analyze.md](docs/guide/analyze.md) |
 | Change when the web app counts a view as already kept, or how a kept figure is taken out | `figureContent` and `removeFigure` in `cirro-studio/src/figures/spec.ts` (a removal goes through `applyEdit` in `src/workbench/workbench.ts`, as `removeResult` in `reports/store.ts` does: a figure only in the draft drops its `set-figure`, a saved one records `delete-figure`; tested in `workbench.test.ts` and `spec.test.ts`) + `useFreshDisplay` in `item/displayState.ts` (re-read as the camera moves) + `FigureCaption` in `item/StorePage.tsx` (**Remove…** on an open figure) + `buildLibrary` in `src/app/library.ts` (the map leaves out a figure a later version removed) | [docs/guide/analyze.md](docs/guide/analyze.md#keep-a-figure) |
 | Change how an opened canvas figure, or Fit to data, frames the canvas | `showDisplay` in `cirro-studio/src/item/displayState.ts` (hands the canvas a copy of the figure's camera, or, for a figure kept fit to its data, asks it to fit: the viewer's `followDisplayViewport` re-fits only when the display's viewport changes, and camera moves don't reach it; tested in `displayState.test.ts`) + `FitWhenAsked` in `item/LensCanvas.tsx` (runs that fit with the canvas's own `onFit`; the docked settings' and views bar's Fit to data go through `showDisplay` with no camera, so what Save as a figure keeps is the fitted view) | [docs/guide/analyze.md](docs/guide/analyze.md#keep-a-figure) |
-| Change how the web app lists an opened store's kept figures and reports, or one it can't read | `readFigures` and `readEach` in `cirro-studio/src/figures/spec.ts` and `readResults` in `src/reports/store.ts` (each entry read on its own: one whose objects answer an error, such as a version published without its chunk files, comes back under `unreadable` with the reason; tested in `workbench.test.ts`) + `StorePage.tsx` (names an unreadable one by the title its version's `layer.json` saved it with) + `ViewMenu` in `item/ViewTabs.tsx` (lists it as a note, not a choice) | [docs/guide/public-data.md](docs/guide/public-data.md) |
-| Change how the web app lists an open stage's items (rows, facts, filters, the size ruler, the minimap rail) | `cirro-studio/src/map/browse.ts` (the folder tree, rows, search and filters, say-it-once, the ruler; pure, with `browse.test.ts`) + `nodes.ts` (each item's facts in words and its lineage) + `StageTree.tsx` (the treegrid and the look under a row) + `StageView.tsx` (the rail and the address) | [docs/guide/public-data.md](docs/guide/public-data.md#the-map) |
+| Change how the web app lists an opened store's kept figures and reports, or one it can't read | `readFigures` and `readEach` in `cirro-studio/src/figures/spec.ts` and `readResults` in `src/reports/store.ts` (each entry read on its own: one whose objects answer an error, such as a version published without its chunk files, comes back under `unreadable` with the reason; tested in `workbench.test.ts`) + `StorePage.tsx` (names an unreadable one by the title its version's `layer.json` saved it with) + `ViewMenu` in `item/ViewTabs.tsx` (lists it as a note, not a choice) | [docs/guide/look-at-a-section.md](docs/guide/look-at-a-section.md#tabs) |
+| Change how the web app lists an open stage's items (rows, facts, filters, the size ruler, the minimap rail) | `cirro-studio/src/map/browse.ts` (the folder tree, rows, search and filters, say-it-once, the ruler; pure, with `browse.test.ts`) + `nodes.ts` (each item's facts in words and its lineage) + `StageTree.tsx` (the treegrid and the look under a row) + `StageView.tsx` (the rail and the address) | [docs/guide/public-data.md](docs/guide/find-a-dataset.md#the-map) |
 | Change what the web app's Add Data page offers | `cirro-studio/src/add/` (`AddData.tsx`: what each stage says; `uploadCommand.ts`: the `cirro upload` command) + `cirro-studio/src/cirro/cirroCollection.ts` (`PURPOSE` and `UPLOAD`: which pipelines and data types a stage lists, matched by ID and name, with `cirroCollection.test.ts`) | [docs/guide/cirro.md](docs/guide/cirro.md#add-data) |
 | Change how the web app starts and manages Analysis Workspaces | `cirro-studio/src/workspaces/` (`cirro.ts`: the environment, folder names, sizes, the per-user limit, Cirro's lifecycle; `Workspaces.tsx`: the top-bar button and sheet; `NewWorkspace.tsx`: the form; `request.ts`: what an item asks for) + `cirro-permissions.json`; the Studio reads the folder map (`SDS_CIRRO_DATASETS`) in `backend/app/config.py` | [cirro-studio/README.md](cirro-studio/README.md#workspaces) |
 | Change Cirro login (device code, credential scoping, expiry) | `backend/app/cirro.py` (`CredentialStore`, `start_login`) + `backend/app/routers/cirro.py` (`/api/cirro/auth`) + `frontend/src/components/CirroConnectDialog.tsx` + the token helpers in `frontend/src/api.ts` | [DESIGN.md](DESIGN.md) §15 |
@@ -749,7 +749,7 @@ npm run docs:build    # production build + dead-link check
 tree *is* the route tree (`DEVELOPMENT.md` → `/DEVELOPMENT`, `docs/CONTRACT.md` →
 `/docs/CONTRACT`) and the relative links these docs already use between each other keep
 working. Nothing is copied, so nothing can drift — which is the whole point, and why
-CLAUDE.md forbids forking any of it into `docs-site/`. Three consequences:
+CLAUDE.md forbids forking any of it into `docs-site/`. Four consequences:
 
 - `srcExclude` in `.vitepress/config.mts` has to stay tight, or every stray markdown
   file in the repo becomes a page. Agent instructions (`CLAUDE.md`, `AGENTS.md`,
@@ -763,6 +763,10 @@ CLAUDE.md forbids forking any of it into `docs-site/`. Three consequences:
   build's `relative_site_links` rule (`config.mts`) rewrites every link starting with
   `PUBLISHED_AT` into one relative to its page, so the built site works from whatever
   domain serves it. Moving the site changes `PUBLISHED_AT` and `base` there.
+- A link to a section has to use GitHub's anchor for its heading, so the site builds
+  its heading ids the same way (`githubSlug` in `config.mts`). The dead-link check
+  covers pages, not sections: a section link that misses lands at the top of its page
+  on both.
 
 **It wears the app's skin.** `.vitepress/theme/style.css` restates Cirro's typefaces
 (Geist / Geist Mono, self-hosted through `@fontsource-variable`) and the palette from
@@ -771,6 +775,8 @@ and the application are the same product on sight. The brand mark in the nav bar
 `CIRRO_MARK` in `config.mts` — the geometry of `frontend/public/favicon.svg`, inlined as
 a data URI because VitePress only serves a public directory at `<srcDir>/public`, which
 here is the repo root. A change to the app's palette, typefaces or mark moves both.
+`style.css` is shared with prompt-nb's site; `.vitepress/theme/guide.css` is this site's
+own, and styles the raw `<details>` blocks the guide folds file-level detail into.
 
 **The landing page** at the site's root is the one presentation-first page on it:
 `docs-site/index.md` (a `layout: page` with no sidebar) rendering

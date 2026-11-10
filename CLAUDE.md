@@ -13,12 +13,18 @@ stale is incomplete.
   feature manual.
 - `docs/guide/` is the source of truth for the **user-facing** app: what it does, panel
   by panel and flow by flow, one page per part, in the order a new user needs them —
-  `README.md` (what it is and which part you need), `public-data.md`, `cirro.md` and
-  `analyze.md` (the web app), `analysis-workspaces.md` and `docker.md` (the Analysis
-  Workspace), and `viewer.md` (the viewer on its own, the advanced case). A change that
-  adds, removes, or alters a user-facing capability or a user-facing panel/flow updates
-  the page that covers it. If a UI change materially alters a panel shown in one of its
-  screenshots (`docs/images/*`), refresh that screenshot too.
+  `README.md` (what it is and which part you need); `public-data.md` and `cirro.md` (the
+  web app's two ways in), then `find-a-dataset.md`, `look-at-a-section.md`, `analyze.md`
+  and `link-a-dataset.md` (the web app, the same for both); `analysis-workspaces.md` and
+  `docker.md` (the Analysis Workspace); `viewer.md` (the viewer on its own, the advanced
+  case); and `glossary.md` (the words the guide uses in a particular sense). A change
+  that adds, removes, or alters a user-facing capability or a user-facing panel/flow
+  updates the page that covers it. If a UI change materially alters a panel shown in one
+  of its screenshots (`docs/images/*`), refresh that screenshot too. A new term of art,
+  or a change to what one means, updates `glossary.md`. File-level detail (file names,
+  extensions, store paths, matching rules) goes in a `<details>` block after the plain
+  account it qualifies, which renders folded both on GitHub and on the site; never put a
+  heading inside one.
 - `DEVELOPMENT.md` is the source of truth for the **developer-facing** detail:
   architecture, repo layout / where-to-change-what, the local dev environment, and the
   test suite / offline CLI. A change to any of those updates `DEVELOPMENT.md` (and

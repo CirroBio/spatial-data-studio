@@ -28,7 +28,7 @@ const embedSnippet = '<iframe src="viewer/index.html\n    ?checkpoint=my-run.sda
       <header class="masthead">
         <div class="masthead-grid">
           <div>
-            <h1>Look at and analyze spatial omics data in your browser</h1>
+            <h1>Spatial omics data in your browser</h1>
             <p class="lede">Open a Xenium, Visium or CosMx section and see every cell over the
             tissue image. Find clusters, compare groups and the genes that set them apart, and
             keep what you find as a version of the data, with nothing to install and no code to
@@ -41,14 +41,14 @@ const embedSnippet = '<iframe src="viewer/index.html\n    ?checkpoint=my-run.sda
 
           <div class="ways">
             <a class="way" :href="publicData" target="_self">
-              <span class="way-title">Public projects</span>
+              <span class="way-title">Public Data</span>
               <span class="way-text">Example sections anyone can open, with no account. They
               are read-only: what you save stays in your browser.</span>
             </a>
             <a class="way" :href="privateData" target="_self">
-              <span class="way-title">Your Cirro projects</span>
-              <span class="way-text">Log in to open your own projects, read where they are
-              stored. Where you can add to one, each result is saved back to it for your team.</span>
+              <span class="way-title">Your Data (Cirro)</span>
+              <span class="way-text">Log in to open your own data, read where Cirro stores it.
+              Where your role lets you add to it, each result is saved back for your team.</span>
             </a>
           </div>
         </div>
@@ -58,11 +58,11 @@ const embedSnippet = '<iframe src="viewer/index.html\n    ?checkpoint=my-run.sda
         <figure>
           <img class="shot" :src="shot" width="2400" height="1350"
                alt="A Xenium pancreas section open in the web app: every cell drawn over the immunofluorescence image and colored by its cellular neighborhood, with the analysis tasks in a drawer on the left and the display settings in a drawer on the right." />
-          <figcaption>A Xenium human pancreas section from Spatial Data Studio's public project, each cell colored by its
+          <figcaption>A Xenium human pancreas section from Spatial Data Studio's public data, each cell colored by its
           cellular neighborhood over the immunofluorescence image. The analyses are in the drawer on the left and the
           display settings in the drawer on the right.
-          <a :href="withBase('/docs/guide/public-data')">Explore public data</a> walks through
-          it.</figcaption>
+          <a :href="withBase('/docs/guide/look-at-a-section')">Look at a section</a> walks
+          through it.</figcaption>
         </figure>
       </section>
 
@@ -93,7 +93,7 @@ const embedSnippet = '<iframe src="viewer/index.html\n    ?checkpoint=my-run.sda
             <p>A view kept as a figure, saved inside the version it was made in.</p>
           </li>
         </ol>
-        <p class="note"><a :href="withBase('/docs/guide/public-data#four-stages-of-data')">Four
+        <p class="note"><a :href="withBase('/docs/guide/find-a-dataset#four-stages-of-data')">Four
         stages of data</a> has which Cirro datasets and files each stage reads, and what you can
         do at each.</p>
 
@@ -115,7 +115,7 @@ const embedSnippet = '<iframe src="viewer/index.html\n    ?checkpoint=my-run.sda
             <h3>Work as a team</h3>
             <p>In Cirro, each version is a dataset in the project, with a note of what was saved
             and by whom. Anyone on the project can open it and save their own version on top.
-            <a :href="withBase('/docs/guide/cirro')">Your data in Cirro</a>.</p>
+            <a :href="withBase('/docs/guide/cirro')">Your Data (Cirro)</a>.</p>
           </div>
           <div>
             <h3>Figures you can publish</h3>
@@ -691,7 +691,7 @@ em.emph { font-style: normal; font-weight: 600; color: var(--ink); }
   color: var(--vp-button-brand-hover-text);
 }
 
-.ways { display: grid; gap: 14px; }
+.ways { display: grid; gap: 14px; align-self: center; }
 
 .landing a.way {
   display: block;

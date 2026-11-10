@@ -1,0 +1,18 @@
+/* The guide folds file-level detail into raw <details> blocks (CLAUDE.md), so GitHub
+   folds them too; VitePress styles only its own `::: details` containers, so these take
+   that container's colors. Kept out of style.css, which is shared with prompt-nb. */
+.vp-doc details {
+  margin: 16px 0;
+  padding: 2px 16px;
+  border: 1px solid var(--vp-custom-block-details-border);
+  border-radius: 8px;
+  background-color: var(--vp-custom-block-details-bg);
+  color: var(--vp-custom-block-details-text);
+}
+
+.vp-doc details > summary {
+  margin: 10px 0;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
