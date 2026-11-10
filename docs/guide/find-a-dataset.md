@@ -18,8 +18,9 @@ difference the app makes between them. A read-only project has a **Read-only** b
 beside its name, which says what that means when clicked (and offers to log in). You can
 look and run every analysis there, and what you save is kept in
 this browser, in a folder of its own (*Saved in this browser*) in the project you saved it
-in: not on other computers, and nobody else can see it. It offers no **Add Data**,
-pipelines or Analysis Workspaces, which all add to a project. Every public project is
+in: not on other computers, and nobody else can see it. It offers no **Add Data** or
+Analysis Workspaces, which add to a project, and shows an image's or a run's pipelines
+switched off, saying what would let you run them. Every public project is
 read-only, and so is a Cirro project where your role lets you only view
 ([Projects you can only read](cirro.md#projects-you-can-only-read)).
 

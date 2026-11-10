@@ -374,7 +374,9 @@ input[type="checkbox"], input[type="radio"], input[type="range"] { accent-color:
   padding: var(--sds-space-2) var(--sds-space-3); background: var(--sds-color-surface-raised); border: 1px solid var(--sds-color-border); border-radius: var(--sds-radius-md); cursor: pointer;
 }
 .task-button:hover:not(:disabled) { border-color: var(--c, var(--sds-color-accent)); }
-.task-button:disabled { opacity: 0.55; cursor: not-allowed; }
+/* A task that can't run here: its name dimmed, and the reason it gives left legible. */
+.task-button:disabled { background: transparent; border-style: dashed; cursor: not-allowed; }
+.task-button:disabled .task-label { opacity: 0.55; }
 .task-label { font-weight: var(--sds-weight-medium); }
 .task-about { grid-column: 1; font-size: var(--sds-text-sm); color: var(--sds-color-text-muted); }
 .task-unavailable { font-size: var(--sds-text-xs); color: var(--sds-color-text-muted); margin-top: var(--sds-space-2); }

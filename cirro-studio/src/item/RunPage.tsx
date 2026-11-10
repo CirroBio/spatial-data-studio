@@ -7,7 +7,7 @@ import { describeError } from '../cirro/session';
 import { RUN_TYPES } from '../data/discover';
 import type { RunItem } from '../data/model';
 import { Facts, kinOf } from './Facts';
-import { PipelineLinks, ReadOnlyPipelines } from './PipelineLinks';
+import { PipelineLinks } from './PipelineLinks';
 import { useDrawers, ViewFrame } from './ViewFrame';
 
 // The first data row of a metrics CSV, keeping quoted fields whole.
@@ -60,12 +60,8 @@ export function RunPage({ item }: { item: RunItem }) {
           content: (
             <>
               <p className="task-heading">Make something new</p>
-              {collection.access === 'read' ? <ReadOnlyPipelines what="Making spatial data from this run" /> : (
-                <>
-                  <PipelineLinks datasetId={item.datasetId} purpose="encode" about="Turn this run into a SpatialData store to open here: Spatial Data Studio's workflow reads it as the instrument wrote it." />
-                  <PipelineLinks datasetId={item.datasetId} purpose="segment" about="Or segment its cells again first." />
-                </>
-              )}
+              <PipelineLinks datasetId={item.datasetId} purpose="encode" about="Turn this run into a SpatialData store to open here: Spatial Data Studio's workflow reads it as the instrument wrote it." />
+              <PipelineLinks datasetId={item.datasetId} purpose="segment" about="Or segment its cells again first." />
             </>
           ),
         }}
