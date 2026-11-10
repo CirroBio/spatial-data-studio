@@ -874,10 +874,13 @@ at `../viewer/`, so they are not copied twice. Pull requests build but do not pu
   a bootstrap whose adoption raises ending `errored` (`run_loading_lifecycle_flow`) — a
   full save keeping every later save full, so a shape annotation and the loaded records'
   logs survive a second, table-only save (`run_full_save_stays_full_flow`), plot
-  invalidation/redraw (and a gene plot invalidated by a compute that rebinds `X`,
-  `run_gene_plot_invalidation_flow`), the data-inspector endpoints, cross-session
-  isolation, saving a session that ran `filter_rank_genes_groups` (whose `uns` record
-  arrays carry NaN gene names) on both the full and the incremental route, the
+  invalidation/redraw (and a gene plot invalidated by a compute that rewrites `X`,
+  `run_gene_plot_invalidation_flow`), `normalize_total` + `log1p` rewriting a sparse
+  `X` in place and the result reaching the live session, `/data/X:<gene>` and a reloaded
+  save (`run_x_writeback_flow`), an `X`-only compute saved incrementally rewriting the
+  table and its CSC mirror (`run_incremental_save_flow`), the data-inspector endpoints,
+  cross-session isolation, saving a session that ran `filter_rank_genes_groups` (whose
+  `uns` record arrays carry NaN gene names) on both the full and the incremental route, the
   eight spatial/multi-sample custom methods on `xenium_tma.zarr`, the
   cell-segmentation `/shapes/{element}/geoarrow` polygons on `xenium.zarr` (including
   `run_shape_index_check`: the saved checkpoint's boundary GeoParquet is spatially

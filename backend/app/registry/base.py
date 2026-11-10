@@ -20,6 +20,7 @@ import io
 import logging
 import threading
 import traceback
+import zlib
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -388,16 +389,41 @@ def keyset(adata, sdata) -> dict:
         else:
             snap[f] = {k: id(v) for k, v in m.items()}
     # `X` is a single matrix, not a key→value mapping, so it can't be tracked per key.
-    # Snapshot its whole-array identity under a sentinel empty key: a compute that
-    # rewrites the expression matrix (normalize_total, log1p, scale) rebinds `adata.X`,
-    # so id() changes and `diff` emits the coarse field path `X:` — enough for a
-    # gene-colored canvas (colorByPath `X:<gene>`) to invalidate. Per-gene granularity
-    # isn't recoverable from one array id.
-    snap["X"] = {"": id(adata.X)}
+    # Snapshot the whole matrix under a sentinel empty key: a change surfaces as the
+    # coarse field path `X:` — enough for a gene-colored canvas (colorByPath `X:<gene>`)
+    # to invalidate — and ships the whole matrix back (kernel._facet_values). Per-gene
+    # granularity isn't recoverable from one matrix-wide fingerprint.
+    snap["X"] = {"": _matrix_fingerprint(adata.X)}
     if sdata is not None:
         for f in _SDATA_FACETS:
             snap[f] = {k: id(v) for k, v in getattr(sdata, f, {}).items()}
     return snap
+
+
+def _matrix_fingerprint(X) -> tuple:
+    """`keyset`'s snapshot of the expression matrix: its content, not its identity.
+    Identity misses the common case, since scanpy's normalize_total and log1p rescale
+    a sparse X's `data` in place and nothing changes id; and it over-reports, since
+    scipy's `eliminate_zeros` (run by calculate_qc_metrics) re-slices `data` and
+    `indices` into new array objects even when it removes nothing. So every buffer is
+    checksummed (CRC32), one full pass over X before the call and one after. That is
+    cheap next to what every compute already pays to pickle the whole table into the
+    child: in the app image CRC32 runs at ~6.5 GB/s, pickling the same buffer at
+    ~0.4 GB/s. A sampled fingerprint would cost nothing but could miss a compute that
+    edits a few values, which is the silent no-op this exists to catch."""
+    import numpy as np
+    from scipy import sparse
+    if sparse.issparse(X):
+        buffers = (X.data, X.indices, X.indptr)
+    elif isinstance(X, np.ndarray):
+        buffers = (X,)
+    else:  # no X, or one with no in-memory buffer to checksum
+        return (id(X),)
+    crc = 0
+    for buf in buffers:
+        # ravel(order="K") is a view for any contiguous layout, so this copies nothing.
+        crc = zlib.crc32(buf.ravel(order="K"), crc)
+    return (type(X).__name__, X.shape, X.dtype.str, crc)
 
 
 def diff(before: dict, after: dict) -> tuple[dict, list]:
@@ -409,14 +435,17 @@ def diff(before: dict, after: dict) -> tuple[dict, list]:
             elem = _FACET_TO_ELEMENT.get(facet)
             if elem:
                 fields.extend(f"{elem}:{k}" for k in changed)
-            # `X` is a coarse, keyless signal (see keyset): it belongs in `fields` (to
-            # bump the gene-coloring version) but not in the element-level diff that
-            # drives save/dirty — the active table is marked dirty regardless, and an
-            # X-only change must not force a full rewrite (`_facet_values` also can't
-            # read a non-mapping facet).
-            if facet != "X":
-                out[facet] = changed
+            out[facet] = changed
     return out, fields
+
+
+def structural_diff(facets: dict) -> dict:
+    """A compute's structural diff (history entry, `job.completed`, `_mark_dirty`)
+    from the changed facets its child shipped back. `X` is left out: it travels as one
+    matrix with no names to list, the checkpoint schema keeps it out of every
+    structural diff, and the coarse `X:` changed field already reports it. The active
+    table is marked dirty on every compute regardless, so the save still rewrites it."""
+    return {facet: sorted(values) for facet, values in facets.items() if facet != "X"}
 
 
 def run_compute(session, mutate) -> CallResult:
@@ -435,9 +464,9 @@ def run_compute(session, mutate) -> CallResult:
         # rather than facet-merged (see kernel._table_reshaped).
         return CallResult(status="completed", log=env.get("log", ""), new_object=env["new_object"])
     facets = env.get("changed_facets", {})
-    structural_diff = {facet: sorted(values) for facet, values in facets.items()}
     return CallResult(status="completed", log=env.get("log", ""), changed_facets=facets,
-                      structural_diff=structural_diff, changed_fields=env.get("changed_fields", []))
+                      structural_diff=structural_diff(facets),
+                      changed_fields=env.get("changed_fields", []))
 
 
 def run_plot(session, fn, injected: list | None = None, bound: dict | None = None) -> CallResult:

@@ -98,9 +98,13 @@ def _restore_transforms(env: dict, pre: dict | None = None) -> dict:
 
 def _facet_values(adata, sdata, changed: dict) -> dict:
     """Only the changed column/array objects, keyed like `keyset`/`diff` — the
-    payload that travels back to the parent."""
+    payload that travels back to the parent. A changed `X` travels whole, under
+    keyset's sentinel key."""
     out = {}
     for facet, keys in changed.items():
+        if facet == "X":
+            out[facet] = {"": adata.X}
+            continue
         m = getattr(adata, facet) if facet in _TABLE_FACETS else getattr(sdata, facet, {})
         out[facet] = {k: m[k] for k in keys}
     return out
@@ -265,6 +269,9 @@ def run_custom_plot(fn, injected, bound, adata, sdata) -> dict:
 
 def apply_changed_facets(adata, sdata, facets: dict) -> None:
     for facet, values in facets.items():
+        if facet == "X":
+            adata.X = values[""]
+            continue
         target = adata if facet in _TABLE_FACETS else sdata
         m = getattr(target, facet)
         for k, v in values.items():

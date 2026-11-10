@@ -1429,6 +1429,7 @@ def run_incremental_save_flow(client, checkpoint_path):
     table-only compute then saves by rewriting just the table element and reusing the
     on-disk rasters untouched. Asserts the incremental branch is taken, the raster
     files are left untouched, and the change round-trips."""
+    import numpy as np
     from app.deps import MANAGER
     from app.persistence import store
     sid = new_session(client, checkpoint_path)
@@ -1436,15 +1437,19 @@ def run_incremental_save_flow(client, checkpoint_path):
     assert store.can_update_incrementally(sess.sdata, sess.extract_dir), \
         "a checkpoint-loaded session should be incremental-capable"
 
-    # normalize_total mutates only .X, which the structural diff can't see (keyset
-    # doesn't track X) — the active table must still be marked dirty, or the change
-    # would be silently dropped by the incremental save.
+    # normalize_total changes only X, which stays out of the structural diff — the
+    # active table must still be marked dirty, or the incremental save would skip it.
     client.post(f"/api/sessions/{sid}/jobs", json={
         "namespace": "sc.pp", "function": "normalize_total", "params": {}})
     st = poll(client, sid, lambda s: hist_status(s, "normalize_total")[0] == "completed")
     assert not hist_status(st, "normalize_total")[1], "expected an empty structural_diff for X-only op"
     assert not sess.force_full and sess.active_table_key in sess.dirty_tables, \
         f"X-only compute not marked dirty: force_full={sess.force_full} tables={sess.dirty_tables}"
+    # Every expressing cell now sums to one shared total, which raw counts never do.
+    totals = np.asarray(sess.active_table().X.sum(axis=1)).ravel()
+    totals = totals[totals > 0]
+    assert np.allclose(totals, totals[0], rtol=1e-3), \
+        f"normalize_total left the live X unnormalized: totals {totals.min()}..{totals.max()}"
 
     def raster_mtimes():
         base = os.path.join(str(sess.sdata.path), "images")
@@ -1458,10 +1463,15 @@ def run_incremental_save_flow(client, checkpoint_path):
     assert raster_mtimes() == before, "images were rewritten during an incremental save"
     assert not sess.dirty_tables and not sess.force_full, "dirty state not cleared after save"
     print(f"[ok] incremental save reused {len(before)} raster files untouched")
+    # The gene-major mirror is rebuilt from the dirty table, so it has to densify to
+    # the normalized values the live session serves, not the counts it was loaded with.
+    run_csc_mirror_check(client, sid, out)
 
     sid2 = new_session(client, out)
     r = client.get(f"/api/sessions/{sid2}/data/obsp:spatial_distances")
     assert r.status_code == 200, r.text
+    assert (MANAGER.get(sid2).active_table().X != sess.active_table().X).nnz == 0, \
+        "the incremental save did not write the normalized X"
     print("[ok] incremental-saved table change survived reload")
 
 
@@ -2120,10 +2130,10 @@ def run_invalidation_flow(client):
 
 
 def run_gene_plot_invalidation_flow(client):
-    """A plot drawn from a gene references it as `X:<gene>`, while a compute that rebinds
+    """A plot drawn from a gene references it as `X:<gene>`, while a compute that rewrites
     the expression matrix (sc.pp.scale here) reports only the coarse `X:` field: the
-    matrix is tracked by whole-array identity. That field must still invalidate the plot,
-    or it stays `drawn` over a figure of the old values."""
+    matrix is tracked as one whole. That field must still invalidate the plot, or it
+    stays `drawn` over a figure of the old values."""
     sid = new_session(client)
     for namespace, fn, params in (
             ("sc.tl", "rank_genes_groups", {"groupby": "leiden"}),
@@ -2145,6 +2155,53 @@ def run_gene_plot_invalidation_flow(client):
     assert status == "invalidated", f"gene plot left {status} after X: changed"
     assert client.delete(f"/api/sessions/{sid}").status_code == 200
     print("[ok] a changed X: invalidated a plot drawn from a gene")
+
+
+def run_x_writeback_flow(client):
+    """A compute that rewrites the expression matrix must change the live session, not
+    just its history. normalize_total and log1p rescale a sparse X's values in place,
+    where no array changes identity, so the compute child has to notice the new content
+    and ship the matrix back. Both used to complete while the session kept raw counts,
+    and every later step (leiden, rank_genes_groups, gene coloring) silently ran on
+    them. A save and reload must then keep the transformed matrix."""
+    import numpy as np
+    from app.deps import MANAGER
+
+    sid = new_session(client)
+    sess = MANAGER.get(sid)
+    expressing = np.asarray(sess.active_table().X.sum(axis=1)).ravel() > 0
+    x_version = client.get(f"/api/sessions/{sid}").json()["data_versions"].get("X:", 0)
+    for fn in ("normalize_total", "log1p"):
+        job = client.post(f"/api/sessions/{sid}/jobs", json={
+            "namespace": "sc.pp", "function": fn, "params": {}}).json()
+        assert wait_job(client, sid, job["job_id"])["status"] == "completed", fn
+    st = client.get(f"/api/sessions/{sid}").json()
+    assert st["data_versions"].get("X:", 0) == x_version + 2, \
+        f"X: not bumped once per X-changing compute: {st['data_versions'].get('X:')}"
+    assert not hist_status(st, "normalize_total")[1], "X must stay out of the structural diff"
+
+    # normalize_total gives every cell one shared total and log1p is invertible, so
+    # undoing the log must give equal per-cell sums, which raw counts never have.
+    X = sess.active_table().X
+    totals = np.asarray(X.expm1().sum(axis=1)).ravel()[expressing]
+    assert np.allclose(totals, totals[0], rtol=1e-3), \
+        f"live X not normalized + log-transformed: per-cell totals {totals.min()}..{totals.max()}"
+    gene = "Sox17"
+    column = X[:, sess.active_table().var_names.get_loc(gene)].toarray().ravel()
+    served = fetch_arrow(client, sid, f"X:{gene}").column("value").to_numpy()
+    assert np.allclose(served, column, rtol=1e-5, atol=1e-6), \
+        f"/data/X:{gene} does not serve the transformed matrix"
+    print("[ok] normalize_total + log1p reached the live X and /data/X:<gene>")
+
+    out = os.path.join(str(config.DATA_DIR), "x_writeback_session.zarr.zip")
+    sv = client.post(f"/api/sessions/{sid}/save", json={"path": out}).json()
+    assert wait_job(client, sid, sv["job_id"])["status"] == "completed"
+    rid = new_session(client, out)
+    assert (MANAGER.get(rid).active_table().X != X).nnz == 0, \
+        "the saved checkpoint did not keep the transformed X"
+    for s in (rid, sid):
+        assert client.delete(f"/api/sessions/{s}").status_code == 200
+    print("[ok] the transformed X survived a save and reload")
 
 
 def run_figure_persistence(client, sid, plot_id):
@@ -3970,6 +4027,7 @@ def main():
         run_loading_lifecycle_flow(client, out)
         run_invalidation_flow(client)
         run_gene_plot_invalidation_flow(client)
+        run_x_writeback_flow(client)
         run_encoding_persistence_flow(client)
         run_encoding_defaults_parity()
         run_viridis_lut_parity()

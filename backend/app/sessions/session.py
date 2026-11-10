@@ -849,11 +849,11 @@ class Session:
     def _mark_dirty(self, structural_diff: dict) -> None:
         """Record which elements a data mutation touched so the next save rewrites only
         those. The mutation ran on the active table, so mark it unconditionally — an
-        in-place `X`-only change is tracked only coarsely (`keyset` snapshots `X` by
-        whole-matrix identity and `diff` deliberately keeps it out of the structural
-        diff), and the active table is cheap to rewrite regardless. The diff is used to
-        catch OTHER changed table elements (`tables` facet) and to force a full save
-        when a raster or geometry element changed (those can't be updated in place)."""
+        `X`-only change leaves the structural diff empty (`registry.base.structural_diff`
+        keeps `X` out of it), and the active table is cheap to rewrite regardless. The
+        diff is used to catch OTHER changed table elements (`tables` facet) and to force
+        a full save when a raster or geometry element changed (those can't be updated in
+        place)."""
         from ..registry.base import is_table_facet
         if self.active_table_key:
             self.dirty_tables.add(self.active_table_key)
@@ -1204,7 +1204,7 @@ class Session:
         changed = set(changed_fields)
         # A plot references the genes it reads as `X:<gene>`, but a rewrite of the
         # expression matrix reports only the coarse `X:` (registry/base.py keyset: X is
-        # tracked by whole-array identity), so a changed `X:` hits every gene reference —
+        # tracked as one whole matrix), so a changed `X:` hits every gene reference —
         # the same folding useColorField applies to gene colorings.
         x_changed = "X:" in changed
         invalidated = []
