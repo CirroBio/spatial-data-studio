@@ -6,6 +6,7 @@
 import type { AsyncReadable } from '@zarrita/storage';
 import * as zarr from 'zarrita';
 import type { DisplaySpec } from '@cirrobio/spatial-viewer';
+import { describeError } from '../cirro/session';
 import { FIGURES, UNS_ROOT } from '../stack/manifest';
 import { applyEdit } from '../workbench/workbench';
 
@@ -49,14 +50,32 @@ export async function readString(store: Required<AsyncReadable>, path: string): 
   return String(await zarr.get(arr));
 }
 
-export async function readFigures(store: Required<AsyncReadable>, table: string): Promise<FigureSpec[]> {
+/** A figure or result the store lists but whose objects couldn't be read, by its id. */
+export interface Unreadable { id: string; reason: string }
+
+export interface Kept<T> { kept: T[]; unreadable: Unreadable[] }
+
+/** Each of `ids` read on its own, so one that can't be read (a version copied without
+ * some of its chunks answers 403 for them) leaves the rest listed. `read` answers null
+ * for an entry that isn't one of this app's. */
+export async function readEach<T>(ids: string[], read: (id: string) => Promise<T | null>): Promise<Kept<T>> {
+  const settled = await Promise.allSettled(ids.map(read));
+  const kept: T[] = [];
+  const unreadable: Unreadable[] = [];
+  settled.forEach((s, i) => {
+    if (s.status === 'rejected') unreadable.push({ id: ids[i], reason: describeError(s.reason) });
+    else if (s.value !== null) kept.push(s.value);
+  });
+  return { kept, unreadable };
+}
+
+export async function readFigures(store: Required<AsyncReadable>, table: string): Promise<Kept<FigureSpec>> {
   const prefix = `tables/${table}/uns/${UNS_ROOT}/${FIGURES}`;
-  const ids = await childNames(store, prefix);
-  const specs = await Promise.all(ids.map(async (id) => {
+  const { kept, unreadable } = await readEach(await childNames(store, prefix), async (id) => {
     const parsed = JSON.parse(await readString(store, `${prefix}/${id}`)) as FigureSpec;
     return parsed.format === FIGURE_FORMAT ? parsed : null;
-  }));
-  return specs.filter((s): s is FigureSpec => s !== null).sort((a, b) => a.created_at.localeCompare(b.created_at));
+  });
+  return { kept: kept.sort((a, b) => a.created_at.localeCompare(b.created_at)), unreadable };
 }
 
 /** A short, path-safe id, unique enough for one dataset's figures and results. */
