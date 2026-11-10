@@ -17,9 +17,6 @@ const shot = withBase('/docs/images/web-app.jpg');
 const app = withBase('/../');
 const publicData = withBase('/../?tenant=public');
 const privateData = withBase('/../?sign-in');
-
-// A string rather than template text, so its line breaks survive Vue's whitespace handling.
-const embedSnippet = '<iframe src="viewer/index.html\n    ?checkpoint=my-run.sdata.zarr.zip\n    &embed=1"></iframe>';
 </script>
 
 <template>
@@ -487,11 +484,12 @@ const embedSnippet = '<iframe src="viewer/index.html\n    ?checkpoint=my-run.sda
             <a :href="withBase('/demo/')">Live demos</a></p>
           </div>
 
-          <div>
-            <div class="standalone">
-              <div class="cmds">
-                <code class="cmd">{{ embedSnippet }}</code>
-              </div>
+          <div class="embed">
+            <p class="embed-label">To show a saved section in a frame on your own page:</p>
+            <div class="vp-doc">
+              <div class="language-html vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">html</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span class="t-punct">&lt;</span><span class="t-tag">iframe</span></span>
+<span class="line"><span class="t-attr">  src</span><span class="t-punct">=</span><span class="t-str">"viewer/index.html?checkpoint=my-run.sdata.zarr.zip"</span></span>
+<span class="line"><span class="t-attr">  style</span><span class="t-punct">=</span><span class="t-str">"width: 100%; height: 600px; border: 0"</span><span class="t-punct">&gt;&lt;/</span><span class="t-tag">iframe</span><span class="t-punct">&gt;</span></span></code></pre></div>
             </div>
           </div>
         </div>
@@ -637,14 +635,6 @@ const embedSnippet = '<iframe src="viewer/index.html\n    ?checkpoint=my-run.sda
 
 em.emph { font-style: normal; font-weight: 600; color: var(--ink); }
 
-.landing code {
-  font-family: var(--vp-font-family-mono);
-  font-size: .86em;
-  background: var(--surface-sunk);
-  border-radius: 4px;
-  padding: .1em .34em;
-}
-
 /* masthead */
 
 .masthead { padding: 24px 0 44px; }
@@ -709,30 +699,18 @@ em.emph { font-style: normal; font-weight: 600; color: var(--ink); }
 .way-title { display: block; font-weight: 700; font-size: 18px; margin-bottom: 4px; }
 .way-text { display: block; font-size: 15px; line-height: 1.5; color: var(--ink-2); }
 
-.standalone {
-  border: 1px solid var(--rule);
-  border-radius: 9px;
-  background: var(--surface);
-  overflow: hidden;
-}
+/* The embed snippet borrows a docs page's code block (.vp-doc), copy button included;
+   the tokens take shiki's github-light / github-dark colors, as the guide's html blocks
+   are highlighted at build time. */
+.embed-label { font-size: 15.5px; color: var(--ink-2); margin-bottom: 10px; }
 
-.cmds { display: flex; flex-direction: column; }
+/* 16px is a docs page's base size, which the block's code size is relative to. */
+.embed div[class*='language-'] { margin: 0; border-radius: 8px; font-size: 16px; }
 
-.cmd {
-  display: block;
-  font-family: var(--vp-font-family-mono);
-  font-size: 13px;
-  line-height: 1.55;
-  padding: 11px 16px;
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-  color: var(--ink);
-  background: none;
-  border-radius: 0;
-  border-top: 1px solid var(--rule);
-}
-
-.cmd:first-child { border-top: 0; }
+.t-punct { --shiki-light: #24292e; --shiki-dark: #e1e4e8; }
+.t-tag { --shiki-light: #22863a; --shiki-dark: #85e89d; }
+.t-attr { --shiki-light: #6f42c1; --shiki-dark: #b392f0; }
+.t-str { --shiki-light: #032f62; --shiki-dark: #9ecbff; }
 
 
 /* sections */
