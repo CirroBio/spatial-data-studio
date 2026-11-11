@@ -151,6 +151,23 @@ with what Python gives on the same data, with these differences:
   chi-square test of the whole table instead, which says whether the mix differs
   anywhere rather than where.
 
+## Cite the methods
+
+A result from these analyses rests on these methods, and on the format the app reads:
+
+- Wolf, F.A., Angerer, P. & Theis, F.J. SCANPY: large-scale single-cell gene expression
+  data analysis. *Genome Biol* 19, 15 (2018).
+  [doi:10.1186/s13059-017-1382-0](https://doi.org/10.1186/s13059-017-1382-0)
+- Palla, G., Spitzer, H., Klein, M. et al. Squidpy: a scalable framework for spatial omics
+  analysis. *Nat Methods* 19, 171-178 (2022).
+  [doi:10.1038/s41592-021-01358-2](https://doi.org/10.1038/s41592-021-01358-2)
+- Traag, V.A., Waltman, L. & van Eck, N.J. From Louvain to Leiden: guaranteeing
+  well-connected communities. *Sci Rep* 9, 5233 (2019).
+  [doi:10.1038/s41598-019-41695-z](https://doi.org/10.1038/s41598-019-41695-z)
+- Marconato, L., Palla, G., Yamauchi, K.A. et al. SpatialData: an open and universal data
+  framework for spatial omics. *Nat Methods* 22, 58-62 (2025).
+  [doi:10.1038/s41592-024-02212-x](https://doi.org/10.1038/s41592-024-02212-x)
+
 ## When the browser isn't enough
 
 The browser runs the analyses above. For any other squidpy or scanpy function, for a

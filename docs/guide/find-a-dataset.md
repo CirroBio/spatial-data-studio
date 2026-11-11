@@ -11,7 +11,9 @@ of spatial data opens as a section to [look at](look-at-a-section.md) and
 All data in the app lives in [projects](glossary.md#project). The project name in the top
 bar opens the list of them: your Cirro projects once you have logged in (before that,
 **Log in to see them…**), then the public projects, so you can move between them.
-**About** says which version of the app this is and cites the methods it follows.
+**About** opens this guide in a new tab; pointing at it shows which version of the app
+this is, which the account menu also gives once you have logged in. The methods the
+analyses follow, and what to cite, are under [Cite the methods](analyze.md#cite-the-methods).
 
 Every project is either one you can add to or a read-only one, and that is the only
 difference the app makes between them. A read-only project has a **Read-only** badge
