@@ -2,9 +2,8 @@ import { lazy, Suspense, useState, type ReactNode } from 'react';
 import { describeError, type CirroSession } from '../cirro/session';
 import { usePublicProjects } from '../data/publicProjects';
 import { forgetTenant, homeUrl, showHome, showSignIn, showSignInTab } from '../tenants';
-import { About } from './About';
 import type { CirroProject } from './App';
-import { APP_NAME, APP_VERSION } from './appInfo';
+import { APP_NAME, APP_VERSION, DOCS_URL } from './appInfo';
 import { navigate, openedStore, useRoute } from './route';
 import { useOptionalStudio } from './studio';
 import { Popover } from './ui';
@@ -96,21 +95,20 @@ function CatalogStatus() {
   return null;
 }
 
+const ABOUT_TITLE = `${APP_NAME} ${APP_VERSION}: how it works, and the methods it follows`;
+
 // Where the app goes once logged out: the start page, or the log-in box for another Cirro.
 type Leaving = { next: () => void };
 
 function AccountMenu({ session, onSettings, onSignIn }: { session: CirroSession | null; onSettings?: () => void; onSignIn: () => void }) {
   const [problem, setProblem] = useState<Leaving & { message: string } | null>(null);
   const [unsaved, setUnsaved] = useState<Leaving & { drafts: number } | null>(null);
-  const [about, setAbout] = useState(false);
-  const aboutDialog = about && <About onClose={() => setAbout(false)} />;
   if (!session) {
     return (
       <>
         {onSettings && <button type="button" className="topbar-button" onClick={onSettings}>Settings</button>}
-        <button type="button" className="topbar-button" onClick={() => setAbout(true)}>About</button>
+        <a className="topbar-button" href={DOCS_URL} target="_blank" rel="noreferrer" title={ABOUT_TITLE}>About</a>
         <button type="button" className="button button-primary shell-log-in" onClick={onSignIn}>Log In (Cirro)</button>
-        {aboutDialog}
       </>
     );
   }
@@ -138,7 +136,7 @@ function AccountMenu({ session, onSettings, onSignIn }: { session: CirroSession 
           <div className="menu" role="menu">
             {onSettings && <button type="button" className="menu-item" onClick={() => { close(); onSettings(); }}>Settings</button>}
             <button type="button" className="menu-item" onClick={() => { close(); void askToLogOut(showSignIn); }}>Log in to another Cirro</button>
-            <button type="button" className="menu-item" onClick={() => { close(); setAbout(true); }}>About {APP_NAME}</button>
+            <a role="menuitem" className="menu-item" href={DOCS_URL} target="_blank" rel="noreferrer" title={ABOUT_TITLE} onClick={close}>About {APP_NAME}</a>
             <button type="button" className="menu-item" onClick={() => { close(); void askToLogOut(showHome); }}>Log out</button>
             <p className="menu-note muted">{APP_NAME} {APP_VERSION}</p>
           </div>
@@ -159,7 +157,6 @@ function AccountMenu({ session, onSettings, onSignIn }: { session: CirroSession 
           </div>
         </div>
       )}
-      {aboutDialog}
       {problem && (
         <div className="modal-backdrop" role="dialog" aria-modal="true">
           <div className="modal">

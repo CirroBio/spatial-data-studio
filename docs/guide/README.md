@@ -71,8 +71,8 @@ any web server, or a frame in a dashboard.
   app works with, and the map.
 - [Look at a section](look-at-a-section.md): an opened section, its tabs, the two
   drawers, and how it first opens.
-- [Analyze in the browser](analyze.md): the analyses, their reports, figures, and how the
-  results compare with scanpy and squidpy.
+- [Analyze in the browser](analyze.md): the analyses, their reports, figures, how the
+  results compare with scanpy and squidpy, and what to cite.
 - [Link to your own dataset](link-a-dataset.md): a link that opens one dataset in the web
   app from wherever you host it, presigned URLs included, and how to prepare the file.
 - [Analysis Workspaces](analysis-workspaces.md): starting one, sharing it, and everything
