@@ -28,6 +28,10 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      # Google Analytics for the published site (packages/studio-ui/src/analytics.ts). Set
+      # only here, so no other build of the app, the viewer or the docs reports anything.
+      VITE_GA_MEASUREMENT_ID: G-WHTKC5XK7N
     steps:
       - name: Checkout
         uses: actions/checkout@v4

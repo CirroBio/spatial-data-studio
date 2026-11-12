@@ -6,3 +6,4 @@ export { default as ObsFieldSelect } from './ObsFieldSelect';
 export { default as ColorSwatchPicker } from './ColorSwatchPicker';
 export { default as PanelTabs, type PanelTab } from './PanelTabs';
 export { useClickOutside } from './useClickOutside';
+export { reportPageView, startAnalytics } from './analytics';

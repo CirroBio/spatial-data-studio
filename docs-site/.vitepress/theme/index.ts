@@ -1,7 +1,9 @@
 import DefaultTheme from 'vitepress/theme';
 import './style.css';
 import './guide.css';
-import type { Theme } from 'vitepress';
+import { inBrowser, type Theme } from 'vitepress';
+// The module itself, not the package: the package's index brings the apps' React controls.
+import { reportPageView, startAnalytics } from '@cirrobio/studio-ui/src/analytics';
 import Layout from './components/Layout.vue';
 import LandingPage from './components/LandingPage.vue';
 import ViewerEmbed from './components/ViewerEmbed.vue';
@@ -15,8 +17,13 @@ import ViewerEmbed from './components/ViewerEmbed.vue';
 export default {
   extends: DefaultTheme,
   Layout,
-  enhanceApp({ app }) {
+  enhanceApp({ app, router }) {
     app.component('LandingPage', LandingPage);
     app.component('ViewerEmbed', ViewerEmbed);
+    if (inBrowser) {
+      startAnalytics(import.meta.env.VITE_GA_MEASUREMENT_ID);
+      // Runs for the first page as well as every later one.
+      router.onAfterRouteChange = reportPageView;
+    }
   },
 } satisfies Theme;

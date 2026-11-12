@@ -3,7 +3,11 @@ import { createRoot } from 'react-dom/client';
 import './index.css';
 import App from './App';
 import { setErrorSink } from '@cirrobio/spatial-viewer';
+import { reportPageView, startAnalytics } from '@cirrobio/studio-ui';
 import { useAppStore } from './store/sessionStore';
+
+startAnalytics(import.meta.env.VITE_GA_MEASUREMENT_ID);
+reportPageView();
 
 // Route reportError into the app's notification store. Installed here rather than
 // inside lib/errors so the canvas keeps no dependency on app state (see errors.ts).
