@@ -36,8 +36,9 @@ save stays in your browser.
 
 The web app, its viewer and this guide count visits with Google Analytics. Google is told
 which page you opened, without anything after the page's address, so never which dataset
-you opened, what you searched for or which Cirro you logged in to, and a random number
-your browser keeps so a return visit counts once. No Google code runs in the page and
+you opened, what you searched for or which Cirro you logged in to; how long the page was
+in view; and a random number your browser keeps so a return visit counts once. No Google
+code runs in the page and
 Google sets no cookies. An Analysis Workspace reports nothing.
 
 ### In an Analysis Workspace

@@ -18,8 +18,9 @@ workspace package and is not published.
   their own. `ColorBySelect` is one searchable list of the table's annotations and, once
   a name is typed, its genes; it needs a `DataSourceProvider` around it to search genes,
   and offers annotations alone without one.
-- `reportPageView`: one Google Analytics page view, sent without loading Google's script
-  and with the address cut to origin and path, used by both apps and the docs site
+- `reportPageView`: one Google Analytics page view, and later that page's time in view,
+  sent without loading Google's script and with the address cut to origin and path,
+  used by both apps and the docs site
   (which imports `src/analytics` directly, to skip the React controls). Nothing is sent
   unless a measurement ID is passed; see `DEVELOPMENT.md` for where it is set.
 
