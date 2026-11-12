@@ -847,8 +847,11 @@ uses, with the address cut to origin and path (the web app's and viewer's querie
 the sign-in `code`, store addresses (`open`, `checkpoint`), the tenant and search text).
 A random visitor ID and the session count live in `localStorage`
 (`spatial-data-studio.analytics-visitor`), shared by the three parts since they share an
-origin. GA reports page views, visitors, sessions, place and device, but no engagement
-time or scrolling, and the stream's enhanced measurement settings have no effect. The
+origin. Each page's time in view goes out as a `user_engagement` event when the page is
+hidden, left or replaced, since GA counts a returning visitor as an active user only once
+it has engagement time. GA reports page views, active users, sessions and engaged
+sessions, engagement time, place and device, but no scrolling, and the stream's enhanced
+measurement settings have no effect. The
 endpoint is undocumented: if GA's Realtime view stops showing visits after a deploy, it
 is the first suspect.
 
