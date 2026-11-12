@@ -3,24 +3,26 @@
 // dev, the release's viewer-dist, the Analysis Workspace image) passes no ID and reports
 // nothing.
 //
-// GA is given a page's address without its query or hash. The web app's and the viewer's
-// carry the sign-in code on the return from Cirro, store addresses (`open`, `checkpoint`),
-// the tenant and search text. This holds only while the GA stream's "page changes based
-// on browser history events" is off: GA's own page views read the full address.
+// No Google code runs here: Google's script would share the page with the Cirro sign-in
+// and could read it. Each page view is one request to the endpoint gtag.js itself sends
+// to. That endpoint is not documented, so a change on Google's side stops the counts
+// without an error; the documented Measurement Protocol needs a secret a browser can't
+// keep. GA is given a page's address without its query or hash, which carry the sign-in
+// code on the return from Cirro, store addresses (`open`, `checkpoint`), the tenant and
+// search text.
 
-declare global {
-  interface Window {
-    dataLayer?: unknown[];
-  }
-}
+const COLLECT_URL = 'https://www.google-analytics.com/g/collect';
+const VISITOR_KEY = 'spatial-data-studio.analytics-visitor';
+// GA's own: a page view this long after the last starts a new session.
+const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
 
-const GTAG_URL = 'https://www.googletagmanager.com/gtag/js';
-
-let started = false;
-
-function gtag(..._args: unknown[]): void {
-  // gtag.js reads Arguments objects off the queue; an array of the same values is ignored.
-  (window.dataLayer ??= []).push(arguments);
+// What GA needs to count visitors and sessions. `client` is a random ID made here, not
+// derived from anything about the person.
+interface Visitor {
+  client: string;
+  session: number;
+  sessions: number;
+  lastHit: number;
 }
 
 function addressOnly(href: string): string {
@@ -28,26 +30,40 @@ function addressOnly(href: string): string {
   return url.origin + url.pathname;
 }
 
-/** Load gtag.js for `measurementId`, sending nothing until a page view is reported. */
-export function startAnalytics(measurementId: string | undefined): void {
+/** Report the page now showing; nothing when `measurementId` is unset. */
+export function reportPageView(measurementId: string | undefined): void {
   if (!measurementId) return;
-  started = true;
-  gtag('js', new Date());
-  gtag('config', measurementId, { send_page_view: false });
-  const script = document.createElement('script');
-  script.async = true;
-  script.src = `${GTAG_URL}?id=${encodeURIComponent(measurementId)}`;
-  document.head.append(script);
-}
+  const now = Date.now();
+  const stored = localStorage.getItem(VISITOR_KEY);
+  const before: Visitor | null = stored ? JSON.parse(stored) : null;
+  const newSession = before === null || now - before.lastHit > SESSION_TIMEOUT_MS;
+  const seconds = Math.floor(now / 1000);
+  const visitor: Visitor = {
+    // GA's own format: a random number and the first visit's time in seconds.
+    client: before?.client ?? `${Math.floor(Math.random() * 2 ** 31)}.${seconds}`,
+    session: newSession ? seconds : before.session,
+    sessions: (before?.sessions ?? 0) + (newSession ? 1 : 0),
+    lastHit: now,
+  };
+  localStorage.setItem(VISITOR_KEY, JSON.stringify(visitor));
 
-/** Report the page now showing; nothing unless startAnalytics was given an ID. */
-export function reportPageView(): void {
-  if (!started) return;
-  // `set`, not event parameters, so GA's own events (engagement, scrolls) carry the
-  // stripped address too.
-  gtag('set', {
-    page_location: addressOnly(window.location.href),
-    page_referrer: document.referrer && addressOnly(document.referrer),
+  const hit = new URLSearchParams({
+    v: '2',
+    tid: measurementId,
+    cid: visitor.client,
+    sid: String(visitor.session),
+    sct: String(visitor.sessions),
+    en: 'page_view',
+    dl: addressOnly(window.location.href),
+    dt: document.title,
+    ul: navigator.language.toLowerCase(),
+    sr: `${screen.width}x${screen.height}`,
   });
-  gtag('event', 'page_view');
+  if (before === null) hit.set('_fv', '1');
+  if (newSession) {
+    hit.set('_ss', '1');
+    // Where the visit came from counts once, when it starts.
+    if (document.referrer) hit.set('dr', addressOnly(document.referrer));
+  }
+  navigator.sendBeacon(`${COLLECT_URL}?${hit}`);
 }
