@@ -1,7 +1,7 @@
 import React, { type ErrorInfo, type ReactNode } from 'react';
 import ReactDOM from 'react-dom/client';
 import type { SystemInfoResponse } from '@cirrobio/api-client';
-import { reportPageView, startAnalytics } from '@cirrobio/studio-ui';
+import { reportPageView } from '@cirrobio/studio-ui';
 import '@fontsource-variable/geist';
 import '@fontsource-variable/geist-mono';
 import { REDIRECT_URI, forgetStoredUsers, isSignInReturn, signInError } from './signInState';
@@ -17,8 +17,7 @@ import './styles/tokens.css';
 import './styles/app.css';
 import './styles/studio-ui.css';
 
-startAnalytics(import.meta.env.VITE_GA_MEASUREMENT_ID);
-reportPageView();
+reportPageView(import.meta.env.VITE_GA_MEASUREMENT_ID);
 
 const root = ReactDOM.createRoot(document.getElementById('root')!);
 

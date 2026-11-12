@@ -840,12 +840,17 @@ which the workflow sets as `VITE_GA_MEASUREMENT_ID` for its build job. Every oth
 (`run.sh`, `npm run dev`, release.yml's `viewer-dist.tar.gz`, the Docker image) leaves it
 unset and reports nothing. The code is `packages/studio-ui/src/analytics.ts`, called from
 `cirro-studio/src/main.tsx` and `frontend/src/main.tsx` once per page load and from the
-docs theme (`.vitepress/theme/index.ts`) on every route change. It sends page views
-itself, with the address cut to origin and path: the web app's and viewer's queries carry
-the sign-in `code`, store addresses (`open`, `checkpoint`), the tenant and search text.
-That holds only while the GA stream's **Enhanced measurement → Page changes based on
-browser history events** is off, since GA's own page views send the full address; turn
-off **Outbound clicks** too, which sends link targets (links into a tenant's Cirro).
+docs theme (`.vitepress/theme/index.ts`) on every route change. No Google script is
+loaded, since it would share the page with the Cirro sign-in and could read it: each page
+view is one `sendBeacon` to `google-analytics.com/g/collect`, the endpoint gtag.js itself
+uses, with the address cut to origin and path (the web app's and viewer's queries carry
+the sign-in `code`, store addresses (`open`, `checkpoint`), the tenant and search text).
+A random visitor ID and the session count live in `localStorage`
+(`spatial-data-studio.analytics-visitor`), shared by the three parts since they share an
+origin. GA reports page views, visitors, sessions, place and device, but no engagement
+time or scrolling, and the stream's enhanced measurement settings have no effect. The
+endpoint is undocumented: if GA's Realtime view stops showing visits after a deploy, it
+is the first suspect.
 
 ## Tests
 
