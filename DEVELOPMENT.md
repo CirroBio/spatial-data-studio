@@ -835,6 +835,18 @@ embeddable per page. The docs reach the viewer and the app above their base as
 `/../viewer/` and `/../`, and the app's example `index.json` names the demo checkpoints
 at `../viewer/`, so they are not copied twice. Pull requests build but do not publish.
 
+**Google Analytics** reports from all three published parts under one measurement ID,
+which the workflow sets as `VITE_GA_MEASUREMENT_ID` for its build job. Every other build
+(`run.sh`, `npm run dev`, release.yml's `viewer-dist.tar.gz`, the Docker image) leaves it
+unset and reports nothing. The code is `packages/studio-ui/src/analytics.ts`, called from
+`cirro-studio/src/main.tsx` and `frontend/src/main.tsx` once per page load and from the
+docs theme (`.vitepress/theme/index.ts`) on every route change. It sends page views
+itself, with the address cut to origin and path: the web app's and viewer's queries carry
+the sign-in `code`, store addresses (`open`, `checkpoint`), the tenant and search text.
+That holds only while the GA stream's **Enhanced measurement → Page changes based on
+browser history events** is off, since GA's own page views send the full address; turn
+off **Outbound clicks** too, which sends link targets (links into a tenant's Cirro).
+
 ## Tests
 
 - `npm run test:studio` — the web app's unit tests (vitest): the version stack (writing

@@ -2,7 +2,7 @@
   "name": "@cirrobio/studio-ui",
   "version": "1.9.1",
   "private": true,
-  "description": "Spatial Data Studio's own controls (the canvas display settings and the pickers they use), shared by the Studio app and Spatial Data Studio for Cirro.",
+  "description": "Spatial Data Studio's own controls (the canvas display settings and the pickers they use) and its Google Analytics page views, shared by the Studio app and Spatial Data Studio for Cirro.",
   "license": "SEE LICENSE IN LICENSE.md",
   "type": "module",
   "sideEffects": false,

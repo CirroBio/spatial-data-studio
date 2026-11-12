@@ -34,6 +34,11 @@ project can open it and build on it. In a read-only one (every public project, a
 Cirro project where your role lets you only view), the analyses still run, and what you
 save stays in your browser.
 
+The web app, its viewer and this guide count visits with Google Analytics. It is told
+which page you opened, without anything after the page's address, so never which dataset
+you opened, what you searched for or which Cirro you logged in to. An Analysis Workspace
+reports nothing.
+
 ### In an Analysis Workspace
 
 Some work needs more than a browser can give: a squidpy or scanpy function the web app
