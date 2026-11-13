@@ -167,6 +167,7 @@
       "id": "xenium",
       "label": "10x Xenium",
       "reader": "io.xenium",
+      "reader_params": {"transcripts": false},
       "detect": {
         "all_of": [
           "experiment.xenium"
@@ -311,6 +312,7 @@
       "id": "merscope",
       "label": "Vizgen MERSCOPE",
       "reader": "io.merscope",
+      "reader_params": {"transcripts": false},
       "detect": {
         "all_of": [
           "detected_transcripts.csv"
@@ -340,6 +342,7 @@
       "id": "cosmx",
       "label": "NanoString CosMx",
       "reader": "io.cosmx",
+      "reader_params": {"transcripts": false},
       "detect": {
         "any_of": [
           [
