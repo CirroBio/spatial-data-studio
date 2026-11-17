@@ -3405,6 +3405,70 @@ def run_cosmx_multiregion_flow(client):
         shutil.rmtree(staging, ignore_errors=True)
 
 
+def _write_steinbock_outs(path, samples, markers, side, cells_per_side):
+    """A minimal steinbock output folder: `cells.h5ad`, one OME-TIFF per sample under
+    `ome/` with a channel per marker, and its DeepCell mask under `masks_deepcell/`, named
+    and laid out as spatialdata-io's steinbock reader expects."""
+    import anndata
+    import numpy as np
+    import pandas as pd
+    import tifffile
+
+    os.makedirs(os.path.join(path, "ome"))
+    os.makedirs(os.path.join(path, "masks_deepcell"))
+    centres = np.linspace(0.2 * side, 0.8 * side, cells_per_side).astype(int)
+    obs = []
+    for sample in samples:
+        pixels = np.stack([np.full((side, side), c + 1, np.float32) for c in range(len(markers))])
+        tifffile.imwrite(os.path.join(path, "ome", f"{sample}.ome.tiff"), pixels,
+                         ome=True, metadata={"axes": "CYX", "Channel": {"Name": markers}})
+        mask = np.zeros((side, side), np.uint16)
+        for i, (y, x) in enumerate((y, x) for y in centres for x in centres):
+            mask[y - 2:y + 2, x - 2:x + 2] = i + 1
+            obs.append({"name": f"Object {i + 1} in {sample}.tiff", "Image": f"{sample}.tiff",
+                        "image": f"{sample}.tiff", "centroid-0": float(y), "centroid-1": float(x)})
+        tifffile.imwrite(os.path.join(path, "masks_deepcell", f"{sample}.tiff"), mask)
+    obs = pd.DataFrame(obs).set_index("name")
+    anndata.AnnData(np.ones((len(obs), len(markers)), np.float32), obs=obs,
+                    var=pd.DataFrame(index=markers)).write_h5ad(os.path.join(path, "cells.h5ad"))
+
+
+def run_steinbock_channel_names_flow(client):
+    """A steinbock image's channels carry its markers' names.
+
+    spatialdata-io's steinbock reader drops the OME channel names, so every image
+    arrived with channels 0..n-1 and the channel picker showed numbers instead of
+    markers. The read now names them from `cells.h5ad`'s var, which steinbock writes in
+    the images' channel order (registry/reader_fixes.py). Three markers is the case
+    spatialdata reads as RGB, naming the channels r, g, b, so the fixture uses three."""
+    from spatialdata.models import get_channel_names
+
+    from app.deps import MANAGER
+
+    samples, markers = ["Patient1_001", "Patient1_002"], ["CD3", "LAG3 / LAG33", "DNA1"]
+    staging = tempfile.mkdtemp(dir=str(config.DATA_DIR))  # sessions only read under DATA_DIR
+    try:
+        outs = os.path.join(staging, "steinbock")
+        _write_steinbock_outs(outs, samples, markers, side=40, cells_per_side=3)
+        r = client.post("/api/sessions", json={"source": {
+            "kind": "read", "namespace": "io", "function": "steinbock", "params": {"path": outs}}})
+        assert r.status_code == 200, r.text
+        sid = r.json()["id"]
+        st = poll(client, sid, lambda s: s["summary"]["status"] in ("ready", "errored"))
+        assert st["summary"]["status"] == "ready", f"steinbock read errored: {st['summary']}"
+
+        sdata = MANAGER.get(sid).sdata
+        assert sorted(sdata.images) == [f"{s}_image" for s in samples]
+        for name, image in sdata.images.items():
+            assert list(get_channel_names(image)) == markers, \
+                f"{name}'s channels are {list(get_channel_names(image))}, expected {markers}"
+        print(f"[ok] {len(samples)} steinbock images carry their {len(markers)} markers' names")
+
+        assert client.delete(f"/api/sessions/{sid}").status_code == 200
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
 def run_subset_coordinate_space_flow(client):
     """Both halves of the coordinate reconciliation on a multi-coordinate-system store:
     where the image lands, and where a lasso crops.
@@ -4049,6 +4113,7 @@ def main():
         run_version_flow(client)
         run_subset_coordinate_space_flow(client)
         run_cosmx_multiregion_flow(client)
+        run_steinbock_channel_names_flow(client)
         if have_fixture(XENIUM, "subset coordinate-space flow"):
             run_xenium_subset_space_flow(client)
         if have_fixture(XENIUM, "segmentation flow"):
