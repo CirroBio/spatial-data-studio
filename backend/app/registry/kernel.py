@@ -16,6 +16,7 @@ from __future__ import annotations
 import importlib
 import traceback
 
+from . import reader_fixes
 from .base import (
     _TABLE_FACETS, capture_log, keyset, diff, render_plot, short_error,
 )
@@ -200,6 +201,8 @@ def _child_library_call(library, path, effect_class, injected_order, bound, adat
         try:
             before = keyset(adata, sdata) if effect_class == "compute" else None
             ret = fn(*injected, **bound)
+            if (library, path) == ("spatialdata_io", "steinbock"):
+                ret = reader_fixes.name_steinbock_channels(ret)
         except Exception as e:
             return _failure_envelope(buf, e)
         log = buf.getvalue()
