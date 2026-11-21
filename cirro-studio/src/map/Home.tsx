@@ -20,8 +20,9 @@ const FOOT_HEIGHT = 24;
 // columns; the bubbles follow their labels into the second row.
 const TWO_COLUMNS_BELOW = 860;
 // A bubble's area is the square root of its bytes, so a 10 GB store doesn't leave a 10 MB
-// one a speck; and no bubble is narrower than this share of the largest, so every item
-// (a figure, which has no bytes of its own) is something to point at.
+// one a speck; and no bubble is narrower than this share of the largest where the project
+// has room for that, so every item (a figure, which has no bytes of its own) is something
+// to point at.
 const FLOOR_WIDTH = 0.3;
 
 interface Placed { x: number; y: number; r: number; node: StageNode }
@@ -41,7 +42,10 @@ export function Home({ nodes, onScene }: { nodes: Record<StageId, StageNode[]>; 
     const rowHeight = height / rows;
     const maxD = Math.max(60, Math.min(colWidth - 40, rowHeight - head - FOOT_HEIGHT - 24));
     const all = STAGES.flatMap((s) => nodes[s.id]);
-    const floor = Math.sqrt(Math.max(1, ...all.map((n) => n.size))) * FLOOR_WIDTH ** 2;
+    const areas = all.map((n) => Math.sqrt(n.size));
+    // In a project of a thousand items the floor gives way (to half the mean area), or the
+    // small items together would crowd the large ones down to specks as well.
+    const floor = Math.min(Math.max(1, ...areas) * FLOOR_WIDTH ** 2, areas.reduce((a, b) => a + b, 0) / (2 * Math.max(1, areas.length)));
     const weight = (n: StageNode) => Math.max(Math.sqrt(n.size), floor);
     const totals = STAGES.map((s) => nodes[s.id].reduce((sum, n) => sum + weight(n), 0));
     const maxTotal = Math.max(1, ...totals);
