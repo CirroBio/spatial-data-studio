@@ -2,12 +2,14 @@
 // a heatmap from neighborhood enrichment, stacked bars from a composition.
 import { useEffect, useRef, useState } from 'react';
 import type { AsyncReadable } from '@zarrita/storage';
+import { downloadBlob } from '@cirrobio/spatial-viewer';
 import { Heatmap } from '../charts/Heatmap';
 import { StackedBars } from '../charts/StackedBars';
 import { Volcano } from '../charts/Volcano';
 import { describeError } from '../cirro/session';
 import { useSize } from '../lib/useSize';
 import { GENE_TEST_COLUMN, matrixOf, readDataFrame, type DataFrame } from '../reports/store';
+import { fileStem, pngBlob, standaloneSvg, svgBlob } from './export';
 import type { ChartSpec, FigureSpec } from './spec';
 
 const num = (df: DataFrame, column: string) => {
@@ -64,10 +66,41 @@ export function ChartFigure({ spec, store, table }: { spec: FigureSpec; store: R
       live = false;
     };
   }, [store, table, resultPath, marksPath]);
+  const [exporting, setExporting] = useState(false);
+  // The chart as it is drawn here, at the width the figure was kept at. No PDF: the PDF
+  // writer loses the labels' halos and with them the labels, and the SVG is the vector copy.
+  const download = async (format: 'svg' | 'png') => {
+    const drawn = ref.current?.querySelector('svg');
+    if (!drawn) return;
+    setProblem(null);
+    setExporting(true);
+    try {
+      const svg = standaloneSvg(drawn);
+      const page = { widthMm: spec.width_mm, heightMm: (spec.width_mm * drawn.clientHeight) / drawn.clientWidth };
+      const blob = format === 'svg' ? svgBlob(svg) : await pngBlob(svg, page);
+      downloadBlob(blob, `${fileStem(spec.title)}.${format}`);
+    } catch (e) {
+      setProblem(describeError(e));
+    } finally {
+      setExporting(false);
+    }
+  };
   return (
     <div className="chart-figure" ref={ref}>
-      <h2>{spec.title}</h2>
-      {spec.caption && <p className="muted">{spec.caption}</p>}
+      <header className="report-head">
+        <div className="report-title">
+          <h2>{spec.title}</h2>
+          {spec.caption && <p className="muted">{spec.caption}</p>}
+        </div>
+        {chart && tables && (
+          <div className="button-row">
+            <span className="muted">Download</span>
+            {(['png', 'svg'] as const).map((f) => (
+              <button key={f} type="button" className="button button-small" disabled={exporting} onClick={() => void download(f)}>{f.toUpperCase()}</button>
+            ))}
+          </div>
+        )}
+      </header>
       {problem && <p className="notice notice-danger">{problem}</p>}
       {chart && tables && width > 0 && <Chart chart={chart} df={tables.df} marks={tables.marks} width={Math.min(width, 720)} />}
     </div>

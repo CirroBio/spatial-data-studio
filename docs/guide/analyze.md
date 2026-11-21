@@ -49,11 +49,11 @@ half a minute for 200,000.
 ## Compare composition
 
 The **Composition** tab counts the cells in each group of what the tissue is colored
-by. Choose a column under **Across**, in its Display drawer, and it counts them across
-that column's groups instead: cell types or Leiden clusters across regions, say, or
+by. Choose a column under **Across**, beside **Color by** over the view, and it counts
+them across that column's groups instead: cell types or Leiden clusters across regions, say, or
 cellular neighborhoods across the areas you drew with **Label cells** (the *labels*
 column). Cells with no group in either column are left out, and the view says how many.
-A column of more than 100 groups can't be counted across. **Count the whole tissue**
+A column of more than 100 groups can't be counted across. The **×** beside **Across** (*Count the whole tissue*)
 goes back to one bar per group.
 
 The comparison shows:
@@ -125,7 +125,10 @@ kept twice. While the figure is only in the unsaved changes, **Take it out**, in
 under the button, takes it back out and leaves the rest of the changes as they are.
 
 A kept figure is saved with the version, listed under the **Figures** tab and on the
-map's Figures stage, and opens framed as it was. With a figure open, **Remove…** under
+map's Figures stage, and opens framed as it was. An open chart figure has **Download**
+over it, as a 300 dpi PNG or an SVG; a tissue or cell map figure has **Download…** under
+its caption in the Display drawer, which opens **Save as a figure** on the view as the
+figure framed it. With a figure open, **Remove…** under
 its caption in the Display drawer takes it out: out of the unsaved changes, or, for a
 figure saved in an earlier version, out of the next version you save. The version that
 kept it still has it, under **Versions**, but the map's Figures stage no longer lists it.

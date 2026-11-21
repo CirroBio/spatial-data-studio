@@ -823,6 +823,9 @@ export default function SpatialCanvas({
           invertY={invertY}
           onNavigate={navigateTo}
           onNavigateEnd={persistViewport}
+          // Below the Spatial/Embeddings/Tables switch, which owns the same corner; a host
+          // that insets the overlays' top has already cleared its own bar.
+          top={host.overlayInset?.top === undefined ? 44 : 8}
         />
       )}
 

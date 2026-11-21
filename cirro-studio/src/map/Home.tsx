@@ -5,20 +5,24 @@
 // only tells where they belong.
 import { useLayoutEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { STAGES, type StageId } from '../app/library';
-import { LENS_PARAM, navigate, openItem, STAGE_PARAM } from '../app/route';
+import { LEAVING_STAGE, LENS_PARAM, navigate, openItem, STAGE_PARAM } from '../app/route';
 import { useStudio } from '../app/studio';
 import { formatBytes, plural, STAGE_ICONS, tint } from '../app/ui';
 import { useSize } from '../lib/useSize';
 import type { Bubble, Scene } from './BubbleLayer';
 import { packCluster, type StageNode } from './nodes';
 
-const HEAD_HEIGHT = 150;
-const FOOT_HEIGHT = 56;
+const HEAD_HEIGHT = 176;
+// The headings are smaller where the stages wrap (app.css), leaving the bubbles more of each row.
+const NARROW_HEAD_HEIGHT = 124;
+const FOOT_HEIGHT = 24;
 // The stylesheet's breakpoint (app.css, .map-landing) where the stages wrap to two
 // columns; the bubbles follow their labels into the second row.
 const TWO_COLUMNS_BELOW = 860;
-// Items smaller than this share of the largest still draw as a visible dot.
-const FLOOR_SHARE = 0.004;
+// A bubble's area is the square root of its bytes, so a 10 GB store doesn't leave a 10 MB
+// one a speck; and no bubble is narrower than this share of the largest, so every item
+// (a figure, which has no bytes of its own) is something to point at.
+const FLOOR_WIDTH = 0.3;
 
 interface Placed { x: number; y: number; r: number; node: StageNode }
 
@@ -29,15 +33,16 @@ export function Home({ nodes, onScene }: { nodes: Record<StageId, StageNode[]>; 
 
   const layout = useMemo(() => {
     if (!width || !height) return null;
-    const perRow = width <= TWO_COLUMNS_BELOW ? 2 : STAGES.length;
+    const narrow = width <= TWO_COLUMNS_BELOW;
+    const perRow = narrow ? 2 : STAGES.length;
+    const head = narrow ? NARROW_HEAD_HEIGHT : HEAD_HEIGHT;
     const rows = Math.ceil(STAGES.length / perRow);
     const colWidth = width / perRow;
     const rowHeight = height / rows;
-    const maxD = Math.max(60, Math.min(colWidth - 40, rowHeight - HEAD_HEIGHT - FOOT_HEIGHT - 24));
+    const maxD = Math.max(60, Math.min(colWidth - 40, rowHeight - head - FOOT_HEIGHT - 24));
     const all = STAGES.flatMap((s) => nodes[s.id]);
-    const largest = Math.max(1, ...all.map((n) => n.size));
-    const floor = largest * FLOOR_SHARE;
-    const weight = (n: StageNode) => Math.max(n.size, floor);
+    const floor = Math.sqrt(Math.max(1, ...all.map((n) => n.size))) * FLOOR_WIDTH ** 2;
+    const weight = (n: StageNode) => Math.max(Math.sqrt(n.size), floor);
     const totals = STAGES.map((s) => nodes[s.id].reduce((sum, n) => sum + weight(n), 0));
     const maxTotal = Math.max(1, ...totals);
     const placed = new Map<string, Placed>();
@@ -45,10 +50,10 @@ export function Home({ nodes, onScene }: { nodes: Record<StageId, StageNode[]>; 
       const d = totals[i] ? Math.max(48, maxD * Math.sqrt(totals[i] / maxTotal)) : 0;
       const cx = colWidth * ((i % perRow) + 0.5);
       const row = Math.floor(i / perRow);
-      const bottom = (row + 1) * rowHeight - (row === rows - 1 ? FOOT_HEIGHT : 0);
-      const cy = (row * rowHeight + HEAD_HEIGHT + bottom) / 2;
+      // On one line under the headings, the widest cluster just clear of them.
+      const cy = row * rowHeight + head + maxD / 2;
       if (d) {
-        for (const p of packCluster(nodes[s.id], d, floor)) placed.set(p.node.key, { ...p, x: cx - d / 2 + p.x, y: cy - d / 2 + p.y });
+        for (const p of packCluster(nodes[s.id], d, weight)) placed.set(p.node.key, { ...p, x: cx - d / 2 + p.x, y: cy - d / 2 + p.y });
       }
       return { stage: s, cx, cy, d };
     });
@@ -80,7 +85,7 @@ export function Home({ nodes, onScene }: { nodes: Record<StageId, StageNode[]>; 
   const open = (e: MouseEvent, stage: StageId) => {
     const n = bubbleAt(e, stage);
     if (n) openItem(n.target.datasetId, n.target.path, n.target.lens ? { [LENS_PARAM]: n.target.lens } : {});
-    else navigate({ section: 'stage', [STAGE_PARAM]: stage });
+    else navigate({ section: 'stage', [STAGE_PARAM]: stage, ...LEAVING_STAGE });
   };
 
   const totalBytes = (id: StageId) => nodes[id].reduce((s, n) => s + n.size, 0);
@@ -123,7 +128,15 @@ export function Home({ nodes, onScene }: { nodes: Record<StageId, StageNode[]>; 
           </button>
         ))}
       </div>
-      <p className="map-tagline">{hovered ? hovered.label : 'Click a bubble to open it, or a heading to list everything there.'}</p>
+      <p className="map-tagline">Click a bubble to open it, or a heading to list everything there.</p>
+      {hovered && layout?.placed.has(hovered.key) && (() => {
+        const p = layout.placed.get(hovered.key)!;
+        return (
+          <p className="map-bubble-name" style={{ left: p.x, top: p.y - p.r }}>
+            {hovered.label}{hovered.size > 0 && <span className="muted"> · {formatBytes(hovered.size)}</span>}
+          </p>
+        );
+      })()}
     </div>
   );
 }

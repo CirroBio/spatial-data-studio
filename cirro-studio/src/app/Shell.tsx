@@ -52,7 +52,7 @@ function ProjectPicker({ projects, loggedIn, onSettings }: { projects: CirroProj
 // What read-only means here, and how to keep work for good.
 function ReadOnlyBadge({ loggedIn, onSignIn }: { loggedIn: boolean; onSignIn: () => void }) {
   return (
-    <Popover className="shell-access" label="Read-only">
+    <Popover className="shell-access" label={<>Read-only ▾</>}>
       {() => (
         <div className="menu shell-access-panel">
           <p>You can look and run every analysis here. What you save stays in this browser: not on other computers, and nobody else sees it.</p>

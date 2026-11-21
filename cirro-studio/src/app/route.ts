@@ -103,6 +103,10 @@ const sameAddress = (a: string, b: string) => {
   return sorted(a) === sorted(b);
 };
 
+/** Moving to another stage, or back to the overview, leaves a stage's selection and search
+ * behind. */
+export const LEAVING_STAGE = { [SELECT_PARAM]: null, [QUERY_PARAM]: null, [FILTER_PARAM]: null };
+
 /** Stepping out (Esc, ×) goes back in history when the previous entry is where it leads,
  * so stepping in and out doesn't pile up entries; otherwise it navigates there. */
 export function stepBack(update: Record<string, string | null>) {

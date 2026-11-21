@@ -129,8 +129,9 @@ input[type="checkbox"], input[type="radio"], input[type="range"] { accent-color:
 .shell-breadcrumb { display: flex; align-items: center; gap: var(--sds-space-2); min-width: min(8em, 25vw); }
 .shell-access > .topbar-button {
   color: var(--sds-color-text-muted); font-size: var(--sds-text-xs); white-space: nowrap;
-  border: 1px solid var(--sds-color-border); border-radius: 999px; padding: 1px 8px;
+  border: 1px solid var(--sds-color-border); border-radius: 999px; padding: 1px 8px; flex: none;
 }
+.shell-access > .topbar-button:hover { color: var(--sds-color-text); border-color: var(--sds-color-text-muted); }
 .shell-access-panel { width: 300px; padding: var(--sds-space-3); display: grid; gap: var(--sds-space-2); font-size: var(--sds-text-sm); white-space: normal; }
 .shell-access-panel .button { justify-self: start; }
 .shell-spacer { flex: 1 1 var(--sds-space-4); }
@@ -188,7 +189,7 @@ input[type="checkbox"], input[type="radio"], input[type="range"] { accent-color:
 .map-home { position: relative; width: 100%; height: 100%; overflow: hidden; }
 .map-home-canvas { position: absolute; inset: 0; }
 .map-landing { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
-.map-stage { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; display: grid; align-content: start; justify-items: center; padding: var(--sds-space-8) var(--sds-space-3) 0; border-radius: 18px; }
+.map-stage { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; display: grid; align-content: start; justify-items: center; padding: 56px var(--sds-space-3) 0; border-radius: 18px; }
 .map-stage:hover { background: color-mix(in srgb, var(--c) 5%, transparent); }
 .map-stage-empty .map-icon, .map-stage-empty .map-stage-name { opacity: 0.55; }
 .map-stage-head { display: grid; justify-items: center; gap: 6px; text-align: center; }
@@ -196,8 +197,13 @@ input[type="checkbox"], input[type="radio"], input[type="range"] { accent-color:
 .map-icon svg { width: 100%; height: 100%; display: block; }
 .map-rail-map svg { width: 28px; height: 28px; display: block; }
 .map-stage-name { font-size: var(--sds-text-2xl); font-weight: var(--sds-weight-semibold); }
+/* A heading opens its stage's list. */
+.map-stage-name::after { content: ' ›'; color: var(--sds-color-text-muted); font-weight: normal; }
+.map-stage:hover .map-stage-name::after { color: var(--c); }
 .map-stage-caption { font-size: var(--sds-text-sm); color: var(--sds-color-text-muted); }
-.map-tagline { position: absolute; left: 0; right: 0; bottom: var(--sds-space-4); text-align: center; font-size: var(--sds-text-sm); color: var(--sds-color-text-muted); pointer-events: none; }
+.map-tagline { position: absolute; left: 0; right: 0; top: var(--sds-space-4); margin: 0; text-align: center; font-size: var(--sds-text-sm); color: var(--sds-color-text-muted); pointer-events: none; }
+/* The name of the bubble under the pointer, just over it. */
+.map-bubble-name { position: absolute; z-index: 3; margin: 0; transform: translate(-50%, calc(-100% - 6px)); white-space: nowrap; pointer-events: none; font-size: var(--sds-text-sm); font-weight: var(--sds-weight-medium); padding: 2px var(--sds-space-2); border-radius: var(--sds-radius-md); background: var(--sds-color-surface-raised); border: 1px solid var(--sds-color-border); box-shadow: var(--sds-shadow-raised); }
 .map-links path { fill: none; stroke: var(--sds-color-text-muted); stroke-width: 1.2; stroke-dasharray: 3 4; opacity: 0.55; }
 /* The words of a view arrive as its bubbles settle; the lineage lines once they have. */
 .map-landing, .map-tagline, .map-rail, .map-bar { animation: fade-in 0.45s ease 0.15s both; }
@@ -220,13 +226,16 @@ input[type="checkbox"], input[type="radio"], input[type="range"] { accent-color:
 /* Names are placed for where a bubble ends up, so they wait until it is there. */
 .bubble-layer-moving .bubble-label, .bubble-layer-moving .bubble-name { opacity: 0; transition: none; }
 
-.map-stage-view { display: grid; grid-template-columns: 184px minmax(0, 1fr); height: 100%; }
-.map-rail { display: grid; align-content: start; gap: var(--sds-space-2); padding: var(--sds-space-3); border-right: 1px solid var(--sds-color-border); overflow: auto; }
-.map-rail-stage { font: inherit; color: inherit; text-align: left; display: grid; row-gap: 2px; padding: var(--sds-space-3); background: none; border: 1px solid transparent; border-radius: var(--sds-radius-lg); cursor: pointer; }
+/* The row is pinned to the view's height so a long list scrolls inside .map-browser; an implicit
+   auto row would grow to the list and .map would clip it. */
+.map-stage-view { display: grid; grid-template-columns: 184px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); height: 100%; }
+/* The four stages share the rail's height, their minimaps shrinking, so none is below the fold. */
+.map-rail { display: grid; grid-template-rows: repeat(4, minmax(0, auto)); align-content: start; gap: var(--sds-space-2); padding: var(--sds-space-3); border-right: 1px solid var(--sds-color-border); overflow: auto; }
+.map-rail-stage { font: inherit; color: inherit; text-align: left; display: grid; grid-template-rows: auto auto minmax(0, 1fr); min-height: 0; row-gap: 2px; padding: var(--sds-space-3); background: none; border: 1px solid transparent; border-radius: var(--sds-radius-lg); cursor: pointer; }
 .map-rail-stage:hover { background: var(--sds-color-surface); }
 .map-rail-stage[aria-current="true"] { border-color: var(--c); background: color-mix(in srgb, var(--c) 6%, transparent); }
 /* The stage's minimap: its bubbles, laid over this by the map's BubbleLayer. */
-.map-rail-map { height: 112px; margin-top: var(--sds-space-2); display: grid; place-items: center; color: var(--c); }
+.map-rail-map { height: 112px; max-height: 100%; min-height: 0; margin-top: var(--sds-space-2); display: grid; place-items: center; color: var(--c); }
 .map-rail-name { font-weight: var(--sds-weight-semibold); }
 .map-rail-caption { font-size: var(--sds-text-xs); color: var(--sds-color-text-muted); }
 .map-main { position: relative; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; }
@@ -255,20 +264,28 @@ input[type="checkbox"], input[type="radio"], input[type="range"] { accent-color:
 .facts-summary { color: var(--sds-color-text-muted); font-variant-numeric: tabular-nums; }
 .facts-kind { display: inline-flex; align-items: center; gap: 6px; font-weight: var(--sds-weight-semibold); }
 .facts-kin { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; color: var(--sds-color-text-muted); }
+/* Whose data it is gives way first, so the line stays one row with Details at its end. */
+.facts-credit { flex: 1 1 12em; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .facts-spacer { flex: 1; }
 .kin-chip { font: inherit; font-size: var(--sds-text-sm); display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--sds-color-border); border-radius: 999px; padding: 0 var(--sds-space-2); background: var(--sds-color-surface-raised); color: var(--sds-color-text); cursor: pointer; max-width: 260px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .kin-chip:hover { border-color: var(--c, var(--sds-color-accent)); }
 .picture-loading { display: grid; place-items: center; gap: var(--sds-space-3); align-content: center; border-top: 1px solid var(--sds-color-border); }
 
 /* The frame: the view fills it edge to edge, and the drawers float over it (ViewFrame). */
-.frame { position: relative; min-height: 0; overflow: hidden; border-top: 1px solid var(--sds-color-border); }
-.frame-main { position: absolute; inset: 0; }
+/* Clipped, not hidden: a drawer pushed away sits past the edge, and a hidden box could still be
+   scrolled to it (by a focus or scrollIntoView), shifting the whole view sideways. */
+.frame { position: relative; min-height: 0; overflow: clip; border-top: 1px solid var(--sds-color-border); }
+/* Its own stacking context: the canvas' overlays (the overview, the legends) stay under the
+   views bar and its menus, however they stack among themselves. */
+.frame-main { position: absolute; inset: 0; isolation: isolate; }
 /* A list or chart rather than the tissue keeps clear of the open drawers, and of the views bar. */
 .frame-sheet {
   overflow: auto; background: var(--sds-color-surface); transition: padding 0.2s ease;
   padding: var(--drawer-gap) calc(var(--inset-right) + var(--drawer-gap)) var(--drawer-gap) calc(var(--inset-left) + var(--drawer-gap));
 }
-.frame-barred .frame-sheet { padding-top: calc(var(--bar-room) + var(--drawer-gap)); }
+/* A sheet starts under the views bar, so what scrolls in it never passes behind the bar. */
+.frame-barred .frame-sheet { top: calc(var(--bar-room) + var(--drawer-gap)); padding-top: 0; }
+.frame-barred { background: var(--sds-color-surface); }
 /* The views, as the Studio's switch over its canvas: one joined strip, the open view in the
    accent; the canvas' tools (ViewTools) in a strip like it at the other end. */
 .frame-bar {
@@ -283,6 +300,9 @@ input[type="checkbox"], input[type="radio"], input[type="range"] { accent-color:
   pointer-events: auto; flex: 0 1 240px; min-width: 150px; padding: 3px; border: 1px solid var(--sds-color-border); border-radius: var(--sds-radius-md);
   background: color-mix(in srgb, var(--sds-color-surface-raised) 90%, transparent); box-shadow: var(--sds-shadow-raised);
 }
+.view-labelled { display: flex; align-items: center; gap: 6px; flex-basis: 300px; font-size: var(--sds-text-xs); color: var(--sds-color-text-muted); }
+.view-labelled > span { padding-left: 4px; white-space: nowrap; }
+.view-labelled > div { flex: 1; min-width: 0; }
 .view-tabs, .view-tools {
   pointer-events: auto; display: flex; flex-wrap: nowrap; font-size: var(--sds-text-xs); box-shadow: var(--sds-shadow-raised);
   border: 1px solid var(--sds-color-border); border-radius: var(--sds-radius-md);
@@ -290,7 +310,9 @@ input[type="checkbox"], input[type="radio"], input[type="range"] { accent-color:
 }
 /* The blur makes the strip a stacking context, which its Reports and Figures menus can't rise
    out of; lifting the strip keeps them over the tools when those wrap under the tabs. */
-.view-tabs { position: relative; z-index: 1; }
+/* Narrower than its tabs, the strip takes a second row rather than running past the frame,
+   where its last tabs could not be reached (a scrolling strip would clip its menus). */
+.view-tabs { position: relative; z-index: 1; flex-wrap: wrap; min-width: 0; }
 .view-tab, .view-tab-menu .topbar-button {
   font: inherit; font-weight: var(--sds-weight-medium); white-space: nowrap; padding: 4px var(--sds-space-3); border: 0; border-radius: 0;
   background: none; color: var(--sds-color-text-muted); cursor: pointer; transition: color 0.15s ease, background-color 0.15s ease;
@@ -439,6 +461,7 @@ input[type="checkbox"], input[type="radio"], input[type="range"] { accent-color:
 .draft-list { display: flex; gap: var(--sds-space-2); flex: 1; min-width: 0; overflow: hidden; }
 /* One line each, newest kept whole: older chips shrink to an ellipsis first. */
 .draft-list .chip { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 4em; }
+.draft-earlier { flex: none; align-self: center; font-size: var(--sds-text-sm); }
 .draft-list .chip:last-child { flex-shrink: 0; max-width: 100%; }
 
 /* An open stage: its items as a tree of their folders, a row each with its facts in words, its
@@ -449,6 +472,8 @@ input[type="checkbox"], input[type="radio"], input[type="range"] { accent-color:
 .stage-tree-summary { margin: 2px 0 0; font-size: var(--sds-text-sm); color: var(--sds-color-text-muted); }
 .stage-tree-shared { color: var(--sds-color-text); }
 .stage-tree-tools { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sds-space-2); }
+/* A source's citation can run to a line; the chip keeps to a few words, with the rest in its title. */
+.stage-tree-chip-text { display: inline-block; max-width: 28ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 .stage-tree-chip[aria-pressed="true"] { border-color: var(--c); background: color-mix(in srgb, var(--c) 12%, transparent); }
 .stage-tree-sort { display: inline-flex; align-items: center; gap: 6px; font-size: var(--sds-text-sm); }
 .stage-tree-sort .select { padding: 2px 6px; font-size: var(--sds-text-sm); }
@@ -463,6 +488,14 @@ input[type="checkbox"], input[type="radio"], input[type="range"] { accent-color:
 .stage-tree-caret { width: 1em; flex: none; color: var(--sds-color-text-muted); }
 .stage-tree-dot { width: 10px; height: 10px; flex: none; margin-top: 5px; border-radius: 50%; background: var(--c); }
 .stage-tree-label { display: grid; min-width: 0; }
+/* One click opens an item from its row; the row itself selects it, for the look under it,
+   which has its own Open. It lies over the end of the row, taking no room from the name.
+   Always shown where nothing hovers. */
+.stage-tree-item { position: relative; }
+.stage-tree-open { position: absolute; top: 5px; right: var(--sds-space-2); opacity: 0; pointer-events: none; }
+.stage-tree-row:hover .stage-tree-open, .stage-tree-row:focus-visible .stage-tree-open, .stage-tree-open:focus-visible { opacity: 1; pointer-events: auto; }
+.stage-tree-row.selected .stage-tree-open { visibility: hidden; }
+@media (hover: none) { .stage-tree-open { opacity: 1; pointer-events: auto; } }
 .stage-tree-title { font-weight: var(--sds-weight-medium); overflow-wrap: anywhere; }
 .stage-tree-path { font-size: var(--sds-text-xs); }
 .stage-tree-facts { font-size: var(--sds-text-sm); color: var(--sds-color-text-muted); }
@@ -500,8 +533,17 @@ input[type="checkbox"], input[type="radio"], input[type="range"] { accent-color:
 
 @media (max-width: 860px) {
   .map-landing { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .map-stage { padding-top: 40px; }
+  .map-stage-head { gap: 2px; }
+  .map-icon { width: 24px; height: 24px; }
+  .map-stage-name { font-size: var(--sds-text-lg); }
   .map-stage-view { grid-template-columns: minmax(0, 1fr); }
-  .map-rail { display: none; }
+  .map-hint { display: none; }
+  /* The rail lies along the top, each stage by its name and count, without its minimap. */
+  .map-stage-view { grid-template-rows: auto minmax(0, 1fr); }
+  .map-rail { display: flex; gap: var(--sds-space-1); padding: var(--sds-space-2) var(--sds-space-3) 0; border-right: 0; overflow-x: auto; }
+  .map-rail-stage { flex: none; padding: var(--sds-space-1) var(--sds-space-3); }
+  .map-rail-map { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation-duration: 0s !important; }
@@ -540,7 +582,7 @@ input[type="checkbox"], input[type="radio"], input[type="range"] { accent-color:
 .report-body { display: grid; gap: var(--sds-space-6); }
 .report-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--sds-space-3); margin: 0; }
 .report-stat { background: var(--sds-color-surface); border: 1px solid var(--sds-color-border); border-radius: var(--sds-radius-md); padding: var(--sds-space-3); }
-.report-stat dt { font-size: var(--sds-text-xs); color: var(--sds-color-text-muted); text-transform: uppercase; letter-spacing: 0.05em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.report-stat dt { font-size: var(--sds-text-xs); color: var(--sds-color-text-muted); text-transform: uppercase; letter-spacing: 0.05em; overflow-wrap: anywhere; }
 .report-stat dd { margin: var(--sds-space-1) 0 0; font-size: var(--sds-text-xl); font-weight: var(--sds-weight-semibold); font-variant-numeric: tabular-nums; }
 .report-stat .report-stat-note { font-size: var(--sds-text-xs); font-weight: normal; }
 .report-section { display: grid; gap: var(--sds-space-2); min-width: 0; }
