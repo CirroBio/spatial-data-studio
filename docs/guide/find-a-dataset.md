@@ -145,13 +145,16 @@ files such as `cells.zarr.zip`.
   again from the version's data.
 - **What you can do.** Open it to see it again: a tissue figure restores the store's view
   as it was framed, where **Save as a figure** downloads it as SVG, PDF or a 300 dpi PNG,
-  and a chart figure redraws the chart from the result it came from.
+  and a chart figure redraws the chart from the result it came from, with **Download** as
+  a 300 dpi PNG or an SVG.
 
 ## The map
 
 A project opens as a map of the four stages (Images, Instrument runs, Spatial data,
-Figures). Each bubble is one item, sized by its files and named inside it when there is
-room; pointing at one shows its full name under the map. A dataset holding several stores
+Figures). Each bubble is one item, larger the larger its files (on a compressed scale, so that a
+small dataset beside a very large one, or a figure, is still something to point at) and
+named inside it when there is room; pointing at one shows its full name and size beside
+it. A dataset holding several stores
 shows each one, and rings inside a spatial-data bubble are the versions saved on that
 store. Dashed lines join a run or an image to the spatial data made from it.
 
@@ -167,15 +170,17 @@ bubbles, to open it as a list of its items, a row each, in their Cirro folders:
   the scale for each one, so a closed folder still shows where its large items are.
 - **Said once.** What every item of the stage shares ("all 10x Xenium") is said once,
   above the list, rather than on every row.
-- **Find and narrow.** Search by name, folder, tag or any of those facts; the chips beside
+- **Find and narrow.** Search by name, folder, tag or any of those facts (the line under
+  the stage's name then says how many of its items are shown); the chips beside
   the search narrow the list to one kind of item (only "OME-TIFF", say), and are offered
   only for facts that tell the stage's items apart. Order by name, size or newest, and
   switch between **Folders** and a **Flat list** of everything.
 - **Select** a row to see more under it: the dataset's description, who added it and when,
   a link to it in Cirro, what it was made from and what was made from it (click one to go
   to it in its own stage), and what you can do: **Open** it, open it in an Analysis
-  Workspace, or run a pipeline on it. A double-click, or Enter, opens an item straight
-  away, its picture growing out of its row; leaving the picture comes back to the list with
+  Workspace, or run a pipeline on it. **Open**, which shows at the end of a row's name
+  as you point at it, a double-click, or Enter opens an item straight away, its picture
+  growing out of its row; leaving the picture comes back to the list with
   the row still selected.
 - **Keyboard.** The arrow keys move through the list and open and close folders, typing
   jumps to a name, `/` goes to the search (where the down arrow moves into the list and
@@ -184,5 +189,6 @@ bubbles, to open it as a list of its items, a row each, in their Cirro folders:
 
 On a wide screen, a rail on the left keeps every stage as a small map of its bubbles: the
 open stage's dims the items the search leaves out and rings the selected item and what
-it was made from and into. What you have opened, searched for, selected and chosen is
+it was made from and into. On a narrow one the stages are a strip of names along the top
+instead. What you have opened, searched for, selected and chosen is
 kept in the page's address, so a reload, Back or a shared link shows the same list.

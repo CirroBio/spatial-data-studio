@@ -11,7 +11,7 @@ import { refOfItem } from '../app/library';
 import { OPEN_DOCS_URL } from '../app/appInfo';
 import { ACROSS_PARAM, LENS_PARAM, navigate, openedStore, stepBack, TASK_PARAM, useRoute } from '../app/route';
 import { useStudio } from '../app/studio';
-import { formatCount, plural, RemoveButton, SettingsIcon, tint } from '../app/ui';
+import { formatCount, RemoveButton, SettingsIcon, tint } from '../app/ui';
 import { describeError } from '../cirro/session';
 import type { StoreItem, VersionItem } from '../data/model';
 import { ChartFigure } from '../figures/ChartFigure';
@@ -76,6 +76,10 @@ function FigureCaption({ figure, wb }: { figure: FigureSpec; wb: Workbench }) {
       <p className="caption-figure">{figure.caption || figure.title}</p>
       <div className="button-row">
         {unsaved && <span className="chip chip-static">In the unsaved changes</span>}
+        {figure.view.kind === 'canvas' && (
+          <button type="button" className="button button-small" title="As a PNG, PDF or SVG, from Save as a figure"
+            onClick={() => navigate({ section: 'task', [TASK_PARAM]: 'figure' })}>Download…</button>
+        )}
         <RemoveButton onRemove={() => void remove()} />
       </div>
       {problem && <p className="notice notice-danger">{problem}</p>}
@@ -210,20 +214,6 @@ export function StorePage({ item, entity }: { item: StoreItem | VersionItem; ent
   let displayBody: ReactNode;
   if (onCanvas) {
     displayBody = <div className="display-settings studio-ui" ref={setSettings} />;
-  } else if (lens === 'composition' && displays.spatial) {
-    displayBody = (
-      <div className="display-note studio-ui">
-        <p className="muted">The composition counts the {unit}s in each group of what the tissue is colored by, across the groups of another column if you choose one.</p>
-        <ColorBySelect value={displays.spatial.encoding.color_by ?? ''} obsFields={fields!.obs} layers={fields!.layers}
-          hasX={fields!.has_x} onChange={(path) => updateEncoding(wb.key, 'spatial', { color_by: path })} />
-        <label className="field">
-          <span>Across</span>
-          <ObsFieldSelect fields={fields!.obs.filter((f) => f.kind === 'categorical')} value={across ?? ''} placeholder="The whole tissue"
-            onChange={(c) => navigate({ [ACROSS_PARAM]: c || null }, { replace: true })} />
-        </label>
-        {across && <button type="button" className="link-button" onClick={() => navigate({ [ACROSS_PARAM]: null }, { replace: true })}>Count the whole tissue</button>}
-      </div>
-    );
   } else {
     displayBody = <p className="muted display-note">Display settings apply to the tissue and the {unit} map.</p>;
   }
@@ -259,16 +249,7 @@ export function StorePage({ item, entity }: { item: StoreItem | VersionItem; ent
       <Facts title={title} item={item} origin={entity?.base ?? undefined}
         kind={item.kind === 'version' ? `Version${wb.levels.length > 1 ? ` ${wb.levels.length - 1}` : ''} · ${item.title}` : 'Spatial data'}
         stage="spatial" from={from} into={into} unsaved={wb.changes.length > 0}
-        extra={(
-          <>
-            {fields && <span className="facts-summary">{summary(fields, unit)}</span>}
-            {saved > 0 && (
-              <button type="button" className="kin-chip" onClick={() => chooseLens('versions')}>
-                {plural(saved, ['version', 'versions'])} saved
-              </button>
-            )}
-          </>
-        )} />
+        extra={fields && <span className="facts-summary">{summary(fields, unit)}</span>} />
       {!wb.handle ? (
         <div className="picture-loading">
           <span className="spinner" />
@@ -276,20 +257,34 @@ export function StorePage({ item, entity }: { item: StoreItem | VersionItem; ent
         </div>
       ) : (
         <DatasetCanvases wbKey={wb.key} handle={wb.handle} dataVersions={wb.dataVersions} selecting={selecting} inset={overlayInset}>
-          <ViewFrame drawers={drawers} sheet={!onCanvas}
+          <ViewFrame drawers={drawers} sheet={!onCanvas} barRoom={overlayInset.top}
             bar={(
               <div className="view-bar" data-backdrop={backdrop} ref={setBar}>
                 <ViewTabs views={views} reports={reportViews} figures={figureViews} current={lens} onChoose={chooseLens} />
-                {onCanvas && (
+                {(onCanvas || lens === 'composition') && (
                   <div className="view-side">
-                    {/* What colors the cells, in reach on the view: the most common change there is. */}
+                    {/* What colors the cells (and so what the composition counts), in reach on the
+                        view: the most common change there is. */}
                     {fields && displays[canvasSlot] && (
-                      <div className="view-color studio-ui">
+                      <div className="view-color view-labelled studio-ui">
+                        <span>Color by</span>
                         <ColorBySelect value={colorBy ?? ''} obsFields={fields.obs} layers={fields.layers} hasX={fields.has_x}
                           onChange={(path) => updateEncoding(wb.key, canvasSlot, { color_by: path })} />
                       </div>
                     )}
-                    <div ref={setTools} />
+                    {lens === 'composition' && (
+                      <div className="view-color view-labelled studio-ui">
+                        <span>Across</span>
+                        <ObsFieldSelect fields={fields!.obs.filter((f) => f.kind === 'categorical')} value={across ?? ''} placeholder="The whole tissue"
+                          onChange={(c) => navigate({ [ACROSS_PARAM]: c || null }, { replace: true })} />
+                        {/* The picker has no empty choice. */}
+                        {across && (
+                          <button type="button" className="icon-button" title="Count the whole tissue" aria-label="Count the whole tissue"
+                            onClick={() => navigate({ [ACROSS_PARAM]: null }, { replace: true })}>×</button>
+                        )}
+                      </div>
+                    )}
+                    {onCanvas && <div ref={setTools} />}
                   </div>
                 )}
               </div>
@@ -302,8 +297,9 @@ export function StorePage({ item, entity }: { item: StoreItem | VersionItem; ent
                 <TaskList hasCells={hasCells} hasGenes={Boolean(fields?.has_x)} reports={reports} figures={figures} onFigure={(id) => chooseLens(`figure:${id}`)} />
               ),
             }}
-            // Versions has nothing to set, so it takes the drawer's side of the page.
-            right={lens === 'versions' ? undefined : {
+            // Versions and a report have nothing to set, and the composition's two choices are on
+            // the bar, so they take the drawer's side of the page.
+            right={lens === 'versions' || lens === 'composition' || reportOpen ? undefined : {
               label: 'Display',
               icon: <SettingsIcon />,
               content: (

@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { VIRIDIS_CSS_GRADIENT } from './colorUtils';
 import {
   CELL_LEGEND, CHANNEL_LEGEND, DRAW_HINT, LEGEND_ROW, LOADING_CUE, SWATCH, TILE_STATUS,
@@ -117,16 +117,24 @@ export function CellColorLegend({
   title: string;
   scale?: number;
 }) {
+  // Folded to its title, a long legend gives the tissue under it back.
+  const [folded, setFolded] = useState(false);
   if (!(visible && legend)) return null;
   return (
     <div style={{ ...CELL_LEGEND, transform: `scale(${scale})`, transformOrigin: 'bottom right' }}>
-      <div
-        style={{ ...TRUNCATE, maxWidth: LEGEND_MAX_PX, fontSize: 11, fontWeight: 500, color: themeColor('text'), marginBottom: 4 }}
-        title={title}
+      <button
+        type="button"
+        onClick={() => setFolded((f) => !f)}
+        aria-expanded={!folded}
+        title={`${title} (click to ${folded ? 'show' : 'hide'} the legend)`}
+        style={{
+          ...TRUNCATE, display: 'block', maxWidth: LEGEND_MAX_PX, padding: 0, border: 0, background: 'none', cursor: 'pointer',
+          font: 'inherit', fontSize: 11, fontWeight: 500, color: themeColor('text'), marginBottom: folded ? 0 : 4,
+        }}
       >
-        {title}
-      </div>
-      {legend.kind === 'categorical' ? (
+        {folded ? '▸' : '▾'} {title}
+      </button>
+      {folded ? null : legend.kind === 'categorical' ? (
         <CategoryRows items={legend.items} />
       ) : legend.kind === 'too-many-categories' ? (
         <div style={{ maxWidth: LEGEND_MAX_PX, fontSize: 11, color: themeColor('muted') }}>

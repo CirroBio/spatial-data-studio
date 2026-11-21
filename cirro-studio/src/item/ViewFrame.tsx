@@ -9,9 +9,8 @@ type Side = 'left' | 'right';
 interface Open { left: boolean; right: boolean }
 
 const STORAGE_KEY = appKey('drawers');
-const LEFT_WIDTH = 300;
-// A task's panel holds charts and tables, so the tasks drawer widens while one is open.
-const TASK_WIDTH = 380;
+// One width for the task list and an open task, so the views bar holds still between them.
+const LEFT_WIDTH = 340;
 const RIGHT_WIDTH = 288;
 const GAP = 12;
 // The room a closed drawer's tab takes at the top corner, which the views bar keeps clear of.
@@ -22,6 +21,9 @@ export const BAR_ROOM = 40;
 // Below this the drawers start closed, and only one is out at a time: both would cover
 // most of the view.
 const ROOMY_WIDTH = 1100;
+// Below this a drawer covers close to half the view, so a page opens with both away
+// whatever was kept open on a wider window.
+const TIGHT_WIDTH = 860;
 
 function useNarrow(): boolean {
   const [narrow, setNarrow] = useState(() => window.innerWidth < ROOMY_WIDTH);
@@ -34,6 +36,7 @@ function useNarrow(): boolean {
 }
 
 function initialOpen(): Open {
+  if (window.innerWidth < TIGHT_WIDTH) return { left: false, right: false };
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null') as Open | null;
     if (saved) return saved;
@@ -98,13 +101,12 @@ export function useDrawers(working: boolean): Drawers {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [toggle, toggleBoth]);
-  const left = working ? TASK_WIDTH : LEFT_WIDTH;
   // Kept as one object while the drawers stay put: the canvas host is rebuilt when it changes.
   const inset = useMemo(
-    () => ({ left: open.left ? left + GAP : 0, right: open.right ? RIGHT_WIDTH + GAP : 0 }),
-    [open.left, open.right, left],
+    () => ({ left: open.left ? LEFT_WIDTH + GAP : 0, right: open.right ? RIGHT_WIDTH + GAP : 0 }),
+    [open.left, open.right],
   );
-  return { open, toggle, widths: { left, right: RIGHT_WIDTH }, inset };
+  return { open, toggle, widths: { left: LEFT_WIDTH, right: RIGHT_WIDTH }, inset };
 }
 
 const Chevron = ({ to }: { to: Side }) => (
@@ -149,8 +151,10 @@ function Drawer({ side, spec, open, onToggle }: { side: Side; spec: DrawerSpec; 
  * chart rather than the tissue) keeps clear of the open drawers instead of running under
  * them. Without `right` (a view with nothing to set) the right drawer and its tab are
  * away, and the view has that side to itself. */
-export function ViewFrame({ drawers, left, right, bar, main, sheet = false }: {
+export function ViewFrame({ drawers, left, right, bar, main, sheet = false, barRoom = BAR_ROOM }: {
   drawers: Drawers; left: DrawerSpec; right?: DrawerSpec; bar?: ReactNode; main: ReactNode; sheet?: boolean;
+  // The bar's measured room, where it can wrap to a second row.
+  barRoom?: number;
 }) {
   const insetRight = right ? drawers.inset.right : 0;
   const style = {
@@ -158,7 +162,7 @@ export function ViewFrame({ drawers, left, right, bar, main, sheet = false }: {
     '--inset-left': `${drawers.inset.left}px`, '--inset-right': `${insetRight}px`,
     '--bar-left': `${drawers.open.left ? drawers.inset.left + GAP : TAB_ROOM}px`,
     '--bar-right': `${!right ? GAP : drawers.open.right ? insetRight + GAP : TAB_ROOM}px`,
-    '--bar-room': `${BAR_ROOM}px`,
+    '--bar-room': `${barRoom}px`,
   } as CSSProperties;
   return (
     <div className={bar ? 'frame frame-barred' : 'frame'} style={style}>

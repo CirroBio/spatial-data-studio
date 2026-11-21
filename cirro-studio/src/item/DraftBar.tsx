@@ -26,6 +26,7 @@ export function DraftBar({ wb, baseSize, datasetName }: { wb: Workbench; baseSiz
             <span className="muted"> · {formatBytes(wb.draftBytes)} to save</span>
           </span>
           <span className="draft-list">
+            {wb.changes.length > 3 && <span className="muted draft-earlier">+{wb.changes.length - 3} earlier</span>}
             {wb.changes.slice(-3).map((c, i) => {
               const text = describeChange(c);
               return <span key={i} className={`chip chip-static ${isRemoval(c) ? 'chip-removed' : ''}`} title={text}>{text}</span>;

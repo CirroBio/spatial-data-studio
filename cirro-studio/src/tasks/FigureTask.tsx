@@ -8,7 +8,7 @@ import { LENS_PARAM, useRoute } from '../app/route';
 import { useStudio } from '../app/studio';
 import { plural } from '../app/ui';
 import { describeError } from '../cirro/session';
-import { pdfBlob, pngBlob, svgBlob } from '../figures/export';
+import { fileStem, pdfBlob, pngBlob, svgBlob } from '../figures/export';
 import { figureLayout, figureSvg, SIZE_PRESETS, type FigureLegend, type SizePreset } from '../figures/layout';
 import { coordinateUnit, scaleBar, storeReader } from '../figures/scaleBar';
 import { figureContent, keepFigure, removeFigure, type FigureSpec } from '../figures/spec';
@@ -44,7 +44,6 @@ function visiblePart(canvas: HTMLCanvasElement, inset: { left: number; right: nu
   return { image, cssWidth: image.width / ratio };
 }
 
-const slug = (s: string) => s.trim().replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').toLowerCase() || 'figure';
 
 export default function FigureTask({ wb, name, inset, figures }: TaskProps) {
   const { session } = useStudio();
@@ -137,7 +136,7 @@ export default function FigureTask({ wb, name, inset, figures }: TaskProps) {
       const svg = figureSvg(spec);
       const layout = figureLayout(spec);
       const blob = format === 'svg' ? svgBlob(svg) : format === 'pdf' ? await pdfBlob(svg, layout) : await pngBlob(svg, layout);
-      const file = `${slug(title)}.${format}`;
+      const file = `${fileStem(title)}.${format}`;
       downloadBlob(blob, file);
       setDownloaded(file);
       setOmitted(layout.legend?.omitted ?? 0);
@@ -168,11 +167,11 @@ export default function FigureTask({ wb, name, inset, figures }: TaskProps) {
       <div className="button-row">
         <span className="muted">Download</span>
         {(['png', 'pdf', 'svg'] as const).map((f) => (
-          <button key={f} type="button" className={f === 'png' ? 'button button-primary' : 'button'} disabled={exporting} onClick={() => void exportAs(f)}>{f.toUpperCase()}</button>
+          <button key={f} type="button" className="button" disabled={exporting} onClick={() => void exportAs(f)}>{f.toUpperCase()}</button>
         ))}
       </div>
       {downloaded && <p className="notice notice-info">Downloaded {downloaded}.</p>}
-      <button type="button" className="button" disabled={!display || !title.trim() || keeping || keptAs !== null} onClick={() => void keep()}>
+      <button type="button" className="button button-primary" disabled={!display || !title.trim() || keeping || keptAs !== null} onClick={() => void keep()}>
         {keptAs ? 'Kept with the data' : 'Keep with the data'}
       </button>
       {keptAs && (inDraft(keptAs) ? (

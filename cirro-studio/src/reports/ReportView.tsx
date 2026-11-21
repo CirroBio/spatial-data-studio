@@ -2,7 +2,7 @@
 // run, then the report its kind draws from the kept tables.
 import { lazy, Suspense, useEffect, useRef, useState, type LazyExoticComponent, type ReactElement } from 'react';
 import type { CheckpointHandle } from '@cirrobio/spatial-viewer';
-import { LENS_PARAM, navigate } from '../app/route';
+import { LENS_PARAM, navigate, TASK_PARAM } from '../app/route';
 import { describeError } from '../cirro/session';
 import { useSize } from '../lib/useSize';
 import { storeOf, type Workbench } from '../workbench/workbench';
@@ -64,7 +64,12 @@ export function ReportView({ result, wb, unit }: { result: KeptResult; wb: Workb
   const Report = REPORTS[result.meta.kind];
   return (
     <div className="report" ref={ref}>
-      <ReportHeader result={result} unsaved={unsaved} onRemove={() => void remove()} />
+      <ReportHeader result={result} unsaved={unsaved} onRemove={() => void remove()}>
+        {/* What clusters are for, without scrolling to the report's end for it. */}
+        {result.meta.kind === 'clusters' && (
+          <button type="button" className="button button-primary" onClick={() => navigate({ section: 'task', [TASK_PARAM]: 'markers' })}>Find marker genes</button>
+        )}
+      </ReportHeader>
       {problem && <p className="notice notice-danger">{problem}</p>}
       {!Report && <p className="muted">This version of the app doesn't draw this kind of report; its tables are in the data.</p>}
       {Report && !table && !problem && <p className="muted">Reading the result…</p>}

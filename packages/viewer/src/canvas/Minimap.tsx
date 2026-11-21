@@ -31,11 +31,13 @@ interface Props {
   invertY: boolean;
   onNavigate: (target: [number, number]) => void;
   onNavigateEnd: () => void;
+  // How far below the overlays' top edge it sits.
+  top: number;
 }
 
 export default function Minimap({
   imageUrl, positions, colors, worldToCanvas, extent, viewport, canvasSize,
-  invertX, invertY, onNavigate, onNavigateEnd,
+  invertX, invertY, onNavigate, onNavigateEnd, top,
 }: Props) {
   const [ex0, ey0, ex1, ey1] = extent;
   const ew = Math.max(ex1 - ex0, 1e-9);
@@ -113,14 +115,13 @@ export default function Minimap({
     onNavigateEnd();
   }, [onNavigateEnd]);
 
-  // Positioned below the Spatial/Embeddings/Tables switch, which owns the same corner.
   return (
     <div
       ref={boxRef}
       style={{
         ...OVERLAY_PANEL,
         width, height,
-        top: 44, left: 8, zIndex: 20,
+        top, left: 8, zIndex: 20,
         borderRadius: 4,
         overflow: 'hidden',
         cursor: 'crosshair',

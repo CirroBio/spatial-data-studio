@@ -66,7 +66,12 @@ export function StageTree({ stage, nodes, state, onState, open, onOpenFolders, o
   const rowEl = (id: string) => grid.current?.querySelector<HTMLElement>(`[data-row="${CSS.escape(id)}"]`);
   const dotOf = (id: string) => rowEl(id)?.querySelector('.stage-tree-dot') ?? null;
   useEffect(() => {
-    if (state.selected) rowEl(state.selected)?.scrollIntoView({ block: 'nearest' });
+    const row = state.selected ? rowEl(state.selected) : null;
+    if (!row) return;
+    row.scrollIntoView({ block: 'nearest' });
+    // Then the look under it, when it fits: its Open is the point of selecting the row.
+    const look = row.nextElementSibling;
+    if (look?.classList.contains('stage-tree-look-row')) look.scrollIntoView({ block: 'nearest' });
   }, [state.selected]);
   const current = rows.findIndex((r) => r.node.id === state.selected);
   // Far enough down to show the selected row, wherever it is.
@@ -126,6 +131,7 @@ export function StageTree({ stage, nodes, state, onState, open, onOpenFolders, o
   };
 
   const folders = countFolders(root);
+  const shown = keep ? mine.filter(keep).length : mine.length;
   const reading = catalog.status === 'scanning' ? ` · still reading ${catalog.toScan - catalog.scanned} datasets` : '';
 
   if (!mine.length) {
@@ -138,7 +144,7 @@ export function StageTree({ stage, nodes, state, onState, open, onOpenFolders, o
       <header className="stage-tree-head">
         <h2>{info.label}</h2>
         <p className="stage-tree-summary">
-          {plural(mine.length, info.unit)}
+          {keep ? `${shown} of ${plural(mine.length, info.unit)}` : plural(mine.length, info.unit)}
           {root.bytes > 0 && ` · ${formatBytes(root.bytes)}`}
           {folders > 0 && ` · in ${plural(folders, ['folder', 'folders'])}`}
           {shared.length > 0 && <span className="stage-tree-shared"> · {shared.map(saidOfAll).join(' · ')}</span>}
@@ -164,9 +170,9 @@ export function StageTree({ stage, nodes, state, onState, open, onOpenFolders, o
           const id = filterId({ key: facet.key, text: v.text });
           const on = state.filters.has(id);
           return (
-            <button key={id} type="button" className="chip stage-tree-chip" aria-pressed={on}
+            <button key={id} type="button" className="chip stage-tree-chip" aria-pressed={on} title={v.text}
               onClick={() => { const next = new Set(state.filters); if (on) next.delete(id); else next.add(id); onState({ filters: next }); }}>
-              {v.text} <span className="muted">{v.count}</span>
+              <span className="stage-tree-chip-text">{v.text}</span> <span className="muted">{v.count}</span>
             </button>
           );
         }))}
@@ -242,6 +248,11 @@ export function StageTree({ stage, nodes, state, onState, open, onOpenFolders, o
                     </span>
                   )}
                 </span>
+                {/* Outside the tab order: Enter on the row opens it. */}
+                <button type="button" className="button button-small stage-tree-open" tabIndex={-1} aria-label={`Open ${n.label}`}
+                  onClick={(e) => { e.stopPropagation(); onOpen(n, dotOf(n.key)); }} onDoubleClick={(e) => e.stopPropagation()}>
+                  Open
+                </button>
               </span>
               <span role="gridcell" className="stage-tree-size">
                 <SizeTrack ruler={size}>{size && n.size > 0 && <i className="stage-tree-mark" style={{ left: `${onRuler(size, n.size) * 100}%` }} />}</SizeTrack>

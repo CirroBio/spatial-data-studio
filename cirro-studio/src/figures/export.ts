@@ -38,13 +38,37 @@ export function withPhys(png: Uint8Array<ArrayBuffer>, dpi: number): Uint8Array<
   return out;
 }
 
+/** A figure's title as a file name, without its extension. */
+export const fileStem = (title: string) => title.trim().replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').toLowerCase() || 'figure';
+
+type PageSize = Pick<FigureLayout, 'widthMm' | 'heightMm'>;
+
+// What a chart's stylesheet sets, which a file of its own has to carry itself.
+const PAINT = ['fill', 'fill-opacity', 'stroke', 'stroke-width', 'stroke-dasharray', 'stroke-linejoin', 'paint-order', 'opacity', 'font-family', 'font-size', 'font-weight', 'text-anchor'];
+
+/** A chart drawn on the page as an SVG that stands alone: the paint its stylesheet gives
+ * each element written onto the element. */
+export function standaloneSvg(svg: SVGSVGElement): string {
+  const copy = svg.cloneNode(true) as SVGSVGElement;
+  const drawn = [svg, ...svg.querySelectorAll('*')];
+  const copied = [copy, ...copy.querySelectorAll('*')];
+  drawn.forEach((el, i) => {
+    const style = getComputedStyle(el);
+    for (const p of PAINT) copied[i].setAttribute(p, style.getPropertyValue(p));
+    copied[i].removeAttribute('class');
+  });
+  copy.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  copy.setAttribute('viewBox', `0 0 ${svg.clientWidth} ${svg.clientHeight}`);
+  return new XMLSerializer().serializeToString(copy);
+}
+
 export function svgBlob(svg: string): Blob {
   return new Blob([svg], { type: 'image/svg+xml' });
 }
 
 /** Rasterise the figure at `dpi`, white background, through the browser's own SVG
  * renderer (the same one that shows the preview). */
-export async function pngBlob(svg: string, layout: FigureLayout, dpi = FIGURE_DPI): Promise<Blob> {
+export async function pngBlob(svg: string, layout: PageSize, dpi = FIGURE_DPI): Promise<Blob> {
   const width = Math.round((layout.widthMm / 25.4) * dpi);
   const height = Math.round((layout.heightMm / 25.4) * dpi);
   const url = URL.createObjectURL(svgBlob(svg));

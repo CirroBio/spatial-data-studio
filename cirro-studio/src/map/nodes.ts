@@ -175,11 +175,10 @@ type PackedNode = HierarchyCircularNode<Tree>;
 // one, so a minimap's padding doesn't take the room its bubbles need.
 const gapFor = (d: number) => Math.min(4, d / 60);
 
-/** Packed circles, areas by bytes. Small items keep a floor so a figure is still a dot
- * beside a 5 GB store. */
-function packTree(tree: Tree, d: number, floor: number): PackedNode {
+/** Packed circles, areas by each item's `weight`. */
+function packTree(tree: Tree, d: number, weight: (n: StageNode) => number): PackedNode {
   const root = hierarchy(tree)
-    .sum((t) => (t.node ? Math.max(t.node.size, floor) : 0))
+    .sum((t) => (t.node ? weight(t.node) : 0))
     .sort((a, b) => (b.value ?? 0) - (a.value ?? 0));
   const gap = gapFor(d);
   return pack<Tree>().size([d, d]).padding((t) => (t.depth === 0 ? 2 * gap : gap))(root);
@@ -187,8 +186,8 @@ function packTree(tree: Tree, d: number, floor: number): PackedNode {
 
 /** A stage's bubbles packed by folder into a circle `d` across, positioned from its
  * top-left corner: a column of the overview, or a stage's minimap in the rail. */
-export function packCluster(nodes: StageNode[], d: number, floor: number): { node: StageNode; x: number; y: number; r: number }[] {
-  return packTree(folderTree(nodes), d, floor).leaves()
+export function packCluster(nodes: StageNode[], d: number, weight: (n: StageNode) => number): { node: StageNode; x: number; y: number; r: number }[] {
+  return packTree(folderTree(nodes), d, weight).leaves()
     .filter((l) => l.data.node)
     .map((l) => ({ node: l.data.node!, x: l.x, y: l.y, r: l.r }));
 }

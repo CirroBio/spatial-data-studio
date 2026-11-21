@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { STAGES, stageOf, type StageId } from '../app/library';
 import {
-  FILTER_PARAM, FLAT_PARAM, LENS_PARAM, navigate, openItem, QUERY_PARAM, SELECT_PARAM, SORT_PARAM, STAGE_PARAM, stepBack, useRoute,
+  FILTER_PARAM, FLAT_PARAM, LEAVING_STAGE, LENS_PARAM, navigate, openItem, QUERY_PARAM, SELECT_PARAM, SORT_PARAM, STAGE_PARAM, stepBack, useRoute,
 } from '../app/route';
 import { plural, STAGE_ICONS, tint } from '../app/ui';
 import { useSize } from '../lib/useSize';
@@ -45,8 +45,6 @@ function addressOf(patch: Partial<BrowseState>): Record<string, string | null> {
   return out;
 }
 
-// Moving to another stage, or back to the overview, leaves this stage's selection and search behind.
-const leaving = { [SELECT_PARAM]: null, [QUERY_PARAM]: null, [FILTER_PARAM]: null };
 
 function Rail({ current, nodes, slots }: {
   current: StageId; nodes: Record<StageId, StageNode[]>; slots: RefObject<Partial<Record<StageId, HTMLElement>>>;
@@ -55,7 +53,7 @@ function Rail({ current, nodes, slots }: {
     <nav className="map-rail" aria-label="Stages">
       {STAGES.map((s) => (
         <button key={s.id} type="button" className="map-rail-stage" style={tint(s.color)} aria-current={s.id === current}
-          onClick={() => navigate({ section: 'stage', [STAGE_PARAM]: s.id, ...leaving })}>
+          onClick={() => navigate({ section: 'stage', [STAGE_PARAM]: s.id, ...LEAVING_STAGE })}>
           <span className="map-rail-name">{s.label}</span>
           <span className="map-rail-caption">{plural(nodes[s.id].length, s.unit)}</span>
           {/* Where the stage's bubbles rest as its minimap; its icon when it has none. */}
@@ -108,7 +106,7 @@ export function StageView({ stage, nodes, onScene }: {
     return () => cancelAnimationFrame(frame);
   }, [opening]);
 
-  const reveal = (n: StageNode) => navigate({ section: 'stage', [STAGE_PARAM]: n.stage, ...leaving, [SELECT_PARAM]: n.key });
+  const reveal = (n: StageNode) => navigate({ section: 'stage', [STAGE_PARAM]: n.stage, ...LEAVING_STAGE, [SELECT_PARAM]: n.key });
 
   useLayoutEffect(() => {
     if (!page.current || !width) return;
@@ -122,7 +120,8 @@ export function StageView({ stage, nodes, onScene }: {
       const d = Math.min(box.width, box.height);
       const left = box.left + (box.width - d) / 2;
       const top = box.top + (box.height - d) / 2;
-      for (const p of packCluster(nodes[s.id], d, largest * FLOOR_SHARE)) {
+      // Areas by bytes, with a floor so a figure is still a dot beside a 5 GB store.
+      for (const p of packCluster(nodes[s.id], d, (n) => Math.max(n.size, largest * FLOOR_SHARE))) {
         if (p.node.key === opening?.node.key) continue;
         const dim = s.id === stage && match && !match.has(p.node.key);
         bubbles.push({
@@ -153,7 +152,7 @@ export function StageView({ stage, nodes, onScene }: {
       }
       if (e.key !== 'Escape' || e.defaultPrevented || document.querySelector('.popover-panel, .modal-backdrop')) return;
       if (state.selected) onState({ selected: null });
-      else stepBack({ section: 'home', [STAGE_PARAM]: null, ...leaving });
+      else stepBack({ section: 'home', [STAGE_PARAM]: null, ...LEAVING_STAGE });
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -165,7 +164,7 @@ export function StageView({ stage, nodes, onScene }: {
       <section className="map-main">
         <div className="map-bar">
           <nav className="map-crumbs" aria-label="Where you are">
-            <button type="button" className="map-crumb" onClick={() => navigate({ section: 'home', [STAGE_PARAM]: null, ...leaving })}>
+            <button type="button" className="map-crumb" onClick={() => navigate({ section: 'home', [STAGE_PARAM]: null, ...LEAVING_STAGE })}>
               <span className="map-crumb-dot" /> All data
             </button>
             <span className="map-sep">›</span>
@@ -178,7 +177,7 @@ export function StageView({ stage, nodes, onScene }: {
           <StageTree stage={stage} nodes={nodes} state={state} onState={onState} open={open} onOpenFolders={setOpen}
             onOpen={openNode} onReveal={reveal} onMatch={setMatch} searchRef={search} />
         </div>
-        {nodes[stage].length > 0 && <p className="map-hint">Double-click a row to open it · / to search</p>}
+        {nodes[stage].length > 0 && <p className="map-hint">Click a row for its details · Open, double-click or Enter opens it · / to search</p>}
       </section>
     </div>
   );

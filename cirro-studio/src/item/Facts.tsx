@@ -1,5 +1,6 @@
-// The line above a picture: its name, what it is, how big, where it came from and what
-// it was made into, whose data it is (for public data), and a way to its page in Cirro.
+// The line above a picture: its name, what it is, whose data it is (for public data), where
+// it came from and what it was made into. Details holds the rest: how big, when it was
+// added, and a way to its page in Cirro.
 import type { ReactNode } from 'react';
 import type { CatalogItem } from '../data/model';
 import { stageOf, type Library, type StageId } from '../app/library';
@@ -36,13 +37,10 @@ export function Facts({ title, item, origin, kind, stage, from, into, extra, uns
       )}
       <h1 className="facts-title">{title}</h1>
       <span className="facts-kind"><span className="dot" /> {kind}</span>
-      {item.size > 0 && <span>{formatBytes(item.size)}</span>}
-      {dataset && <span className="muted">{dataset.processName}</span>}
-      {dataset?.createdAt && <span className="muted">{formatDate(dataset.createdAt)}</span>}
-      {credit && <span className="muted"><CreditLine credit={credit} /></span>}
+      {extra}
+      {credit && <span className="muted facts-credit"><CreditLine credit={credit} /></span>}
       {from.length > 0 && <span className="facts-kin">from {from.map((k) => <KinChip key={k.item.key} kin={k} />)}</span>}
       {into.length > 0 && <span className="facts-kin">made into {into.slice(0, 3).map((k) => <KinChip key={k.item.key} kin={k} />)}{into.length > 3 && <span className="muted"> +{into.length - 3}</span>}</span>}
-      {extra}
       <span className="facts-spacer" />
       {collection.access === 'write' && (
         <button type="button" className="button button-small" title="Every squidpy and scanpy analysis, on a machine in this project, in a new tab"
@@ -57,6 +55,9 @@ export function Facts({ title, item, origin, kind, stage, from, into, extra, uns
             {dataset?.description && <><dt>About</dt><dd>{dataset.description}</dd></>}
             {source && <><dt>Saved on</dt><dd>{source.name}</dd></>}
             {credit?.changes && <><dt>{source ? 'Processing of the original' : 'Processing'}</dt><dd>{credit.changes}</dd></>}
+            {item.size > 0 && <><dt>Size</dt><dd>{formatBytes(item.size)}</dd></>}
+            {dataset?.processName && <><dt>Data type</dt><dd>{dataset.processName}</dd></>}
+            {dataset?.createdAt && <><dt>Added</dt><dd>{formatDate(dataset.createdAt)}</dd></>}
             <dt>Path</dt><dd className="mono">{item.path || '(whole dataset)'}</dd>
             {dataset?.createdBy && <><dt>Made by</dt><dd>{dataset.createdBy}</dd></>}
             {dataset?.folders.length ? <><dt>Folder</dt><dd>{dataset.folders.join(', ')}</dd></> : null}
