@@ -1,6 +1,6 @@
 // The project as the app presents it: four stages a spatial study moves through, with
 // each SpatialData store and the versions saved on it gathered into one spatial dataset.
-import type { CatalogItem, DatasetRecord, ImageItem, RunItem, StoreItem, VersionItem } from '../data/model';
+import type { CatalogItem, ImageItem, RunItem, StoreItem, VersionItem } from '../data/model';
 import { itemKey } from '../data/model';
 import { datasetRef, parseCirroRef } from '../stack/cirroRef';
 import type { CatalogState } from './catalog';
@@ -143,5 +143,3 @@ export function ancestry(entity: SpatialEntity, version: VersionItem | null): st
   for (let at = version; at; at = byRef.get(at.parent) ?? null) chain.unshift(refOfItem(at));
   return [entity.baseRef, ...chain];
 }
-
-export const datasetOf = (state: Pick<CatalogState, 'byId'>, item: CatalogItem): DatasetRecord | undefined => state.byId.get(item.datasetId);

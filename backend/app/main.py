@@ -6,12 +6,14 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocke
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from .config import config, data_roots, within_data_dir
+from .config import config, data_roots
 from .registry.introspect import REGISTRY
 from .registry.reader_paths import reader_namespace
 from .sessions.manager import SessionManager
 from .sessions.presence import PRESENCE, clean_name
-from .sessions.session import SessionLoadingError
+from .sessions import save_request
+from .sessions.session import (SessionBusyError, SessionLoadingError, SessionLockedError,
+                               SessionNotFoundError, SessionReadOnlyError)
 from .transport.sse import BUS
 from .transport import arrow
 from .transport import tables
@@ -20,8 +22,7 @@ from .prewarm import PREWARM
 from . import datasets
 from . import deps
 from .deps import (get_session, get_writable_session, claim_lock, get_manager, in_executor,
-                   read_locked, bad_request, bind_client_id, CLIENT_ID,
-                   default_save_path, search_var_names)
+                   read_locked, bad_request, bind_client_id, CLIENT_ID, search_var_names)
 from .routers import imaging as imaging_router, cirro as cirro_router
 from .routers import snapshots as snapshots_router, recipes as recipes_router
 from .mcp.server import mcp_server
@@ -103,6 +104,22 @@ async def _session_still_loading(request: Request, exc: SessionLoadingError):
     409, retryable once it is ready. App-wide so every route that reaches one — here
     and in routers/ — answers the same way."""
     return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+
+# The refusals of the shared session guards (deps.get_session / get_writable_session /
+# claim_lock / read_locked), which raise domain errors because the MCP surface calls
+# them too. Each is answered as `{"detail": <message>}` with the status below.
+_SESSION_GUARD_STATUS = {SessionNotFoundError: 404, SessionReadOnlyError: 403,
+                         SessionLockedError: 423, SessionBusyError: 503}
+
+
+async def _session_guard_refused(request: Request, exc: Exception):
+    return JSONResponse(status_code=_SESSION_GUARD_STATUS[type(exc)],
+                        content={"detail": str(exc)})
+
+
+for _guard_error in _SESSION_GUARD_STATUS:
+    app.add_exception_handler(_guard_error, _session_guard_refused)
 
 # Self-contained route domains live in routers/ (imports above); the rest — sessions,
 # jobs, staging, plots, displays, subset/save, shape annotations, the data path, and
@@ -371,6 +388,20 @@ async def redraw(sid: str, plot_id: str):
     return {"ok": True}
 
 
+# A figure's bytes can come verbatim from a loaded checkpoint (`Session.figure` falls
+# back to the store's own), and an SVG opened as a document on this origin would run any
+# script it carries with the workspace's authority. `sandbox` gives such a document an
+# opaque origin and no script; nosniff keeps the declared type. Only the SVG is
+# sandboxed: a browser's PDF viewer does not run inside a sandboxed document. The SPA
+# fetches the bytes instead and cleans an SVG itself (viewer `sanitizeSvg`) before it
+# makes a blob URL of one.
+_FIGURE_HEADERS = {"X-Content-Type-Options": "nosniff"}
+_SVG_FIGURE_HEADERS = {
+    **_FIGURE_HEADERS,
+    "Content-Security-Policy": "sandbox; default-src 'none'; style-src 'unsafe-inline'",
+}
+
+
 @app.get("/api/sessions/{sid}/plots/{plot_id}/figure")
 async def figure(sid: str, plot_id: str, fmt: str = "svg"):
     media = {"svg": "image/svg+xml", "pdf": "application/pdf", "png": "image/png"}.get(fmt)
@@ -381,7 +412,8 @@ async def figure(sid: str, plot_id: str, fmt: str = "svg"):
     blob = get_session(sid).figure(plot_id, fmt)
     if blob is None:
         raise HTTPException(404, "figure not drawn")
-    return Response(content=blob, media_type=media)
+    return Response(content=blob, media_type=media,
+                    headers=_SVG_FIGURE_HEADERS if fmt == "svg" else _FIGURE_HEADERS)
 
 
 # ---- displays --------------------------------------------------------------
@@ -459,194 +491,18 @@ async def list_third_party_licenses():
     return acknowledgements.catalog()
 
 
-def _validated_include(sess, include) -> dict[str, list[str]] | None:
-    """Check the save body's element selection against the session, raising 400 rather
-    than letting a bad name surface as a failed job. A facet absent from `include` keeps
-    that facet whole; a facet present keeps exactly the names listed, so `{"images": []}`
-    drops every image."""
-    if include is None:
-        return None
-    from .registry.base import sdata_facets
-    if not isinstance(include, dict):
-        raise HTTPException(400, "include must be an object of facet -> element names")
-    facets = sdata_facets()
-    out: dict[str, list[str]] = {}
-    for facet, names in include.items():
-        if facet not in facets:
-            raise HTTPException(400, f"unknown element facet '{facet}'")
-        if not isinstance(names, list):
-            raise HTTPException(400, f"include['{facet}'] must be a list of element names")
-        have = set(getattr(sess.sdata, facet, None) or {})
-        missing = sorted(n for n in names if n not in have)
-        if missing:
-            raise HTTPException(400, f"unknown {facet} element(s): {', '.join(missing)}")
-        out[facet] = list(names)
-    kept = out.get("tables")
-    # Dropping the table the displays and every field path are resolved against would
-    # produce a checkpoint that reopens with nothing to show.
-    if kept is not None and sess.active_table_key is not None:
-        if sess.active_table_key not in kept:
-            raise HTTPException(400, "the active table must be included in the saved checkpoint")
-        # `select_elements` keeps the listed order, and a display names no table — it
-        # resolves against the first one. So a list that includes the active table but
-        # does not lead with it would hand the reopened checkpoint a different default
-        # table than the app_state written beside it describes. Reordering keeps both
-        # tables and costs nothing; the order carries no other meaning.
-        out["tables"] = [sess.active_table_key] + [n for n in kept if n != sess.active_table_key]
-    return out
-
-
-def _validated_levels(sess, levels) -> dict[str, int] | None:
-    """Check the save body's per-image resolution choice — image name -> index of the
-    finest pyramid level to write, coarser levels always kept, so 0 writes the whole
-    pyramid. Levels a caller left at 0 are dropped here, so an all-0 request is
-    indistinguishable from no request at all and keeps the incremental fast path."""
-    if not levels:
-        return None
-    if not isinstance(levels, dict):
-        raise HTTPException(400, "levels must be an object of image name -> level index")
-    from . import imaging
-    out: dict[str, int] = {}
-    for name, finest in levels.items():
-        if name not in (getattr(sess.sdata, "images", None) or {}):
-            raise HTTPException(400, f"unknown images element '{name}'")
-        depth = len(imaging.image_levels(sess.sdata, name))
-        if not isinstance(finest, int) or isinstance(finest, bool) or not 0 <= finest < depth:
-            raise HTTPException(400, f"levels['{name}'] must be an integer in 0..{depth - 1}")
-        if finest:
-            out[name] = finest
-    return out or None
-
-
-def _validated_slots(sess, slots) -> dict[str, list[str]] | None:
-    """Check the save body's per-table slot selection — table name -> the slot paths to
-    write (`store.table_slot_paths`' vocabulary). A table absent from `slots` is written
-    whole; a table present keeps exactly the paths listed. Two things a selection may
-    not drop, because the resulting file would not open onto what it claims to hold:
-    the structurally required slots (`store.REQUIRED_TABLE_SLOTS`), and an `obsm` key a
-    display reads its coordinates or its embedding from — `coords` and `obsm_key` are
-    non-nullable in `app_state.schema.json`, so unlike a coloring they cannot be
-    neutralised."""
-    if not slots:
-        return None
-    if not isinstance(slots, dict):
-        raise HTTPException(400, "slots must be an object of table name -> slot paths")
-    from .persistence import store
-    out: dict[str, list[str]] = {}
-    for name, paths in slots.items():
-        adata = (getattr(sess.sdata, "tables", None) or {}).get(name)
-        if adata is None:
-            raise HTTPException(400, f"unknown tables element '{name}'")
-        if not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
-            raise HTTPException(400, f"slots['{name}'] must be a list of slot paths")
-        have = store.table_slot_paths(adata)
-        if unknown := sorted(set(paths) - set(have)):
-            raise HTTPException(400, f"unknown slot(s) in table '{name}': {', '.join(unknown)}")
-        if missing := [p for p in store.REQUIRED_TABLE_SLOTS if p not in paths]:
-            raise HTTPException(
-                400, f"table '{name}' cannot be saved without: {', '.join(missing)}")
-        for key in _display_obsm_keys(sess) if name == sess.active_table_key else ():
-            if f"obsm/{key}" in have and f"obsm/{key}" not in paths:
-                raise HTTPException(400, f"obsm/{key} is used by a display and must be saved")
-        out[name] = list(paths)
-    return out
-
-
-def _display_obsm_keys(sess) -> set[str]:
-    """The obsm keys the session's displays resolve against: an embedding's `obsm_key`
-    and a spatial display's `coords` (an `obsm:<key>` field path)."""
-    keys = set()
-    for d in sess.app_state.get("displays", []):
-        enc = d.get("encoding") or {}
-        if key := enc.get("obsm_key"):
-            keys.add(key)
-        element, _, key = (enc.get("coords") or "").partition(":")
-        if element == "obsm" and key:
-            keys.add(key)
-    return keys
-
-
-def _validated_figures(sess, figures) -> list[str] | None:
-    """Check the save body's figure selection: `null`/absent keeps every drawn plot's
-    figure, a list keeps exactly those plot ids (`[]` writes no figures at all). Ids that
-    aren't drawn plots are a client bug, not something to silently drop."""
-    if figures is None:
-        return None
-    if not isinstance(figures, list) or not all(isinstance(p, str) for p in figures):
-        raise HTTPException(400, "figures must be a list of plot ids")
-    missing = sorted(set(figures) - sess.drawn_plot_ids())
-    if missing:
-        raise HTTPException(400, f"no drawn plot(s) with id(s): {', '.join(missing)}")
-    return figures
-
-
-def _validated_name(body) -> str | None:
-    """The save body's session name: what the checkpoint records as its own name
-    (`app_state["name"]`, adopted again when the file is reloaded) and what the live
-    session is renamed to. Absent leaves both alone."""
-    name = body.get("name")
-    if name is None:
-        return None
-    if not isinstance(name, str) or not name.strip():
-        raise HTTPException(400, "name must be a non-empty string")
-    return name.strip()
-
-
-def _validated_destination(sess, body) -> tuple[str, bool]:
-    """Resolve the save body's destination to (path, hash_name).
-
-    `path` is the verbatim escape hatch — written exactly as given, with no content-hash
-    suffix (the MCP save_checkpoint tool and the offline harness use it). The Save dialog
-    instead sends `folder` (a directory under DATA_DIR, created if it doesn't exist) and
-    `prefix` (the filename stem), which compose onto `default_save_path` and so keep the
-    hash suffix. A folder outside DATA_DIR or a prefix that isn't a plain filename is a
-    400 here rather than a job that fails minutes into a multi-GB write."""
-    explicit = body.get("path")
-    folder, prefix = body.get("folder"), body.get("prefix")
-    if explicit is not None and (folder is not None or prefix is not None):
-        raise HTTPException(400, "path cannot be combined with folder or prefix")
-    if explicit is not None:
-        if not isinstance(explicit, str) or not explicit.strip():
-            raise HTTPException(400, "path must be a non-empty string")
-        return explicit, False
-    if folder is not None:
-        if not isinstance(folder, str):
-            raise HTTPException(400, "folder must be a string")
-        target = (config.DATA_DIR / folder).resolve()
-        if not within_data_dir(target):
-            raise HTTPException(400, "folder is outside the data directory")
-        if target.exists() and not target.is_dir():
-            raise HTTPException(400, f"'{folder}' is not a directory")
-    if prefix is not None:
-        if not isinstance(prefix, str) or not prefix.strip():
-            raise HTTPException(400, "prefix must be a non-empty string")
-        prefix = prefix.strip()
-        # One path component, and not dot-prefixed: the dataset scanner skips names
-        # starting with "." (it is how save staging hides itself), so such a checkpoint
-        # would never appear in the load picker.
-        if "/" in prefix or "\\" in prefix or prefix.startswith("."):
-            raise HTTPException(400, "prefix must be a filename with no path separators")
-    return default_save_path(sess, folder, prefix), True
-
-
 @app.post("/api/sessions/{sid}/save")
 async def save(sid: str, body: dict | None = None):
+    """Queue a checkpoint save. The body's destination, name and selections are checked
+    by `save_request` (shared with the MCP save_checkpoint tool); what it refuses is a
+    400 here rather than a failed job."""
     sess = get_writable_session(sid)
-    body = body or {}
-    name = _validated_name(body)
-    # The stem `prefix` falls back to is the session's name as it stands now; the rename
-    # lands on the worker together with the write (Session._run_save), so a save that
-    # never runs leaves both the name and the file alone.
-    path, hash_name = _validated_destination(sess, body)
-    include = _validated_include(sess, body.get("include"))
-    levels = _validated_levels(sess, body.get("levels"))
-    slots = _validated_slots(sess, body.get("slots"))
-    figures = _validated_figures(sess, body.get("figures"))
-    job_id = sess.enqueue_special("save", {"path": path, "hash_name": hash_name,
-                                           "name": name, "include": include,
-                                           "levels": levels, "slots": slots,
-                                           "figures": figures})
-    return {"job_id": job_id, "path": path}
+    try:
+        payload = save_request.validated_payload(sess, body or {})
+    except save_request.SaveRequestError as e:
+        raise HTTPException(400, str(e))
+    job_id = sess.enqueue_special("save", payload)
+    return {"job_id": job_id, "path": payload["path"]}
 
 
 # ---- points -> global coordinate transform ---------------------------------
@@ -671,7 +527,14 @@ async def set_points_transform(sid: str, body: dict):
     if not (isinstance(affine, list) and len(affine) == 6):
         raise HTTPException(400, "affine must be 6 floats [a, b, c, d, e, f]")
     explicit = body.get("path")
-    path = explicit or default_save_path(sess)
+    if explicit:
+        if not isinstance(explicit, str):
+            raise HTTPException(400, "path must be a string")
+        try:
+            save_request.require_save_path(explicit)
+        except save_request.SaveRequestError as e:
+            raise HTTPException(400, str(e))
+    path = explicit or save_request.default_save_path(sess)
     job_id = sess.enqueue_special("set_transform", {"affine": affine, "path": path, "hash_name": not explicit})
     return {"job_id": job_id, "path": path}
 

@@ -89,8 +89,9 @@ backend/    FastAPI app
                   holder, session lookup (get_session/get_writable_session — the read-only
                   + edit-lock guard every mutating route goes through), the per-request
                   client id (bind_client_id/CLIENT_ID), the read-lock/executor wrappers, the
-                  image-render admission semaphore, and the business helpers shared by a
-                  route and the MCP surface (default checkpoint path, var-name search)
+                  image-render admission semaphore, and the var-name search a route shares
+                  with the MCP surface. The session guards raise the session layer's own
+                  errors (sessions/session.py), which main.py maps onto 404/403/423/503
   app/registry/   base.py (abstract Function + contract envelope), library_fn.py (one reflection
                   executor for squidpy/scanpy/spatialdata-io), custom/ (non-squidpy functions),
                   library_catalog.yaml (opt-in library manifests), terms.yaml + dictionary.py
@@ -102,7 +103,9 @@ backend/    FastAPI app
   app/sessions/   manager, session (queue/worker), presence (viewer list + per-session edit lock),
                   adapter (routes to Function.execute), regions,
                   shape_annotations (arrows/lines/boxes/polygons/ellipses/text -> sdata.shapes["annotations"]),
-                  appstate, transform (points->global affine)
+                  appstate, transform (points->global affine),
+                  save_request (what a checkpoint save may be asked for: destination, name,
+                  element/level/slot/figure selections — shared by the save route and MCP)
   app/schemas/    pydantic request-body schemas (annotations.py, kept in sync with
                   packages/viewer/src/schemas/annotations.ts's zod schema)
   app/transport/  arrow (field -> Arrow IPC), tables (element inventory + dataframe page JSON),
@@ -218,7 +221,7 @@ Component-level notes: [`backend/README.md`](backend/README.md),
 | Change the MCP assistant surface (tools, vision render, agent guidance) | `backend/app/mcp/server.py` (tools) + `vision.py` (render/coords/membership) + `agent.py` (presence/lock) + `guides/*.md` (guidance text); mounted in `main.py` | [DESIGN.md](DESIGN.md) §29 |
 | Change the checkpoint/persistence format | `backend/app/persistence/store.py` | [DESIGN.md](DESIGN.md) §3, §14.1, [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) |
 | Change which elements a save can leave out, which parts of a table it can leave out, at what resolution images are written, or how their sizes are estimated | `backend/app/persistence/store.py` (`select_elements`, `trim_pyramid`, `trim_table`, `element_size_mb`, `image_levels`, `table_slots`) + `sessions/appstate.py` (`prune_to_elements`, `prune_to_table_slots`) + `frontend/src/components/SaveCheckpointDialog.tsx` | below |
-| Change where a save writes, what the file is named, or what the session is called | `backend/app/main.py` (`_validated_destination`, `_validated_name`) + `deps.py` (`default_save_path`) + `sessions/session.py` (`rename`, `_run_load`) + `frontend/src/components/SaveCheckpointDialog.tsx` (the checkpoint extension itself is in `frontend/src/lib/checkpointExt.ts`, kept out of the dialog so its lazy chunk stays split) | below |
+| Change where a save writes, what the file is named, or what the session is called | `backend/app/sessions/save_request.py` (`validated_destination`, `validated_name`, `default_save_path`) + `sessions/session.py` (`rename`, `_run_load`) + `frontend/src/components/SaveCheckpointDialog.tsx` (the checkpoint extension itself is in `frontend/src/lib/checkpointExt.ts`, kept out of the dialog so its lazy chunk stays split) | below |
 | Change how rendered plot figures are stored, served or shown | `backend/app/persistence/store.py` (`_write_figures`, `read_figure`, `figure_index`) + `sessions/session.py` (`figure`, `figure_index`, `figures_to_persist`) + `frontend/src/lib/figures.ts` + `components/PlotGallery.tsx` / `FigureLightbox.tsx` / `PlotDetail.tsx` | below |
 | Change what the serverless viewer can read from a checkpoint | `backend/app/persistence/store.py` (`_write_viewer_sidecar`, the writer half) + `packages/viewer/src/data/checkpointSource.ts` (the reader half) — the two must move together | [DESIGN.md](DESIGN.md) §14.1–14.2, [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) §4 |
 | Change how a store without the sidecar (plain SpatialData) is read — which table, where images and boundaries sit, which cell each boundary belongs to, the default displays | `packages/viewer/src/data/plainSpatialData.ts` (its image placement ports `imaging.pixel_to_world`, its boundary placement `geometry.element_to_world`, its `cellIndexOf` `geometry.cell_index`, its displays `manager.auto_displays`; keep them agreeing) + `plainSpatialData.test.ts` | [docs/CHECKPOINT_FORMAT.md](docs/CHECKPOINT_FORMAT.md) §9 |
@@ -325,7 +328,11 @@ still captured and delivered at completion — this only adds a live tap.
 The session worker sets an ambient sink (`livelog.job_target`) around a read-bootstrap
 job; `capture_log` (`registry/base.py`) tees each captured write to it, published as
 `job.log` (`{session_id, job_id, chunk}`). The custom `.zarr` reader runs in the worker
-thread, so it publishes directly. Library readers (spatialdata-io Xenium/Visium/…) run
+thread, so it publishes directly — and, sharing the API process with every other
+session, captures only its own thread's logging records (`livelog.own_thread_logs`, tapping
+the root logger and the ones that do not propagate to it, such as spatialdata's, and
+admitting zarr's shared I/O thread, where a store read logs its progress), not
+stdout/stderr: what the import prints or warns goes to the server console, not the job log. Library readers (spatialdata-io Xenium/Visium/…) run
 in the loky child, which can't reach the bus: `kernel.run_library_call` opens a
 `livelog.child_log_stream` (a `multiprocessing.Manager` queue + a drainer thread) for
 read calls, the child's `capture_log(sink=queue.put)` pushes lines onto it, and the
@@ -340,15 +347,16 @@ these in per-job / per-load buffers (`sessionStore`) and renders them with `Ansi
 
 ### Where a save writes, and what the file calls itself
 
-`POST /api/sessions/{id}/save` takes three destination fields, all validated at the
-route boundary (`main._validated_destination` / `_validated_name`) so a bad one is a 400
-rather than a job that fails minutes into a multi-GB write:
+`POST /api/sessions/{id}/save` takes three destination fields, all validated before the
+job is queued (`sessions/save_request.py`: `validated_destination` / `validated_name`, run
+by the route and by the MCP `save_checkpoint` tool alike) so a bad one is a 400 rather
+than a job that fails minutes into a multi-GB write:
 
 - `folder` — a directory under `DATA_DIR`, created by the writer if it doesn't exist
   (`store._zip_from_dir` / `_save_zip` both `mkdir(parents=True)` before staging beside
   the destination).
 - `prefix` — the filename stem `-<content hash>` is appended to, defaulting to the
-  session's current name. `deps.default_save_path(sess, folder, prefix)` is the single
+  session's current name. `save_request.default_save_path(sess, folder, prefix)` is the single
   seam that composes both; the points-transform route and the MCP `save_checkpoint` tool
   call it with neither and so keep the flat-in-`DATA_DIR` default.
 - `name` — the session name. `Session.rename` (run on the worker as the save job's
@@ -393,7 +401,7 @@ container-level sharing.
 the table its shape and every field path, and `uns` holds the `spatialdata_attrs` without
 which it is not a valid SpatialData table. Nor is an `obsm` key a display draws from —
 `coords`/`obsm_key` are non-nullable in the schema, so unlike a coloring they have no
-neutral form; `main._validated_slots` rejects both and the dialog locks the checkboxes to
+neutral form; `save_request.validated_slots` rejects both and the dialog locks the checkboxes to
 match. Everything else, `X` included, can go.
 
 **Dropping `X`.** It is usually the largest thing in the file and the reason the control
@@ -466,6 +474,13 @@ know:
   session and a checkpoint. `frontend/src/lib/figures.ts` holds the shared selectors
   (which format to display, which plots have a figure, byte totals) and `hooks/useFigure.ts`
   turns one into an object URL, revoked when the plot, format or component changes.
+  An SVG is cleaned on the way out of `getPlotFigure`, in both sources
+  (`packages/viewer/src/lib/sanitizeSvg.ts`, with `sanitizeSvg.test.ts`): the store may be
+  one somebody else chose — a live session serves a loaded checkpoint's figures verbatim —
+  and that object URL opened outside an `<img>` is a document of the app's origin. Only an
+  allowlist of drawing elements, local `#id` references and embedded rasters survive, so a
+  matplotlib feature that writes an element outside the list needs the list extended, or
+  it will be missing from the copy the app shows and downloads.
 
 ## Local dev environment
 

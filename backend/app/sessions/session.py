@@ -12,11 +12,9 @@ import time
 import uuid
 from concurrent.futures import BrokenExecutor, ThreadPoolExecutor
 from contextlib import contextmanager
-from pathlib import Path
 
-from . import appstate
+from . import appstate, save_request
 from .adapter import ADAPTER
-from ..config import within_data_dir
 from ..registry.introspect import REGISTRY
 from ..registry.reader_paths import validate_reader_params
 from ..transport import livelog
@@ -179,6 +177,26 @@ class SessionLoadingError(Exception):
     to 409)."""
 
 
+# What the shared session guards (deps.py) refuse a request with. Raised as domain
+# errors because those guards are also reached off-HTTP, by the MCP surface; main.py
+# maps each onto its status once. None is a RuntimeError/KeyError/ValueError: routes
+# catch those around the same calls to answer 400/404, and would relabel these.
+class SessionNotFoundError(Exception):
+    """No live session has the requested id (404)."""
+
+
+class SessionReadOnlyError(Exception):
+    """A mutation refused because the session is read-only (403)."""
+
+
+class SessionLockedError(Exception):
+    """A mutation refused because another viewer holds the session's edit lock (423)."""
+
+
+class SessionBusyError(Exception):
+    """A read that could not take the session's read lock in time (503, retryable)."""
+
+
 class Session:
     def __init__(self, sid, name, sdata, app_state, manager, parent_id=None, store_path=None,
                 read_only=False):
@@ -189,8 +207,9 @@ class Session:
         self.manager = manager
         self.parent_id = parent_id
         self.store_path = store_path
-        # True for a session opened frozen (create_from_load(read_only=True)): every
-        # mutating route rejects it (deps.py::get_writable_session) so it stays a
+        # True for a session opened frozen (create_from_load(read_only=True)), or one
+        # whose checkpoint carries a newer app_state schema than this app (`_run_load`):
+        # every mutating route rejects it (deps.py::get_writable_session) so it stays a
         # read-only view of its checkpoint.
         self.read_only = read_only
         # True when the in-memory object matches its saved checkpoint: set on load
@@ -670,13 +689,13 @@ class Session:
                         if self.extract_dir:
                             shutil.rmtree(self.extract_dir, ignore_errors=True)
                         self.extract_dir = result.extract_dir
-                    is_reimport = fn is not None and fn.effect_class == "read"
+                    is_read_call = fn is not None and fn.effect_class == "read"
                     # An imported store may itself be a checkpoint this app wrote (opened
                     # via Import Data instead of the checkpoint loader): its attrs carry
                     # the writing session's app_state, whose compute_history is the
                     # provenance of the data. Carry those records into this session
                     # instead of silently dropping them.
-                    if is_reimport:
+                    if is_read_call:
                         self._adopt_import_history(new_object)
                     # A reader's images/labels can be single-scale or huge-chunked; tile
                     # them now so the canvas never realizes a multi-GB chunk per tile.
@@ -687,14 +706,16 @@ class Session:
                     # that happens to reuse a conventional image name, which would otherwise
                     # be wrongly treated as "already known local" — leaving raster_stores[name]
                     # pointing at the PREVIOUS dataset's cache dir. Force a from-scratch
-                    # locality check for that case by passing no prior knowledge at all.
-                    known_stores = {} if is_reimport else self.raster_stores
-                    # A read bootstrap's rebuild can be lengthy (multi-GB); stream its
-                    # progress over the same job.log channel `target` above already taps,
-                    # so the import spinner keeps moving during this (write-lock-held) rebuild.
+                    # locality check for every read call by passing no prior knowledge at
+                    # all (the first bootstrap has none to pass anyway).
+                    known_stores = {} if is_read_call else self.raster_stores
+                    # A read call's rebuild (the first bootstrap or a re-import) can be
+                    # lengthy (multi-GB); stream its progress over the same job.log channel
+                    # `target` above already taps, so the import spinner keeps moving during
+                    # this (write-lock-held) rebuild.
                     progress = ((lambda message, pct=None: BUS.publish(
                         "job.log", {"session_id": self.id, "job_id": job_id, "chunk": f"{message}\n"}))
-                                if is_reimport else None)
+                                if is_read_call else None)
                     self._adopt_rasters(known_stores, progress)
                     self.active_table_key = self._default_table_key()
                     if not self.app_state["displays"]:
@@ -929,15 +950,12 @@ class Session:
                 if held.get(fmt) is None:
                     held[fmt] = read_figure(self.extract_dir, pid, fmt)
 
-    def _save_and_finish(self, job_id: str, payload: dict, kind: str,
-                         bump_fields: list | None = None) -> None:
+    def _save_and_finish(self, job_id: str, payload: dict, kind: str) -> None:
         """Shared completion tail for the checkpoint-writing jobs (save, set_transform):
-        validate the target path, write the checkpoint under the read lock (data reads
-        keep flowing during a multi-GB zip), then flip the saved-state bookkeeping and
-        publish the job's terminal event."""
-        target = Path(payload["path"]).resolve()
-        if not within_data_dir(target):
-            raise ValueError("save path is outside the data directory")
+        write the checkpoint under the read lock (data reads keep flowing during a
+        multi-GB zip), then flip the saved-state bookkeeping and publish the job's
+        terminal event. The callers have already checked the target path
+        (`save_request.require_save_path`), before mutating anything."""
         include, levels = payload.get("include"), payload.get("levels")
         slots = payload.get("slots")
         with self.lock.reading():
@@ -952,8 +970,6 @@ class Session:
             self.saved = True
             self._clear_dirty()
         self._jobs[job_id]["status"] = "completed"
-        if bump_fields:
-            appstate.bump_versions(self.app_state, bump_fields)
         BUS.publish("job.completed", {"session_id": self.id, "job_id": job_id, "kind": kind,
                                       "path": written,
                                       "data_versions": self.app_state["data_versions"]})
@@ -962,13 +978,23 @@ class Session:
         """Set the points->global transform on the active table's region element and
         persist to disk so it survives a session restart (§3.1 mutating job)."""
         from . import transform
+        # Before the affine is touched: a refused target leaves the transform as it was.
+        save_request.require_save_path(payload["path"])
         with self.lock.writing():
             region = transform.set_affine6(self.sdata, self.active_table(), payload["affine"])
         if region:
             self.dirty_transforms.add(region)
-        self._save_and_finish(job_id, payload, "set_transform", bump_fields=["obsm:spatial"])
+        # The affine is live from here whether or not the write below succeeds, so the
+        # session is unsaved and the coordinates clients hold are stale now. Bumping
+        # before the save reaches them either way: job.completed carries data_versions,
+        # and job.failed has clients refetch the session state that holds them.
+        self.saved = False
+        appstate.bump_versions(self.app_state, ["obsm:spatial"])
+        self._save_and_finish(job_id, payload, "set_transform")
 
     def _run_save(self, job_id, payload):
+        # Before the rename: a refused target leaves the session named as it was.
+        save_request.require_save_path(payload["path"])
         name = payload.get("name")
         # Also renames when only `app_state` lacks the name: a session that has never
         # been renamed still needs it recorded, or a file saved under a different prefix
@@ -1051,6 +1077,12 @@ class Session:
                 report("Building views…")
                 if not self.app_state["displays"]:
                     self.manager.auto_displays(self)
+                if newer:
+                    # A file written by a later app carries app_state this one cannot
+                    # migrate, so every mutating route has to refuse it
+                    # (deps.get_writable_session reads this attribute, and so does the
+                    # summary published below).
+                    self.read_only = True
                 self.status = "ready"
                 self.error = None
                 self._publish_summary()

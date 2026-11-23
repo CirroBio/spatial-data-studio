@@ -62,7 +62,8 @@ store
         store = params.get("store")
         if not store:
             return CallResult(status="failed", error="a store path is required")
-        with capture_log() as buf:
+        # Runs on the session worker thread in the API process, not in a pool child.
+        with capture_log(process_wide=False) as buf:
             try:
                 sdata, extract_dir, _ = read_spatialdata_archive(store)
             except Exception as e:

@@ -224,9 +224,10 @@ class Config:
 
     MAX_SESSIONS = int(os.environ.get("SDS_MAX_SESSIONS", "8"))
 
-    # Max image tiles/thumbnails composited at once. A zoom/pan burst asks for many
-    # tiles simultaneously, and each finest-level tile can realize a full multi-MB
-    # pyramid chunk; this caps the concurrent transient so the burst can't OOM.
+    # Max image thumbnails composited at once (deps.render_image; the thumbnail route
+    # is its only caller, the canvas compositing client-side). Each one realizes a whole
+    # coarsest pyramid level and an RGB composite of it; this caps the concurrent
+    # transient so several requested together can't OOM.
     # Scales with the CPU allocation by default (compositing is CPU-bound) rather than a
     # fixed small number, so a bigger deployment gets more parallelism without a config
     # change; override down via the env var on a memory-constrained container.
@@ -294,8 +295,11 @@ class Config:
     LONG_RUNNING_S = float(os.environ.get("SDS_LONG_RUNNING_S", "120"))  # watchdog threshold
 
     # Max time a read-only endpoint waits on the session read lock before giving up
-    # with a fast 503 instead of hanging. Reads block while a compute/plot job holds
-    # the write lock for its whole duration; behind a fronting proxy (e.g. CloudFront,
+    # with a fast 503 instead of hanging. A compute/plot job runs with no lock and takes
+    # the write lock only to commit its result, but reads still block for as long as that
+    # commit lasts, and adopting a new object (an import, a checkpoint load, a compute
+    # that returns a replacement) re-tiles its rasters under the lock, which can take
+    # minutes for a large store; behind a fronting proxy (e.g. CloudFront,
     # ~30s origin timeout) a longer block returns a 504 to the browser. Failing fast
     # under that limit turns the hang into a retryable 503 the frontend re-issues once
     # the job completes (via SSE). Keep comfortably below the proxy's timeout.

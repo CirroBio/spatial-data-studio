@@ -92,7 +92,7 @@ export default function RegionsPanel() {
     try {
       if (isLocal) {
         if (source && regionCellIndices) {
-          applyLocalRegion({
+          await applyLocalRegion({
             source,
             cellIndices: regionCellIndices,
             nCells: sessionState?.fields.n_obs ?? 0,

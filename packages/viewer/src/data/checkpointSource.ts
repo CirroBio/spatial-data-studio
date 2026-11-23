@@ -23,6 +23,7 @@ import {
 } from '../types';
 import { applyAffineXy } from '../canvas/imageAffine';
 import { afterThisTask } from '../lib/afterThisTask';
+import { sanitizeSvg } from '../lib/sanitizeSvg';
 import { SHAPE_ANNOTATIONS_ELEMENT } from '../lib/shapeAnnotations';
 import type { ShapeAnnotation } from '../schemas/annotations';
 import type { FileMetaData } from 'hyparquet';
@@ -616,7 +617,11 @@ export async function openCheckpointStore(
     async getPlotFigure(plotId: string, format: FigureFormat): Promise<Blob | null> {
       if (!sidecar.figures?.[plotId]?.[format]) return null;
       const bytes = await readBytes(root, `viewer/figures/${plotId}/${format}`);
-      return new Blob([bytes], { type: FIGURE_MEDIA_TYPES[format] });
+      // The store may be one somebody else chose (`?checkpoint=<url>`), and an SVG blob
+      // is a same-origin document as soon as its URL is opened outside an <img>. Cleaned
+      // here so the display and the download are both handed the safe copy.
+      const body = format === 'svg' ? sanitizeSvg(new TextDecoder().decode(bytes)) : bytes;
+      return new Blob([body], { type: FIGURE_MEDIA_TYPES[format] });
     },
 
     async getExpressionMatrix(onProgress) {

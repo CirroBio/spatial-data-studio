@@ -4,24 +4,14 @@ import ColorRangeControls from './ColorRangeControls';
 import CanvasSettingsShell from './CanvasSettingsShell';
 import LegendControls from './LegendControls';
 import PointStyleControls from './PointStyleControls';
-import type { ColorRange, EmbeddingDisplaySpec, ObsField, ObsmField } from '@cirrobio/spatial-viewer';
+import type { EmbeddingCanvasControls } from '@cirrobio/spatial-viewer';
 
-interface Props {
-  display: EmbeddingDisplaySpec;
-  obsFields: ObsField[];
-  hasX: boolean;
-  layers: string[];
-  obsmFields: ObsmField[];
-  colorByName: string;
-  legendVisible: boolean;
-  updateEncoding: (patch: Partial<EmbeddingDisplaySpec['encoding']>) => void;
-  colorRange: ColorRange | null;
-  setColorLimits: (limits: [number, number] | null) => void;
+// What the mounted canvas supplies, plus the placement the host adds.
+type Props = EmbeddingCanvasControls & {
   panelCollapsed: boolean;
   setPanelCollapsed: (v: boolean) => void;
   docked?: boolean;
-  onFit: () => void;
-}
+};
 
 // One row of the X/Y/Z axis pickers: which component of the selected obsm array
 // to plot on that axis.

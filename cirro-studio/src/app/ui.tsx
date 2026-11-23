@@ -115,7 +115,3 @@ export const STAGE_ICONS: Record<StageId, ReactNode> = {
 
 /** A stage's tint as an inline style, for elements that read `--c`. */
 export const tint = (cssVar: string) => ({ '--c': `var(${cssVar})` }) as CSSProperties;
-
-export function Spinner({ label }: { label: string }) {
-  return <span className="spinner" role="status" aria-label={label} />;
-}

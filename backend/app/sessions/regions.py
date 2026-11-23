@@ -36,7 +36,7 @@ def _membership_from_indices(adata, cell_indices: list[int]) -> np.ndarray:
     return inside
 
 
-def _membership(sdata, adata, payload: dict) -> np.ndarray:
+def membership(sdata, adata, payload: dict) -> np.ndarray:
     """Boolean mask of cells whose coordinates fall inside any drawn ring. The lasso
     rings arrive in *world* space, so the cells are resolved into the same space by
     `transform.world_xy` — which key holds the coordinates, then the region element's
@@ -82,7 +82,7 @@ def assign(session, payload: dict) -> list:
 
     cell_indices = payload.get("cell_indices")
     inside = (_membership_from_indices(adata, cell_indices) if cell_indices is not None
-              else _membership(session.sdata, adata, payload))
+              else membership(session.sdata, adata, payload))
 
     # obs categorical column, "unassigned" by default (single-label partition, §2)
     col = adata.obs.get(set_name)

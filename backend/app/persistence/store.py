@@ -507,7 +507,7 @@ def select_elements(sdata, include: dict[str, list[str]] | None = None,
     selection just dropped.
 
     A name in `include` that the object does not have is a ValueError. The save route
-    has already rejected it with a 400 (`main._validated_include`), so reaching here
+    has already rejected it with a 400 (`save_request.validated_include`), so reaching here
     means a caller built the selection itself (the CLI, the MCP surface) — dropping the
     name instead would hand that caller a checkpoint quietly missing an element it asked
     for.

@@ -96,8 +96,6 @@ export function navigate(update: Record<string, string | null>, { replace = fals
   listeners.forEach((l) => l());
 }
 
-export const hrefFor = (update: Record<string, string | null>) => target(update).toString();
-
 const sameAddress = (a: string, b: string) => {
   const sorted = (s: string) => [...new URLSearchParams(s)].map((p) => p.join('=')).sort().join('&');
   return sorted(a) === sorted(b);

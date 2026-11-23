@@ -1,10 +1,12 @@
 """Image serving for the canvas background (DESIGN §9.2).
 
-Large sections (Xenium: ~34k x 14k px, multi-GB) can't ship as one image, so we
-serve the SpatialData multiscale pyramid as WebP tiles: deck.gl requests only the
-tiles visible at the current zoom, from the level whose native resolution matches
-the screen. A single coarse thumbnail is still served as an always-present base
-layer under the tiles.
+Large sections (Xenium: ~34k x 14k px, multi-GB) can't ship as one image, so the
+canvas composites client-side: the browser (Viv) reads the session's normalized
+multiscale raster zarr chunk by chunk through the raw raster-store route, fetching
+only what is visible at the current zoom. This module describes each image for that
+client (`image_info`: dimensions, pyramid levels, channels, contrast domain), keeps
+the cache of raw chunk bytes the route serves from, and renders the one image the
+server still composites itself: a WebP thumbnail of the coarsest level.
 
 Two coordinate spaces have to be reconciled. The spot/cell coordinates in
 `obsm["spatial"]` may be in different units (e.g. Xenium microns) than the image's
@@ -48,7 +50,7 @@ _NORM_CACHE_MAX = 256  # per-channel norm arrays kept in memory (LRU)
 # reads one compressed chunk file per browser request; without this, panning back
 # over already-seen tiles re-reads each chunk (a syscall + read-lock round trip, and
 # a real disk read when WORK_DIR is not RAM-backed). Same (id(sdata), ...) keying as
-# the tile cache, so evict_caches drops it on the same adoption/close boundary.
+# _norm_cache, so evict_caches drops it on the same adoption/close boundary.
 # Byte-budgeted because these bytes live in the API process heap (counted in RSS);
 # guarded by a lock since reads run under the shared — hence concurrent — read lock.
 _raster_chunk_cache: "OrderedDict[tuple, bytes]" = OrderedDict()
@@ -59,7 +61,7 @@ _RASTER_CHUNK_BUDGET = int(config.RASTER_CHUNK_CACHE_MB * 1e6)
 
 def evict_caches(sdata) -> None:
     """Drop every cache entry belonging to `sdata`. Call before a session's object is
-    released so a reused id() can't serve another image's cached norm/tiles/chunks."""
+    released so a reused id() can't serve another image's cached norm or chunks."""
     global _raster_chunk_bytes
     sid = id(sdata)
     with _norm_cache_lock:

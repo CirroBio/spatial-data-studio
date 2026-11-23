@@ -70,6 +70,7 @@ export { useArrowPositions, type ScatterPositions } from './canvas/useArrowPosit
 // ---- Snapshots (PNG capture + the saved-figure contract) ---------------------
 export { downloadCanvasPng, plotCanvas } from './lib/canvasCapture';
 export { downloadBlob } from './lib/download';
+export { sanitizeSvg } from './lib/sanitizeSvg';
 export {
   formatCreated, type Snapshot, type SnapshotExportParams, type SnapshotFormat,
 } from './lib/snapshots';
