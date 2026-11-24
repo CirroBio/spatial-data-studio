@@ -285,15 +285,34 @@ class _CaptureBuffer(io.StringIO):
         return _clean_log(super().getvalue())
 
 
+# zarr does a store's reads on one loop thread of its own (zarr.core.sync), and that
+# is where it logs each group and array it opens — the only progress an in-process
+# store read reports.
+_STORE_IO_THREADS = ("zarr_io",)
+
+
 @contextlib.contextmanager
-def capture_log(sink=None):
+def capture_log(sink=None, *, process_wide: bool = True):
     """Capture everything the call logs/prints into a returned buffer. When a `sink`
     is given (or an ambient live-log target is set — see transport/livelog.py), each
-    write is also streamed to the client live."""
+    write is also streamed to the client live.
+
+    The default swaps sys.stdout/sys.stderr and taps the root logger unfiltered, which
+    is only sound where the call owns its process: a compute-pool child (kernel.py). A
+    call that runs in the API process on a session worker thread passes
+    `process_wide=False` and gets the records its own thread logs (the root's and
+    spatialdata's), with zarr's from its I/O thread, and nothing else — not what it or
+    a library prints or warns straight to stdout/stderr, which stays on the console
+    (livelog.own_thread_logs has the reasons)."""
+    from ..transport import livelog
     if sink is None:
-        from ..transport import livelog
         sink = livelog.current_sink()
     buf = _CaptureBuffer(sink)
+    if not process_wide:
+        with livelog.own_thread_logs(buf.write, logging.DEBUG, detached=True,
+                                     helper_threads=_STORE_IO_THREADS):
+            yield buf
+        return
     handler = logging.StreamHandler(buf)
     handler.setLevel(logging.DEBUG)
     root = logging.getLogger()

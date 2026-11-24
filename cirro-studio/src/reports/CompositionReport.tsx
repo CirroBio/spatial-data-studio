@@ -3,20 +3,19 @@
 // (log2 observed over expected, with a chi-square test of each pair) as a heatmap; and
 // every pair's counts. The Composition view draws the same sections live, and keeps them
 // as this report.
-import { useMemo, useState, type ReactNode } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { MIN_EXPECTED, testComposition, type CrossTable } from '../analysis/composition';
 import { useStudio } from '../app/studio';
 import { formatCount } from '../app/ui';
 import { Heatmap } from '../charts/Heatmap';
 import { StackedBars } from '../charts/StackedBars';
 import { SIGNIFICANCE } from '../charts/Volcano';
-import { describeError } from '../cirro/session';
 import { SIZE_PRESETS } from '../figures/layout';
 import { keepFigure, type ChartSpec } from '../figures/spec';
 import { useDisplays } from '../item/displayState';
 import { useColorKey } from '../item/useColorField';
 import { FORMATS, ResultTable, type Column } from '../tasks/parts';
-import { DownloadCsv, NO_COLOR, pct, Section, Stats } from './parts';
+import { DownloadCsv, NO_COLOR, pct, Section, Stats, useSaveFigure } from './parts';
 import type { ReportProps } from './ReportView';
 import { matrixOf } from './store';
 
@@ -126,19 +125,7 @@ export function CompositionSections({ table, colors, column, across, leftOut, un
 
 /** Keep a chart over this result as a figure, and say once it is kept. */
 function SaveFigure({ save }: { save: () => Promise<void> }) {
-  const [state, setState] = useState<'saving' | 'saved' | null>(null);
-  const [problem, setProblem] = useState<string | null>(null);
-  const run = async () => {
-    setState('saving');
-    setProblem(null);
-    try {
-      await save();
-      setState('saved');
-    } catch (e) {
-      setState(null);
-      setProblem(describeError(e));
-    }
-  };
+  const { state, problem, run } = useSaveFigure(save);
   return (
     <span className="button-row">
       {problem && <span className="notice notice-danger">{problem}</span>}

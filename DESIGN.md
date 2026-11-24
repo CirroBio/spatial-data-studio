@@ -2670,7 +2670,7 @@ and stay retired.
 The hard requirement is that the agent can *see* a display, *reason* about a pattern,
 and then *act* on it (annotate/subset) in coordinates provably consistent with the
 pixels it saw. `view_display` renders through the §14 snapshot core
-(`snapshots._render_figure`) and returns two content blocks: the PNG, and a metadata
+(`snapshots.render_figure`) and returns two content blocks: the PNG, and a metadata
 JSON carrying a `pixel_to_world` affine (composing the deck viewport window, the
 PNG's y-down rows, `invert_x/y`, and — when the display renders in image-pixel space,
 §9.4 — the image's own `pixel_to_world`), the world window and corner coordinates,

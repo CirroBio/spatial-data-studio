@@ -64,7 +64,8 @@ export function useSSE(enabled = true): void {
   // data_versions already update instantly from the event payload, so delaying the
   // catch-up refetch by one tick is invisible to the user — but it collapses a
   // back-to-back batch (a recipe's N queued steps, or run-all) into one request
-  // instead of N, each of which would otherwise queue behind the next step's write lock.
+  // instead of N, each of which can land on another step's commit and wait for its
+  // write lock.
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   function scheduleRefresh(sessionId: string) {
     if (refreshTimer.current) clearTimeout(refreshTimer.current);
@@ -135,13 +136,15 @@ export function useSSE(enabled = true): void {
         }
       },
 
-      // Show the row immediately from the event itself. A refetch here can't do it:
-      // GET /api/sessions takes the session read lock, which blocks until the
-      // already-running job releases the write lock — so the row would only appear
-      // once the job finished. Insert on queued, flip to running on started, and let
-      // the terminal events below refetch to reconcile the full record (the write
-      // lock is released by then). Job tracking is scoped to the active session so
-      // another session's activity never spins this viewer's UI.
+      // Show the row immediately from the event itself rather than from a refetch.
+      // GET /api/sessions/{id} takes the session read lock: a job computes without
+      // the write lock and takes it only to commit, but whatever holds it when the
+      // refetch arrives — an earlier job's commit (minutes when it adopts and re-tiles
+      // an object), a save, a checkpoint load — makes that read wait, then 503 and
+      // retry. The event is already here. Insert on queued, flip to running on
+      // started, and let the terminal events below refetch to reconcile the full
+      // record. Job tracking is scoped to the active session so another session's
+      // activity never spins this viewer's UI.
       'job.queued': (data) => {
         const d = data as JobQueuedEvent;
         if (d.session_id !== activeSession()) return;
@@ -178,9 +181,10 @@ export function useSSE(enabled = true): void {
         if (d.session_id !== activeSession()) return;
         updateDataVersions(d.data_versions);
         // Flip the row to its terminal status from the event, not the refetch below:
-        // in a back-to-back queue (recipe / run-all) this job's completion refetch
-        // blocks on the read lock behind the NEXT job's write lock, so without this
-        // the finished row would keep showing "running" until the whole batch drains.
+        // that refetch is debounced, and in a back-to-back queue (recipe / run-all)
+        // the read it makes can still wait on the read lock behind a later step's
+        // commit — so without this the finished row would keep showing "running"
+        // after it ended.
         if (d.kind === 'compute') setEntryStatus(d.job_id, 'completed');
         // Save runs as a background job with no visible result; confirm it finished.
         if (d.kind === 'save') {

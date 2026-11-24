@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import {
   ApiError,
+  arrowToColorSource,
   defaultFill,
   defaultStroke,
   fetchWhenIdle,
@@ -45,6 +46,27 @@ const UNLABELLED = 'unlabelled';
 // reactive state — the codes array is large and nothing renders off it directly;
 // the canvas reads it back through the data source like any other column.
 const localRegionColumns = new Map<string, LocalCategorical>();
+
+// A column the store already holds, as the starting point for labelling into it. Its
+// levels keep their order (and so their palette colours); a cell with no level — a
+// pandas categorical stores a missing value as code -1 — joins "unlabelled", which is
+// added only when such a cell exists.
+function seedFromStoredColumn(stored: LocalCategorical): LocalCategorical {
+  const categories = [...stored.categories];
+  const codes = Int32Array.from(stored.codes);
+  let unlabelled = categories.indexOf(UNLABELLED);
+  for (let i = 0; i < codes.length; i++) {
+    if (codes[i] >= 0 && codes[i] < stored.categories.length) continue;
+    if (unlabelled < 0) unlabelled = categories.push(UNLABELLED) - 1;
+    codes[i] = unlabelled;
+  }
+  return { categories, codes };
+}
+
+// Whether the upload rows have been read once. The first read is the baseline: the
+// backend keeps settled uploads listed, so what it returns is this browser's history,
+// not news.
+let cirroUploadsLoaded = false;
 
 // A job's status lands in whichever collection holds it; these narrow the shared
 // status union so setEntryStatus can update the right record type without a cast.
@@ -196,8 +218,9 @@ interface AppStore {
   updateDisplay: (display: DisplaySpec) => void;
   addDisplay: (display: DisplaySpec) => void;
   // Optimistically show a submitted compute/plot as queued straight from the
-  // job.queued event — a refetch can't do this because the read won't return until
-  // the (already-running) job frees the write lock (it 503s and retries until then).
+  // job.queued event — the event is in hand, while a refetch is a round trip whose
+  // read waits (503s and retries) for as long as a commit, a save or a load holds
+  // the session's write lock.
   addQueuedEntry: (
     effectClass: 'compute' | 'plot',
     base: { id: string; namespace: string; function: string; params: Record<string, unknown> },
@@ -273,7 +296,9 @@ interface AppStore {
   // Label cells entirely in the browser (serverless viewer). Writes a local
   // categorical column onto the data source and mirrors it into the session state
   // the pickers and legend read, so the result is indistinguishable from a
-  // backend-assigned region set — except that it lives only in this tab.
+  // backend-assigned region set — except that it lives only in this tab. Async
+  // because the first label into a column the store already holds reads that column,
+  // so the labels it carries are kept rather than shadowed by an empty one.
   applyLocalRegion: (args: {
     source: DataSource;
     cellIndices: number[];
@@ -281,7 +306,7 @@ interface AppStore {
     obsColumn: string;
     category: string;
     color: string;
-  }) => void;
+  }) => Promise<void>;
   setRegionCellIndices: (idx: number[] | null) => void;
   addDrawVertex: (pt: [number, number]) => void;
   addDrawPolygon: (ring: [number, number][]) => void;
@@ -679,17 +704,34 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setRegionCellIndices: (idx) => set({ regionCellIndices: idx }),
   hiddenCells: null,
   setHiddenCells: (cells) => set({ hiddenCells: cells && cells.size ? cells : null }),
-  applyLocalRegion: ({ source, cellIndices, nCells, obsColumn, category, color }) =>
+  applyLocalRegion: async ({ source, cellIndices, nCells, obsColumn, category, color }) => {
+    const setLocalColumn = source.setLocalColumn?.bind(source);
+    if (!setLocalColumn) return;
+    const path = `obs:${obsColumn}`;
+    const sessionId = get().activeSessionId;
+    // The local column shadows the stored one of the same name from its first label
+    // on, so a column the checkpoint already carries (an existing region set is the
+    // default target) has to be the starting point — starting empty would wipe every
+    // category it holds off the canvas and out of the region registry. Read before
+    // any shadow is installed, which is the only time the source still returns the
+    // stored column.
+    let stored: LocalCategorical | undefined;
+    if (!localRegionColumns.has(path)
+        && get().sessionState?.fields.obs.some((f) => f.name === obsColumn)) {
+      const column = arrowToColorSource(await source.getFieldData(path));
+      // The maps are per-session and were cleared if the session changed meanwhile.
+      if (get().activeSessionId !== sessionId) return;
+      if (column?.kind === 'categorical') stored = seedFromStoredColumn(column);
+    }
     set((s) => {
-      if (!s.sessionState || !source.setLocalColumn) return {};
-      const path = `obs:${obsColumn}`;
+      if (!s.sessionState) return {};
       const regions = s.sessionState.app_state.regions ?? [];
       const existing = regions.find((r) => r.obs_column === obsColumn);
 
-      // Categories carry an explicit "unlabelled" level at code 0 so cells outside
-      // every lasso stay visible (and greyed) rather than dropping out of the
-      // colouring. Re-labelling a cell overwrites its previous category.
-      const previous = localRegionColumns.get(path);
+      // A column started here carries an explicit "unlabelled" level at code 0 so
+      // cells outside every lasso stay visible (and greyed) rather than dropping out
+      // of the colouring. Re-labelling a cell overwrites its previous category.
+      const previous = localRegionColumns.get(path) ?? stored;
       const categories = previous ? [...previous.categories] : [UNLABELLED];
       let code = categories.indexOf(category);
       if (code < 0) {
@@ -701,7 +743,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         if (i >= 0 && i < codes.length) codes[i] = code;
       }
       localRegionColumns.set(path, { categories, codes });
-      source.setLocalColumn(path, { categories, codes });
+      setLocalColumn(path, { categories, codes });
 
       // Recount every category from the codes, so re-labelling over an earlier
       // selection reports the truth rather than accumulating.
@@ -744,7 +786,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
           },
         },
       };
-    }),
+    });
+  },
   addDrawVertex: (pt) => set((s) => ({ drawRing: [...s.drawRing, pt] })),
   addDrawPolygon: (ring) => set((s) => ({ drawPolygons: [...s.drawPolygons, ring] })),
   commitDrawRegion: () =>
@@ -936,8 +979,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const previous = new Map(get().cirroUploads.map((u) => [u.id, u.state]));
     try {
       const { uploads } = await getCirroUploads();
+      // Only a change this page watched happen is announced — otherwise every page
+      // load would repeat the outcome of every past upload.
+      const announce = cirroUploadsLoaded;
+      cirroUploadsLoaded = true;
       for (const u of uploads) {
-        if (previous.get(u.id) === u.state) continue;
+        if (!announce || previous.get(u.id) === u.state) continue;
         if (u.state === 'completed') {
           get().pushNotification({ kind: 'info', message: `Uploaded to Cirro as "${u.dataset_name}".` });
         } else if (u.state === 'failed') {

@@ -534,6 +534,10 @@ class SessionManager:
             raise RuntimeError(f"max concurrent sessions ({config.MAX_SESSIONS}) reached")
 
     def _check_admission(self, resident_mb: float):
+        # A non-positive limit disables memory accounting (see `_mem_fraction`); without
+        # this, `avail` would be negative and every load refused.
+        if config.CONTAINER_MEM_MB <= 0:
+            return
         avail = config.CONTAINER_MEM_MB - self._effective_mb()
         if resident_mb > avail:
             raise RuntimeError(

@@ -28,8 +28,6 @@ export interface DatasetRecord {
   credit?: Partial<Credit>;
 }
 
-export type ItemKind = 'image' | 'run' | 'store' | 'version';
-
 interface ItemBase {
   // `<datasetId>/<path>`, unique within a collection.
   key: string;

@@ -3,9 +3,7 @@
 // data and opens as its report.
 import { useState } from 'react';
 import { ENRICHMENT_PERMUTATIONS, SPATIAL_NEIGHBOURS } from '../analysis/defaults';
-import { useStudio } from '../app/studio';
 import { describeError } from '../cirro/session';
-import { useDisplays } from '../item/displayState';
 import type { NeighborhoodsSummary } from '../reports/NeighborhoodsReport';
 import { openReport } from '../reports/parts';
 import { keepResult, storableNames, type KeptTable } from '../reports/store';
@@ -13,17 +11,15 @@ import { readCoords, readGroups } from './data';
 import { ColumnSelect, JobStatus } from './parts';
 import type { TaskProps } from './TaskPanel';
 import { useJob } from './useJob';
+import { useSpatialTask } from './useSpatialTask';
 
 const MAX_GROUPS = 60;
 
 export default function NeighborhoodsTask({ wb, unit }: TaskProps) {
-  const handle = wb.handle!;
-  const { session } = useStudio();
-  const displays = useDisplays(wb.key, wb.handle);
+  const { handle, session, coords } = useSpatialTask(wb);
   const [column, setColumn] = useState('');
   const [problem, setProblem] = useState<string | null>(null);
   const job = useJob();
-  const coords = displays.spatial?.encoding.coords ?? 'obsm:spatial';
 
   const run = async () => {
     setProblem(null);

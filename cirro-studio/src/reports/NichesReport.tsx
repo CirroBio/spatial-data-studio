@@ -3,11 +3,10 @@
 // words and bars), and the full table of mixes.
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useStudio } from '../app/studio';
-import { formatCount, plural } from '../app/ui';
+import { formatCount } from '../app/ui';
 import { BarList } from '../charts/BarList';
 import { Heatmap } from '../charts/Heatmap';
-import { TissueThumb, type Paint, type Tissue } from '../charts/TissueThumb';
-import { describeError } from '../cirro/session';
+import type { Paint, Tissue } from '../charts/TissueThumb';
 import { SIZE_PRESETS } from '../figures/layout';
 import { keepFigure } from '../figures/spec';
 import { useDisplays } from '../item/displayState';
@@ -15,7 +14,7 @@ import { useColorKey } from '../item/useColorField';
 import { useSize } from '../lib/useSize';
 import { readGroups } from '../tasks/data';
 import { ResultTable, type Column } from '../tasks/parts';
-import { DownloadCsv, FullTable, NO_COLOR, pct, Section, showOnTissue, Stats, useTissue } from './parts';
+import { DownloadCsv, FullTable, GroupCard, NO_COLOR, pct, Section, showOnTissue, Stats, useSaveFigure, useTissue } from './parts';
 import type { ReportProps } from './ReportView';
 
 export type NichesSummary = {
@@ -46,7 +45,6 @@ const DISTINCT = 1.5;
 const SHOWN_GROUPS = 5;
 // A group under this share of a niche gets no bar: it would be a sliver labelled "<1%".
 const BAR_MIN = 0.01;
-const THUMB_W = 132;
 // The heatmap's label room and largest square (its own limits): it is drawn no wider than
 // they need, so it doesn't trail empty space.
 const HEAT_LABEL_W = 110;
@@ -78,19 +76,10 @@ function NicheCard({ label, size, total, color, mix, overall, groups, groupColor
     .map((s) => ({ ...s, ratio: s.share / overall[s.group] }))
     .sort((a, b) => b.ratio - a.ratio)[0];
   return (
-    <article className="group-card">
-      <header className="group-card-head">
-        <span className="swatch" style={{ background: color }} />
-        <h4>{label}</h4>
-        <span className="muted">{plural(size, [unit, `${unit}s`])} · {((100 * size) / Math.max(total, 1)).toFixed(1)}%</span>
-      </header>
-      <div className="group-card-body">
-        <figure className="group-card-thumb">
-          {tissue && paint ? <TissueThumb tissue={tissue} paint={paint} width={THUMB_W} label={`Where ${label} is`} />
-            : <div className="thumb-empty" style={{ width: THUMB_W, height: THUMB_W }} />}
-          <figcaption className="muted">Where its {unit}s are</figcaption>
-        </figure>
-        {/* Sized by the card, not by the bars drawn at its last width, or it couldn't narrow. */}
+    <GroupCard label={label} color={color} size={size} share={`${((100 * size) / Math.max(total, 1)).toFixed(1)}%`} unit={unit}
+      tissue={tissue} paint={paint}
+      detail={(
+        // Sized by the card, not by the bars drawn at its last width, or it couldn't narrow.
         <div ref={ref} style={{ flex: 1, minWidth: 0, contain: 'inline-size' }}>
           {width > 0 && (
             <BarList width={width} label={`The largest groups in ${label}`}
@@ -98,14 +87,14 @@ function NicheCard({ label, size, total, color, mix, overall, groups, groupColor
                 .map((s) => ({ label: groups[s.group], value: s.share, color: groupColor(groups[s.group]), note: pct(s.share) }))} />
           )}
         </div>
-      </div>
+      )}>
       <p className="group-card-text">
         {describeMix(mix, groups)}{' '}
         {distinct && distinct.ratio >= DISTINCT
           ? <><strong>{groups[distinct.group]}</strong> is {distinct.ratio.toFixed(1)}× as common here as across all {unit}s.</>
           : <>No group is much more common here than across all {unit}s.</>}
       </p>
-    </article>
+    </GroupCard>
   );
 }
 
@@ -170,25 +159,15 @@ export default function NichesReport({ result, table, wb, handle, unit, width }:
     [niches, current, nicheColors],
   );
 
-  const [figure, setFigure] = useState<'saving' | 'saved' | null>(null);
-  const [problem, setProblem] = useState<string | null>(null);
-  const saveFigure = async () => {
-    setFigure('saving');
-    setProblem(null);
-    try {
-      await keepFigure(wb.key, handle.tableKey, {
-        title: result.meta.title,
-        caption: `Each row is a niche, found by k-means over every ${unit}'s neighborhood: the ${unit} and its ${neighbors} nearest. A square is the average share of a ${column} group in that niche's neighborhoods.`,
-        created_by: session?.displayName ?? '',
-        view: { kind: 'chart', chart: { type: 'heatmap', result: [...result.path, 'table'].join('/') } },
-        width_mm: (groups.length > 12 ? SIZE_PRESETS.double : SIZE_PRESETS.single).widthMm,
-      });
-      setFigure('saved');
-    } catch (e) {
-      setFigure(null);
-      setProblem(describeError(e));
-    }
-  };
+  const { state: figure, problem, run: saveFigure } = useSaveFigure(async () => {
+    await keepFigure(wb.key, handle.tableKey, {
+      title: result.meta.title,
+      caption: `Each row is a niche, found by k-means over every ${unit}'s neighborhood: the ${unit} and its ${neighbors} nearest. A square is the average share of a ${column} group in that niche's neighborhoods.`,
+      created_by: session?.displayName ?? '',
+      view: { kind: 'chart', chart: { type: 'heatmap', result: [...result.path, 'table'].join('/') } },
+      width_mm: (groups.length > 12 ? SIZE_PRESETS.double : SIZE_PRESETS.single).widthMm,
+    });
+  });
 
   const heatW = Math.min(width - 2, Math.max(320, HEAT_LABEL_W + groups.length * HEAT_CELL + 10));
   const tableRows = useMemo(() => niches.map((niche, i) => ({

@@ -2,7 +2,7 @@
 // DataSource interface, so the same canvas can be pointed at a checkpoint instead.
 import { useMemo } from 'react';
 import { loadOmeZarr } from '@vivjs/loaders';
-import type { DataSource, ImageLoader } from '@cirrobio/spatial-viewer';
+import { sanitizeSvg, type DataSource, type ImageLoader } from '@cirrobio/spatial-viewer';
 import {
   getElements, getFieldData, getFigureUrl, getImageInfo, getImageThumbnailUrl,
   getShapesGeoArrow, searchVarNames,
@@ -33,7 +33,11 @@ export function createApiSource(sessionId: string): DataSource {
       });
       if (res.status === 404) return null;
       if (!res.ok) throw new Error(`figure fetch failed: ${res.status} ${res.statusText}`);
-      return res.blob();
+      // A figure the session did not draw itself comes verbatim from the checkpoint it
+      // loaded, so an SVG is cleaned for the same reason the checkpoint source cleans
+      // one: the blob URL made from it is a same-origin document once opened in a tab.
+      if (format !== 'svg') return res.blob();
+      return new Blob([sanitizeSvg(await res.text())], { type: 'image/svg+xml' });
     },
 
     async openImageLoader(element): Promise<ImageLoader> {

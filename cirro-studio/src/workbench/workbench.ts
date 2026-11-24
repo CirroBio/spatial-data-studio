@@ -254,8 +254,3 @@ export async function saveDraft(key: string, req: SaveRequest, onProgress?: (fra
     return { ...result, key: workbenchKey({ datasetId: result.datasetId, path: LAYER_MANIFEST, kind: 'version' }) };
   });
 }
-
-/** Forget an opened stack, so opening it again reads it afresh. */
-export function closeWorkbench(key: string) {
-  benches.delete(key);
-}

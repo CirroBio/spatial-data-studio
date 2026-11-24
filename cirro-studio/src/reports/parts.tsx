@@ -1,13 +1,13 @@
 // What the reports share: the header that says what was run and when, the tiles of
-// summary numbers, sections, the folded full table and its CSV download, the tissue they
-// draw thumbnails of, and the actions that reach back into the data (color the tissue,
-// score a gene set).
+// summary numbers, sections, the folded full table and its CSV download, the card of one
+// group, the tissue they draw thumbnails of, and the actions that reach back into the data
+// (color the tissue, score a gene set) or keep a chart as a figure.
 import { useEffect, useState, type ReactNode } from 'react';
 import { downloadBlob, type CheckpointHandle, type ExpressionMatrix } from '@cirrobio/spatial-viewer';
 import { geneIndex } from '../analysis/matrix';
 import { LENS_PARAM, navigate } from '../app/route';
-import { formatCount, formatDate, RemoveButton } from '../app/ui';
-import { tissueOf, type Tissue } from '../charts/TissueThumb';
+import { formatCount, formatDate, plural, RemoveButton } from '../app/ui';
+import { TissueThumb, tissueOf, type Paint, type Tissue } from '../charts/TissueThumb';
 import { describeError } from '../cirro/session';
 import { updateEncoding } from '../item/displayState';
 import { freeName, readCoords, readMatrix } from '../tasks/data';
@@ -22,6 +22,8 @@ export const GENE_SET_SIZE = 25;
 
 // A group's color when its column no longer has it.
 export const NO_COLOR = '#8a93a3';
+
+const GROUP_THUMB_W = 132;
 
 /** A share as a whole percentage; a share too small to round to 1% says so. */
 export const pct = (v: number) => (v > 0 && v < 0.01 ? '<1%' : `${Math.round(100 * v)}%`);
@@ -103,6 +105,51 @@ export function DownloadCsv<R extends object>({ name, rows, columns }: { name: s
       <button type="button" className="button button-small" onClick={download}>Download CSV</button>
       {downloaded && <span className="muted" role="status">Downloaded {downloaded}</span>}
     </span>
+  );
+}
+
+/** Keeping a chart over a result as a figure: whether it is being kept or has been, and why it couldn't be. */
+export function useSaveFigure(save: () => Promise<void>) {
+  const [state, setState] = useState<'saving' | 'saved' | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const run = async () => {
+    setState('saving');
+    setProblem(null);
+    try {
+      await save();
+      setState('saved');
+    } catch (e) {
+      setState(null);
+      setProblem(describeError(e));
+    }
+  };
+  return { state, problem, run };
+}
+
+/** One group of a report: its color, name and size, where it is on the tissue beside
+ * `detail`, and under them whatever the report says of it. `share` comes formatted: the
+ * reports round it differently. */
+export function GroupCard({ label, color, size, share, unit, tissue, paint, thumbLabel = `Where ${label} is`, caption, detail, children }: {
+  label: string; color: string; size: number; share: string; unit: string; tissue: Tissue | null; paint: Paint | null;
+  thumbLabel?: string; caption?: string; detail: ReactNode; children: ReactNode;
+}) {
+  return (
+    <article className="group-card">
+      <header className="group-card-head">
+        <span className="swatch" style={{ background: color }} />
+        <h4>{label}</h4>
+        <span className="muted">{plural(size, [unit, `${unit}s`])} · {share}</span>
+      </header>
+      <div className="group-card-body">
+        <figure className="group-card-thumb">
+          {tissue && paint ? <TissueThumb tissue={tissue} paint={paint} width={GROUP_THUMB_W} label={thumbLabel} />
+            : <div className="thumb-empty" style={{ width: GROUP_THUMB_W, height: GROUP_THUMB_W }} />}
+          <figcaption className="muted">{caption ?? `Where its ${unit}s are`}</figcaption>
+        </figure>
+        {detail}
+      </div>
+      {children}
+    </article>
   );
 }
 

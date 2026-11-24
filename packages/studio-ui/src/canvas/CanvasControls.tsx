@@ -10,63 +10,24 @@ import DualRangeField, { rangeDigits, rangeStep } from './DualRangeField';
 import ColorRangeControls from './ColorRangeControls';
 import {
   CATEGORY_SWATCHES, CHANNEL_COLORS, SPATIAL_ENCODING_DEFAULTS, ZOOM_LIMITS,
-  type Channel, type ColorRange, type ObsField, type SpatialDisplaySpec,
+  type SpatialCanvasControls,
 } from '@cirrobio/spatial-viewer';
 
-interface CanvasControlsProps {
-  display: SpatialDisplaySpec;
-  obsFields: ObsField[];
-  layers: string[];
-  hasX: boolean;
-  colorByName: string;
-  legendVisible: boolean;
-  updateEncoding: (patch: Partial<SpatialDisplaySpec['encoding']>) => void;
-  // Categorical levels + effective hex color for the per-category color controls;
-  // null unless the current color-by field is categorical (within the level cap).
-  categoryColorItems: { label: string; color: string }[] | null;
-  hasCategoryOverrides: boolean;
-  setCategoryColor: (label: string, color: string) => void;
-  resetCategoryColors: () => void;
-  colorRange: ColorRange | null;
-  setColorLimits: (limits: [number, number] | null) => void;
-  showPoints: boolean;
+// What the mounted canvas supplies, plus the setters and placement the host adds.
+type CanvasControlsProps = SpatialCanvasControls & {
   setShowPoints: (v: boolean) => void;
-  showImage: boolean;
   setShowImage: (v: boolean) => void;
-  invertX: boolean;
   setInvertX: (v: boolean) => void;
-  invertY: boolean;
   setInvertY: (v: boolean) => void;
-  background: 'light' | 'dark';
   setBackground: (v: 'light' | 'dark') => void;
-  showLegend: boolean;
   setShowLegend: (v: boolean) => void;
-  showMinimap: boolean;
   setShowMinimap: (v: boolean) => void;
-  renderMode: 'points' | 'points+shapes';
   setRenderMode: (v: 'points' | 'points+shapes') => void;
-  shapeSets: string[];
-  shapesElement: string | null;
   setShapesElement: (v: string) => void;
-  imageSets: string[];
-  imageElement: string | null;
-  setImageElement: (v: string | null) => void;
-  channels: Channel[];
-  setChannel: (index: number, patch: Partial<{ visible: boolean; name: string; color: string; contrastLimits: [number, number] }>) => void;
-  maxVisibleReached: boolean;
   panelCollapsed: boolean;
   setPanelCollapsed: (v: boolean) => void;
   docked?: boolean;
-  zoom: number;
-  onZoom: (delta: number) => void;
-  onFit: () => void;
-  onEditTransform?: () => void;
-  // False when this viewer can't change the session (read-only snapshot, or another
-  // viewer holds the edit lock): everything else here is a display setting that stays
-  // on this screen, but the transform editor writes to the session and its checkpoint.
-  canEdit: boolean;
-  editBlockedReason: string | null;
-}
+};
 
 type DisplayTab = 'layers' | 'cells' | 'image';
 

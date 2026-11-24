@@ -6,11 +6,9 @@ import { useState } from 'react';
 import { MORAN_MIN_CELLS, SPATIAL_NEIGHBOURS } from '../analysis/defaults';
 import { geneIndex } from '../analysis/matrix';
 import { PATTERN_GRID, PATTERN_MIN_CORRELATION, PATTERN_MIN_GENES, spatialPatterns } from '../analysis/patterns';
-import { useStudio } from '../app/studio';
 import { tissueOf } from '../charts/TissueThumb';
 import { SIGNIFICANCE } from '../charts/Volcano';
 import { describeError } from '../cirro/session';
-import { useDisplays } from '../item/displayState';
 import type { MoranSummary } from '../reports/MoranReport';
 import { openReport } from '../reports/parts';
 import { GENE_TEST_COLUMN, keepResult, type KeptTable } from '../reports/store';
@@ -18,17 +16,15 @@ import { readCoords, readMatrix } from './data';
 import { JobStatus } from './parts';
 import type { TaskProps } from './TaskPanel';
 import { useJob } from './useJob';
+import { useSpatialTask } from './useSpatialTask';
 
 // How many of the strongest spatially variable genes are grouped into patterns.
 const PATTERN_GENES = 60;
 
 export default function SpatialGenesTask({ wb, unit }: TaskProps) {
-  const handle = wb.handle!;
-  const { session } = useStudio();
-  const displays = useDisplays(wb.key, wb.handle);
+  const { handle, session, coords } = useSpatialTask(wb);
   const [problem, setProblem] = useState<string | null>(null);
   const job = useJob();
-  const coords = displays.spatial?.encoding.coords ?? 'obsm:spatial';
 
   const run = async () => {
     setProblem(null);

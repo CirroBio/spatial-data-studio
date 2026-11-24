@@ -16,7 +16,7 @@ router = APIRouter()
 @contextlib.contextmanager
 def _snapshot_errors():
     """Map a render's failure modes onto status codes, shared by save and preview — the
-    two run the same `_render_figure` and previously disagreed, the save endpoint letting
+    two run the same `render_figure` and previously disagreed, the save endpoint letting
     a bad `obsm_key` escape as a 500 where the preview answered 400. A read-lock timeout is
     the same retryable 503 every other read path returns (deps.read_locked)."""
     try:

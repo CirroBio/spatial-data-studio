@@ -5,11 +5,10 @@
 // every pair.
 import { useEffect, useMemo, useState } from 'react';
 import { useStudio } from '../app/studio';
-import { formatCount, plural } from '../app/ui';
+import { formatCount } from '../app/ui';
 import { BarList } from '../charts/BarList';
 import { Heatmap } from '../charts/Heatmap';
 import { TissueThumb, type Paint, type Tissue } from '../charts/TissueThumb';
-import { describeError } from '../cirro/session';
 import { SIZE_PRESETS } from '../figures/layout';
 import { keepFigure } from '../figures/spec';
 import { useDisplays } from '../item/displayState';
@@ -17,7 +16,7 @@ import { useColorKey } from '../item/useColorField';
 import { readGroups } from '../tasks/data';
 import { ResultTable, type Column } from '../tasks/parts';
 import { storeOf } from '../workbench/workbench';
-import { DownloadCsv, FullTable, NO_COLOR, pct, Section, showOnTissue, Stats, useTissue } from './parts';
+import { DownloadCsv, FullTable, GroupCard, NO_COLOR, pct, Section, showOnTissue, Stats, useSaveFigure, useTissue } from './parts';
 import type { ReportProps } from './ReportView';
 import { matrixOf, readResultTable } from './store';
 
@@ -42,7 +41,6 @@ const SHOWN_PAIRS = 10;
 // How many groups a card names on each side, and lists among its cells' neighbors.
 const NAMED = 2;
 const SHOWN_NEIGHBORS = 4;
-const THUMB_W = 132;
 const PAIR_THUMB_W = 200;
 // The heatmap's squares stop growing at this size, and the chart at the width they need.
 const HEAT_CELL = 26;
@@ -60,7 +58,7 @@ const PAIR_COLUMNS: Column<PairRow>[] = [
 ];
 const listed = (items: string[]) => (items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`);
 
-function GroupCard({ label, groups, index, size, total, colors, z, shares, tissue, paint, unit }: {
+function NeighborsCard({ label, groups, index, size, total, colors, z, shares, tissue, paint, unit }: {
   label: string; groups: string[]; index: number; size: number; total: number; colors: string[]; z: Float64Array;
   shares: Float64Array | null; tissue: Tissue | null; paint: Paint | null; unit: string;
 }) {
@@ -73,33 +71,22 @@ function GroupCard({ label, groups, index, size, total, colors, z, shares, tissu
   const named = (js: number[]) => listed(js.map((j) => `${groups[j]} (z ${fmtZ(z[index * n + j])})`));
   const neighbors = shares && groups.map((_, j) => j).sort((x, y) => shares[y] - shares[x]).slice(0, SHOWN_NEIGHBORS);
   return (
-    <article className="group-card">
-      <header className="group-card-head">
-        <span className="swatch" style={{ background: colors[index] }} />
-        <h4>{label}</h4>
-        <span className="muted">{plural(size, [unit, `${unit}s`])} · {pct(size / Math.max(total, 1))}</span>
-      </header>
-      <div className="group-card-body">
-        <figure className="group-card-thumb">
-          {tissue && paint ? <TissueThumb tissue={tissue} paint={paint} width={THUMB_W} label={`Where ${label} is`} />
-            : <div className="thumb-empty" style={{ width: THUMB_W, height: THUMB_W }} />}
-          <figcaption className="muted">Where its {unit}s are</figcaption>
-        </figure>
-        {neighbors && (
-          <table className="marker-mini">
-            <thead><tr><th>Its {unit}s' neighbors</th><th>Share</th><th>z</th></tr></thead>
-            <tbody>
-              {neighbors.map((j) => (
-                <tr key={groups[j]}>
-                  <td><span className="dot" style={{ background: colors[j] }} /> {groups[j]}{j === index && <span className="muted"> (itself)</span>}</td>
-                  <td>{fmtShare(shares[j])}</td>
-                  <td>{fmtZ(z[index * n + j])}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
+    <GroupCard label={label} color={colors[index]} size={size} share={pct(size / Math.max(total, 1))} unit={unit}
+      tissue={tissue} paint={paint}
+      detail={neighbors && (
+        <table className="marker-mini">
+          <thead><tr><th>Its {unit}s' neighbors</th><th>Share</th><th>z</th></tr></thead>
+          <tbody>
+            {neighbors.map((j) => (
+              <tr key={groups[j]}>
+                <td><span className="dot" style={{ background: colors[j] }} /> {groups[j]}{j === index && <span className="muted"> (itself)</span>}</td>
+                <td>{fmtShare(shares[j])}</td>
+                <td>{fmtZ(z[index * n + j])}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}>
       <p className="group-card-text">
         {!Number.isFinite(own) ? <>Too few {unit}s to tell whether they keep together. </>
           : own >= Z_NOTABLE ? <><strong>Keeps together</strong> (z {fmtZ(own)}). </>
@@ -108,7 +95,7 @@ function GroupCard({ label, groups, index, size, total, colors, z, shares, tissu
         {beside.length ? <>Sits next to {named(beside)} more than chance</> : <>Sits next to no other group more than chance</>}
         {avoids.length ? <>; avoids {named(avoids)}.</> : <>, and avoids none.</>}
       </p>
-    </article>
+    </GroupCard>
   );
 }
 
@@ -191,25 +178,15 @@ export default function NeighborhoodsReport({ result, table, wb, handle, unit, w
   const [picked, setPicked] = useState<Pair | null>(null);
   const pair = picked ?? together[0] ?? apart[0] ?? null;
 
-  const [figure, setFigure] = useState<'saving' | 'saved' | null>(null);
-  const [problem, setProblem] = useState<string | null>(null);
-  const saveFigure = async () => {
-    setFigure('saving');
-    setProblem(null);
-    try {
-      await keepFigure(wb.key, handle.tableKey, {
-        title: result.meta.title,
-        caption: `z-scores of how often each pair of ${column} groups are neighbors (each ${unit}'s ${neighbors} nearest on the tissue) against ${formatCount(permutations)} shuffles of the labels: red, more often than chance; blue, less.`,
-        created_by: session?.displayName ?? '',
-        view: { kind: 'chart', chart: { type: 'heatmap', result: [...result.path, 'table'].join('/') } },
-        width_mm: SIZE_PRESETS.single.widthMm,
-      });
-      setFigure('saved');
-    } catch (e) {
-      setFigure(null);
-      setProblem(describeError(e));
-    }
-  };
+  const { state: figure, problem, run: saveFigure } = useSaveFigure(async () => {
+    await keepFigure(wb.key, handle.tableKey, {
+      title: result.meta.title,
+      caption: `z-scores of how often each pair of ${column} groups are neighbors (each ${unit}'s ${neighbors} nearest on the tissue) against ${formatCount(permutations)} shuffles of the labels: red, more often than chance; blue, less.`,
+      created_by: session?.displayName ?? '',
+      view: { kind: 'chart', chart: { type: 'heatmap', result: [...result.path, 'table'].join('/') } },
+      width_mm: SIZE_PRESETS.single.widthMm,
+    });
+  });
 
   const rows = useMemo((): PairRow[] => groups.flatMap((from, i) => groups.map((to, j) => ({
     from, to, z: z[i * n + j], count: counts?.[i * n + j] ?? NaN, share: shares?.[i * n + j] ?? NaN,
@@ -289,7 +266,7 @@ export default function NeighborhoodsReport({ result, table, wb, handle, unit, w
           : `Whether each group's ${unit}s keep together (its z-score with itself), and the groups its ${unit}s' neighbors belong to most: their share of all its neighbors, and how far that is from chance.`}>
         <div className="group-cards">
           {groups.map((g, i) => (
-            <GroupCard key={g} label={g} groups={groups} index={i} size={sizes[i]} total={total} colors={colors} z={z}
+            <NeighborsCard key={g} label={g} groups={groups} index={i} size={sizes[i]} total={total} colors={colors} z={z}
               shares={shares && shares.subarray(i * n, (i + 1) * n)} tissue={tissue} paint={paints?.[i] ?? null} unit={unit} />
           ))}
         </div>

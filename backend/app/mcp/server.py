@@ -13,8 +13,8 @@ Design rules:
   one POST, no SSE dependency, so it survives buffering proxies and is trivially
   testable.
 - The assistant participates in presence/locking as a first-class viewer
-  (mcp/agent.py); mutating tools surface the 423 "locked by <name>" as a clean
-  error with the takeover hint.
+  (mcp/agent.py); mutating tools surface the edit-lock refusal ("locked by
+  <name>") as a clean error with the takeover hint.
 - Guidance for the agent (domain + app) ships as markdown in mcp/guides/, served
   by `read_guide` and indexed in the server instructions below.
 """
@@ -25,7 +25,6 @@ import json
 import time
 from pathlib import Path
 
-from fastapi import HTTPException
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.utilities.types import Image
 from mcp.server.transport_security import TransportSecuritySettings
@@ -35,11 +34,13 @@ from .. import datasets, recipes, snapshots
 from ..config import config, data_roots
 from ..registry.introspect import REGISTRY
 from ..registry.reader_paths import reader_namespace
-from ..sessions.session import TERMINAL_JOB_STATUSES
+from ..sessions import save_request
+from ..sessions.session import (TERMINAL_JOB_STATUSES, SessionLockedError,
+                                SessionNotFoundError, SessionReadOnlyError)
 from ..transport import tables
 from ..transport.sse import BUS
 from .. import deps
-from ..deps import in_executor, read_locked, default_save_path, search_var_names
+from ..deps import in_executor, read_locked, search_var_names
 
 GUIDES_DIR = Path(__file__).parent / "guides"
 GUIDE_TOPICS = {
@@ -120,14 +121,15 @@ def _sess(session_id: str | None = None):
 
 def _writable(session_id: str | None = None):
     """The mutating-tool guard: same checks as the REST routes (read-only + edit
-    lock), with the HTTPException translated into an agent-actionable error."""
+    lock), with the refusal translated into an agent-actionable error."""
     try:
         return deps.get_writable_session(_sid(session_id))
-    except HTTPException as e:
-        hint = (" — call set_active_session(session_id, take_control=True) to take the "
-                "edit lock (tell the user first; they keep watching read-only)"
-                if e.status_code == 423 else "")
-        raise RuntimeError(f"{e.detail}{hint}")
+    except SessionLockedError as e:
+        raise RuntimeError(f"{e} — call set_active_session(session_id, take_control=True) "
+                           "to take the edit lock (tell the user first; they keep watching "
+                           "read-only)")
+    except (SessionNotFoundError, SessionReadOnlyError) as e:
+        raise RuntimeError(str(e))
 
 
 async def _await_job(sess, job_id: str, timeout_s: float) -> str:
@@ -332,12 +334,14 @@ async def release_control() -> dict:
 async def save_checkpoint(session_id: str | None = None, path: str | None = None,
                           wait: bool = True, timeout_s: float = 600) -> dict:
     """Save the session to a .zarr.zip checkpoint (reloadable via create_session).
-    Default path: <data dir>/<session name> with a content-hash suffix."""
+    Default path: <data dir>/<session name> with a content-hash suffix. An explicit
+    path must be under the data dir."""
     agent.bind_agent()
     sess = _writable(session_id)
-    target = path or default_save_path(sess)
-    job_id = sess.enqueue_special("save", {"path": target, "hash_name": not path})
-    out = await _special_job_report(sess, job_id, wait, timeout_s, path=target)
+    # The same checks the save route applies; a refused request raises here.
+    payload = save_request.validated_payload(sess, {"path": path} if path else {})
+    job_id = sess.enqueue_special("save", payload)
+    out = await _special_job_report(sess, job_id, wait, timeout_s, path=payload["path"])
     if out["status"] == "completed":
         out["path"] = sess.store_path  # the save may have appended the hash suffix
     return out
@@ -353,8 +357,8 @@ async def close_session(session_id: str, save: bool = False) -> dict:
     else:
         try:
             deps.claim_lock(session_id)
-        except HTTPException as e:
-            raise RuntimeError(str(e.detail))
+        except SessionLockedError as e:
+            raise RuntimeError(str(e))
     # A failed save raises here with the session still open, and the assistant stays
     # attached to it.
     await in_executor(_mgr().close, session_id, save)

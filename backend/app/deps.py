@@ -3,7 +3,9 @@ session-lookup / executor / read-lock / image-render helpers used by both main.p
 and every router module. Kept out of main.py so routers can import them without a
 circular dependency on the app object (main.py imports the routers, not vice versa).
 Session-scoped business logic shared between a route and the MCP surface (the
-default checkpoint path, the var-name search) lives here too, for the same reason.
+var-name search) lives here too, for the same reason. The session guards below are
+that as well, so they raise the session layer's own errors (sessions/session.py),
+which main.py maps onto HTTP statuses.
 """
 import asyncio
 import contextlib
@@ -14,6 +16,8 @@ from fastapi import Header, HTTPException
 from .config import config
 from .sessions.manager import SessionManager
 from .sessions.presence import PRESENCE
+from .sessions.session import (SessionBusyError, SessionLockedError, SessionNotFoundError,
+                               SessionReadOnlyError)
 
 # The process-wide manager, bound by lifespan once the registry is built. Public
 # (not underscore) because it is the canonical live-manager handle for out-of-request
@@ -51,7 +55,7 @@ def bad_request():
 def get_session(sid: str):
     s = get_manager().get(sid)
     if s is None:
-        raise HTTPException(404, "session not found")
+        raise SessionNotFoundError("session not found")
     return s
 
 
@@ -63,7 +67,7 @@ def get_writable_session(sid: str):
     not just an unwired UI."""
     s = get_session(sid)
     if s.read_only:
-        raise HTTPException(403, "session is read-only")
+        raise SessionReadOnlyError("session is read-only")
     claim_lock(sid)
     return s
 
@@ -75,7 +79,7 @@ def claim_lock(sid: str):
     viewers writing at once."""
     holder = PRESENCE.claim(sid, CLIENT_ID.get())
     if holder is not None:
-        raise HTTPException(423, f"session is locked by {holder.name}")
+        raise SessionLockedError(f"session is locked by {holder.name}")
 
 
 # The calling browser client's id, bound per request from the X-SDS-Client-Id header
@@ -96,24 +100,6 @@ async def bind_client_id(x_sds_client_id: str | None = Header(default=None)) -> 
 
 async def in_executor(fn, *a):
     return await asyncio.get_running_loop().run_in_executor(None, fn, *a)
-
-
-def default_save_path(sess, folder: str | None = None, prefix: str | None = None) -> str:
-    """Checkpoint path to use when the caller doesn't give one explicitly — shared by
-    the save/points-transform routes and the MCP save_checkpoint tool. The filename's
-    content-hash suffix is (re)computed from the written bytes on every save (see
-    `_save_zip`), so this only needs the checkpoint's clean base name - stripping any
-    hash (or extension) a previous save already appended keeps it from stacking a new
-    one on top.
-
-    `folder` (a directory under DATA_DIR, relative to it or absolute) and `prefix` (the
-    filename stem the hash is appended to) are the Save dialog's destination fields;
-    without them the file lands flat in DATA_DIR under the session's name. Both are
-    validated at the route boundary (`main._validated_destination`) — a caller reaching
-    this directly must have checked them itself."""
-    from .persistence.store import strip_content_hash, strip_checkpoint_ext, CHECKPOINT_EXT
-    stem = strip_content_hash(strip_checkpoint_ext(prefix or sess.name))
-    return str(config.DATA_DIR / (folder or "") / f"{stem}{CHECKPOINT_EXT}")
 
 
 async def search_var_names(sess, q: str = "", limit: int = 50) -> list[str]:
@@ -137,17 +123,21 @@ async def search_var_names(sess, q: str = "", limit: int = 50) -> list[str]:
 async def read_locked(sess, fn, *a):
     """Run `fn(*a)` in the executor under the session's read lock — the shape every
     read-only endpoint needs to serve a field/manifest/preview off a session that a
-    queued job may be mutating concurrently. A compute/plot job holds the write lock for
-    its whole duration; rather than block past a fronting proxy's origin timeout (which
-    surfaces as a 504), give up after READ_LOCK_TIMEOUT_S with a retryable 503 the
-    frontend re-issues once the job completes."""
+    queued job may be mutating concurrently. A compute/plot job computes with no lock
+    held and takes the write lock only to commit its result (`Session._run_call`), but a
+    commit can be long: adopting a read bootstrap's or a loaded checkpoint's object
+    re-tiles its rasters under the write lock (minutes for a large store), and a
+    close-with-save writes the whole checkpoint under it. Rather than block past a
+    fronting proxy's origin timeout (which surfaces as a 504), give up after
+    READ_LOCK_TIMEOUT_S with a retryable 503 (`SessionBusyError`) the frontend re-issues
+    once the lock is free."""
     def _run():
         # acquire_read reports the timeout as False rather than raising, so the 503 covers
         # ONLY the acquisition: a TimeoutError raised by fn itself (a slow network read,
         # say) is a different failure and must not be relabelled as lock contention the
         # client will retry forever.
         if not sess.lock.acquire_read(config.READ_LOCK_TIMEOUT_S):
-            raise HTTPException(503, "session busy: compute in progress, retry")
+            raise SessionBusyError("session busy: compute in progress, retry")
         try:
             return fn(*a)
         finally:
@@ -155,18 +145,18 @@ async def read_locked(sess, fn, *a):
     return await in_executor(_run)
 
 
-# Global cap on concurrent image compositing. deck.gl fires a burst of tile requests on
-# every zoom/pan, and each finest-level tile can realize a full multi-MB pyramid chunk;
-# without this a burst decodes them all at once and spikes memory. Shared across sessions
-# since RAM is a process-wide resource.
+# Global cap on concurrent server-side image compositing. The only thing composited
+# here is the thumbnail (routers/imaging.py; the canvas composites tiles in the browser),
+# and each one decodes and composites a whole level of the image's pyramid; without
+# this, several arriving together decode at once and spike memory. Shared across
+# sessions since RAM is a process-wide resource.
 _IMAGE_RENDER_SEM = asyncio.Semaphore(config.IMAGE_RENDER_CONCURRENCY)
 
 
 async def render_image(sess, fn):
-    """Composite a tile/thumbnail under the render semaphore, refusing once RSS is past
-    the admission boundary so a zoom burst can't push an already-loaded container into
-    OOM. 503 lets the frontend keep its coarse base layer and retry as memory frees
-    (BitmapLayer just re-requests on the next viewport change)."""
+    """Composite an image thumbnail under the render semaphore, refusing once memory is
+    past the admission boundary so a render can't push an already-loaded container into
+    OOM. The 503 is retryable: the caller asks again once memory has freed."""
     async with _IMAGE_RENDER_SEM:
         if get_manager().over_memory_boundary():
             raise HTTPException(503, "image render deferred: memory boundary reached")

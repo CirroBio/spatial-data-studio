@@ -8,14 +8,13 @@ import { formatCount } from '../app/ui';
 import { BarList } from '../charts/BarList';
 import { TissueThumb, type Paint } from '../charts/TissueThumb';
 import { SIGNIFICANCE, Volcano } from '../charts/Volcano';
-import { describeError } from '../cirro/session';
 import { SIZE_PRESETS } from '../figures/layout';
 import { keepFigure } from '../figures/spec';
 import { useDisplays } from '../item/displayState';
 import { readGroups } from '../tasks/data';
 import { FORMATS, ResultTable, type Column, type GroupSpec } from '../tasks/parts';
 import { storeOf } from '../workbench/workbench';
-import { DownloadCsv, FullTable, GENE_SET_SIZE, geneValues, pct, ScoreGenes, Section, showOnTissue, Stats, useMatrix, useTissue } from './parts';
+import { DownloadCsv, FullTable, GENE_SET_SIZE, geneValues, pct, ScoreGenes, Section, showOnTissue, Stats, useMatrix, useSaveFigure, useTissue } from './parts';
 import type { ReportProps } from './ReportView';
 import { geneTestsOf, readResultTable } from './store';
 
@@ -80,25 +79,15 @@ export default function CompareReport({ result, table, wb, handle, unit, width }
     };
   }, [wb.key, handle, result, a, b]);
 
-  const [figure, setFigure] = useState<'saving' | 'saved' | null>(null);
-  const [problem, setProblem] = useState<string | null>(null);
-  const saveFigure = async () => {
-    setFigure('saving');
-    setProblem(null);
-    try {
-      await keepFigure(wb.key, handle.tableKey, {
-        title: result.meta.title,
-        caption: `Genes compared between ${a.label} (${formatCount(a.size)} ${unit}s) and ${b.label} (${formatCount(b.size)}): Wilcoxon rank-sum, Benjamini–Hochberg adjusted. Dashed lines: adjusted p = ${cutoffs.padj} and |log2 fold change| = ${cutoffs.logfc}.`,
-        created_by: session?.displayName ?? '',
-        view: { kind: 'chart', chart: { type: 'volcano', result: [...result.path, 'table'].join('/'), labels: SIGNIFICANCE.labels, ...cutoffs } },
-        width_mm: SIZE_PRESETS.single.widthMm,
-      });
-      setFigure('saved');
-    } catch (e) {
-      setFigure(null);
-      setProblem(describeError(e));
-    }
-  };
+  const { state: figure, problem, run: saveFigure } = useSaveFigure(async () => {
+    await keepFigure(wb.key, handle.tableKey, {
+      title: result.meta.title,
+      caption: `Genes compared between ${a.label} (${formatCount(a.size)} ${unit}s) and ${b.label} (${formatCount(b.size)}): Wilcoxon rank-sum, Benjamini–Hochberg adjusted. Dashed lines: adjusted p = ${cutoffs.padj} and |log2 fold change| = ${cutoffs.logfc}.`,
+      created_by: session?.displayName ?? '',
+      view: { kind: 'chart', chart: { type: 'volcano', result: [...result.path, 'table'].join('/'), labels: SIGNIFICANCE.labels, ...cutoffs } },
+      width_mm: SIZE_PRESETS.single.widthMm,
+    });
+  });
 
   const tableColumns: Column<GeneTest>[] = [
     { key: 'gene', label: 'Gene' }, { key: 'logfc', label: 'log2FC', format: FORMATS.num },

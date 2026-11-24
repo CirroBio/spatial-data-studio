@@ -2,7 +2,7 @@
 with an exact, machine-usable mapping between the PNG's pixels and the session's
 world coordinates.
 
-Built on the snapshot render core (`snapshots._render_figure`), which already
+Built on the snapshot render core (`snapshots.render_figure`), which already
 reproduces any spatial/embedding display — image compositing, palette-matched cells,
 boundary polygons — for a given viewport. This module adds what an *agent* needs on
 top of a human-facing figure:
@@ -214,12 +214,12 @@ def render_view(session, display_id: str | None = None, viewport=None,
             viewport = display["viewport"]
         spec = {"display_id": display.get("id"), "viewport": viewport,
                 "width_px": width_px, "height_px": height_px, "dpi": RENDER_DPI}
-        # _render_figure builds a bare (non-pyplot) Figure — no Gcf registration, so
+        # render_figure builds a bare (non-pyplot) Figure — no Gcf registration, so
         # nothing to close and concurrent renders can't corrupt shared figure state.
-        fig, render_meta = snapshots._render_figure(session, spec)
+        fig, render_meta = snapshots.render_figure(session, spec)
         ax = fig.axes[0]
         target, zoom = viewport["target"], float(viewport["zoom"])
-        bbox = snapshots._window(target, zoom, width_px, height_px)
+        bbox = snapshots.viewport_window(target, zoom, width_px, height_px)
 
         # view -> world: identity unless the display renders in image-pixel space.
         kind, _, p2w, w2v = snapshots.view_frame(session, display)
@@ -292,7 +292,7 @@ def _coordinate_meta(ax, p2w, width_px, height_px, viewport, enc, kind,
 # ---- region membership (shared by inspect/annotate/subset) ----------------------
 def cells_in_polygons(session, display: dict | None, polygons, space: str = "spatial") -> np.ndarray:
     """Boolean mask of active-table cells inside any of the polygon rings.
-    space='spatial': rings are world coordinates (reuses regions._membership, the
+    space='spatial': rings are world coordinates (reuses regions.membership, the
     same math the annotate endpoint applies). space='embedding': rings are embedding
     coordinates of the display's obsm components — resolved here because the backend
     annotate/subset endpoints only take embedding selections as cell_indices."""
@@ -300,7 +300,7 @@ def cells_in_polygons(session, display: dict | None, polygons, space: str = "spa
 
     adata = session.active_table()
     if space == "spatial":
-        return regions._membership(session.sdata, adata, {"polygons": polygons})
+        return regions.membership(session.sdata, adata, {"polygons": polygons})
 
     from matplotlib.path import Path as MplPath
     coords = snapshots.point_coords(session, (display or {}).get("encoding", {}), "embedding")

@@ -5,13 +5,13 @@ import { useEffect, useMemo, useState } from 'react';
 import type { GeneTest } from '../analysis/rankGenes';
 import { formatCount, plural } from '../app/ui';
 import { DotPlot } from '../charts/DotPlot';
-import { TissueThumb, type Paint, type Tissue } from '../charts/TissueThumb';
+import type { Paint, Tissue } from '../charts/TissueThumb';
 import { useDisplays } from '../item/displayState';
 import { useColorKey } from '../item/useColorField';
 import { readGroups } from '../tasks/data';
 import { FORMATS, ResultTable, type Column } from '../tasks/parts';
 import type { Workbench } from '../workbench/workbench';
-import { DownloadCsv, FullTable, GENE_SET_SIZE, geneValues, NO_COLOR, pct, ScoreGenes, Section, showOnTissue, Stats, useMatrix, useTissue } from './parts';
+import { DownloadCsv, FullTable, GENE_SET_SIZE, geneValues, GroupCard, NO_COLOR, pct, ScoreGenes, Section, showOnTissue, Stats, useMatrix, useTissue } from './parts';
 import type { ReportProps } from './ReportView';
 import { geneTestsOf } from './store';
 
@@ -25,7 +25,6 @@ export type MarkersSummary = {
 const SHOWN_MARKERS = 5;
 // More columns than this and the dot plot stops being read at a glance.
 const MAX_DOT_GENES = 80;
-const THUMB_W = 132;
 const TABLE_COLUMNS: Column<GeneTest>[] = [
   { key: 'gene', label: 'Gene' }, { key: 'score', label: 'Score', format: FORMATS.num },
   { key: 'logfc', label: 'log2FC', format: FORMATS.num }, { key: 'padj', label: 'Adj. p', format: FORMATS.p },
@@ -34,7 +33,7 @@ const TABLE_COLUMNS: Column<GeneTest>[] = [
 // The table shows a group at a time; its file holds every group's, one after another.
 const CSV_COLUMNS: Column<GeneTest & { group: string }>[] = [{ key: 'group', label: 'Group' }, ...TABLE_COLUMNS];
 
-function GroupCard({ wb, handle, column, label, size, total, color, tests, significant, tissue, member, unit }: {
+function MarkersCard({ wb, handle, column, label, size, total, color, tests, significant, tissue, member, unit }: {
   wb: Workbench; handle: ReportProps['handle']; column: string; label: string; size: number; total: number; color: string;
   tests: GeneTest[]; significant: GeneTest[]; tissue: Tissue | null; member: ((c: number) => boolean) | null;
   unit: string;
@@ -52,18 +51,9 @@ function GroupCard({ wb, handle, column, label, size, total, color, tests, signi
   const set = significant.slice(0, GENE_SET_SIZE).map((t) => t.gene);
   const shown = nearest.slice(0, SHOWN_MARKERS);
   return (
-    <article className="group-card">
-      <header className="group-card-head">
-        <span className="swatch" style={{ background: color }} />
-        <h4>{label}</h4>
-        <span className="muted">{plural(size, [unit, `${unit}s`])} · {((100 * size) / Math.max(total, 1)).toFixed(1)}%</span>
-      </header>
-      <div className="group-card-body">
-        <figure className="group-card-thumb">
-          {tissue && paint ? <TissueThumb tissue={tissue} paint={paint} width={THUMB_W} label={gene ? `${gene} on the tissue` : `Where ${label} is`} />
-            : <div className="thumb-empty" style={{ width: THUMB_W, height: THUMB_W }} />}
-          <figcaption className="muted">{gene ? `${gene}, log1p` : `Where its ${unit}s are`}</figcaption>
-        </figure>
+    <GroupCard label={label} color={color} size={size} share={`${((100 * size) / Math.max(total, 1)).toFixed(1)}%`} unit={unit}
+      tissue={tissue} paint={paint} thumbLabel={gene ? `${gene} on the tissue` : undefined} caption={gene ? `${gene}, log1p` : undefined}
+      detail={(
         <table className="marker-mini">
           <thead><tr><th>Gene</th><th>log2FC</th><th>Here · others</th></tr></thead>
           <tbody>
@@ -82,7 +72,7 @@ function GroupCard({ wb, handle, column, label, size, total, color, tests, signi
             ))}
           </tbody>
         </table>
-      </div>
+      )}>
       <p className="group-card-text">
         {significant.length
           ? <>{plural(significant.length, ['gene is', 'genes are'])} higher here. The strongest, <strong>{top.gene}</strong>, is in {pct(top.fracA)} of its {unit}s and {pct(top.fracB)} of the others.</>
@@ -95,7 +85,7 @@ function GroupCard({ wb, handle, column, label, size, total, color, tests, signi
         )}
         {gene && <button type="button" className="link-button" onClick={() => showOnTissue(wb.key, `X:${gene}`)}>Show {gene} on the tissue</button>}
       </div>
-    </article>
+    </GroupCard>
   );
 }
 
@@ -198,7 +188,7 @@ export default function MarkersReport({ result, table, wb, handle, unit, width }
             const code = at?.get(g);
             const member = codes && code !== undefined ? (c: number) => codes.codes[c] === code : null;
             return (
-              <GroupCard key={g} wb={wb} handle={handle} column={column} label={g} size={sizes[i]} total={total} color={colorOf(g)}
+              <MarkersCard key={g} wb={wb} handle={handle} column={column} label={g} size={sizes[i]} total={total} color={colorOf(g)}
                 tests={byGroup[i]} significant={significant[i]} tissue={tissue} member={member} unit={unit} />
             );
           })}

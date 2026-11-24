@@ -63,7 +63,9 @@ export default function Header() {
                 </span>)
             : <SessionPicker />}
         </span>
-        <LockBadge />
+        {/* A checkpoint is a file read in the browser: there is no session on a server
+            to lock, and taking one would post the checkpoint's URL as a session id. */}
+        {!isCheckpoint && <LockBadge />}
         {fields?.n_obs != null && (
           <span className="text-[11px] text-muted font-mono" style={{ fontVariantNumeric: 'tabular-nums' }}>
             {fields.n_obs.toLocaleString()} cells

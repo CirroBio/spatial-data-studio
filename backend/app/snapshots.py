@@ -256,7 +256,7 @@ def _shapes_element(session, enc: dict) -> str | None:
     return polygonal[0] if polygonal else None
 
 
-def _window(target, zoom, width_px, height_px):
+def viewport_window(target, zoom, width_px, height_px):
     """Axis-aligned window [x0,y0,x1,y1] in the view's coordinate space. deck's
     OrthographicView puts 2**zoom pixels per unit, so `n` output px span n/2**zoom
     units, centered on target."""
@@ -527,7 +527,7 @@ def _draw_minimap(fig, session, enc, element, pts, bbox, facecolor, dpi) -> bool
 
 
 # ---- the render core ---------------------------------------------------------
-def _render_figure(session, spec: dict):
+def render_figure(session, spec: dict):
     """Render into an in-memory matplotlib Figure. Returns (fig, render_meta).
 
     Deliberately never pyplot: pyplot's Gcf figure registry is process-global and
@@ -569,7 +569,7 @@ def _render_figure(session, spec: dict):
     else:
         pts = xy
 
-    bbox = _window(target, zoom, width_px, height_px)
+    bbox = viewport_window(target, zoom, width_px, height_px)
 
     # mean inter-point spacing (full dataset bounds) -> world radius, matching
     # buildSpotLayer.estimateMeanSpacing + pointWorldRadius.
@@ -651,7 +651,7 @@ def render_preview(session, spec: dict) -> bytes:
     """A low-cost PNG of the framing for the modal preview. Same core, no file writes
     and no embedded metadata."""
     with session.lock.reading(config.READ_LOCK_TIMEOUT_S):
-        fig, _ = _render_figure(session, spec)
+        fig, _ = render_figure(session, spec)
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=fig.dpi)
     return buf.getvalue()
@@ -695,7 +695,7 @@ def save_snapshot(session, spec: dict) -> dict:
     # across several multi-MB savefig calls stalls a pending compute commit for their whole
     # duration.
     with session.lock.reading(config.READ_LOCK_TIMEOUT_S):
-        fig, render_meta = _render_figure(session, spec)
+        fig, render_meta = render_figure(session, spec)
         meta = _metadata(session, spec, display, render_meta, formats)
 
     meta_json = json.dumps(meta)

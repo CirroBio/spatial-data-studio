@@ -4,9 +4,7 @@
 // run is kept with the data and opens as its report.
 import { useState } from 'react';
 import { NICHE_COUNT, NICHE_NEIGHBOURS } from '../analysis/defaults';
-import { useStudio } from '../app/studio';
 import { describeError } from '../cirro/session';
-import { useDisplays } from '../item/displayState';
 import type { NichesSummary } from '../reports/NichesReport';
 import { openReport } from '../reports/parts';
 import { keepResult, storableNames } from '../reports/store';
@@ -14,11 +12,10 @@ import { freeName, readCoords, readGroups } from './data';
 import { ColumnSelect, JobStatus, writeObsColumn } from './parts';
 import type { TaskProps } from './TaskPanel';
 import { useJob } from './useJob';
+import { useSpatialTask } from './useSpatialTask';
 
 export default function NichesTask({ wb, unit }: TaskProps) {
-  const handle = wb.handle!;
-  const { session } = useStudio();
-  const displays = useDisplays(wb.key, wb.handle);
+  const { handle, session, coords } = useSpatialTask(wb);
   const taken = handle.fields.obs.map((f) => f.name);
   const [column, setColumn] = useState('');
   const [count, setCount] = useState(NICHE_COUNT);
@@ -26,7 +23,6 @@ export default function NichesTask({ wb, unit }: TaskProps) {
   const [name, setName] = useState(() => freeName('niche', taken));
   const [problem, setProblem] = useState<string | null>(null);
   const job = useJob();
-  const coords = displays.spatial?.encoding.coords ?? 'obsm:spatial';
 
   const run = async () => {
     setProblem(null);
